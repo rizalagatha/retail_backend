@@ -2,6 +2,8 @@
 const pool = require('../config/database');
 
 const getAllCustomers = async () => {
+    // Query ini telah diperbarui untuk mengambil kolom tambahan
+    // dan melakukan JOIN dengan tlevel.
     const query = `
         SELECT 
             c.cus_kode AS kode,
@@ -10,8 +12,12 @@ const getAllCustomers = async () => {
             c.cus_kota AS kota,
             c.cus_telp AS telp,
             c.cus_nama_kontak AS namaKontak,
-            IF(c.cus_aktif = 0, 'AKTIF', 'PASIF') AS status
+            IF(c.cus_aktif = 0, 'AKTIF', 'PASIF') AS status,
+            c.cus_tgl_lahir AS tglLahir,
+            c.cus_top AS top,
+            l.lev_nama AS level
         FROM tcustomer c
+        LEFT JOIN tlevel l ON c.cus_lev = l.lev_kode
         ORDER BY c.cus_kode;
     `;
     const [rows] = await pool.query(query);
