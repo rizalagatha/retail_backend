@@ -140,13 +140,11 @@ const getFullProposalDetails = async (nomor) => {
         throw new Error('Data pengajuan tidak ditemukan.');
     }
 
-    const imagePath = path.join(__dirname, '..', 'public', 'images', `${nomor}.jpg`);
+    const imagePath = path.join(__dirname, '..', '..', 'public', 'images', `${nomor}.jpg`);
     let imageUrl = null;
 
     if (fs.existsSync(imagePath)) {
-        // Buat URL lengkap yang bisa diakses oleh browser
-        // Sebaiknya gunakan variabel environment untuk base URL (contoh: process.env.BASE_URL)
-        imageUrl = `${process.env.BASE_URL}/images/${nomor}.jpg`;  
+        imageUrl = `${process.env.BASE_URL || 'http://192.168.1.73:8000'}/images/${nomor}.jpg`;
     }
 
     // 2. Ambil data detail ukuran/size
