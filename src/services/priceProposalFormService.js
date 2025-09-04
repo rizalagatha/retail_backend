@@ -140,9 +140,19 @@ const getFullProposalDetails = async (nomor) => {
         throw new Error('Data pengajuan tidak ditemukan.');
     }
 
-    const imagePath = path.join(__dirname, '..', '..', 'public', 'images', `${nomor}.jpg`);
-    let imageUrl = null;
+    // --- BLOK DEBUGGING PATH ---
+    console.log("\n--- Memulai Debugging Path Gambar ---");
+    console.log("Nomor yang dicari:", nomor);
+    
+    // `process.cwd()` adalah cara yang lebih andal untuk mendapatkan root direktori proyek Anda
+    const imagePath = path.join(process.cwd(), 'public', 'images', `${nomor}.jpg`);
+    
+    console.log("Mencoba mencari file di path absolut:", imagePath);
+    console.log("Apakah file ditemukan?", fs.existsSync(imagePath) ? "YA" : "TIDAK");
+    console.log("--- Selesai Debugging Path Gambar ---\n");
+    // --- AKHIR BLOK DEBUGGING ---
 
+    let imageUrl = null;
     if (fs.existsSync(imagePath)) {
         imageUrl = `${process.env.BASE_URL || 'http://192.168.1.73:8000'}/images/${nomor}.jpg`;
     }
