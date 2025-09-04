@@ -19,7 +19,7 @@ router.get('/tshirt-type-details', priceProposalFormController.getTshirtTypeDeta
 // router.get('/edit-details/:nomor', priceProposalFormController.getDetailsForEdit);
 router.post('/upload-image', upload.single('proposalImage'), priceProposalFormController.uploadImage);
 
-router.get('/get-discount', priceProposalFormController.getDiscountByBruto);
+router.get('/get-discount', priceProposalFormController.getDiscount);
 
 router.get('/search-products-by-type', priceProposalFormController.searchProductsByType);
 
