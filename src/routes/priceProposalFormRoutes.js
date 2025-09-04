@@ -23,4 +23,6 @@ router.get('/get-discount', priceProposalFormController.getDiscount);
 
 router.get('/search-products-by-type', priceProposalFormController.searchProductsByType);
 
+router.get('/search-additional-costs', priceProposalFormController.searchAdditionalCosts);
+
 module.exports = router;

@@ -66,6 +66,15 @@ const searchProductsByType = async (req, res) => {
     }
 };
 
+const searchAdditionalCosts = async (req, res) => {
+    try {
+        const costs = await priceProposalFormService.searchAdditionalCosts();
+        res.json(costs);
+    } catch (error) {
+        res.status(500).json({ message: 'Gagal mencari biaya tambahan.' });
+    }
+};
+
 module.exports = {
     getNextNumber,
     searchTshirtTypes,
@@ -73,4 +82,5 @@ module.exports = {
     uploadImage,
     getDiscount,
     searchProductsByType,
+    searchAdditionalCosts,
 };

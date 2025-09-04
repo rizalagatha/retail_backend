@@ -111,10 +111,25 @@ const searchProductsByType = async (jenisKaos) => {
     return rows;
 };
 
+const searchAdditionalCosts = async () => {
+    // Query ini meniru SQLbantuan dari kode Delphi Anda
+    const query = `
+        SELECT 
+            bt_tambahan AS tambahan,
+            bt_harga AS harga 
+        FROM tbiayatambahan 
+        WHERE bt_harga <> 0 
+        ORDER BY bt_tambahan
+    `;
+    const [rows] = await pool.query(query);
+    return rows;
+};
+
 module.exports = {
     generateNewProposalNumber,
     searchTshirtTypes,
     getTshirtTypeDetails,
     getDiscountByBruto,
     searchProductsByType,
+    searchAdditionalCosts,
 };
