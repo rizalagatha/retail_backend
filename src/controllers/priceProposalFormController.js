@@ -36,13 +36,31 @@ const getTshirtTypeDetails = async (req, res) => {
     }
 };
 
-const uploadImage = (req, res) => {
-    // Jika middleware multer berhasil, file sudah tersimpan.
-    // Kirim respons sukses.
-    if (!req.file) {
-        return res.status(400).json({ message: 'Tidak ada file yang diunggah.' });
+const uploadImage = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ message: 'Tidak ada file yang diunggah.' });
+        }
+        
+        // Ambil nomor pengajuan dari body request
+        const { nomor } = req.body;
+        if (!nomor) {
+            // Hapus file sementara jika nomor tidak ada
+            fs.unlinkSync(req.file.path); 
+            return res.status(400).json({ message: 'Nomor pengajuan diperlukan.' });
+        }
+
+        // Buat nama file final (contoh: K07.2025.00001.jpg)
+        const finalFileName = `${nomor}${path.extname(req.file.originalname)}`;
+        
+        // Panggil service untuk me-rename file
+        const finalPath = await priceProposalFormService.renameProposalImage(req.file.path, finalFileName);
+
+        res.status(200).json({ message: 'Gambar berhasil diunggah.', filePath: finalPath });
+
+    } catch (error) {
+        res.status(500).json({ message: error.message });
     }
-    res.status(200).json({ message: 'Gambar berhasil diunggah.', filePath: req.file.path });
 };
 
 const getDiscount = async (req, res) => {

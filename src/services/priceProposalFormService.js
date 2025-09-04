@@ -146,7 +146,7 @@ const getFullProposalDetails = async (nomor) => {
     if (fs.existsSync(imagePath)) {
         // Buat URL lengkap yang bisa diakses oleh browser
         // Sebaiknya gunakan variabel environment untuk base URL (contoh: process.env.BASE_URL)
-        imageUrl = `http://192.168.1.73:8000/images/${nomor}.jpg`;  
+        imageUrl = `${process.env.BASE_URL}/images/${nomor}.jpg`;  
     }
 
     // 2. Ambil data detail ukuran/size
@@ -175,6 +175,22 @@ const getFullProposalDetails = async (nomor) => {
     };
 };
 
+const renameProposalImage = async (tempFilePath, finalFileName) => {
+    return new Promise((resolve, reject) => {
+        // Tentukan path tujuan
+        const finalPath = path.join(__dirname, '..', 'public', 'images', finalFileName);
+        
+        // Ganti nama file
+        fs.rename(tempFilePath, finalPath, (err) => {
+            if (err) {
+                console.error("Gagal me-rename file:", err);
+                return reject(new Error('Gagal memproses file gambar.'));
+            }
+            resolve(finalPath);
+        });
+    });
+};
+
 module.exports = {
     generateNewProposalNumber,
     searchTshirtTypes,
@@ -183,4 +199,5 @@ module.exports = {
     searchProductsByType,
     searchAdditionalCosts,
     getFullProposalDetails,
+    renameProposalImage,
 };

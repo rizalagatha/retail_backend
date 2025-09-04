@@ -1,32 +1,20 @@
+// di file: src/middleware/uploadMiddleware.js
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
 
-// Tentukan direktori penyimpanan
-const storageDir = path.join(__dirname, '../../public/images/proposals');
-
-// Pastikan direktori ada, jika tidak, buatkan
-if (!fs.existsSync(storageDir)) {
-    fs.mkdirSync(storageDir, { recursive: true });
-}
-
-// Konfigurasi Multer
+// Tentukan folder penyimpanan
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, storageDir);
+    destination: function (req, file, cb) {
+        // Simpan file di folder public/images
+        cb(null, path.join(__dirname, '..', 'public', 'images'));
     },
-    filename: (req, file, cb) => {
-        // Ambil nomor pengajuan dari body request
-        const proposalNumber = req.body.nomor;
-        // Simpan file dengan nama [nomor_pengajuan].jpg
-        const fileName = `${proposalNumber}${path.extname(file.originalname)}`;
-        cb(null, fileName);
+    filename: function (req, file, cb) {
+        // Beri nama sementara dengan timestamp. Kita akan rename nanti.
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
     }
 });
 
-const upload = multer({ 
-    storage: storage,
-    limits: { fileSize: 500 * 1024 } // Batas 500 KB, sama seperti di Delphi
-});
+const upload = multer({ storage: storage });
 
 module.exports = upload;
