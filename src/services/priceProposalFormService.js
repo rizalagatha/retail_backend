@@ -140,12 +140,11 @@ const getFullProposalDetails = async (nomor) => {
         throw new Error('Data pengajuan tidak ditemukan.');
     }
 
+    const cabang = nomor.substring(0, 3);
+
     // `process.cwd()` adalah cara yang lebih andal untuk mendapatkan root direktori proyek Anda
     const imagePath = path.join(process.cwd(), 'public', 'images', cabang, `${nomor}.jpg`);
-
     let imageUrl = null;
-
-    const cabang = nomor.substring(0, 3);
 
     if (fs.existsSync(imagePath)) {
         // Bangun URL yang benar, sertakan subfolder cabang
