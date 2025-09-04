@@ -146,7 +146,7 @@ const getFullProposalDetails = async (nomor) => {
     if (fs.existsSync(imagePath)) {
         // Buat URL lengkap yang bisa diakses oleh browser
         // Sebaiknya gunakan variabel environment untuk base URL (contoh: process.env.BASE_URL)
-        imageUrl = `http://localhost:8000/images/${nomor}.jpg`; 
+        imageUrl = `http://192.168.1.73:8000/images/${nomor}.jpg`;  
     }
 
     // 2. Ambil data detail ukuran/size
