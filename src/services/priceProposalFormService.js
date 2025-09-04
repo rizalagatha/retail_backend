@@ -47,19 +47,18 @@ const searchTshirtTypes = async (term, custom) => {
  * Mengambil daftar ukuran dan harga dasar berdasarkan jenis kaos.
  * Mereplikasi logika dari loadjeniskaos di Delphi.
  */
+// di file: src/services/priceProposalFormService.js
+
 const getTshirtTypeDetails = async (jenisKaos, custom) => {
-    const query = `
+    // 1. Siapkan kedua query
+    const sizeQuery = `
         SELECT 
             u.ukuran,
             CASE
-                WHEN u.ukuran = "S" THEN k.jk_s
-                WHEN u.ukuran = "M" THEN k.jk_m
-                WHEN u.ukuran = "L" THEN k.jk_l
-                WHEN u.ukuran = "XL" THEN k.jk_xl
-                WHEN u.ukuran = "2XL" THEN k.jk_2xl
-                WHEN u.ukuran = "3XL" THEN k.jk_3xl
-                WHEN u.ukuran = "4XL" THEN k.jk_4xl
-                WHEN u.ukuran = "5XL" THEN k.jk_5xl
+                WHEN u.ukuran = "S" THEN k.jk_s WHEN u.ukuran = "M" THEN k.jk_m
+                WHEN u.ukuran = "L" THEN k.jk_l WHEN u.ukuran = "XL" THEN k.jk_xl
+                WHEN u.ukuran = "2XL" THEN k.jk_2xl WHEN u.ukuran = "3XL" THEN k.jk_3xl
+                WHEN u.ukuran = "4XL" THEN k.jk_4xl WHEN u.ukuran = "5XL" THEN k.jk_5xl
                 ELSE 0
             END AS hargaPcs
         FROM tukuran u
@@ -73,29 +72,36 @@ const getTshirtTypeDetails = async (jenisKaos, custom) => {
         WHERE bt_tambahan IN ('BORDIR', 'DTF')
     `;
 
-    // 2. Jalankan kedua query secara paralel untuk efisiensi
-    const [
-        [sizeRows], 
-        [costRows]
-    ] = await Promise.all([
-        pool.query(sizeQuery, [jenisKaos, custom]),
-        pool.query(costsQuery)
-    ]);
+    try {
+        // 2. Jalankan kedua query secara paralel untuk efisiensi
+        const [
+            [sizeRows],
+            [costRows]
+        ] = await Promise.all([
+            pool.query(sizeQuery, [jenisKaos, custom]),
+            pool.query(costsQuery)
+        ]);
 
-    // 3. Gabungkan hasilnya (logika ini tetap sama)
-    const costs = {};
-    costRows.forEach(row => {
-        if (row.bt_tambahan === 'BORDIR') {
-            costs.bordir = { cm: row.bt_cm, min: row.bt_min };
-        } else if (row.bt_tambahan === 'DTF') {
-            costs.dtf = { cm: row.bt_cm, min: row.bt_min };
-        }
-    });
+        // 3. Gabungkan hasilnya (logika ini tetap sama)
+        const costs = {};
+        costRows.forEach(row => {
+            if (row.bt_tambahan === 'BORDIR') {
+                costs.bordir = { cm: row.bt_cm, min: row.bt_min };
+            } else if (row.bt_tambahan === 'DTF') {
+                costs.dtf = { cm: row.bt_cm, min: row.bt_min };
+            }
+        });
 
-    return {
-        sizes: sizeRows,
-        costs: costs
-    };
+        return {
+            sizes: sizeRows,
+            costs: costs
+        };
+    } catch (error) {
+        // Tambahkan log yang lebih detail di sini untuk debugging di masa depan
+        console.error(`[ERROR] Gagal getTshirtTypeDetails untuk jenisKaos: "${jenisKaos}", custom: "${custom}"`);
+        console.error(error); // Cetak error SQL yang sebenarnya ke konsol backend
+        throw error; // Lemparkan kembali error agar controller bisa menangkapnya
+    }
 };
 
 const getDiscountByBruto = async (bruto) => {
