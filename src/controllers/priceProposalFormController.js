@@ -56,10 +56,21 @@ const getDiscount = async (req, res) => {
     }
 };
 
+const searchProductsByType = async (req, res) => {
+    try {
+        const { jenisKaos } = req.query;
+        const products = await priceProposalFormService.searchProductsByType(jenisKaos);
+        res.json(products);
+    } catch (error) {
+        res.status(500).json({ message: 'Gagal mencari produk.' });
+    }
+};
+
 module.exports = {
     getNextNumber,
     searchTshirtTypes,
     getTshirtTypeDetails,
     uploadImage,
     getDiscount,
+    searchProductsByType,
 };

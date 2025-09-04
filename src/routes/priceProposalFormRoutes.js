@@ -19,4 +19,8 @@ router.get('/tshirt-type-details', priceProposalFormController.getTshirtTypeDeta
 // router.get('/edit-details/:nomor', priceProposalFormController.getDetailsForEdit);
 router.post('/upload-image', upload.single('proposalImage'), priceProposalFormController.uploadImage);
 
+router.get('/get-discount', priceProposalController.getDiscountByBruto);
+
+router.get('/search-products-by-type', priceProposalController.searchProductsByType);
+
 module.exports = router;

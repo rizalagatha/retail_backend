@@ -91,9 +91,30 @@ const getDiscountByBruto = async (bruto) => {
     return diskonRp;
 };
 
+const searchProductsByType = async (jenisKaos) => {
+    // Query ini meniru CONCAT dan LIKE dari kode Delphi Anda
+    const query = `
+        SELECT 
+            x.Kode,
+            x.Nama
+        FROM (
+            SELECT 
+                a.brg_kode AS Kode,
+                TRIM(CONCAT_WS(' ', a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna)) AS Nama
+            FROM tbarangdc a
+            WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
+        ) x
+        WHERE x.Nama LIKE ?
+        ORDER BY x.Nama;
+    `;
+    const [rows] = await pool.query(query, [`${jenisKaos}%`]);
+    return rows;
+};
+
 module.exports = {
     generateNewProposalNumber,
     searchTshirtTypes,
     getTshirtTypeDetails,
     getDiscountByBruto,
+    searchProductsByType,
 };
