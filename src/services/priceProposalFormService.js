@@ -67,16 +67,22 @@ const getTshirtTypeDetails = async (jenisKaos, custom) => {
         WHERE u.kategori = "" AND u.kode >= 2 AND u.kode <= 16
         ORDER BY u.kode;
     `;
-    const [sizeRows] = await pool.query(sizeQuery, [jenisKaos, custom]);
-    // 2. Query BARU untuk mengambil data biaya Bordir & DTF
     const costsQuery = `
         SELECT bt_tambahan, bt_cm, bt_min 
         FROM tbiayatambahan 
         WHERE bt_tambahan IN ('BORDIR', 'DTF')
     `;
-    const [costRows] = await pool.query(costsQuery);
 
-    // 3. Gabungkan hasilnya ke dalam satu objek
+    // 2. Jalankan kedua query secara paralel untuk efisiensi
+    const [
+        [sizeRows], 
+        [costRows]
+    ] = await Promise.all([
+        pool.query(sizeQuery, [jenisKaos, custom]),
+        pool.query(costsQuery)
+    ]);
+
+    // 3. Gabungkan hasilnya (logika ini tetap sama)
     const costs = {};
     costRows.forEach(row => {
         if (row.bt_tambahan === 'BORDIR') {
@@ -88,7 +94,7 @@ const getTshirtTypeDetails = async (jenisKaos, custom) => {
 
     return {
         sizes: sizeRows,
-        costs: costs // Kembalikan data biaya bersamaan dengan data ukuran
+        costs: costs
     };
 };
 
