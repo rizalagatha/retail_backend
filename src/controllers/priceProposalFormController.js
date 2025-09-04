@@ -75,6 +75,16 @@ const searchAdditionalCosts = async (req, res) => {
     }
 };
 
+const getEditDetails = async (req, res) => {
+    try {
+        const { nomor } = req.params;
+        const data = await priceProposalFormService.getFullProposalDetails(nomor);
+        res.json(data);
+    } catch (error) {
+        res.status(404).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getNextNumber,
     searchTshirtTypes,
@@ -83,4 +93,5 @@ module.exports = {
     getDiscount,
     searchProductsByType,
     searchAdditionalCosts,
+    getEditDetails,
 };

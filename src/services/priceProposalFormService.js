@@ -125,6 +125,44 @@ const searchAdditionalCosts = async () => {
     return rows;
 };
 
+const getFullProposalDetails = async (nomor) => {
+    // 1. Ambil data header
+    const headerQuery = `
+        SELECT h.*, c.cus_nama 
+        FROM tpengajuanharga h 
+        LEFT JOIN tcustomer c ON c.cus_kode = h.ph_kd_cus 
+        WHERE h.ph_nomor = ?
+    `;
+    const [headerRows] = await pool.query(headerQuery, [nomor]);
+    if (headerRows.length === 0) {
+        throw new Error('Data pengajuan tidak ditemukan.');
+    }
+
+    // 2. Ambil data detail ukuran/size
+    const sizeQuery = `SELECT * FROM tpengajuanharga_size WHERE phs_nomor = ?`;
+    const [sizeRows] = await pool.query(sizeQuery, [nomor]);
+
+    // 3. Ambil data bordir
+    const bordirQuery = `SELECT * FROM tpengajuanharga_bordir WHERE phb_nomor = ?`;
+    const [bordirRows] = await pool.query(bordirQuery, [nomor]);
+
+    // 4. Ambil data DTF
+    const dtfQuery = `SELECT * FROM tpengajuanharga_dtf WHERE phd_nomor = ?`;
+    const [dtfRows] = await pool.query(dtfQuery, [nomor]);
+
+    // 5. Ambil data biaya tambahan
+    const costQuery = `SELECT * FROM tpengajuanharga_tambahan WHERE pht_nomor = ?`;
+    const [costRows] = await pool.query(costQuery, [nomor]);
+
+    return {
+        header: headerRows[0],
+        sizes: sizeRows,
+        bordir: bordirRows[0] || {},
+        dtf: dtfRows[0] || {},
+        additionalCosts: costRows
+    };
+};
+
 module.exports = {
     generateNewProposalNumber,
     searchTshirtTypes,
@@ -132,4 +170,5 @@ module.exports = {
     getDiscountByBruto,
     searchProductsByType,
     searchAdditionalCosts,
+    getFullProposalDetails,
 };

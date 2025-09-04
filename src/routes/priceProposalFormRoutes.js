@@ -25,4 +25,6 @@ router.get('/search-products-by-type', priceProposalFormController.searchProduct
 
 router.get('/search-additional-costs', priceProposalFormController.searchAdditionalCosts);
 
+router.get('/edit-details/:nomor', priceProposalFormController.getEditDetails);
+
 module.exports = router;
