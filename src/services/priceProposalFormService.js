@@ -69,10 +69,31 @@ const getTshirtTypeDetails = async (jenisKaos, custom) => {
     return rows;
 };
 
-// ... (Fungsi untuk save, get for edit, dll. akan ditambahkan nanti)
+const getDiscountByBruto = async (bruto) => {
+    if (!bruto || isNaN(parseFloat(bruto))) {
+        // Jika bruto tidak valid atau 0, kembalikan diskon 0
+        return 0;
+    }
+
+    const query = `
+        SELECT diskon 
+        FROM tpengajuanharga_diskon 
+        WHERE ? >= harga1 AND ? <= harga2
+    `;
+    const [rows] = await pool.query(query, [bruto, bruto]);
+
+    let diskonRp = 0;
+    if (rows.length > 0) {
+        const diskonPersen = rows[0].diskon;
+        diskonRp = (diskonPersen / 100) * parseFloat(bruto);
+    }
+
+    return diskonRp;
+};
 
 module.exports = {
     generateNewProposalNumber,
     searchTshirtTypes,
     getTshirtTypeDetails,
+    getDiscountByBruto,
 };

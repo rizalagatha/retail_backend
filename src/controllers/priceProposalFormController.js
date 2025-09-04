@@ -45,9 +45,21 @@ const uploadImage = (req, res) => {
     res.status(200).json({ message: 'Gambar berhasil diunggah.', filePath: req.file.path });
 };
 
+const getDiscount = async (req, res) => {
+    try {
+        const { bruto } = req.query;
+        // Panggil fungsi service yang baru dibuat
+        const diskonRp = await priceProposalFormService.getDiscountByBruto(bruto);
+        res.json({ diskonRp });
+    } catch (error) {
+        res.status(500).json({ message: 'Gagal menghitung diskon otomatis.' });
+    }
+};
+
 module.exports = {
     getNextNumber,
     searchTshirtTypes,
     getTshirtTypeDetails,
     uploadImage,
+    getDiscount,
 };
