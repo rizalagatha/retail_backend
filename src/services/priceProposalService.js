@@ -39,6 +39,31 @@ const getPriceProposals = async (filters) => {
     return rows;
 };
 
+const getProposalDetails = async (nomor) => {
+    const query = `SELECT * FROM tpengajuanharga WHERE ph_nomor = ?`;
+    const [rows] = await pool.query(query, [nomor]);
+    if (rows.length === 0) {
+        throw new Error('Data tidak ditemukan');
+    }
+    return rows[0];
+};
+
+const deleteProposal = async (nomor) => {
+    // Di aplikasi nyata, Anda harus menggunakan transaksi di sini
+    // untuk menghapus data dari semua tabel terkait (sizes, bordir, dtf, dll.)
+    
+    // Hapus dari tabel header
+    const query = `DELETE FROM tpengajuanharga WHERE ph_nomor = ?`;
+    const [result] = await pool.query(query, [nomor]);
+
+    if (result.affectedRows === 0) {
+        throw new Error('Gagal menghapus data, nomor tidak ditemukan.');
+    }
+    return { message: 'Pengajuan harga berhasil dihapus.' };
+};
+
 module.exports = {
     getPriceProposals,
+    getProposalDetails,
+    deleteProposal,
 };
