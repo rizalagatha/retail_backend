@@ -141,11 +141,15 @@ const getFullProposalDetails = async (nomor) => {
     }
 
     // `process.cwd()` adalah cara yang lebih andal untuk mendapatkan root direktori proyek Anda
-    const imagePath = path.join(process.cwd(), 'public', 'images', `${nomor}.jpg`);
-    
+    const imagePath = path.join(process.cwd(), 'public', 'images', cabang, `${nomor}.jpg`);
+
     let imageUrl = null;
+
+    const cabang = nomor.substring(0, 3);
+
     if (fs.existsSync(imagePath)) {
-        imageUrl = `${process.env.BASE_URL || 'http://192.168.1.73:8000'}/images/${nomor}.jpg`;
+        // Bangun URL yang benar, sertakan subfolder cabang
+        imageUrl = `${process.env.BASE_URL || 'http://192.168.1.73:8000'}/images/${cabang}/${nomor}.jpg`;
     }
 
     // 2. Ambil data detail ukuran/size
@@ -174,12 +178,21 @@ const getFullProposalDetails = async (nomor) => {
     };
 };
 
-const renameProposalImage = async (tempFilePath, finalFileName) => {
+const renameProposalImage = async (tempFilePath, nomor) => {
     return new Promise((resolve, reject) => {
-        // Tentukan path tujuan
-        const finalPath = path.join(__dirname, '..', 'public', 'images', finalFileName);
+        // Ambil 3 karakter pertama dari nomor sebagai kode cabang
+        const cabang = nomor.substring(0, 3);
+        const finalFileName = `${nomor}${path.extname(tempFilePath)}`;
+
+        // Buat path ke folder cabang (misal: .../public/images/K01)
+        const branchFolderPath = path.join(process.cwd(), 'public', 'images', cabang);
+
+        // Buat folder cabang jika belum ada
+        fs.mkdirSync(branchFolderPath, { recursive: true });
+
+        // Tentukan path tujuan final di dalam folder cabang
+        const finalPath = path.join(branchFolderPath, finalFileName);
         
-        // Ganti nama file
         fs.rename(tempFilePath, finalPath, (err) => {
             if (err) {
                 console.error("Gagal me-rename file:", err);
