@@ -27,7 +27,7 @@ const generateNewProposalNumber = async (cabang, tanggal) => {
 const searchTshirtTypes = async (term, custom) => {
     let query = 'SELECT DISTINCT jk_Jenis AS jenisKaos FROM tjeniskaos';
     const params = [];
-    
+
     if (custom === 'Y') {
         query += ' WHERE jk_custom = "Y"';
     } else {
@@ -67,8 +67,29 @@ const getTshirtTypeDetails = async (jenisKaos, custom) => {
         WHERE u.kategori = "" AND u.kode >= 2 AND u.kode <= 16
         ORDER BY u.kode;
     `;
-    const [rows] = await pool.query(query, [jenisKaos, custom]);
-    return rows;
+    const [sizeRows] = await pool.query(sizeQuery, [jenisKaos, custom]);
+    // 2. Query BARU untuk mengambil data biaya Bordir & DTF
+    const costsQuery = `
+        SELECT bt_tambahan, bt_cm, bt_min 
+        FROM tbiayatambahan 
+        WHERE bt_tambahan IN ('BORDIR', 'DTF')
+    `;
+    const [costRows] = await pool.query(costsQuery);
+
+    // 3. Gabungkan hasilnya ke dalam satu objek
+    const costs = {};
+    costRows.forEach(row => {
+        if (row.bt_tambahan === 'BORDIR') {
+            costs.bordir = { cm: row.bt_cm, min: row.bt_min };
+        } else if (row.bt_tambahan === 'DTF') {
+            costs.dtf = { cm: row.bt_cm, min: row.bt_min };
+        }
+    });
+
+    return {
+        sizes: sizeRows,
+        costs: costs // Kembalikan data biaya bersamaan dengan data ukuran
+    };
 };
 
 const getDiscountByBruto = async (bruto) => {
@@ -191,7 +212,7 @@ const renameProposalImage = async (tempFilePath, nomor) => {
 
         // Tentukan path tujuan final di dalam folder cabang
         const finalPath = path.join(branchFolderPath, finalFileName);
-        
+
         fs.rename(tempFilePath, finalPath, (err) => {
             if (err) {
                 console.error("Gagal me-rename file:", err);
