@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const pool = require('../config/database');
 const { format } = require('date-fns');
 
@@ -138,6 +140,15 @@ const getFullProposalDetails = async (nomor) => {
         throw new Error('Data pengajuan tidak ditemukan.');
     }
 
+    const imagePath = path.join(__dirname, '..', 'public', 'images', `${nomor}.jpg`);
+    let imageUrl = null;
+
+    if (fs.existsSync(imagePath)) {
+        // Buat URL lengkap yang bisa diakses oleh browser
+        // Sebaiknya gunakan variabel environment untuk base URL (contoh: process.env.BASE_URL)
+        imageUrl = `http://localhost:8000/images/${nomor}.jpg`; 
+    }
+
     // 2. Ambil data detail ukuran/size
     const sizeQuery = `SELECT * FROM tpengajuanharga_size WHERE phs_nomor = ?`;
     const [sizeRows] = await pool.query(sizeQuery, [nomor]);
@@ -159,7 +170,8 @@ const getFullProposalDetails = async (nomor) => {
         sizes: sizeRows,
         bordir: bordirRows[0] || {},
         dtf: dtfRows[0] || {},
-        additionalCosts: costRows
+        additionalCosts: costRows,
+        imageUrl: imageUrl,
     };
 };
 
