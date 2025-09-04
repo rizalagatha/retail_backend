@@ -25,7 +25,7 @@ const priceProposalFormRoutes= require('./routes/priceProposalFormRoutes');
 
 const app = express();
 const port = process.env.PORT || 8000;
-const imageFolderPath = path.join(__dirname, 'public', 'images'); 
+const imageFolderPath = path.join(process.cwd(), 'public', 'images');
 
 // Middleware
 app.use(cors({
