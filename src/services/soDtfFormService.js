@@ -196,19 +196,32 @@ const searchJenisOrder = async (term) => {
     return rows;
 };
 
-const searchJenisKain = async (term) => {
-    // Query ini meniru logika dari Delphi
-    const query = `
+const searchJenisKain = async (term, page, itemsPerPage) => {
+    const searchTerm = `%${term || ''}%`;
+    const offset = (page - 1) * itemsPerPage;
+
+    const dataQuery = `
         SELECT 
             JenisKain AS nama 
         FROM retail.tjeniskain
         WHERE JenisKain LIKE ?
         ORDER BY JenisKain
+        LIMIT ? OFFSET ?
     `;
-    const searchTerm = `%${term || ''}%`;
-    const [rows] = await pool.query(query, [searchTerm]);
-    // Karena hanya ada satu kolom, kita kembalikan objek agar konsisten
-    return rows.map(row => ({ nama: row.nama }));
+
+    const countQuery = `
+        SELECT COUNT(*) as total
+        FROM retail.tjeniskain
+        WHERE JenisKain LIKE ?
+    `;
+
+    const [items] = await pool.query(dataQuery, [searchTerm, parseInt(itemsPerPage), offset]);
+    const [totalRows] = await pool.query(countQuery, [searchTerm]);
+    
+    return {
+        items: items.map(row => ({ nama: row.nama })),
+        total: totalRows[0].total
+    };
 };
 
 module.exports = {

@@ -57,8 +57,8 @@ const searchJenisOrder = async (req, res) => {
 
 const searchJenisKain = async (req, res) => {
     try {
-        const { term } = req.query;
-        const data = await soDtfFormService.searchJenisKain(term);
+        const { term, page = 1, itemsPerPage = 10 } = req.query;
+        const data = await soDtfFormService.searchJenisKain(term, parseInt(page), parseInt(itemsPerPage));
         res.json(data);
     } catch (error) {
         res.status(500).json({ message: error.message });
