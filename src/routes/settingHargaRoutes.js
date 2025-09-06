@@ -12,6 +12,8 @@ router.get('/', verifyToken, checkPermission(MENU_ID, 'view'), settingHargaContr
 // GET detail jenis kaos untuk diedit
 router.get('/:jenisKaos/:custom', verifyToken, checkPermission(MENU_ID, 'edit'), settingHargaController.getDetails);
 
+router.get('/search-jenis-kaos', verifyToken, checkPermission(MENU_ID, 'insert'), settingHargaController.searchJenisKaos);
+
 // POST untuk menyimpan (insert/update)
 router.post('/save', verifyToken, checkPermission(MENU_ID, 'insert'), settingHargaController.save);
 
