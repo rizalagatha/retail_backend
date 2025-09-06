@@ -23,6 +23,7 @@ const authPinRoutes = require('./routes/authPinRoutes');
 const priceProposalRoutes = require('./routes/priceProposalRoutes');
 const priceProposalFormRoutes= require('./routes/priceProposalFormRoutes');
 const settingHargaRoutes = require('./routes/settingHargaRoutes');
+const soDtfRoutes = require('./routes/soDtfRoutes');
 
 const app = express();
 const port = process.env.PORT || 8000;
@@ -57,6 +58,7 @@ app.use('/api/auth-pin', authPinRoutes);
 app.use('/api/price-proposals', priceProposalRoutes);
 app.use('/api/price-proposal-form', priceProposalFormRoutes);
 app.use('/api/setting-harga', settingHargaRoutes);
+app.use('/api/so-dtf', soDtfRoutes);
 
 // Menjalankan Server
 app.listen(port, () => {
