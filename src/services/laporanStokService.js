@@ -7,7 +7,7 @@ const getRealTimeStock = async (filters) => {
     try {
         // Logika Delphi sangat kompleks karena keterbatasan, di Node.js kita bisa lebih efisien.
         // Pendekatan ini menggunakan satu query utama dengan subquery dan pivot dinamis.
-        
+
         let stockSourceTable = '';
         if (jenisStok === 'showroom') {
             stockSourceTable = 'tmasterstok';
@@ -15,26 +15,28 @@ const getRealTimeStock = async (filters) => {
             stockSourceTable = 'tmasterstokso';
         } else { // Semua
             stockSourceTable = `(
-                SELECT * FROM tmasterstok
-                UNION ALL
-                SELECT * FROM tmasterstokso
-            )`;
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_tanggal, mst_aktif 
+        FROM tmasterstok
+        UNION ALL
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_tanggal, mst_aktif 
+        FROM tmasterstokso
+    )`;
         }
 
         let params = [tanggal, gudang];
         let gudangFilter = `m.mst_cab = ?`;
         if (gudang === 'ALL') {
             // Untuk 'ALL', kita tidak filter berdasarkan cabang di subquery stok
-            gudangFilter = '1 = 1'; 
+            gudangFilter = '1 = 1';
             params = [tanggal];
         }
-        
+
         let kodeBarangFilter = '';
-        if(kodeBarang) {
+        if (kodeBarang) {
             kodeBarangFilter = 'AND a.brg_kode = ?';
             params.push(kodeBarang);
         }
-        
+
         const havingClause = !tampilkanKosong ? 'HAVING TOTAL > 0' : '';
 
         const query = `
@@ -68,7 +70,7 @@ const getRealTimeStock = async (filters) => {
             ${havingClause}
             ORDER BY NAMA;
         `;
-        
+
         const [rows] = await connection.query(query, params);
         return rows;
     } finally {
