@@ -14,7 +14,7 @@ const getOffers = async (startDate, endDate, cabang) => {
     }
 
     const query = `
-        SSELECT 
+        SELECT 
             h.pen_nomor AS nomor,
             h.pen_tanggal AS tanggal,
             IFNULL((SELECT so.so_nomor FROM tso_hdr so WHERE so.so_pen_nomor = h.pen_nomor LIMIT 1), '') AS noSO,
