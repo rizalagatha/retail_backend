@@ -32,7 +32,9 @@ const getOffers = async (startDate, endDate, cabang) => {
             h.pen_alasan AS alasan,
             h.user_create AS created,
             (
-                SELECT ROUND(SUM(dd.pend_jumlah * (dd.pend_harga - dd.pend_diskon)) - hh.pen_disc + (hh.pen_ppn/100 * (SUM(dd.pend_jumlah * (dd.pend_harga - dd.pend_diskon)) - hh.pen_disc)) + hh.pen_bkrm)
+                SELECT ROUND(SUM(dd.pend_jumlah * (dd.pend_harga - dd.pend_diskon)) - hh.pen_disc 
+                    + (hh.pen_ppn/100 * (SUM(dd.pend_jumlah * (dd.pend_harga - dd.pend_diskon)) - hh.pen_disc)) 
+                    + hh.pen_bkrm)
                 FROM tpenawaran_dtl dd
                 LEFT JOIN tpenawaran_hdr hh ON hh.pen_nomor = dd.pend_nomor
                 WHERE hh.pen_nomor = h.pen_nomor
@@ -43,10 +45,18 @@ const getOffers = async (startDate, endDate, cabang) => {
         LEFT JOIN tcustomer c ON h.pen_cus_kode = c.cus_kode
         LEFT JOIN tcustomer_level l ON l.level_kode = h.pen_cus_level
         WHERE h.pen_tanggal BETWEEN ? AND ?
+        ${branchFilter}
     `;
 
-    const [rows] = await pool.query(query, params);
-    return rows;
+    try {
+        const [rows] = await pool.query(query, params);
+        return rows;
+    } catch (error) {
+        console.error("❌ SQL Error:", error.sqlMessage || error.message);
+        console.error("❌ SQL Query:", error.sql || query);
+        console.error("❌ SQL Params:", params);
+        throw error; // biar tetap lempar error ke caller
+    }
 };
 
 const getOfferDetails = async (nomor) => {
