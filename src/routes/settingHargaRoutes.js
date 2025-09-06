@@ -12,6 +12,9 @@ router.get('/', verifyToken, checkPermission(MENU_ID, 'view'), settingHargaContr
 // GET detail jenis kaos untuk diedit
 router.get('/:jenisKaos/:custom', verifyToken, checkPermission(MENU_ID, 'edit'), settingHargaController.getDetails);
 
+// GET template ukuran untuk form baru (membutuhkan hak insert)
+router.get('/ukuran-template', verifyToken, checkPermission(MENU_ID, 'insert'), settingHargaController.getUkuranTemplate);
+
 router.get('/search-jenis-kaos', verifyToken, checkPermission(MENU_ID, 'insert'), settingHargaController.searchJenisKaos);
 
 // POST untuk menyimpan (insert/update)
