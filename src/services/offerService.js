@@ -15,17 +15,30 @@ const getOffers = async (startDate, endDate, cabang) => {
 
     const query = `
         SELECT 
-            h.pen_nomor AS nomor, h.pen_tanggal AS tanggal, h.pen_cus_kode AS kdcus,
+            h.ph_nomor AS nomor,
+            h.ph_tanggal AS tanggal,
+            so.so_nomor AS noSO,
+            h.ph_top AS top,
+            DATE_ADD(h.ph_tanggal, INTERVAL h.ph_top DAY) as tempo,
+            h.ph_ppn AS ppn,
+            h.ph_disc1 AS 'disc%',
+            h.ph_discrp AS diskon,
+            h.ph_kd_cus AS kdcus,
             c.cus_nama AS nama,
-            (SELECT ROUND(SUM(d.pend_jumlah * (d.pend_harga - d.pend_diskon)) - h.pen_disc) FROM tpenawaran_dtl d WHERE d.pend_nomor = h.pen_nomor) AS nominal,
-            IFNULL((SELECT so.so_nomor FROM tso_hdr so WHERE so.so_pen_nomor = h.pen_nomor LIMIT 1), "") AS noSO,
-            h.pen_alasan AS alasan,
-            h.user_create AS created
-        FROM tpenawaran_hdr h
-        LEFT JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
-        WHERE h.pen_tanggal BETWEEN ? AND ?
-        ${branchFilter}
-        ORDER BY h.pen_tanggal, h.pen_nomor;
+            c.cus_kota AS kota,
+            c.cus_telp AS telp,
+            lvl.level_nama AS level,
+            h.ph_ket AS keterangan,
+            h.ph_alasan AS alasan,
+            h.user_create AS created,
+            (h.ph_bruto - h.ph_discrp + h.ph_ppn + h.ph_bykirim) AS nominal,
+            h.ph_alasan AS alasanClose,
+            h.ph_no_inv AS noINV
+        FROM tpenawaran h
+        LEFT JOIN tcustomer c ON h.ph_kd_cus = c.cus_kode
+        LEFT JOIN tso so ON h.ph_no_so = so.so_nomor
+        LEFT JOIN tcustomer_level lvl ON c.cus_lev = lvl.level_kode
+        WHERE h.ph_tanggal BETWEEN ? AND ?
     `;
     const [rows] = await pool.query(query, params);
     return rows;
