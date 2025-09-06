@@ -11,7 +11,7 @@ const getAllTshirtTypes = async () => {
       j.jk_custom AS Custom,
       j.jk_s AS Harga_S, j.jk_m AS Harga_M, j.jk_l AS Harga_L,
       j.jk_xl AS Harga_XL, j.jk_2xl AS Harga_2XL, j.jk_3xl AS Harga_3XL,
-      j.jk_4xl AS Harga_4XL, j.jk_5xl AS Harga_5XL
+      j.jk_4xl AS Harga_4XL, j.jk_5xl AS Harga_5XL,
       j.jk_6xl AS Harga_6XL, j.jk_7xl AS Harga_7XL, j.jk_8xl AS Harga_8XL,
       j.jk_9xl AS Harga_9XL, j.jk_10xl AS Harga_10XL,
       j.jk_oversize AS Harga_Oversize, j.jk_jumbo AS Harga_Jumbo
