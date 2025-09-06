@@ -224,6 +224,22 @@ const searchJenisKain = async (term, page, itemsPerPage) => {
     };
 };
 
+const searchWorkshop = async (term) => {
+    // Query ini meniru logika dari Delphi Anda
+    const query = `
+        SELECT 
+            pab_kode AS kode, 
+            pab_nama AS nama 
+        FROM kencanaprint.tpabrik
+        WHERE pab_kode <> 'P03'
+          AND (pab_kode LIKE ? OR pab_nama LIKE ?)
+        ORDER BY pab_nama
+    `;
+    const searchTerm = `%${term || ''}%`;
+    const [rows] = await pool.query(query, [searchTerm, searchTerm]);
+    return rows;
+};
+
 module.exports = {
     findById,
     create,
@@ -231,5 +247,6 @@ module.exports = {
     searchSales,
     searchJenisOrder,
     searchJenisKain,
+    searchWorkshop,
 };
 

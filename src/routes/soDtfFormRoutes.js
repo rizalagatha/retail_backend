@@ -20,5 +20,7 @@ router.get('/search/jenis-order', verifyToken, checkPermission(MENU_ID, 'view'),
 
 router.get('/search/jenis-kain', verifyToken, checkPermission(MENU_ID, 'view'), soDtfFormController.searchJenisKain);
 
+router.get('/search/workshop', verifyToken, checkPermission(MENU_ID, 'view'), soDtfFormController.searchWorkshop);
+
 module.exports = router;
 

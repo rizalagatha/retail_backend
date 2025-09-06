@@ -65,6 +65,16 @@ const searchJenisKain = async (req, res) => {
     }
 };
 
+const searchWorkshop = async (req, res) => {
+    try {
+        const { term } = req.query;
+        const data = await soDtfFormService.searchWorkshop(term);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getById,
     create,
@@ -72,5 +82,6 @@ module.exports = {
     searchSales,
     searchJenisOrder,
     searchJenisKain,
+    searchWorkshop,
 };
 
