@@ -14,5 +14,7 @@ router.post('/', verifyToken, checkPermission(MENU_ID, 'insert'), soDtfFormContr
 // PUT: Memperbarui SO DTF yang ada
 router.put('/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), soDtfFormController.update);
 
+router.get('/search/sales', verifyToken, checkPermission(MENU_ID, ['insert', 'edit']), soDtfFormController.searchSales);
+
 module.exports = router;
 

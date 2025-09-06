@@ -38,30 +38,65 @@ const findById = async (nomor) => {
     }
 };
 
+/**
+ * @description Membuat nomor SO baru (getmaxnomor versi Delphi).
+ * @param {object} connection - Koneksi database yang sedang aktif (dalam transaksi).
+ * @param {object} data - Data dari form (diperlukan untuk tanggal dan jenis order).
+ * @param {object} user - Objek user dari token (diperlukan untuk kode cabang).
+ * @returns {Promise<string>} Nomor SO DTF yang baru. Contoh: K01.SD.2509.0001
+ */
 const generateNewSoNumber = async (connection, data, user) => {
     const tanggal = new Date(data.header.tanggal);
-    const prefix = `${user.cabang}.${data.header.jenisOrderKode}.${format(tanggal, 'yyMM')}`;
-    const query = `SELECT MAX(RIGHT(sd_nomor, 4)) as maxNum FROM tsodtf_hdr WHERE sd_nomor LIKE ?`;
-    const [rows] = await connection.query(query, [`${prefix}%`]);
-    const nextNum = rows[0].maxNum ? parseInt(rows[0].maxNum, 10) + 1 : 1;
-    return `${prefix}.${nextNum.toString().padStart(4, '0')}`;
+    const branchCode = user.cabang;
+    const orderType = data.header.jenisOrderKode;
+
+    if (!branchCode || !orderType) {
+        throw new Error('Kode cabang dan jenis order harus ada untuk membuat nomor SO.');
+    }
+    
+    // 1. Membuat prefix. Contoh: K01.SD.2509
+    const datePrefix = format(tanggal, 'yyMM');
+    const fullPrefix = `${branchCode}.${orderType}.${datePrefix}`;
+
+    // 2. Query untuk mencari nomor urut maksimal, mirip seperti di Delphi.
+    // CAST(... AS UNSIGNED) untuk memastikan '0009' dibandingkan sebagai angka 9.
+    const query = `
+        SELECT IFNULL(MAX(CAST(RIGHT(sd_nomor, 4) AS UNSIGNED)), 0) as maxNum 
+        FROM tsodtf_hdr 
+        WHERE LEFT(sd_nomor, ${fullPrefix.length}) = ?`;
+        
+    const [rows] = await connection.query(query, [fullPrefix]);
+    
+    // 3. Menentukan nomor urut berikutnya.
+    const maxNum = rows[0].maxNum;
+    const nextNum = maxNum + 1;
+    
+    // 4. Padding dengan nol di depan, meniru RightStr(IntToStr(10000 + ...)) Delphi.
+    const sequentialPart = String(nextNum).padStart(4, '0'); // Contoh: '0001' atau '0016'
+    
+    // 5. Menggabungkan menjadi nomor SO lengkap.
+    return `${fullPrefix}.${sequentialPart}`;
 };
 
 const create = async (data, user) => {
     const connection = await pool.getConnection();
     await connection.beginTransaction();
     try {
+        // Panggil fungsi generateNewSoNumber untuk mendapatkan nomor baru
         const newNomor = await generateNewSoNumber(connection, data, user);
         
         const header = data.header;
+        // Simpan header dengan nomor baru
         const headerQuery = `INSERT INTO tsodtf_hdr (sd_nomor, sd_tanggal, sd_datekerja, sd_dateline, sd_cus_kode, sd_customer, sd_sal_kode, sd_jo_kode, sd_nama, sd_kain, sd_finishing, sd_desain, sd_workshop, sd_ket, user_create, date_create) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
         await connection.query(headerQuery, [newNomor, header.tanggal, header.tglPengerjaan, header.datelineCustomer, header.customerKode, header.customerNama, header.salesKode, header.jenisOrderKode, header.namaDtf, header.kain, header.finishing, header.desain, header.workshopKode, header.keterangan, user.kode]);
 
+        // Simpan detail ukuran
         for (const [index, detail] of data.detailsUkuran.entries()) {
             const detailUkuranQuery = 'INSERT INTO tsodtf_dtl (sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut) VALUES (?, ?, ?, ?, ?)';
             await connection.query(detailUkuranQuery, [newNomor, detail.ukuran, detail.jumlah, detail.harga, index + 1]);
         }
 
+        // Simpan detail titik
         for (const [index, detail] of data.detailsTitik.entries()) {
             const detailTitikQuery = 'INSERT INTO tsodtf_dtl2 (sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut) VALUES (?, ?, ?, ?, ?, ?)';
             await connection.query(detailTitikQuery, [newNomor, detail.keterangan, detail.sizeCetak, detail.panjang, detail.lebar, index + 1]);
@@ -110,9 +145,28 @@ const update = async (nomor, data, user) => {
     }
 };
 
+const searchSales = async (term) => {
+    // Query ini meniru logika dari Delphi Anda
+    const query = `
+        SELECT 
+            sal_kode AS kode, 
+            sal_nama AS nama, 
+            sal_alamat AS alamat 
+        FROM kencanaprint.tsales
+        WHERE sal_aktif = 'Y' 
+          AND (sal_kode LIKE ? OR sal_nama LIKE ?)
+        ORDER BY sal_nama
+        LIMIT 50
+    `;
+    const searchTerm = `%${term || ''}%`;
+    const [rows] = await pool.query(query, [searchTerm, searchTerm]);
+    return rows;
+};
+
 module.exports = {
     findById,
     create,
     update,
+    searchSales
 };
 
