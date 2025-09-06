@@ -196,11 +196,27 @@ const searchJenisOrder = async (term) => {
     return rows;
 };
 
+const searchJenisKain = async (term) => {
+    // Query ini meniru logika dari Delphi
+    const query = `
+        SELECT 
+            JenisKain AS nama 
+        FROM retail.tjeniskain
+        WHERE JenisKain LIKE ?
+        ORDER BY JenisKain
+    `;
+    const searchTerm = `%${term || ''}%`;
+    const [rows] = await pool.query(query, [searchTerm]);
+    // Karena hanya ada satu kolom, kita kembalikan objek agar konsisten
+    return rows.map(row => ({ nama: row.nama }));
+};
+
 module.exports = {
     findById,
     create,
     update,
     searchSales,
     searchJenisOrder,
+    searchJenisKain,
 };
 
