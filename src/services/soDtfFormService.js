@@ -180,10 +180,27 @@ const searchSales = async (term, page, itemsPerPage) => {
     };
 };
 
+const searchJenisOrder = async (term) => {
+    // Query ini meniru logika dari Delphi Anda
+    const query = `
+        SELECT 
+            jo_kode AS kode, 
+            jo_nama AS nama
+        FROM kencanaprint.tjenisorder
+        WHERE jo_divisi = 3
+          AND (jo_kode LIKE ? OR jo_nama LIKE ?)
+        ORDER BY jo_nama
+    `;
+    const searchTerm = `%${term || ''}%`;
+    const [rows] = await pool.query(query, [searchTerm, searchTerm]);
+    return rows;
+};
+
 module.exports = {
     findById,
     create,
     update,
-    searchSales
+    searchSales,
+    searchJenisOrder,
 };
 

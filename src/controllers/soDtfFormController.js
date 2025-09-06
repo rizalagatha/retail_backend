@@ -45,10 +45,21 @@ const searchSales = async (req, res) => {
     }
 };
 
+const searchJenisOrder = async (req, res) => {
+    try {
+        const { term } = req.query;
+        const data = await soDtfFormService.searchJenisOrder(term);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getById,
     create,
     update,
     searchSales,
+    searchJenisOrder,
 };
 

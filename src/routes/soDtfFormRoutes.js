@@ -16,5 +16,7 @@ router.put('/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), soDtfFormCo
 
 router.get('/search/sales', verifyToken, checkPermission(MENU_ID, 'view'), soDtfFormController.searchSales);
 
+router.get('/search/jenis-order', verifyToken, checkPermission(MENU_ID, 'view'), soDtfFormController.searchJenisOrder);
+
 module.exports = router;
 
