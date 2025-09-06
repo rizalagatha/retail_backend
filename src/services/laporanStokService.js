@@ -1,5 +1,5 @@
 // services/laporanStokService.js
-import pool from "../config/db.js";
+import pool from "../config/database.js";
 
 const generateLaporanStok = async (cabang, tanggal) => {
   const conn = await pool.getConnection();
