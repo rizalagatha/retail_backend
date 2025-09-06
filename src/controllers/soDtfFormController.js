@@ -88,6 +88,56 @@ const getSisaKuota = async (req, res) => {
     }
 };
 
+const uploadImage = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ message: 'Tidak ada file yang diunggah.' });
+        }
+        
+        // Ambil nomor SO dari parameter URL
+        const { nomor } = req.params;
+        if (!nomor) {
+            // Hapus file sementara jika nomor tidak ada
+            fs.unlinkSync(req.file.path); 
+            return res.status(400).json({ message: 'Nomor SO DTF diperlukan.' });
+        }
+
+        // Panggil service untuk memproses gambar
+        const finalPath = await soDtfFormService.processSoDtfImage(req.file.path, nomor);
+
+        res.status(200).json({ message: 'Gambar berhasil diunggah.', filePath: finalPath });
+
+    } catch (error) {
+        // Hapus file sementara jika terjadi error lain
+        if (req.file) {
+            fs.unlinkSync(req.file.path);
+        }
+        res.status(500).json({ message: error.message });
+    }
+};
+
+const getUkuranKaos = async (req, res) => {
+    try {
+        const data = await soDtfFormService.getUkuranKaosList();
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+const getUkuranSodtfDetail = async (req, res) => {
+    try {
+        const { jenisOrder, ukuran } = req.query;
+        if (!jenisOrder || !ukuran) {
+            return res.status(400).json({ message: 'Parameter jenisOrder dan ukuran diperlukan.' });
+        }
+        const data = await soDtfFormService.getUkuranSodtfDetail(jenisOrder, ukuran);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getById,
     create,
@@ -97,5 +147,8 @@ module.exports = {
     searchJenisKain,
     searchWorkshop,
     getSisaKuota,
+    uploadImage,
+    getUkuranKaos,
+    getUkuranSodtfDetail,
 };
 

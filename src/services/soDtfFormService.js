@@ -1,5 +1,7 @@
 const pool = require('../config/database');
 const { format } = require('date-fns');
+const fs = require('fs');
+const path = require('path');
 
 const findById = async (nomor) => {
     const connection = await pool.getConnection();
@@ -267,6 +269,70 @@ const getSisaKuota = async (cabang, tanggalKerja) => {
     return 0;
 };
 
+/**
+ * @description Memproses gambar SO DTF: me-rename dan memindahkan ke folder cabang.
+ * @param {string} tempFilePath - Path file sementara dari multer.
+ * @param {string} nomorSo - Nomor SO DTF final.
+ * @returns {Promise<string>} Path final dari file yang sudah diproses.
+ */
+const processSoDtfImage = async (tempFilePath, nomorSo) => {
+    return new Promise((resolve, reject) => {
+        // Ambil 3 karakter pertama dari nomor sebagai kode cabang
+        const cabang = nomorSo.substring(0, 3);
+        const finalFileName = `${nomorSo}${path.extname(tempFilePath)}`;
+
+        // Buat path ke folder tujuan (misal: .../public/images/sodtf/K01)
+        // Menambahkan subfolder 'sodtf' agar lebih terorganisir
+        const branchFolderPath = path.join(process.cwd(), 'public', 'images', 'sodtf', cabang);
+
+        // Buat folder cabang jika belum ada
+        fs.mkdirSync(branchFolderPath, { recursive: true });
+
+        // Tentukan path tujuan final di dalam folder cabang
+        const finalPath = path.join(branchFolderPath, finalFileName);
+        
+        // Hapus file lama jika ada (untuk mode edit)
+        if (fs.existsSync(finalPath)) {
+            fs.unlinkSync(finalPath);
+        }
+
+        fs.rename(tempFilePath, finalPath, (err) => {
+            if (err) {
+                console.error("Gagal me-rename file SO DTF:", err);
+                return reject(new Error('Gagal memproses file gambar SO DTF.'));
+            }
+            resolve(finalPath);
+        });
+    });
+};
+
+/**
+ * @description Mengambil daftar master ukuran kaos dari database.
+ * @returns {Promise<string[]>} Array berisi nama-nama ukuran.
+ */
+const getUkuranKaosList = async () => {
+    // Query ini meniru logika dari Delphi
+    const query = `
+        SELECT Ukuran 
+        FROM tUkuran 
+        WHERE kategori = "" 
+        ORDER BY kode
+    `;
+    const [rows] = await pool.query(query);
+    // Ubah array of objects [{Ukuran: 'S'}] menjadi array of strings ['S']
+    return rows.map(row => row.Ukuran); 
+};
+
+const getUkuranSodtfDetail = async (jenisOrder, ukuran) => {
+    const query = `
+        SELECT us_panjang AS panjang, us_lebar AS lebar 
+        FROM tukuran_sodtf 
+        WHERE us_jenis = ? AND us_ukuran = ?
+    `;
+    const [rows] = await pool.query(query, [jenisOrder, ukuran]);
+    return rows.length > 0 ? rows[0] : null;
+};
+
 module.exports = {
     findById,
     create,
@@ -276,5 +342,8 @@ module.exports = {
     searchJenisKain,
     searchWorkshop,
     getSisaKuota,
+    processSoDtfImage,
+    getUkuranKaosList, 
+    getUkuranSodtfDetail,
 };
 
