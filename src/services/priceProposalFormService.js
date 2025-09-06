@@ -235,6 +235,103 @@ const renameProposalImage = async (tempFilePath, nomor) => {
     });
 };
 
+const saveProposal = async (data) => {
+    const { header, details, bordirItems, dtfItems, additionalCostItems, user, isNew } = data;
+    const connection = await pool.getConnection();
+
+    try {
+        await connection.beginTransaction(); // <-- MULAI TRANSAKSI
+
+        let nomor = header.nomor;
+        if (isNew) {
+            // Asumsi fungsi generateNewProposalNumber sudah ada di service ini
+            nomor = await generateNewProposalNumber(user.cabang, header.tanggal);
+        }
+
+        // 1. Simpan/Update Header (tpengajuanharga)
+        if (isNew) {
+            const headerQuery = `
+                INSERT INTO tpengajuanharga 
+                    (ph_nomor, ph_tanggal, ph_custom, ph_kd_cus, ph_ket, ph_jenis, ph_apv, ph_diskon, user_create, date_create) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            `;
+            await connection.query(headerQuery, [
+                nomor, header.tanggal, header.ketersediaan === 'Custom' ? 'Y' : 'N', 
+                header.customerKode, header.keterangan, header.jenisKaos, 
+                header.approval, data.footer.diskon, user.kode
+            ]);
+        } else {
+            const headerQuery = `
+                UPDATE tpengajuanharga SET 
+                    ph_tanggal = ?, ph_custom = ?, ph_kd_cus = ?, ph_ket = ?, ph_jenis = ?, ph_apv = ?, ph_diskon = ?, user_modified = ?, date_modified = NOW() 
+                WHERE ph_nomor = ?
+            `;
+            await connection.query(headerQuery, [
+                header.tanggal, header.ketersediaan === 'Custom' ? 'Y' : 'N',
+                header.customerKode, header.keterangan, header.jenisKaos,
+                header.approval, data.footer.diskon, user.kode, nomor
+            ]);
+        }
+
+        // 2. Hapus detail lama & Simpan detail ukuran baru (tpengajuanharga_size)
+        await connection.query(`DELETE FROM tpengajuanharga_size WHERE phs_nomor = ?`, [nomor]);
+        if (details && details.length > 0) {
+            const sizeValues = details.map(item => [nomor, item.kodeBarang, item.size, item.qty, item.hargaPcs]);
+            const sizeQuery = `INSERT INTO tpengajuanharga_size (phs_nomor, phs_kode, phs_size, phs_jumlah, phs_harga) VALUES ?`;
+            await connection.query(sizeQuery, [sizeValues]);
+        }
+
+        // 3. Hapus tambahan lama & Simpan tambahan baru (tpengajuanharga_tambahan)
+        await connection.query(`DELETE FROM tpengajuanharga_tambahan WHERE pht_nomor = ?`, [nomor]);
+        if (additionalCostItems && additionalCostItems.length > 0) {
+            const costValues = additionalCostItems.map(item => [nomor, item.tambahan, item.harga]);
+            const costQuery = `INSERT INTO tpengajuanharga_tambahan (pht_nomor, pht_jenis, pht_harga) VALUES ?`;
+            await connection.query(costQuery, [costValues]);
+        }
+
+        // 4. Hapus bordir lama & Simpan bordir baru (tpengajuanharga_bordir)
+        await connection.query(`DELETE FROM tpengajuanharga_bordir WHERE phb_nomor = ?`, [nomor]);
+        const bordirQuery = `
+            INSERT INTO tpengajuanharga_bordir 
+                (phb_nomor, phb_cmbordir, phb_minbordir, phb_rpbordir, phb_bordirp1, phb_bordirl1, phb_bordirp2, phb_bordirl2, phb_bordirp3, phb_bordirl3, phb_bordirp4, phb_bordirl4, phb_bordirp5, phb_bordirl5, phb_bordirp6, phb_bordirl6, phb_bordirp7, phb_bordirl7, phb_bordirp8, phb_bordirl8)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+        await connection.query(bordirQuery, [
+            nomor, data.biayaPerCmBordir, data.bordirMinCharge, data.bordirCost,
+            bordirItems[0].p, bordirItems[0].l, bordirItems[1].p, bordirItems[1].l,
+            bordirItems[2].p, bordirItems[2].l, bordirItems[3].p, bordirItems[3].l,
+            bordirItems[4].p, bordirItems[4].l, bordirItems[5].p, bordirItems[5].l,
+            bordirItems[6].p, bordirItems[6].l, bordirItems[7].p, bordirItems[7].l
+        ]);
+        
+        // 5. Hapus DTF lama & Simpan DTF baru (tpengajuanharga_dtf)
+        await connection.query(`DELETE FROM tpengajuanharga_dtf WHERE phd_nomor = ?`, [nomor]);
+        const dtfQuery = `
+            INSERT INTO tpengajuanharga_dtf
+                (phd_nomor, phd_cmdtf, phd_mindtf, phd_rpdtf, phd_dtfp1, phd_dtfl1, phd_dtfp2, phd_dtfl2, phd_dtfp3, phd_dtfl3, phd_dtfp4, phd_dtfl4, phd_dtfp5, phd_dtfl5, phd_dtfp6, phd_dtfl6, phd_dtfp7, phd_dtfl7, phd_dtfp8, phd_dtfl8)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+        await connection.query(dtfQuery, [
+            nomor, data.biayaPerCmDtf, data.dtfMinCharge, data.dtfCost,
+            dtfItems[0].p, dtfItems[0].l, dtfItems[1].p, dtfItems[1].l,
+            dtfItems[2].p, dtfItems[2].l, dtfItems[3].p, dtfItems[3].l,
+            dtfItems[4].p, dtfItems[4].l, dtfItems[5].p, dtfItems[5].l,
+            dtfItems[6].p, dtfItems[6].l, dtfItems[7].p, dtfItems[7].l
+        ]);
+
+        await connection.commit(); // <-- SUKSES, SIMPAN SEMUA PERUBAHAN
+        return { message: `Pengajuan harga ${nomor} berhasil disimpan.` };
+
+    } catch (error) {
+        await connection.rollback(); // <-- GAGAL, BATALKAN SEMUA PERUBAHAN
+        console.error("Save Proposal Error:", error);
+        throw new Error('Gagal menyimpan data ke database.');
+    } finally {
+        connection.release(); // Selalu lepaskan koneksi
+    }
+};
+
+
 module.exports = {
     generateNewProposalNumber,
     searchTshirtTypes,
@@ -244,4 +341,5 @@ module.exports = {
     searchAdditionalCosts,
     getFullProposalDetails,
     renameProposalImage,
+    saveProposal,
 };

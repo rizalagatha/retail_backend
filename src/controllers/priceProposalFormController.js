@@ -103,6 +103,16 @@ const getEditDetails = async (req, res) => {
     }
 };
 
+const save = async (req, res) => {
+    try {
+        // req.body berisi payload lengkap dari frontend
+        const result = await priceProposalFormService.saveProposal(req.body);
+        res.status(201).json(result);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getNextNumber,
     searchTshirtTypes,
@@ -112,4 +122,5 @@ module.exports = {
     searchProductsByType,
     searchAdditionalCosts,
     getEditDetails,
+    save,
 };
