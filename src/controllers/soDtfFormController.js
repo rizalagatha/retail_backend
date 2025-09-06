@@ -75,6 +75,19 @@ const searchWorkshop = async (req, res) => {
     }
 };
 
+const getSisaKuota = async (req, res) => {
+    try {
+        const { cabang, tanggalKerja } = req.query;
+        if (!cabang || !tanggalKerja) {
+            return res.status(400).json({ message: 'Parameter cabang dan tanggal kerja diperlukan.' });
+        }
+        const sisa = await soDtfFormService.getSisaKuota(cabang, tanggalKerja);
+        res.json({ sisaKuota: sisa });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getById,
     create,
@@ -83,5 +96,6 @@ module.exports = {
     searchJenisOrder,
     searchJenisKain,
     searchWorkshop,
+    getSisaKuota,
 };
 
