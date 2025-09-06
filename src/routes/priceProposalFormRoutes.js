@@ -2,29 +2,34 @@ const express = require('express');
 const router = express.Router();
 const priceProposalFormController = require('../controllers/priceProposalFormController');
 const upload = require('../middleware/uploadMiddleware');
+const { verifyToken, checkPermission, checkInsertOrEditPermission } = require('../middleware/authMiddleware');
 
-// GET /api/price-proposal-form/next-number -> Mendapatkan nomor transaksi baru
-router.get('/next-number', priceProposalFormController.getNextNumber);
+// Definisikan ID Menu untuk Pengajuan Harga
+const PRICE_PROPOSAL_MENU_ID = 38;
 
-// GET /api/price-proposal-form/search-tshirt-types -> Mencari jenis kaos (untuk F1)
-router.get('/search-tshirt-types', priceProposalFormController.searchTshirtTypes);
+// Middleware untuk rute /save yang menangani 'insert' dan 'edit'
+const checkSavePermission = (req, res, next) => {
+    const action = req.body.isNew ? 'insert' : 'edit';
+    return checkPermission(PRICE_PROPOSAL_MENU_ID, action)(req, res, next);
+};
 
-// GET /api/price-proposal-form/tshirt-type-details -> Mengambil detail harga per ukuran
-router.get('/tshirt-type-details', priceProposalFormController.getTshirtTypeDetails);
+// --- RUTE YANG SUDAH DIAMANKAN ---
 
-// POST /api/price-proposal-form/save -> Menyimpan data pengajuan harga baru atau yang diubah
-// router.post('/save', priceProposalFormController.save);
+// Hanya butuh hak 'insert' untuk mendapatkan nomor baru
+router.get('/next-number', verifyToken, checkPermission(PRICE_PROPOSAL_MENU_ID, 'insert'), priceProposalFormController.getNextNumber);
 
-// (Endpoint untuk mode "Ubah" akan kita tambahkan di sini nanti saat diperlukan)
-// router.get('/edit-details/:nomor', priceProposalFormController.getDetailsForEdit);
-router.post('/upload-image', upload.single('proposalImage'), priceProposalFormController.uploadImage);
+// Hanya butuh hak 'edit' untuk memuat data lama
+router.get('/edit-details/:nomor', verifyToken, checkPermission(PRICE_PROPOSAL_MENU_ID, 'edit'), priceProposalFormController.getEditDetails);
 
-router.get('/get-discount', priceProposalFormController.getDiscount);
+// Butuh hak 'insert' ATAU 'edit' untuk mengakses data bantuan form
+router.get('/search-tshirt-types', verifyToken, checkInsertOrEditPermission(PRICE_PROPOSAL_MENU_ID), priceProposalFormController.searchTshirtTypes);
+router.get('/tshirt-type-details', verifyToken, checkInsertOrEditPermission(PRICE_PROPOSAL_MENU_ID), priceProposalFormController.getTshirtTypeDetails);
+router.get('/get-discount', verifyToken, checkInsertOrEditPermission(PRICE_PROPOSAL_MENU_ID), priceProposalFormController.getDiscount);
+router.get('/search-products-by-type', verifyToken, checkInsertOrEditPermission(PRICE_PROPOSAL_MENU_ID), priceProposalFormController.searchProductsByType);
+router.get('/search-additional-costs', verifyToken, checkInsertOrEditPermission(PRICE_PROPOSAL_MENU_ID), priceProposalFormController.searchAdditionalCosts);
 
-router.get('/search-products-by-type', priceProposalFormController.searchProductsByType);
-
-router.get('/search-additional-costs', priceProposalFormController.searchAdditionalCosts);
-
-router.get('/edit-details/:nomor', priceProposalFormController.getEditDetails);
+// Rute 'save' dan 'upload' membutuhkan hak 'insert' ATAU 'edit'
+router.post('/save', verifyToken, checkSavePermission, priceProposalFormController.save);
+router.post('/upload-image', verifyToken, checkSavePermission, upload.single('proposalImage'), priceProposalFormController.uploadImage);
 
 module.exports = router;

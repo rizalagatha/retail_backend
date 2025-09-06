@@ -56,7 +56,32 @@ const checkPermission = (menuId, action) => {
     };
 };
 
+const checkInsertOrEditPermission = (menuId) => {
+    return async (req, res, next) => {
+        const userKode = req.user.kode;
+
+        try {
+            const query = `
+                SELECT hak_men_insert, hak_men_edit 
+                FROM thakuser 
+                WHERE hak_user_kode = ? AND hak_men_id = ?
+            `;
+            const [rows] = await pool.query(query, [userKode, menuId]);
+
+            // Lanjutkan jika pengguna punya salah satu dari dua hak akses
+            if (rows.length > 0 && (rows[0].hak_men_insert === 'Y' || rows[0].hak_men_edit === 'Y')) {
+                next();
+            } else {
+                res.status(403).json({ message: 'Anda tidak memiliki izin untuk mengakses sumber daya ini.' });
+            }
+        } catch (error) {
+            res.status(500).json({ message: 'Terjadi kesalahan pada server.', error: error.message });
+        }
+    };
+};
+
 module.exports = {
     verifyToken,
-    checkPermission
+    checkPermission,
+    checkInsertOrEditPermission,
 };
