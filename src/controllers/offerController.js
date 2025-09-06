@@ -6,10 +6,15 @@ const getOffers = async (req, res) => {
         if (!startDate || !endDate || !cabang) {
             return res.status(400).json({ message: 'Parameter tanggal dan cabang diperlukan.' });
         }
+
         const offers = await offerService.getOffers(startDate, endDate, cabang);
         res.json(offers);
     } catch (error) {
-        res.status(500).json({ message: 'Terjadi kesalahan di server.' });
+        console.error("❌ Controller Error:", error.sqlMessage || error.message);
+        res.status(500).json({
+            message: 'Terjadi kesalahan di server.',
+            error: error.sqlMessage || error.message, // <-- sementara tampilkan untuk debug
+        });
     }
 };
 
