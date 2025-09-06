@@ -145,9 +145,12 @@ const update = async (nomor, data, user) => {
     }
 };
 
-const searchSales = async (term) => {
-    // Query ini meniru logika dari Delphi Anda
-    const query = `
+const searchSales = async (term, page, itemsPerPage) => {
+    const searchTerm = `%${term || ''}%`;
+    const offset = (page - 1) * itemsPerPage;
+
+    // Query untuk mengambil data dengan limit dan offset
+    const dataQuery = `
         SELECT 
             sal_kode AS kode, 
             sal_nama AS nama, 
@@ -156,11 +159,25 @@ const searchSales = async (term) => {
         WHERE sal_aktif = 'Y' 
           AND (sal_kode LIKE ? OR sal_nama LIKE ?)
         ORDER BY sal_nama
-        LIMIT 50
+        LIMIT ? OFFSET ?
     `;
-    const searchTerm = `%${term || ''}%`;
-    const [rows] = await pool.query(query, [searchTerm, searchTerm]);
-    return rows;
+
+    // Query untuk menghitung total hasil pencarian
+    const countQuery = `
+        SELECT COUNT(*) as total
+        FROM kencanaprint.tsales
+        WHERE sal_aktif = 'Y'
+          AND (sal_kode LIKE ? OR sal_nama LIKE ?)
+    `;
+
+    const [items] = await pool.query(dataQuery, [searchTerm, searchTerm, itemsPerPage, offset]);
+    const [totalRows] = await pool.query(countQuery, [searchTerm, searchTerm]);
+    
+    // Kembalikan data dalam format yang diharapkan frontend
+    return {
+        items: items,
+        total: totalRows[0].total
+    };
 };
 
 module.exports = {

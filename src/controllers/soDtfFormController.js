@@ -37,8 +37,8 @@ const update = async (req, res) => {
 
 const searchSales = async (req, res) => {
     try {
-        const { term } = req.query;
-        const data = await soDtfFormService.searchSales(term);
+        const { term, page = 1, itemsPerPage = 10 } = req.query;
+        const data = await soDtfFormService.searchSales(term, parseInt(page), parseInt(itemsPerPage));
         res.json(data);
     } catch (error) {
         res.status(500).json({ message: error.message });
