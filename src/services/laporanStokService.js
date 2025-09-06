@@ -1,89 +1,81 @@
-// services/laporanStokService.js
-import pool from "../config/database.js";
+const pool = require('../config/database');
 
-const generateLaporanStok = async (cabang, tanggal) => {
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
+const getRealTimeStock = async (filters) => {
+    const { gudang, kodeBarang, jenisStok, tampilkanKosong, tanggal } = filters;
+    const connection = await pool.getConnection();
 
-    // nama tabel temporary
-    const tmpTable = "tmp_stok";
+    try {
+        // Logika Delphi sangat kompleks karena keterbatasan, di Node.js kita bisa lebih efisien.
+        // Pendekatan ini menggunakan satu query utama dengan subquery dan pivot dinamis.
+        
+        let stockSourceTable = '';
+        if (jenisStok === 'showroom') {
+            stockSourceTable = 'tmasterstok';
+        } else if (jenisStok === 'pesanan') {
+            stockSourceTable = 'tmasterstokso';
+        } else { // Semua
+            stockSourceTable = `(
+                SELECT * FROM tmasterstok
+                UNION ALL
+                SELECT * FROM tmasterstokso
+            )`;
+        }
 
-    // drop kalau sudah ada
-    await conn.query(`DROP TEMPORARY TABLE IF EXISTS ${tmpTable}`);
+        let params = [tanggal, gudang];
+        let gudangFilter = `m.mst_cab = ?`;
+        if (gudang === 'ALL') {
+            // Untuk 'ALL', kita tidak filter berdasarkan cabang di subquery stok
+            gudangFilter = '1 = 1'; 
+            params = [tanggal];
+        }
+        
+        let kodeBarangFilter = '';
+        if(kodeBarang) {
+            kodeBarangFilter = 'AND a.brg_kode = ?';
+            params.push(kodeBarang);
+        }
+        
+        const havingClause = !tampilkanKosong ? 'HAVING TOTAL > 0' : '';
 
-    // buat tabel temporary mirip Delphi
-    await conn.query(`
-      CREATE TEMPORARY TABLE ${tmpTable} (
-        kode VARCHAR(10) NOT NULL,
-        nama VARCHAR(100) NOT NULL,
-        XS DOUBLE NOT NULL DEFAULT 0,
-        S DOUBLE NOT NULL DEFAULT 0,
-        M DOUBLE NOT NULL DEFAULT 0,
-        L DOUBLE NOT NULL DEFAULT 0,
-        XL DOUBLE NOT NULL DEFAULT 0,
-        \`2XL\` DOUBLE NOT NULL DEFAULT 0,
-        \`3XL\` DOUBLE NOT NULL DEFAULT 0,
-        \`4XL\` DOUBLE NOT NULL DEFAULT 0,
-        \`5XL\` DOUBLE NOT NULL DEFAULT 0,
-        \`6XL\` DOUBLE NOT NULL DEFAULT 0,
-        \`7XL\` DOUBLE NOT NULL DEFAULT 0,
-        \`8XL\` DOUBLE NOT NULL DEFAULT 0,
-        \`9XL\` DOUBLE NOT NULL DEFAULT 0,
-        \`10XL\` DOUBLE NOT NULL DEFAULT 0,
-        PRIMARY KEY (kode)
-      )
-    `);
-
-    // ambil stok per barang+ukuran
-    const [stokRows] = await conn.query(
-      `
-      SELECT 
-        b.brg_kode AS kode,
-        b.brg_nama AS nama,
-        s.stok_ukuran AS ukuran,
-        SUM(s.stok_jumlah) AS jumlah
-      FROM tstok s
-      JOIN tbarang b ON b.brg_kode = s.stok_brg
-      WHERE s.stok_cabang = ?
-        AND s.stok_tanggal <= ?
-      GROUP BY b.brg_kode, s.stok_ukuran
-      `,
-      [cabang, tanggal]
-    );
-
-    // masukkan data ke tabel temporary
-    for (const row of stokRows) {
-      // insert kalau belum ada
-      await conn.query(
-        `INSERT INTO ${tmpTable} (kode, nama) VALUES (?, ?)
-         ON DUPLICATE KEY UPDATE nama = VALUES(nama)`,
-        [row.kode, row.nama]
-      );
-
-      // update kolom sesuai ukuran
-      const ukuran = row.ukuran;
-      const jumlah = row.jumlah || 0;
-      await conn.query(
-        `UPDATE ${tmpTable} SET \`${ukuran}\` = ? WHERE kode = ?`,
-        [jumlah, row.kode]
-      );
+        const query = `
+            SELECT
+                a.brg_kode AS KODE,
+                a.brg_ktgp AS KTGPRODUK,
+                a.brg_ktg AS KTGBARANG,
+                TRIM(CONCAT_WS(' ', a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna)) AS NAMA,
+                SUM(CASE WHEN s.mst_ukuran = 'S' THEN s.stok ELSE 0 END) AS S,
+                SUM(CASE WHEN s.mst_ukuran = 'M' THEN s.stok ELSE 0 END) AS M,
+                SUM(CASE WHEN s.mst_ukuran = 'L' THEN s.stok ELSE 0 END) AS L,
+                SUM(CASE WHEN s.mst_ukuran = 'XL' THEN s.stok ELSE 0 END) AS XL,
+                SUM(CASE WHEN s.mst_ukuran = '2XL' THEN s.stok ELSE 0 END) AS \`2XL\`,
+                SUM(CASE WHEN s.mst_ukuran = '3XL' THEN s.stok ELSE 0 END) AS \`3XL\`,
+                SUM(CASE WHEN s.mst_ukuran = '4XL' THEN s.stok ELSE 0 END) AS \`4XL\`,
+                SUM(CASE WHEN s.mst_ukuran = '5XL' THEN s.stok ELSE 0 END) AS \`5XL\`,
+                SUM(s.stok) AS TOTAL,
+                IFNULL((SELECT SUM(brgd_min) FROM tbarangdc_dtl b WHERE b.brgd_kode = a.brg_kode), 0) AS Buffer
+            FROM tbarangdc a
+            LEFT JOIN (
+                SELECT 
+                    m.mst_brg_kode, 
+                    m.mst_ukuran, 
+                    SUM(m.mst_stok_in - m.mst_stok_out) as stok
+                FROM ${stockSourceTable} m
+                WHERE m.mst_aktif = 'Y' AND m.mst_tanggal <= ? AND ${gudangFilter}
+                GROUP BY m.mst_brg_kode, m.mst_ukuran
+            ) s ON a.brg_kode = s.mst_brg_kode
+            WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y' ${kodeBarangFilter}
+            GROUP BY a.brg_kode, NAMA
+            ${havingClause}
+            ORDER BY NAMA;
+        `;
+        
+        const [rows] = await connection.query(query, params);
+        return rows;
+    } finally {
+        connection.release();
     }
-
-    // ambil hasil akhir
-    const [result] = await conn.query(`SELECT * FROM ${tmpTable}`);
-
-    await conn.commit();
-    return result;
-  } catch (err) {
-    await conn.rollback();
-    console.error("❌ LaporanStokService Error:", err);
-    throw err;
-  } finally {
-    conn.release();
-  }
 };
 
-export default {
-  generateLaporanStok,
+module.exports = {
+    getRealTimeStock,
 };
