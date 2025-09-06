@@ -24,6 +24,7 @@ const priceProposalRoutes = require('./routes/priceProposalRoutes');
 const priceProposalFormRoutes= require('./routes/priceProposalFormRoutes');
 const settingHargaRoutes = require('./routes/settingHargaRoutes');
 const soDtfRoutes = require('./routes/soDtfRoutes');
+const laporanStokRoutes = require('./routes/laporanStokRoutes');
 
 const app = express();
 const port = process.env.PORT || 8000;
@@ -59,6 +60,7 @@ app.use('/api/price-proposals', priceProposalRoutes);
 app.use('/api/price-proposal-form', priceProposalFormRoutes);
 app.use('/api/setting-harga', settingHargaRoutes);
 app.use('/api/so-dtf', soDtfRoutes);
+app.use('/api/laporan-stok', laporanStokRoutes);
 
 // Menjalankan Server
 app.listen(port, () => {
