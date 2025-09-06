@@ -5,7 +5,6 @@ const getOffers = async (startDate, endDate, cabang) => {
     let params = [startDate, endDate];
     let branchFilter = '';
 
-    // Meniru logika filter cabang dari Delphi
     if (cabang === 'KDC') {
         branchFilter = 'AND LEFT(h.pen_nomor, 3) IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)';
     } else {
@@ -14,39 +13,52 @@ const getOffers = async (startDate, endDate, cabang) => {
     }
 
     const query = `
-    SELECT 
-        h.pen_nomor AS nomor,
-        h.pen_tanggal AS tanggal,
-        IFNULL((SELECT so.so_nomor FROM tso_hdr so WHERE so.so_pen_nomor = h.pen_nomor LIMIT 1), '') AS noSO,
-        h.pen_top AS top,
-        DATE_ADD(h.pen_tanggal, INTERVAL h.pen_top DAY) as tempo,
-        h.pen_ppn AS ppn,
-        h.pen_disc1 AS \`disc%\`,
-        h.pen_disc AS diskon,
-        h.pen_cus_kode AS kdcus,
-        c.cus_nama AS nama,
-        c.cus_kota AS kota,
-        c.cus_telp AS telp,
-        CONCAT(h.pen_cus_level, ' - ', l.level_nama) AS level,
-        h.pen_ket AS keterangan,
-        h.pen_alasan AS alasan,
-        h.user_create AS created,
-        (
-            SELECT ROUND(SUM(dd.pend_jumlah * (dd.pend_harga - dd.pend_diskon)) - hh.pen_disc 
-                + (hh.pen_ppn/100 * (SUM(dd.pend_jumlah * (dd.pend_harga - dd.pend_diskon)) - hh.pen_disc)) 
-                + hh.pen_bkrm)
-            FROM tpenawaran_dtl dd
-            LEFT JOIN tpenawaran_hdr hh ON hh.pen_nomor = dd.pend_nomor
-            WHERE hh.pen_nomor = h.pen_nomor
-        ) AS nominal,
-        h.pen_alasan AS alasanClose,
-        (SELECT inv.inv_nomor FROM tinv_hdr inv WHERE inv.inv_pen_nomor = h.pen_nomor LIMIT 1) AS noINV
-    FROM tpenawaran_hdr h
-    LEFT JOIN tcustomer c ON h.pen_cus_kode = c.cus_kode
-    LEFT JOIN tcustomer_level l ON l.level_kode = h.pen_cus_level
-    WHERE h.pen_tanggal BETWEEN ? AND ?
-    ${branchFilter}
-`;
+        SELECT 
+            h.pen_nomor AS nomor,
+            h.pen_tanggal AS tanggal,
+            IFNULL((SELECT so.so_nomor 
+                    FROM tso_hdr so 
+                    WHERE so.so_pen_nomor = h.pen_nomor 
+                    LIMIT 1), '') AS noSO,
+            h.pen_top AS top,
+            DATE_ADD(h.pen_tanggal, INTERVAL h.pen_top DAY) as tempo,
+            h.pen_ppn AS ppn,
+            h.pen_disc1 AS \`disc%\`,
+            h.pen_disc AS diskon,
+            h.pen_cus_kode AS kdcus,
+            c.cus_nama AS nama,
+            c.cus_kota AS kota,
+            c.cus_telp AS telp,
+            CONCAT(h.pen_cus_level, ' - ', l.level_nama) AS level,
+            h.pen_ket AS keterangan,
+            h.pen_alasan AS alasan,
+            h.user_create AS created,
+            (
+                SELECT ROUND(SUM(dd.pend_jumlah * (dd.pend_harga - dd.pend_diskon)) - hh.pen_disc 
+                    + (hh.pen_ppn/100 * (SUM(dd.pend_jumlah * (dd.pend_harga - dd.pend_diskon)) - hh.pen_disc)) 
+                    + hh.pen_bkrm)
+                FROM tpenawaran_dtl dd
+                LEFT JOIN tpenawaran_hdr hh ON hh.pen_nomor = dd.pend_nomor
+                WHERE hh.pen_nomor = h.pen_nomor
+            ) AS nominal,
+            h.pen_alasan AS alasanClose,
+            (
+                SELECT inv.inv_nomor 
+                FROM tinv_hdr inv 
+                WHERE inv.inv_nomor_so = (
+                    SELECT so.so_nomor 
+                    FROM tso_hdr so 
+                    WHERE so.so_pen_nomor = h.pen_nomor 
+                    LIMIT 1
+                )
+                LIMIT 1
+            ) AS noINV
+        FROM tpenawaran_hdr h
+        LEFT JOIN tcustomer c ON h.pen_cus_kode = c.cus_kode
+        LEFT JOIN tcustomer_level l ON l.level_kode = h.pen_cus_level
+        WHERE h.pen_tanggal BETWEEN ? AND ?
+        ${branchFilter}
+    `;
 
     try {
         const [rows] = await pool.query(query, params);
@@ -55,9 +67,10 @@ const getOffers = async (startDate, endDate, cabang) => {
         console.error("❌ SQL Error:", error.sqlMessage || error.message);
         console.error("❌ SQL Query:", error.sql || query);
         console.error("❌ SQL Params:", params);
-        throw error; // biar tetap lempar error ke caller
+        throw error;
     }
 };
+
 
 const getOfferDetails = async (nomor) => {
     // Query ini adalah adaptasi dari query detail di Delphi Anda
