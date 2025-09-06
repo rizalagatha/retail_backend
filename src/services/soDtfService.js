@@ -62,6 +62,7 @@ const closeSoDtf = async (nomor, alasan, user) => {
     return { message: 'SO DTF berhasil ditutup.' };
 };
 
+
 module.exports = {
     getSoDtfList,
     getSoDtfDetails,

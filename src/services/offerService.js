@@ -40,7 +40,7 @@ const getOffers = async (startDate, endDate, cabang) => {
                 WHERE hh.pen_nomor = h.pen_nomor
             ) AS nominal,
             h.pen_alasan AS alasanClose,
-            (SELECT inv.inv_nomor FROM tinv_hdr inv WHERE inv.inv_pen_nomor = h.pen_nomor LIMIT 1) AS noINV
+            (SELECT tinv_hdr.inv_nomor FROM tinv_hdr inv WHERE tinv_hdr.inv_pen_nomor = h.pen_nomor LIMIT 1) AS noINV
         FROM tpenawaran_hdr h
         LEFT JOIN tcustomer c ON h.pen_cus_kode = c.cus_kode
         LEFT JOIN tcustomer_level l ON l.level_kode = h.pen_cus_level
