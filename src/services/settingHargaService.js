@@ -124,6 +124,18 @@ const deleteTshirtType = async (jenisKaos, custom) => {
     return { message: 'Data berhasil dihapus.' };
 };
 
+const searchJenisKaosFromBarang = async () => {
+    // Query ini meniru SQLbantuan dari kode Delphi Anda
+    const query = `
+        SELECT DISTINCT 
+            TRIM(CONCAT_WS(' ', a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain)) AS "JenisKaos"
+        FROM tbarangdc a
+        WHERE a.brg_logstok = 'Y' AND a.brg_aktif = 0 AND a.brg_ktg = ""
+        ORDER BY 1;
+    `;
+    const [rows] = await pool.query(query);
+    return rows;
+};
 
 module.exports = {
     getAllTshirtTypes,
@@ -131,4 +143,5 @@ module.exports = {
     getTshirtTypeDetails,
     saveTshirtType,
     deleteTshirtType,
+    searchJenisKaosFromBarang,
 };

@@ -47,10 +47,20 @@ const remove = async (req, res) => {
     }
 };
 
+const searchJenisKaos = async (req, res) => {
+    try {
+        const result = await settingHargaService.searchJenisKaosFromBarang();
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ message: 'Gagal mencari Jenis Kaos.' });
+    }
+};
+
 module.exports = {
     getAll,
     getUkuranTemplate,
     getDetails,
     save,
     remove,
+    searchJenisKaos,
 };
