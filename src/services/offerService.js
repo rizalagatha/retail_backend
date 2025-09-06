@@ -27,7 +27,7 @@ const getOffers = async (startDate, endDate, cabang) => {
             h.pen_disc AS diskon,
             h.pen_cus_kode AS kdcus,
             c.cus_nama AS nama,
-            c.cus_alamat AS alamat
+            c.cus_alamat AS alamat,
             c.cus_kota AS kota,
             c.cus_telp AS telp,
             CONCAT(h.pen_cus_level, ' - ', l.level_nama) AS level,
