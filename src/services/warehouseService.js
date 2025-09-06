@@ -56,7 +56,25 @@ const getBranchOptions = async (userCabang) => {
     return rows;
 };
 
+const getSoDtfBranchOptions = async (userCabang) => {
+    let query = '';
+    let params = [];
+
+    // Meniru logika dari FormCreate di UBrowseSoDTF.pas
+    if (userCabang === 'KDC') {
+        // Jika user adalah KDC, tampilkan semua cabang store (gdg_dc = 0)
+        query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_dc = 0 ORDER BY gdg_kode';
+    } else {
+        // Jika bukan KDC, hanya tampilkan cabang milik user itu sendiri
+        query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ?';
+        params.push(userCabang);
+    }
+    const [rows] = await pool.query(query, params);
+    return rows;
+};
+
 module.exports = {
     searchWarehouses,
     getBranchOptions,
+    getSoDtfBranchOptions,
 };
