@@ -37,5 +37,7 @@ router.get('/lookup/ukuran-kaos', verifyToken, checkPermission(MENU_ID, 'view'),
 
 router.get('/lookup/ukuran-sodtf-detail', verifyToken, checkPermission(MENU_ID, 'view'), soDtfFormController.getUkuranSodtfDetail);
 
+router.post('/calculate-dtg-price', verifyToken, checkPermission(MENU_ID, 'view'), soDtfFormController.calculateDtgPrice);
+
 module.exports = router;
 

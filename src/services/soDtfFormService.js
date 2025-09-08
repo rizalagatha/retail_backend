@@ -333,6 +333,36 @@ const getUkuranSodtfDetail = async (jenisOrder, ukuran) => {
     return rows.length > 0 ? rows[0] : null;
 };
 
+/**
+ * @description Menghitung total harga DTG berdasarkan detail titik cetak dan total jumlah kaos.
+ * @param {Array} detailsTitik - Array objek dari grid detail titik cetak.
+ * @param {number} totalJumlahKaos - Total kuantitas kaos.
+ * @returns {Promise<number>} Total harga DTG.
+ */
+const calculateDtgPrice = async (detailsTitik, totalJumlahKaos) => {
+    let totalHarga = 0;
+    const query = `
+        SELECT us_qty, us_promo, us_harga 
+        FROM tukuran_sodtf 
+        WHERE us_jenis = 'TG' AND us_ukuran = ?
+    `;
+
+    for (const titik of detailsTitik) {
+        if (titik.sizeCetak) {
+            const [rows] = await pool.query(query, [titik.sizeCetak]);
+            if (rows.length > 0) {
+                const hargaRule = rows[0];
+                if (totalJumlahKaos >= hargaRule.us_qty) {
+                    totalHarga += hargaRule.us_promo; // Harga promo
+                } else {
+                    totalHarga += hargaRule.us_harga; // Harga reguler
+                }
+            }
+        }
+    }
+    return totalHarga;
+};
+
 module.exports = {
     findById,
     create,
@@ -345,5 +375,6 @@ module.exports = {
     processSoDtfImage,
     getUkuranKaosList, 
     getUkuranSodtfDetail,
+    calculateDtgPrice,
 };
 

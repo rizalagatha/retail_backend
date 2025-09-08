@@ -138,6 +138,19 @@ const getUkuranSodtfDetail = async (req, res) => {
     }
 };
 
+const calculateDtgPrice = async (req, res) => {
+    try {
+        const { detailsTitik, totalJumlahKaos } = req.body;
+        if (!detailsTitik || totalJumlahKaos === undefined) {
+            return res.status(400).json({ message: 'Parameter tidak lengkap.' });
+        }
+        const harga = await soDtfFormService.calculateDtgPrice(detailsTitik, totalJumlahKaos);
+        res.json({ harga });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getById,
     create,
@@ -150,5 +163,6 @@ module.exports = {
     uploadImage,
     getUkuranKaos,
     getUkuranSodtfDetail,
+    calculateDtgPrice,
 };
 
