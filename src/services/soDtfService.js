@@ -14,7 +14,7 @@ const getSoDtfList = async (filters) => {
     // Query ini meniru query kompleks dari Delphi Anda
     const query = `
         SELECT 
-            x.Nomor, x.Tanggal, x.TglPengerjaan, x.DatelineCus, x.NamaDTF, x.Jumlah, x.Titik, 
+            x.Nomor, DATE_FORMAT(x.Tanggal, '%d-%m-%Y') AS Tanggal, DATE_FORMAT(x.TglPengerjaan, '%d-%m-%Y') AS TglPengerjaan, x.DatelineCus, x.NamaDTF, x.Jumlah, x.Titik, 
             (x.jumlah * x.titik) AS TotalTitik, IFNULL(x.LHK, 0) AS LHK,
             x.NoSO, x.NoINV, x.Sales, x.BagDesain, x.KdCus, x.Customer, x.Kain, 
             x.Finishing, x.Workshop, x.Keterangan, x.AlasanClose, x.Created, x.Close
