@@ -21,7 +21,7 @@ const offerFormRoutes = require('./routes/offerFormRoutes');
 const warehouseRoutes = require('./routes/warehouseRoutes');
 const authPinRoutes = require('./routes/authPinRoutes');
 const priceProposalRoutes = require('./routes/priceProposalRoutes');
-const priceProposalFormRoutes= require('./routes/priceProposalFormRoutes');
+const priceProposalFormRoutes = require('./routes/priceProposalFormRoutes');
 const settingHargaRoutes = require('./routes/settingHargaRoutes');
 const soDtfRoutes = require('./routes/soDtfRoutes');
 const soDtfFormRoutes = require('./routes/soDtfFormRoutes');
@@ -29,12 +29,14 @@ const laporanStokRoutes = require('./routes/laporanStokRoutes');
 
 const app = express();
 const port = process.env.PORT || 8000;
+const corsOptions = {
+    origin: 'http://localhost:5173', // Ganti dengan domain frontend Anda
+    exposedHeaders: 'Content-Disposition',
+};
 const imageFolderPath = path.join(process.cwd(), 'public', 'images');
 
 // Middleware
-app.use(cors({
-    origin: 'http://localhost:5173'
-}));
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use('/images', express.static(imageFolderPath));
