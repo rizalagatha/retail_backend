@@ -5,9 +5,10 @@ const { eachDayOfInterval, format } = require('date-fns');
 const getCabangList = async (user) => {
     let query;
     if (user.cabang === 'KDC') {
-        query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_dc=0 ORDER BY gdg_kode';
+        // Query ini sudah benar sesuai Delphi: hanya ambil cabang (bukan DC)
+        query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_dc = 0 ORDER BY gdg_kode';
     } else {
-        query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode= ? ORDER BY gdg_kode';
+        query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ?';
     }
     const [rows] = await pool.query(query, [user.cabang]);
     return rows;
