@@ -129,35 +129,60 @@ const remove = async (nomor, user) => {
 };
 
 const exportHeader = async (filters) => {
-    // 1. Ambil data menggunakan logika yang sama dengan browse
-    const data = await getSoDtfList(filters);
+    console.log('[DEBUG] Memulai proses exportHeader dengan filter:', filters);
 
-    // 2. Buat Workbook dan Worksheet Excel
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('SO DTF Header');
+    try {
+        const data = await getSoDtfList(filters);
 
-    // 3. Definisikan header kolom
-    worksheet.columns = [
-        { header: 'Nomor', key: 'Nomor', width: 20 },
-        { header: 'Tanggal', key: 'Tanggal', width: 15 },
-        { header: 'Tgl Pengerjaan', key: 'TglPengerjaan', width: 18 },
-        { header: 'Nama DTF', key: 'NamaDTF', width: 30 },
-        { header: 'Jml', key: 'Jumlah', width: 10 },
-        { header: 'Titik', key: 'Titik', width: 10 },
-        { header: 'Total Titik', key: 'TotalTitik', width: 15 },
-        { header: 'LHK', key: 'LHK', width: 10 },
-        { header: 'No. SO', key: 'NoSO', width: 20 },
-        { header: 'No. Invoice', key: 'NoINV', width: 20 },
-        { header: 'Sales', key: 'Sales', width: 25 },
-        { header: 'Customer', key: 'Customer', width: 35 },
-        { header: 'Keterangan', key: 'Keterangan', width: 40 },
-    ];
+        // 1. Cek data yang didapat dari database
+        console.log(`[DEBUG] getSoDtfList mengembalikan ${data.length} baris data.`);
+        if (data.length > 0) {
+            // Tampilkan baris pertama untuk memeriksa struktur key/nama kolom
+            console.log('[DEBUG] Contoh baris data pertama:', JSON.stringify(data[0], null, 2));
+        }
 
-    // 4. Tambahkan data ke worksheet
-    worksheet.addRows(data);
+        if (!data || data.length === 0) {
+            console.log('[DEBUG] Tidak ada data untuk diekspor. Proses dihentikan.');
+            // Jika tidak ada data, kita bisa melempar error agar ditangkap controller
+            throw new Error("Tidak ada data yang ditemukan untuk diekspor.");
+        }
 
-    // 5. Kembalikan file sebagai buffer
-    return await workbook.xlsx.writeBuffer();
+        console.log('[DEBUG] Memulai pembuatan file Excel dengan exceljs...');
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('SO DTF Header');
+
+        // Pastikan 'key' di sini SAMA PERSIS (termasuk huruf besar/kecil) dengan nama properti di data[0]
+        worksheet.columns = [
+            { header: 'Nomor', key: 'Nomor', width: 20 },
+            { header: 'Tanggal', key: 'Tanggal', width: 15 },
+            { header: 'Tgl Pengerjaan', key: 'TglPengerjaan', width: 18 },
+            { header: 'Nama DTF', key: 'NamaDTF', width: 30 },
+            { header: 'Jml', key: 'Jumlah', width: 10 },
+            { header: 'Titik', key: 'Titik', width: 10 },
+            { header: 'Total Titik', key: 'TotalTitik', width: 15 },
+            { header: 'LHK', key: 'LHK', width: 10 },
+            { header: 'No. SO', key: 'NoSO', width: 20 },
+            { header: 'No. Invoice', key: 'NoINV', width: 20 },
+            { header: 'Sales', key: 'Sales', width: 25 },
+            { header: 'Customer', key: 'Customer', width: 35 },
+            { header: 'Keterangan', key: 'Keterangan', width: 40 },
+        ];
+        
+        console.log('[DEBUG] Header kolom berhasil dibuat. Menambahkan baris data...');
+        worksheet.addRows(data);
+        
+        console.log('[DEBUG] Data berhasil ditambahkan. Membuat buffer file...');
+        const buffer = await workbook.xlsx.writeBuffer();
+
+        console.log('[DEBUG] Buffer file Excel berhasil dibuat. Ukuran:', buffer.length, 'bytes.');
+        return buffer;
+
+    } catch (error) {
+        // Jika ada error di mana pun, ini akan tercatat di console
+        console.error('[DEBUG] Terjadi error saat membuat file Excel:', error);
+        // Lempar lagi error agar controller bisa menangkapnya
+        throw error;
+    }
 };
 
 /**
