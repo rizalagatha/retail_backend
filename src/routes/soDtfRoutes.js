@@ -15,6 +15,6 @@ router.get('/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), soDtfContro
 router.post('/close', verifyToken, checkPermission(MENU_ID, 'edit'), soDtfController.close);
 
 // DELETE untuk menghapus SO DTF
-// router.delete('/:nomor', verifyToken, checkPermission(MENU_ID, 'delete'), soDtfController.remove);
+router.delete('/:nomor', verifyToken, checkPermission(MENU_ID, 'delete'), soDtfController.remove);
 
 module.exports = router;

@@ -32,11 +32,20 @@ const close = async (req, res) => {
     }
 };
 
-// Tambahkan fungsi untuk delete jika diperlukan
-// const remove = ...
+const remove = async (req, res) => {
+    try {
+        const { nomor } = req.params;
+        const result = await soDtfService.remove(nomor, req.user);
+        res.json(result);
+    } catch (error) {
+        // Kirim status 400 (Bad Request) untuk error validasi, 500 untuk lainnya
+        res.status(error.message.includes('tidak bisa dihapus') || error.message.includes('tidak berhak') ? 400 : 500).json({ message: error.message });
+    }
+};
 
 module.exports = {
     getAll,
     getDetails,
     close,
+    remove,
 };

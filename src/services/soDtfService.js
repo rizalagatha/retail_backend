@@ -62,9 +62,63 @@ const closeSoDtf = async (nomor, alasan, user) => {
     return { message: 'SO DTF berhasil ditutup.' };
 };
 
+/**
+ * @description Menghapus data SO DTF setelah validasi.
+ * @param {string} nomor - Nomor SO DTF yang akan dihapus.
+ * @param {object} user - Objek user yang sedang login.
+ */
+const remove = async (nomor, user) => {
+    const connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    try {
+        // 1. Ambil data yang akan divalidasi
+        const [rows] = await connection.query('SELECT sd_nomor, NoSO, NoINV, Close FROM v_sodtf_browse WHERE Nomor = ?', [nomor]);
+        if (rows.length === 0) {
+            throw new Error('Data tidak ditemukan.');
+        }
+        const record = rows[0];
+
+        // 2. Lakukan semua validasi seperti di Delphi
+        if (user.cabang !== 'KDC' && user.cabang !== record.sd_nomor.substring(0, 3)) {
+            throw new Error(`Anda tidak berhak menghapus data milik cabang ${record.sd_nomor.substring(0, 3)}.`);
+        }
+        if (record.NoSO) {
+            throw new Error('Sudah dibuat SO, tidak bisa dihapus.');
+        }
+        if (record.NoINV) {
+            throw new Error('Sudah dibuat Invoice, tidak bisa dihapus.');
+        }
+        if (record.Close === 'Y') {
+            throw new Error('Transaksi sudah ditutup, tidak bisa dihapus.');
+        }
+
+        // 3. Hapus data dari tabel header
+        // PENTING: Diasumsikan foreign key di tsodtf_dtl & tsodtf_dtl2 sudah di-set ON DELETE CASCADE
+        await connection.query('DELETE FROM tsodtf_hdr WHERE sd_nomor = ?', [nomor]);
+
+        await connection.commit();
+
+        // 4. Hapus file gambar setelah transaksi DB berhasil
+        const cabang = nomor.substring(0, 3);
+        const imagePath = path.join(process.cwd(), 'public', 'images', 'sodtf', cabang, `${nomor}.jpg`);
+        if (fs.existsSync(imagePath)) {
+            fs.unlinkSync(imagePath);
+        }
+
+        return { message: `SO DTF ${nomor} berhasil dihapus.` };
+    } catch (error) {
+        await connection.rollback();
+        // Teruskan error message dari validasi agar bisa ditampilkan di frontend
+        throw new Error(error.message || 'Gagal menghapus data.');
+    } finally {
+        connection.release();
+    }
+};
 
 module.exports = {
     getSoDtfList,
     getSoDtfDetails,
     closeSoDtf,
+    remove,
 };
