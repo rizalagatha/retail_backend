@@ -134,20 +134,20 @@ const exportHeader = async (filters) => {
 };
 
 const exportDetail = async (filters) => {
-    const { startDate, endDate, cabang, filterDateType } = filters;
-    const dateColumn = filterDateType === 'pengerjaan' ? 'h.sd_datekerja' : 'h.sd_tanggal';
-    let params = [startDate, endDate];
+    const { nomorList } = filters; // Sekarang kita menerima daftar nomor
 
-    // Query ini tetap sama, untuk menggabungkan header dan detail
-    let query = `
+    // Jika tidak ada nomor yang dikirim, kembalikan array kosong
+    if (!nomorList || nomorList.length === 0) {
+        return [];
+    }
+    
+    // Ubah query agar menggunakan `WHERE IN`
+    const query = `
         SELECT 
             h.sd_nomor AS Nomor, 
             DATE_FORMAT(h.sd_tanggal, '%d-%m-%Y') AS Tanggal, 
-            DATE_FORMAT(h.sd_datekerja, '%d-%m-%Y') AS TglPengerjaan, 
             h.sd_nama AS NamaDTF,
             (SELECT SUM(i.sdd_jumlah) FROM tsodtf_dtl i WHERE i.sdd_nomor = h.sd_nomor) AS JmlHeader,
-            (SELECT COUNT(*) FROM tsodtf_dtl2 i WHERE i.sdd2_nomor = h.sd_nomor) AS Titik,
-            IFNULL((SELECT dd.sod_so_nomor FROM tso_dtl dd WHERE dd.sod_sd_nomor = h.sd_nomor GROUP BY dd.sod_so_nomor LIMIT 1), "") AS NoSO,
             s.sal_nama AS Sales, 
             c.cus_nama AS Customer,
             d.sdd_ukuran AS Ukuran, 
@@ -156,17 +156,12 @@ const exportDetail = async (filters) => {
         JOIN tsodtf_dtl d ON h.sd_nomor = d.sdd_nomor
         LEFT JOIN tcustomer c ON c.cus_kode = h.sd_cus_kode
         LEFT JOIN kencanaprint.tsales s ON s.sal_kode = h.sd_sal_kode
-        WHERE ${dateColumn} BETWEEN ? AND ?
+        WHERE h.sd_nomor IN (?) -- Menggunakan WHERE IN untuk mencari banyak nomor
+        ORDER BY h.sd_nomor, d.sdd_nourut
     `;
 
-    if (cabang !== 'ALL') {
-        query += ' AND LEFT(h.sd_nomor, 3) = ?';
-        params.push(cabang);
-    }
-    query += ' ORDER BY h.sd_nomor, d.sdd_nourut';
-
-    const [data] = await pool.query(query, params);
-    return data; // Langsung kembalikan data JSON
+    const [data] = await pool.query(query, [nomorList]);
+    return data;
 };
 
 module.exports = {
