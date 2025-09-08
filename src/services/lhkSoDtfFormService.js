@@ -23,20 +23,24 @@ const loadData = async (tanggal, cabang) => {
 };
 
 const searchSoPo = async (term, cabang) => {
-    // Query ini menggabungkan pencarian SO DTF dan PO DTF
+    // Query ini menggabungkan pencarian SO DTF (bantuankode) dan PO DTF (bantuanpo)
     const query = `
         (SELECT 
             h.sd_nomor AS kode,
             h.sd_nama AS nama,
+            (SELECT SUM(sdd_jumlah) FROM retail.tsodtf_dtl WHERE sdd_nomor = h.sd_nomor) AS jumlah,
+            h.sd_tanggal AS tanggal,
             'SO DTF' AS tipe
         FROM retail.tsodtf_hdr h 
         WHERE (LEFT(h.sd_nomor, 3) = ? OR sd_workshop = ?)
           AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?)
         )
-        UNION
+        UNION ALL
         (SELECT 
             h.pjh_nomor AS kode,
             h.pjh_ket AS nama,
+            0 AS jumlah,
+            h.pjh_tanggal AS tanggal,
             'PO DTF' as tipe
         FROM kencanaprint.tpodtf_hdr h
         WHERE h.pjh_kode_kaosan = ?

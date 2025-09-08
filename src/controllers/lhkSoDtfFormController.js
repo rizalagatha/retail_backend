@@ -13,6 +13,9 @@ const loadData = async (req, res) => {
 const searchSoPo = async (req, res) => {
     try {
         const { term, cabang } = req.query;
+        if (!cabang) {
+            return res.status(400).json({ message: 'Parameter cabang diperlukan.' });
+        }
         const data = await lhkSoDtfFormService.searchSoPo(term, cabang);
         res.json(data);
     } catch (error) {
