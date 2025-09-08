@@ -58,13 +58,20 @@ const getDasborData = async (filters) => {
 };
 
 // Mengambil data detail untuk satu tanggal
+// Ganti fungsi getDasborDetail yang lama dengan yang ini
+
 const getDasborDetail = async (filters) => {
-    const { tanggal, cabang } = filters;
-    // Query ini sekarang mengembalikan semua kolom yang dibutuhkan
+    const { tanggal, cabang } = filters; // `tanggal` di sini formatnya 'YYYY-MM-DD'
+    
+    // Membuat rentang waktu untuk satu hari penuh
+    const startDate = `${tanggal} 00:00:00`;
+    const endDate = `${tanggal} 23:59:59`;
+
+    // Query ini menggunakan BETWEEN untuk perbandingan DATETIME yang lebih akurat
     const query = `
         SELECT 
             h.sd_nomor AS SoDTF,
-            DATE_FORMAT(h.sd_datekerja, '%d-%m-%Y') AS TglPengerjaan, /* <-- DITAMBAHKAN */
+            DATE_FORMAT(h.sd_datekerja, '%d-%m-%Y') AS TglPengerjaan,
             h.sd_nama AS Nama,
             IFNULL((SELECT SUM(d.sdd_jumlah) FROM tsodtf_dtl d WHERE d.sdd_nomor = h.sd_nomor), 0) AS Jumlah,
             IFNULL((SELECT COUNT(*) FROM tsodtf_dtl2 i WHERE i.sdd2_nomor = h.sd_nomor), 0) AS Titik,
@@ -75,10 +82,10 @@ const getDasborDetail = async (filters) => {
         FROM retail.tsodtf_hdr h
         WHERE h.sd_jo_kode = "SD" 
           AND LEFT(h.sd_nomor, 3) = ?
-          AND DATE(h.sd_datekerja) = ?
+          AND h.sd_datekerja BETWEEN ? AND ?
         ORDER BY h.sd_nomor
     `;
-    const [rows] = await pool.query(query, [cabang, tanggal]);
+    const [rows] = await pool.query(query, [cabang, startDate, endDate]);
     return rows;
 };
 
