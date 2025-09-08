@@ -38,6 +38,7 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use('/images', express.static(imageFolderPath));
+app.disable('etag');
 
 // Menggunakan Rute
 app.use('/api/auth', authRoutes);
