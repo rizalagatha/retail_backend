@@ -73,7 +73,7 @@ const getDasborDetail = async (filters) => {
         FROM retail.tsodtf_hdr h
         WHERE h.sd_jo_kode = "SD" 
           AND LEFT(h.sd_nomor, 3) = ?
-          AND h.sd_datekerja = ?
+          AND DATE(h.sd_datekerja) = ? 
     `;
     const [rows] = await pool.query(query, [cabang, tanggal]);
     return rows;
