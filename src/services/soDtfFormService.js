@@ -243,29 +243,33 @@ const searchWorkshop = async (term) => {
 };
 
 const getSisaKuota = async (cabang, tanggalKerja) => {
-    // Query ini adalah migrasi langsung dari fungsi Delphi Anda
+    // Query ini dipecah menjadi 3 sub-query yang lebih sederhana dan standar
     const query = `
         SELECT 
-            x.dq_kuota - (x.jumlah * x.titik) AS sisa 
-        FROM (
-            SELECT 
-                IFNULL((SELECT dq_kuota FROM tdtf_kuota WHERE dq_cab = ?), 0) AS dq_kuota,
-                (SELECT IFNULL(SUM(d.sdd_jumlah), 0) 
-                 FROM tsodtf_hdr h 
-                 LEFT JOIN tsodtf_dtl d ON d.sdd_nomor = h.sd_nomor 
-                 WHERE h.sd_jo_kode = 'SD' AND LEFT(h.sd_nomor, 3) = ? AND h.sd_datekerja = ?) AS jumlah,
-                (SELECT IFNULL(COUNT(*), 0) 
-                 FROM tsodtf_hdr j 
-                 LEFT JOIN tsodtf_dtl2 i ON i.sdd2_nomor = j.sd_nomor 
-                 WHERE j.sd_jo_kode = 'SD' AND LEFT(j.sd_nomor, 3) = ? AND j.sd_datekerja = ?) AS titik
-        ) x
+            (SELECT IFNULL(dq_kuota, 0) FROM tdtf_kuota WHERE dq_cab = ?) AS dq_kuota,
+
+            (SELECT IFNULL(SUM(d.sdd_jumlah), 0) 
+             FROM tsodtf_hdr h 
+             LEFT JOIN tsodtf_dtl d ON d.sdd_nomor = h.sd_nomor 
+             WHERE h.sd_jo_kode = 'SD' AND LEFT(h.sd_nomor, 3) = ? AND h.sd_datekerja = ?) AS jumlah,
+
+            (SELECT IFNULL(COUNT(*), 0) 
+             FROM tsodtf_hdr j 
+             LEFT JOIN tsodtf_dtl2 i ON i.sdd2_nomor = j.sd_nomor 
+             WHERE j.sd_jo_kode = 'SD' AND LEFT(j.sd_nomor, 3) = ? AND j.sd_datekerja = ?) AS titik
     `;
 
-    const [rows] = await pool.query(query, [cabang, cabang, tanggalKerja, cabang, tanggalKerja]);
+    // Parameter tetap sama, berjumlah 5
+    const params = [cabang, cabang, tanggalKerja, cabang, tanggalKerja];
+    const [rows] = await pool.query(query, params);
     
     if (rows.length > 0) {
-        return rows[0].sisa;
+        const { dq_kuota, jumlah, titik } = rows[0];
+        // Kalkulasi akhir dilakukan di sini, lebih aman dan mudah dibaca
+        const sisa = dq_kuota - (jumlah * titik);
+        return sisa;
     }
+
     return 0;
 };
 
