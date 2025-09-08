@@ -14,7 +14,7 @@ const findById = async (nomor) => {
                 (SELECT v.level_nama FROM tcustomer_level_history y LEFT JOIN tcustomer_level v ON v.level_kode=y.clh_level WHERE y.clh_cus_kode=h.sd_cus_kode ORDER BY y.clh_tanggal DESC LIMIT 1) as customerLevel,
                 sd_jo_kode as jenisOrderKode, jo_nama as jenisOrderNama, sd_nama as namaDtf, sd_kain as kain,
                 sd_finishing as finishing, sd_desain as desain, sd_workshop as workshopKode,
-                pab_nama as workshopNama, sd_ket as keterangan, user_create as user
+                pab_nama as workshopNama, sd_ket as keterangan, h.user_create as user
             FROM tsodtf_hdr h
             LEFT JOIN kencanaprint.tsales s ON h.sd_sal_kode = s.sal_kode
             LEFT JOIN tcustomer c ON h.sd_cus_kode = c.cus_kode
