@@ -35,7 +35,11 @@ const getList = async (filters) => {
 
 // Mengambil data detail (SQLDetail)
 const getDetails = async (nomor, filters) => {
-    const { startDate, endDate, cabang } = filters;
+    // Ambil filter yang relevan dari frontend
+    const { startDate, endDate, cabang, filterDateType } = filters;
+    const dateColumn = filterDateType === 'pengerjaan' ? 'h.sd_datekerja' : 'h.sd_tanggal';
+
+    // Query ini sekarang menyertakan semua filter yang diperlukan
     const query = `
         SELECT 
             d.sds_kode AS Kode,
@@ -45,22 +49,24 @@ const getDetails = async (nomor, filters) => {
             IFNULL((
                 SELECT SUM(dd.dsd_jumlah) 
                 FROM tdtfstok_dtl dd 
-                LEFT JOIN tdtfstok_hdr hh ON hh.ds_nomor = dd.dsd_nomor 
+                JOIN tdtfstok_hdr hh ON hh.ds_nomor = dd.dsd_nomor 
                 WHERE hh.ds_sd_nomor = h.sd_nomor AND dd.dsd_kode = d.sds_kode AND dd.dsd_ukuran = d.sds_ukuran
             ), 0) AS LHK,
             (d.sds_jumlah - IFNULL((
                 SELECT SUM(dd.dsd_jumlah) 
                 FROM tdtfstok_dtl dd 
-                LEFT JOIN tdtfstok_hdr hh ON hh.ds_nomor = dd.dsd_nomor 
+                JOIN tdtfstok_hdr hh ON hh.ds_nomor = dd.dsd_nomor 
                 WHERE hh.ds_sd_nomor = h.sd_nomor AND dd.dsd_kode = d.sds_kode AND dd.dsd_ukuran = d.sds_ukuran
             ), 0)) AS Kurang
         FROM tsodtf_stok d
         LEFT JOIN tbarangdc a ON a.brg_kode = d.sds_kode
         JOIN tsodtf_hdr h ON h.sd_nomor = d.sds_nomor
-        WHERE d.sds_nomor = ?
+        WHERE d.sds_nomor = ? 
+          AND LEFT(h.sd_nomor, 3) = ?
+          AND ${dateColumn} BETWEEN ? AND ?
         ORDER BY d.sds_nourut
     `;
-    const [rows] = await pool.query(query, [nomor]);
+    const [rows] = await pool.query(query, [nomor, cabang, startDate, endDate]);
     return rows;
 };
 
