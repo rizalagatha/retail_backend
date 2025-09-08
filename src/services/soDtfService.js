@@ -72,8 +72,18 @@ const remove = async (nomor, user) => {
     await connection.beginTransaction();
 
     try {
-        // 1. Ambil data yang akan divalidasi
-        const [rows] = await connection.query('SELECT sd_nomor, NoSO, NoINV, Close FROM v_sodtf_browse WHERE Nomor = ?', [nomor]);
+        // 1. Ambil data yang akan divalidasi menggunakan query langsung (tanpa view)
+        const validationQuery = `
+            SELECT 
+                h.sd_nomor,
+                h.sd_closing AS Close,
+                IFNULL((SELECT dd.sod_so_nomor FROM tso_dtl dd WHERE dd.sod_sd_nomor = h.sd_nomor GROUP BY dd.sod_so_nomor LIMIT 1), "") AS NoSO,
+                IFNULL((SELECT dd.invd_inv_nomor FROM tinv_dtl dd WHERE dd.invd_sd_nomor = h.sd_nomor GROUP BY dd.invd_inv_nomor LIMIT 1), "") AS NoINV
+            FROM tsodtf_hdr h
+            WHERE h.sd_nomor = ?
+        `;
+        const [rows] = await connection.query(validationQuery, [nomor]);
+
         if (rows.length === 0) {
             throw new Error('Data tidak ditemukan.');
         }
@@ -109,7 +119,6 @@ const remove = async (nomor, user) => {
         return { message: `SO DTF ${nomor} berhasil dihapus.` };
     } catch (error) {
         await connection.rollback();
-        // Teruskan error message dari validasi agar bisa ditampilkan di frontend
         throw new Error(error.message || 'Gagal menghapus data.');
     } finally {
         connection.release();
