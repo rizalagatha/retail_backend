@@ -363,6 +363,23 @@ const calculateDtgPrice = async (detailsTitik, totalJumlahKaos) => {
     return totalHarga;
 };
 
+const getSizeCetakList = async (jenisOrder) => {
+    const query = `
+        SELECT us_ukuran AS nama 
+        FROM tukuran_sodtf 
+        WHERE us_jenis = ? 
+        ORDER BY us_ukuran
+    `;
+    const [rows] = await pool.query(query, [jenisOrder]);
+    let results = rows.map(row => row.nama);
+
+    // Meniru logika Delphi: tambahkan opsi kosong untuk SD dan DP
+    if (jenisOrder === 'SD' || jenisOrder === 'DP') {
+        results.unshift(''); // Tambahkan string kosong di awal array
+    }
+    return results;
+};
+
 module.exports = {
     findById,
     create,
@@ -376,5 +393,6 @@ module.exports = {
     getUkuranKaosList, 
     getUkuranSodtfDetail,
     calculateDtgPrice,
+    getSizeCetakList,
 };
 

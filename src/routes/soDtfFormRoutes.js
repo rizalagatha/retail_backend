@@ -39,5 +39,7 @@ router.get('/lookup/ukuran-sodtf-detail', verifyToken, checkPermission(MENU_ID, 
 
 router.post('/calculate-dtg-price', verifyToken, checkPermission(MENU_ID, 'view'), soDtfFormController.calculateDtgPrice);
 
+router.get('/lookup/size-cetak', verifyToken, checkPermission(MENU_ID, 'view'), soDtfFormController.getSizeCetak);
+
 module.exports = router;
 

@@ -151,6 +151,19 @@ const calculateDtgPrice = async (req, res) => {
     }
 };
 
+const getSizeCetak = async (req, res) => {
+    try {
+        const { jenisOrder } = req.query;
+        if (!jenisOrder) {
+            return res.status(400).json({ message: 'Parameter jenisOrder diperlukan.' });
+        }
+        const data = await soDtfFormService.getSizeCetakList(jenisOrder);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getById,
     create,
@@ -164,5 +177,6 @@ module.exports = {
     getUkuranKaos,
     getUkuranSodtfDetail,
     calculateDtgPrice,
+    getSizeCetak,
 };
 
