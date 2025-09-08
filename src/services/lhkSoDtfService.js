@@ -33,18 +33,16 @@ const getLhkList = async (filters) => {
 
 const getCabangList = async (user) => {
     let query;
-    // Logika dari FormCreate Delphi
     if (user.cabang === 'KDC') {
+        // Query untuk KDC tetap sama
         query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode="KDC" OR gdg_dc=0 ORDER BY gdg_kode';
     } else {
+        // Query untuk cabang lain tetap sama
         query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ?';
     }
     const [rows] = await pool.query(query, [user.cabang]);
     
-    // Tambahkan 'ALL' jika KDC
-    if (user.cabang === 'KDC') {
-        return [{ kode: 'ALL', nama: 'SEMUA CABANG' }, ...rows];
-    }
+    // Langsung kembalikan hasilnya tanpa menambahkan "ALL"
     return rows;
 };
 
