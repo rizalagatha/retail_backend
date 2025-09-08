@@ -41,5 +41,7 @@ router.post('/calculate-dtg-price', verifyToken, checkPermission(MENU_ID, 'view'
 
 router.get('/lookup/size-cetak', verifyToken, checkPermission(MENU_ID, 'view'), soDtfFormController.getSizeCetak);
 
+router.get('/print-data/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), soDtfFormController.getPrintData);
+
 module.exports = router;
 

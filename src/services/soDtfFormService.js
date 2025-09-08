@@ -384,6 +384,44 @@ const getSizeCetakList = async (jenisOrder) => {
     return results;
 };
 
+/**
+ * @description Mengambil semua data yang diperlukan untuk mencetak satu SO DTF.
+ * @param {string} nomor - Nomor SO DTF.
+ * @returns {Promise<object|null>} Objek berisi semua data untuk dicetak.
+ */
+const getDataForPrint = async (nomor) => {
+    // Query ini adalah migrasi langsung dari query di fungsi cetak Delphi Anda
+    const query = `
+        SELECT 
+            h.*, 
+            LEFT(h.sd_nomor, 3) AS store,
+            g.pab_nama AS gdg_nama,
+            o.jo_nama,
+            DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
+            (SELECT CAST(GROUP_CONCAT(CONCAT(sdd2_nourut, ". ", sdd2_ket, ": P=", sdd2_panjang, "cm L=", sdd2_lebar, "cm") SEPARATOR '\\n') AS CHAR) 
+             FROM tsodtf_dtl2 WHERE sdd2_nomor = h.sd_nomor) AS titik,
+            (SELECT SUM(sdd_jumlah) FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor) AS jumlah,
+            (SELECT CAST(GROUP_CONCAT(CONCAT(sdd_ukuran, "=", sdd_jumlah) SEPARATOR ", ") AS CHAR) 
+             FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor) AS ukuran
+        FROM tsodtf_hdr h
+        LEFT JOIN kencanaprint.tpabrik g ON g.pab_kode = h.sd_workshop
+        LEFT JOIN kencanaprint.tjenisorder o ON h.sd_jo_kode = o.jo_kode
+        WHERE h.sd_nomor = ?
+    `;
+    const [rows] = await pool.query(query, [nomor]);
+    if (rows.length === 0) return null;
+
+    const data = rows[0];
+
+    // Logika untuk mengecek gambar
+    const cabang = nomor.substring(0, 3);
+    const imageFileName = `${nomor}.jpg`;
+    const imagePath = path.join(process.cwd(), 'public', 'images', cabang, imageFileName);
+    data.imageUrl = fs.existsSync(imagePath) ? `/images/${cabang}/${imageFileName}` : null;
+    
+    return data;
+};
+
 module.exports = {
     findById,
     create,
@@ -398,5 +436,6 @@ module.exports = {
     getUkuranSodtfDetail,
     calculateDtgPrice,
     getSizeCetakList,
+    getDataForPrint,   
 };
 
