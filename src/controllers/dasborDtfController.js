@@ -11,6 +11,13 @@ const getDasborData = async (req, res) => {
 
 const getDasborDetail = async (req, res) => {
     try {
+        const { tanggal, cabang } = req.query;
+
+        // Tambahkan blok validasi ini
+        if (!tanggal || !cabang) {
+            return res.status(400).json({ message: 'Parameter "tanggal" dan "cabang" diperlukan.' });
+        }
+
         const data = await dasborDtfService.getDasborDetail(req.query);
         res.json(data);
     } catch (error) {
