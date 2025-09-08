@@ -48,7 +48,7 @@ const exportHeader = async (req, res) => {
         const fileBuffer = await soDtfService.exportHeader(req.query);
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition', 'attachment; filename="Export_SO_DTF_Header.xlsx"');
-        res.send(fileBuffer);
+        res.end(Buffer.from(fileBuffer));
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -59,7 +59,7 @@ const exportDetail = async (req, res) => {
         const fileBuffer = await soDtfService.exportDetail(req.query);
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition', 'attachment; filename="Export_SO_DTF_Detail.xlsx"');
-        res.send(fileBuffer);
+        res.end(Buffer.from(fileBuffer));
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
