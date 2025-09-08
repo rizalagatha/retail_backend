@@ -129,70 +129,29 @@ const remove = async (nomor, user) => {
 };
 
 const exportHeader = async (filters) => {
-    // 1. Ambil data menggunakan logika yang sama dengan browse
-    const data = await getSoDtfList(filters);
-
-    // 2. Buat Workbook dan Worksheet Excel
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('SO DTF Header');
-
-    // 3. Definisikan header kolom
-    worksheet.columns = [
-        { header: 'Nomor', key: 'Nomor', width: 20 },
-        { header: 'Tanggal', key: 'Tanggal', width: 15 },
-        { header: 'Tgl Pengerjaan', key: 'TglPengerjaan', width: 18 },
-        { header: 'Nama DTF', key: 'NamaDTF', width: 30 },
-        { header: 'Jml', key: 'Jumlah', width: 10 },
-        { header: 'Titik', key: 'Titik', width: 10 },
-        { header: 'Total Titik', key: 'TotalTitik', width: 15 },
-        { header: 'LHK', key: 'LHK', width: 10 },
-        { header: 'No. SO', key: 'NoSO', width: 20 },
-        { header: 'No. Invoice', key: 'NoINV', width: 20 },
-        { header: 'Sales', key: 'Sales', width: 25 },
-        { header: 'Customer', key: 'Customer', width: 35 },
-        { header: 'Keterangan', key: 'Keterangan', width: 40 },
-    ];
-
-    // 4. Tambahkan data ke worksheet
-    worksheet.addRows(data);
-
-    // Membuat baris header (baris pertama) menjadi tebal dan berwarna
-    worksheet.getRow(1).eachCell((cell) => {
-        cell.font = { bold: true };
-        cell.fill = {
-            type: 'pattern',
-            pattern: 'solid',
-            fgColor: { argb: 'FFD3D3D3' } // Warna abu-abu muda
-        };
-        cell.border = {
-            bottom: { style: 'thin' }
-        };
-    });
-    // --- AKHIR BLOK STYLING ---
-
-    // 5. Kembalikan file sebagai buffer
-    return await workbook.xlsx.writeBuffer();
+    // Fungsi ini sekarang hanya mengembalikan data JSON dari browse
+    return await getSoDtfList(filters);
 };
 
-/**
- * @description Membuat buffer file Excel dari data detail SO DTF.
- * @param {object} filters - Filter yang sama dengan halaman browse.
- */
 const exportDetail = async (filters) => {
     const { startDate, endDate, cabang, filterDateType } = filters;
     const dateColumn = filterDateType === 'pengerjaan' ? 'h.sd_datekerja' : 'h.sd_tanggal';
     let params = [startDate, endDate];
 
-    // Query ini menggabungkan header dan detail, seperti di screenshot Delphi
+    // Query ini tetap sama, untuk menggabungkan header dan detail
     let query = `
         SELECT 
-            h.sd_nomor, h.sd_tanggal, h.sd_datekerja, h.sd_nama,
+            h.sd_nomor AS Nomor, 
+            DATE_FORMAT(h.sd_tanggal, '%d-%m-%Y') AS Tanggal, 
+            DATE_FORMAT(h.sd_datekerja, '%d-%m-%Y') AS TglPengerjaan, 
+            h.sd_nama AS NamaDTF,
             (SELECT SUM(i.sdd_jumlah) FROM tsodtf_dtl i WHERE i.sdd_nomor = h.sd_nomor) AS JmlHeader,
             (SELECT COUNT(*) FROM tsodtf_dtl2 i WHERE i.sdd2_nomor = h.sd_nomor) AS Titik,
             IFNULL((SELECT dd.sod_so_nomor FROM tso_dtl dd WHERE dd.sod_sd_nomor = h.sd_nomor GROUP BY dd.sod_so_nomor LIMIT 1), "") AS NoSO,
-            s.sal_nama AS Sales, h.sd_desain, c.cus_nama AS Customer, h.sd_kain, h.sd_finishing, h.sd_workshop,
-            h.sd_ket AS Keterangan, h.sd_alasan AS AlasanClose, h.user_create,
-            d.sdd_ukuran, d.sdd_jumlah
+            s.sal_nama AS Sales, 
+            c.cus_nama AS Customer,
+            d.sdd_ukuran AS Ukuran, 
+            d.sdd_jumlah AS Jumlah
         FROM tsodtf_hdr h
         JOIN tsodtf_dtl d ON h.sd_nomor = d.sdd_nomor
         LEFT JOIN tcustomer c ON c.cus_kode = h.sd_cus_kode
@@ -207,28 +166,7 @@ const exportDetail = async (filters) => {
     query += ' ORDER BY h.sd_nomor, d.sdd_nourut';
 
     const [data] = await pool.query(query, params);
-    
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('SO DTF Detail');
-
-    worksheet.columns = [
-        // Kolom dari Header
-        { header: 'Nomor', key: 'sd_nomor', width: 20 },
-        { header: 'Tanggal', key: 'sd_tanggal', width: 15 },
-        { header: 'Tgl Pengerjaan', key: 'sd_datekerja', width: 18 },
-        { header: 'Nama DTF', key: 'sd_nama', width: 30 },
-        { header: 'Jml Total', key: 'JmlHeader', width: 12 },
-        { header: 'Titik', key: 'Titik', width: 10 },
-        { header: 'No. SO', key: 'NoSO', width: 20 },
-        { header: 'Sales', key: 'Sales', width: 25 },
-        { header: 'Customer', key: 'Customer', width: 35 },
-        // Kolom dari Detail
-        { header: 'Ukuran', key: 'sdd_ukuran', width: 15 },
-        { header: 'Jumlah', key: 'sdd_jumlah', width: 12 },
-    ];
-    
-    worksheet.addRows(data);
-    return await workbook.xlsx.writeBuffer();
+    return data; // Langsung kembalikan data JSON
 };
 
 module.exports = {

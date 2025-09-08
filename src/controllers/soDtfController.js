@@ -45,10 +45,8 @@ const remove = async (req, res) => {
 
 const exportHeader = async (req, res) => {
     try {
-        const fileBuffer = await soDtfService.exportHeader(req.query);
-        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        res.setHeader('Content-Disposition', 'attachment; filename="Export_SO_DTF_Header.xlsx"');
-        res.end(Buffer.from(fileBuffer));
+        const data = await soDtfService.exportHeader(req.query);
+        res.json(data); // Kirim sebagai JSON biasa
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -56,10 +54,8 @@ const exportHeader = async (req, res) => {
 
 const exportDetail = async (req, res) => {
     try {
-        const fileBuffer = await soDtfService.exportDetail(req.query);
-        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        res.setHeader('Content-Disposition', 'attachment; filename="Export_SO_DTF_Detail.xlsx"');
-        res.end(Buffer.from(fileBuffer));
+        const data = await soDtfService.exportDetail(req.query);
+        res.json(data); // Kirim sebagai JSON biasa
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
