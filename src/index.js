@@ -26,6 +26,7 @@ const settingHargaRoutes = require('./routes/settingHargaRoutes');
 const soDtfRoutes = require('./routes/soDtfRoutes');
 const soDtfFormRoutes = require('./routes/soDtfFormRoutes');
 const lhkSoDtfRoutes = require('./routes/lhkSoDtfRoutes');
+const lhkSoDtfFormRoutes = require('./routes/lhkSoDtfFormRoutes');
 const laporanStokRoutes = require('./routes/laporanStokRoutes');
 
 const app = express();
@@ -67,6 +68,7 @@ app.use('/api/setting-harga', settingHargaRoutes);
 app.use('/api/so-dtf', soDtfRoutes);
 app.use('/api/so-dtf-form', soDtfFormRoutes);
 app.use('/api/lhk-so-dtf', lhkSoDtfRoutes);
+app.use('/api/lhk-so-dtf-form', lhkSoDtfFormRoutes);
 app.use('/api/laporan-stok', laporanStokRoutes);
 
 // Menjalankan Server
