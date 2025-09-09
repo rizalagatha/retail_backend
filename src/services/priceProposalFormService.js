@@ -161,50 +161,53 @@ const searchAdditionalCosts = async () => {
 };
 
 const getProposalForEdit = async (nomor) => {
-    // 1. Ambil data Header
-    const [headerRows] = await pool.query(`
-  SELECT h.*, c.cus_nama
-  FROM tpengajuanharga h
-  LEFT JOIN tcustomer c ON c.cus_kode = h.ph_kd_cus
-  WHERE ph_nomor = ?
-`, [nomor]);
+    // 1. Ambil data header
+    const headerQuery = `
+        SELECT h.*, c.cus_nama 
+        FROM tpengajuanharga h 
+        LEFT JOIN tcustomer c ON c.cus_kode = h.ph_kd_cus 
+        WHERE h.ph_nomor = ?
+    `;
+    const [headerRows] = await pool.query(headerQuery, [nomor]);
     if (headerRows.length === 0) {
-        throw new Error(`Pengajuan harga dengan nomor ${nomor} tidak ditemukan.`);
+        throw new Error('Data pengajuan tidak ditemukan.');
     }
-    const headerData = headerRows[0];
 
-    // 2. Ambil data Detail Ukuran
-    const [sizeData] = await pool.query(`
-  SELECT d.*,
-       CONCAT_WS(' ',
-         a.brg_jeniskaos,
-         a.brg_tipe,
-         a.brg_lengan,
-         a.brg_jeniskain,
-         a.brg_warna
-       ) AS namaBarang
-FROM tpengajuanharga_size d
-LEFT JOIN tbarangdc a ON a.brg_kode = d.phs_kode
-WHERE d.phs_nomor = ?
-`, [nomor]);
-
-    // 3. Ambil data Biaya Tambahan
-    const [additionalCosts] = await pool.query('SELECT * FROM tpengajuanharga_tambahan WHERE pht_nomor = ?', [nomor]);
-
-    // 4. Ambil data Bordir
-    const [bordirDataRows] = await pool.query('SELECT * FROM tpengajuanharga_bordir WHERE phb_nomor = ?', [nomor]);
-    const bordirData = bordirDataRows.length > 0 ? bordirDataRows[0] : null;
-
-    // 5. Ambil data DTF
-    const [dtfDataRows] = await pool.query('SELECT * FROM tpengajuanharga_dtf WHERE phd_nomor = ?', [nomor]);
-    const dtfData = dtfDataRows.length > 0 ? dtfDataRows[0] : null;
-
-    // 6. Cek & kirim URL gambar jika ada
     const cabang = nomor.substring(0, 3);
-    const imagePath = path.join(process.cwd(), 'public', 'images', cabang, `${nomor}.jpg`);
-    headerData.imageUrl = fs.existsSync(imagePath) ? `/images/${cabang}/${nomor}.jpg` : null;
 
-    return { headerData, sizeData, additionalCosts, bordirData, dtfData };
+    // `process.cwd()` adalah cara yang lebih andal untuk mendapatkan root direktori proyek Anda
+    const imagePath = path.join(process.cwd(), 'public', 'images', cabang, `${nomor}.jpg`);
+    let imageUrl = null;
+
+    if (fs.existsSync(imagePath)) {
+        // Bangun URL yang benar, sertakan subfolder cabang
+        imageUrl = `${process.env.BASE_URL || 'http://192.168.1.73:8000'}/images/${cabang}/${nomor}.jpg`;
+    }
+
+    // 2. Ambil data detail ukuran/size
+    const sizeQuery = `SELECT * FROM tpengajuanharga_size WHERE phs_nomor = ?`;
+    const [sizeRows] = await pool.query(sizeQuery, [nomor]);
+
+    // 3. Ambil data bordir
+    const bordirQuery = `SELECT * FROM tpengajuanharga_bordir WHERE phb_nomor = ?`;
+    const [bordirRows] = await pool.query(bordirQuery, [nomor]);
+
+    // 4. Ambil data DTF
+    const dtfQuery = `SELECT * FROM tpengajuanharga_dtf WHERE phd_nomor = ?`;
+    const [dtfRows] = await pool.query(dtfQuery, [nomor]);
+
+    // 5. Ambil data biaya tambahan
+    const costQuery = `SELECT * FROM tpengajuanharga_tambahan WHERE pht_nomor = ?`;
+    const [costRows] = await pool.query(costQuery, [nomor]);
+
+    return {
+        header: headerRows[0],
+        sizes: sizeRows,
+        bordir: bordirRows[0] || {},
+        dtf: dtfRows[0] || {},
+        additionalCosts: costRows,
+        imageUrl: imageUrl,
+    };
 };
 
 const renameProposalImage = async (tempFilePath, nomor) => {
