@@ -4,7 +4,8 @@ const pool = require('../config/database');
 // Di file: src/services/customerService.js
 
 const getAllCustomers = async () => {
-    // Query ini telah direvisi total untuk menjamin tidak ada duplikasi dan bebas error.
+    // Query ini telah direvisi final sesuai dengan struktur tabel Anda
+    // dan menjamin tidak ada duplikasi.
     const query = `
         SELECT 
             c.cus_kode AS kode,
@@ -21,7 +22,7 @@ const getAllCustomers = async () => {
                 FROM tcustomer_level_history h
                 LEFT JOIN tcustomer_level lvl ON h.clh_level = lvl.level_kode
                 WHERE h.clh_cus_kode = c.cus_kode
-                ORDER BY h.clh_tanggal DESC, h.clh_id DESC
+                ORDER BY h.clh_tanggal DESC -- Mengurutkan hanya berdasarkan tanggal
                 LIMIT 1
             ) AS level
         FROM tcustomer c
