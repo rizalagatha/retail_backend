@@ -93,21 +93,20 @@ const searchAdditionalCosts = async (req, res) => {
     }
 };
 
-const getEditDetails = async (req, res) => {
+const getForEdit = async (req, res) => {
     try {
         const { nomor } = req.params;
-        const data = await priceProposalFormService.getFullProposalDetails(nomor);
+        const data = await priceProposalFormService.getProposalForEdit(nomor);
         res.json(data);
     } catch (error) {
-        res.status(404).json({ message: error.message });
+        res.status(error.status || 500).json({ message: error.message });
     }
 };
 
 const save = async (req, res) => {
     try {
-        // req.body berisi payload lengkap dari frontend
         const result = await priceProposalFormService.saveProposal(req.body);
-        res.status(201).json(result);
+        res.status(req.body.isNew ? 201 : 200).json(result);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -121,6 +120,6 @@ module.exports = {
     getDiscount,
     searchProductsByType,
     searchAdditionalCosts,
-    getEditDetails,
+    getForEdit,
     save,
 };

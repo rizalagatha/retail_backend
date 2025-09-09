@@ -160,54 +160,34 @@ const searchAdditionalCosts = async () => {
     return rows;
 };
 
-const getFullProposalDetails = async (nomor) => {
-    // 1. Ambil data header
-    const headerQuery = `
-        SELECT h.*, c.cus_nama 
-        FROM tpengajuanharga h 
-        LEFT JOIN tcustomer c ON c.cus_kode = h.ph_kd_cus 
-        WHERE h.ph_nomor = ?
-    `;
-    const [headerRows] = await pool.query(headerQuery, [nomor]);
+const getProposalForEdit = async (nomor) => {
+    // 1. Ambil data Header
+    const [headerRows] = await pool.query('SELECT * FROM tpengajuanharga WHERE ph_nomor = ?', [nomor]);
     if (headerRows.length === 0) {
-        throw new Error('Data pengajuan tidak ditemukan.');
+        throw new Error(`Pengajuan harga dengan nomor ${nomor} tidak ditemukan.`);
     }
+    const headerData = headerRows[0];
 
+    // 2. Ambil data Detail Ukuran
+    const [sizeData] = await pool.query('SELECT * FROM tpengajuanharga_size WHERE phs_nomor = ?', [nomor]);
+
+    // 3. Ambil data Biaya Tambahan
+    const [additionalCosts] = await pool.query('SELECT * FROM tpengajuanharga_tambahan WHERE pht_nomor = ?', [nomor]);
+
+    // 4. Ambil data Bordir
+    const [bordirDataRows] = await pool.query('SELECT * FROM tpengajuanharga_bordir WHERE phb_nomor = ?', [nomor]);
+    const bordirData = bordirDataRows.length > 0 ? bordirDataRows[0] : null;
+
+    // 5. Ambil data DTF
+    const [dtfDataRows] = await pool.query('SELECT * FROM tpengajuanharga_dtf WHERE phd_nomor = ?', [nomor]);
+    const dtfData = dtfDataRows.length > 0 ? dtfDataRows[0] : null;
+    
+    // 6. Cek & kirim URL gambar jika ada
     const cabang = nomor.substring(0, 3);
-
-    // `process.cwd()` adalah cara yang lebih andal untuk mendapatkan root direktori proyek Anda
     const imagePath = path.join(process.cwd(), 'public', 'images', cabang, `${nomor}.jpg`);
-    let imageUrl = null;
+    headerData.imageUrl = fs.existsSync(imagePath) ? `/images/${cabang}/${nomor}.jpg` : null;
 
-    if (fs.existsSync(imagePath)) {
-        // Bangun URL yang benar, sertakan subfolder cabang
-        imageUrl = `${process.env.BASE_URL || 'http://192.168.1.73:8000'}/images/${cabang}/${nomor}.jpg`;
-    }
-
-    // 2. Ambil data detail ukuran/size
-    const sizeQuery = `SELECT * FROM tpengajuanharga_size WHERE phs_nomor = ?`;
-    const [sizeRows] = await pool.query(sizeQuery, [nomor]);
-
-    // 3. Ambil data bordir
-    const bordirQuery = `SELECT * FROM tpengajuanharga_bordir WHERE phb_nomor = ?`;
-    const [bordirRows] = await pool.query(bordirQuery, [nomor]);
-
-    // 4. Ambil data DTF
-    const dtfQuery = `SELECT * FROM tpengajuanharga_dtf WHERE phd_nomor = ?`;
-    const [dtfRows] = await pool.query(dtfQuery, [nomor]);
-
-    // 5. Ambil data biaya tambahan
-    const costQuery = `SELECT * FROM tpengajuanharga_tambahan WHERE pht_nomor = ?`;
-    const [costRows] = await pool.query(costQuery, [nomor]);
-
-    return {
-        header: headerRows[0],
-        sizes: sizeRows,
-        bordir: bordirRows[0] || {},
-        dtf: dtfRows[0] || {},
-        additionalCosts: costRows,
-        imageUrl: imageUrl,
-    };
+    return { headerData, sizeData, additionalCosts, bordirData, dtfData };
 };
 
 const renameProposalImage = async (tempFilePath, nomor) => {
@@ -236,7 +216,7 @@ const renameProposalImage = async (tempFilePath, nomor) => {
 };
 
 const saveProposal = async (data) => {
-    const { header, details, bordirItems, dtfItems, additionalCostItems, user, isNew } = data;
+    const { header, details, bordirItems = [], dtfItems = [], additionalCostItems = [], user, isNew } = data;
     const connection = await pool.getConnection();
 
     try {
@@ -274,50 +254,39 @@ const saveProposal = async (data) => {
         }
 
         // 2. Hapus detail lama & Simpan detail ukuran baru (tpengajuanharga_size)
-        await connection.query(`DELETE FROM tpengajuanharga_size WHERE phs_nomor = ?`, [nomor]);
-        if (details && details.length > 0) {
-            const sizeValues = details.map(item => [nomor, item.kodeBarang, item.size, item.qty, item.hargaPcs]);
-            const sizeQuery = `INSERT INTO tpengajuanharga_size (phs_nomor, phs_kode, phs_size, phs_jumlah, phs_harga) VALUES ?`;
-            await connection.query(sizeQuery, [sizeValues]);
-        }
-
-        // 3. Hapus tambahan lama & Simpan tambahan baru (tpengajuanharga_tambahan)
-        await connection.query(`DELETE FROM tpengajuanharga_tambahan WHERE pht_nomor = ?`, [nomor]);
-        if (additionalCostItems && additionalCostItems.length > 0) {
-            const costValues = additionalCostItems.map(item => [nomor, item.tambahan, item.harga]);
-            const costQuery = `INSERT INTO tpengajuanharga_tambahan (pht_nomor, pht_jenis, pht_harga) VALUES ?`;
-            await connection.query(costQuery, [costValues]);
-        }
-
-        // 4. Hapus bordir lama & Simpan bordir baru (tpengajuanharga_bordir)
+        // 4. Hapus & Simpan data bordir HANYA JIKA ADA
         await connection.query(`DELETE FROM tpengajuanharga_bordir WHERE phb_nomor = ?`, [nomor]);
-        const bordirQuery = `
-            INSERT INTO tpengajuanharga_bordir 
+        if (bordirItems && bordirItems.length > 0) {
+            const bordirQuery = `
+                INSERT INTO tpengajuanharga_bordir 
                 (phb_nomor, phb_cmbordir, phb_minbordir, phb_rpbordir, phb_bordirp1, phb_bordirl1, phb_bordirp2, phb_bordirl2, phb_bordirp3, phb_bordirl3, phb_bordirp4, phb_bordirl4, phb_bordirp5, phb_bordirl5, phb_bordirp6, phb_bordirl6, phb_bordirp7, phb_bordirl7, phb_bordirp8, phb_bordirl8)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `;
-        await connection.query(bordirQuery, [
-            nomor, data.biayaPerCmBordir, data.bordirMinCharge, data.bordirCost,
-            bordirItems[0].p, bordirItems[0].l, bordirItems[1].p, bordirItems[1].l,
-            bordirItems[2].p, bordirItems[2].l, bordirItems[3].p, bordirItems[3].l,
-            bordirItems[4].p, bordirItems[4].l, bordirItems[5].p, bordirItems[5].l,
-            bordirItems[6].p, bordirItems[6].l, bordirItems[7].p, bordirItems[7].l
-        ]);
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `;
+            await connection.query(bordirQuery, [
+                nomor, data.biayaPerCmBordir, data.bordirMinCharge, data.bordirCost,
+                bordirItems[0].p, bordirItems[0].l, bordirItems[1].p, bordirItems[1].l,
+                bordirItems[2].p, bordirItems[2].l, bordirItems[3].p, bordirItems[3].l,
+                bordirItems[4].p, bordirItems[4].l, bordirItems[5].p, bordirItems[5].l,
+                bordirItems[6].p, bordirItems[6].l, bordirItems[7].p, bordirItems[7].l
+            ]);
+        }
         
-        // 5. Hapus DTF lama & Simpan DTF baru (tpengajuanharga_dtf)
+        // 5. Hapus & Simpan data DTF HANYA JIKA ADA
         await connection.query(`DELETE FROM tpengajuanharga_dtf WHERE phd_nomor = ?`, [nomor]);
-        const dtfQuery = `
-            INSERT INTO tpengajuanharga_dtf
+        if (dtfItems && dtfItems.length > 0) {
+            const dtfQuery = `
+                INSERT INTO tpengajuanharga_dtf
                 (phd_nomor, phd_cmdtf, phd_mindtf, phd_rpdtf, phd_dtfp1, phd_dtfl1, phd_dtfp2, phd_dtfl2, phd_dtfp3, phd_dtfl3, phd_dtfp4, phd_dtfl4, phd_dtfp5, phd_dtfl5, phd_dtfp6, phd_dtfl6, phd_dtfp7, phd_dtfl7, phd_dtfp8, phd_dtfl8)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `;
-        await connection.query(dtfQuery, [
-            nomor, data.biayaPerCmDtf, data.dtfMinCharge, data.dtfCost,
-            dtfItems[0].p, dtfItems[0].l, dtfItems[1].p, dtfItems[1].l,
-            dtfItems[2].p, dtfItems[2].l, dtfItems[3].p, dtfItems[3].l,
-            dtfItems[4].p, dtfItems[4].l, dtfItems[5].p, dtfItems[5].l,
-            dtfItems[6].p, dtfItems[6].l, dtfItems[7].p, dtfItems[7].l
-        ]);
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `;
+            await connection.query(dtfQuery, [
+                nomor, data.biayaPerCmDtf, data.dtfMinCharge, data.dtfCost,
+                dtfItems[0].p, dtfItems[0].l, dtfItems[1].p, dtfItems[1].l,
+                dtfItems[2].p, dtfItems[2].l, dtfItems[3].p, dtfItems[3].l,
+                dtfItems[4].p, dtfItems[4].l, dtfItems[5].p, dtfItems[5].l,
+                dtfItems[6].p, dtfItems[6].l, dtfItems[7].p, dtfItems[7].l
+            ]);
+        }
 
         await connection.commit(); // <-- SUKSES, SIMPAN SEMUA PERUBAHAN
         return { message: `Pengajuan harga ${nomor} berhasil disimpan.` };
@@ -339,7 +308,7 @@ module.exports = {
     getDiscountByBruto,
     searchProductsByType,
     searchAdditionalCosts,
-    getFullProposalDetails,
+    getProposalForEdit,
     renameProposalImage,
     saveProposal,
 };
