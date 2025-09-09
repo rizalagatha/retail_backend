@@ -36,7 +36,7 @@ const app = express();
 const port = process.env.PORT || 8000;
 const allowedOrigins = [
   "http://localhost:5173",   // vite dev server
-  "http://134.209.106.4"     // frontend di VPS
+  "http://134.209.106.4:8080"     // frontend di VPS
 ];
 const imageFolderPath = path.join(process.cwd(), 'public', 'images');
 
