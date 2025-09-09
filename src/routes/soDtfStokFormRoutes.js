@@ -30,4 +30,10 @@ router.post(
 
 router.get('/print-data/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), soDtfStokFormController.getPrintData);
 
+// Rute untuk ekspor data header
+router.get('/export-header', verifyToken, checkPermission(MENU_ID, 'view'), soDtfStokController.exportHeader);
+
+// Rute untuk ekspor data detail
+router.get('/export-detail', verifyToken, checkPermission(MENU_ID, 'view'), soDtfStokController.exportDetail);
+
 module.exports = router;

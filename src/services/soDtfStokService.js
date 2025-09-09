@@ -1,4 +1,5 @@
 const pool = require('../config/database');
+const ExcelJS = require('exceljs');
 
 // Mengambil daftar data (SQLMaster)
 const getList = async (filters) => {
@@ -85,9 +86,29 @@ const getCabangList = async (user) => {
 // Menutup SO
 const close = async (data) => {
     const { nomor, alasan, user } = data;
+
+    // 1. Ambil data LHK dan Jumlah untuk validasi
+    const [rows] = await pool.query(`
+        SELECT 
+            IFNULL((SELECT SUM(i.sds_jumlah) FROM tsodtf_stok i WHERE i.sds_nomor = h.sd_nomor), 0) AS Jumlah,
+            IFNULL((SELECT SUM(i.dsd_jumlah) FROM tdtfstok_dtl i JOIN tdtfstok_hdr j ON j.ds_nomor = i.dsd_nomor WHERE j.ds_sd_nomor = h.sd_nomor), 0) AS LHK
+        FROM tsodtf_hdr h
+        WHERE h.sd_nomor = ?
+    `, [nomor]);
+
+    if (rows.length === 0) {
+        throw new Error('Data tidak ditemukan.');
+    }
+
+    // 2. Lakukan validasi seperti di Delphi
+    if (rows[0].LHK >= rows[0].Jumlah) {
+        throw new Error('LHK sudah terpenuhi, tidak bisa di-close.');
+    }
+
+    // 3. Jika validasi lolos, update data
     const query = `UPDATE tsodtf_hdr SET sd_alasan = ?, sd_closing = 'Y', user_modified = ?, date_modified = NOW() WHERE sd_nomor = ?`;
-    const [result] = await pool.query(query, [alasan, user, nomor]);
-    if (result.affectedRows === 0) throw new Error('Gagal menutup SO, nomor tidak ditemukan.');
+    await pool.query(query, [alasan, user, nomor]);
+    
     return { message: 'SO berhasil ditutup.' };
 };
 
@@ -98,10 +119,21 @@ const remove = async (nomor, user) => {
     return { message: `SO ${nomor} berhasil dihapus.` };
 };
 
+const exportHeader = async (filters) => {
+    return await getList(filters); // Cukup kembalikan data JSON
+};
+
+const exportDetail = async (filters) => {
+    // Implementasi query detail untuk export
+    // ... (query ini akan menggabungkan header dan detail)
+};
+
 module.exports = {
     getList,
     getDetails,
     getCabangList,
     close,
     remove,
+    exportHeader,
+    exportDetail,
 };
