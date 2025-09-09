@@ -108,25 +108,68 @@ const getCustomerDetails = async (kode) => {
     };
 };
 
+/**
+ * @description Menyimpan data Penawaran (Baru & Ubah).
+ */
 const saveOffer = async (data) => {
-    const { header, details, user } = data;
+    const { header, footer, details, user, isNew } = data;
     const connection = await pool.getConnection();
-    try {
-        await connection.beginTransaction();
+    await connection.beginTransaction();
 
-        // Simpan Header
-        await connection.query('INSERT INTO tpenawaran_hdr (pen_nomor, pen_tanggal, ...) VALUES (?, ?, ...)', [header.nomor, header.tanggal, /* ... kolom lain ... */]);
-        
-        // Simpan Detail
-        for (const item of details) {
-            await connection.query('INSERT INTO tpenawaran_dtl (pend_nomor, pend_kode, ...) VALUES (?, ?, ...)', [header.nomor, item.kode, /* ... kolom lain ... */]);
+    try {
+        let nomorPenawaran = header.nomor;
+
+        // 1. Tentukan nomor & simpan/update data Header
+        if (isNew) {
+            nomorPenawaran = await generateNewOfferNumber(connection, header.gudang.kode, header.tanggal);
+            const insertHeaderQuery = `
+                INSERT INTO tpenawaran_hdr 
+                (pen_nomor, pen_tanggal, pen_top, pen_ppn, pen_disc, pen_disc1, pen_disc2, pen_bkrm, pen_cus_kode, pen_cus_level, pen_ket, user_create, date_create) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            `;
+            await connection.query(insertHeaderQuery, [
+                nomorPenawaran, header.tanggal, header.top, header.ppnPersen, 
+                footer.diskonRp, footer.diskonPersen1, footer.diskonPersen2, footer.biayaKirim,
+                header.customer.kode, header.customer.level.split(' - ')[0], header.keterangan, user.kode
+            ]);
+        } else {
+            const updateHeaderQuery = `
+                UPDATE tpenawaran_hdr SET
+                pen_tanggal = ?, pen_top = ?, pen_ppn = ?, pen_disc = ?, pen_disc1 = ?, pen_disc2 = ?, pen_bkrm = ?,
+                pen_cus_kode = ?, pen_cus_level = ?, pen_ket = ?, user_modified = ?, date_modified = NOW()
+                WHERE pen_nomor = ?
+            `;
+            await connection.query(updateHeaderQuery, [
+                header.tanggal, header.top, header.ppnPersen, footer.diskonRp, footer.diskonPersen1, footer.diskonPersen2, footer.biayaKirim,
+                header.customer.kode, header.customer.level.split(' - ')[0], header.keterangan, user.kode,
+                nomorPenawaran
+            ]);
         }
 
+        // 2. Hapus detail lama (pola delete-then-insert dari Delphi)
+        await connection.query('DELETE FROM tpenawaran_dtl WHERE pend_nomor = ?', [nomorPenawaran]);
+
+        // 3. Sisipkan detail baru
+        for (const [index, item] of details.entries()) {
+            const insertDetailQuery = `
+                INSERT INTO tpenawaran_dtl
+                (pend_nomor, pend_kode, pend_ph_nomor, pend_sd_nomor, pend_ukuran, pend_jumlah, pend_harga, pend_disc, pend_diskon, pend_nourut)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `;
+            await connection.query(insertDetailQuery, [
+                nomorPenawaran, item.kode, item.noPengajuanHarga, item.noSoDtf, item.ukuran,
+                item.jumlah, item.harga, item.diskonPersen, item.diskonRp, index + 1
+            ]);
+        }
+        
+        // TODO: Tambahkan logika untuk menyimpan data otorisasi (totorisasi) jika diperlukan
+
         await connection.commit();
-        return { success: true, message: `Penawaran ${header.nomor} berhasil disimpan.` };
+        return { success: true, message: `Penawaran ${nomorPenawaran} berhasil disimpan.` };
     } catch (error) {
         await connection.rollback();
-        throw error;
+        console.error("Error in saveOffer service:", error); // Log error detail di backend
+        throw new Error('Terjadi kesalahan saat menyimpan data di server.');
     } finally {
         connection.release();
     }

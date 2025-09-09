@@ -54,10 +54,13 @@ const getCustomerDetails = async (req, res) => {
 const saveOffer = async (req, res) => {
     try {
         const result = await offerFormService.saveOffer(req.body);
-        res.status(201).json(result);
+        // Gunakan status 201 untuk data baru, 200 untuk update
+        const statusCode = req.body.isNew ? 201 : 200;
+        res.status(statusCode).json(result);
     } catch (error) {
         console.error('Error saving offer:', error);
-        res.status(500).json({ message: 'Gagal menyimpan penawaran.' });
+        // Kirim pesan error yang lebih spesifik dari service
+        res.status(500).json({ message: error.message || 'Gagal menyimpan penawaran.' });
     }
 };
 
