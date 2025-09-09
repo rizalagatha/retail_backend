@@ -46,30 +46,29 @@ const saveCustomer = async (customerData) => {
         const cusAktif = status === 'AKTIF' ? 0 : 1;
         let newKode = kode;
 
+        // ✅ Format tanggal lahir ke YYYY-MM-DD
         let formattedTglLahir = null;
         if (tglLahir) {
             formattedTglLahir = new Date(tglLahir).toISOString().split('T')[0]; 
         }
 
         if (isNew) {
-            // Ganti 'K03' dengan cabang user yang sedang login
             const userCabang = 'K03'; 
             newKode = await generateNewCustomerCode(userCabang);
 
             await connection.query(
                 `INSERT INTO tcustomer (cus_kode, cus_nama, cus_alamat, cus_kota, cus_telp, cus_nama_kontak, cus_tgllahir, cus_top, cus_aktif, cus_npwp, cus_nama_npwp, cus_alamat_npwp, cus_kota_npwp) 
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [newKode, nama, alamat, kota, telp, namaKontak, tglLahir, top, cusAktif, npwp, namaNpwp, alamatNpwp, kotaNpwp]
+                [newKode, nama, alamat, kota, telp, namaKontak, formattedTglLahir, top, cusAktif, npwp, namaNpwp, alamatNpwp, kotaNpwp]
             );
         } else {
             await connection.query(
                 `UPDATE tcustomer SET cus_nama = ?, cus_alamat = ?, cus_kota = ?, cus_telp = ?, cus_nama_kontak = ?, cus_tgllahir = ?, cus_top = ?, cus_aktif = ?, cus_npwp = ?, cus_nama_npwp = ?, cus_alamat_npwp = ?, cus_kota_npwp = ?
                  WHERE cus_kode = ?`,
-                [nama, alamat, kota, telp, namaKontak, tglLahir, top, cusAktif, npwp, namaNpwp, alamatNpwp, kotaNpwp, newKode]
+                [nama, alamat, kota, telp, namaKontak, formattedTglLahir, top, cusAktif, npwp, namaNpwp, alamatNpwp, kotaNpwp, newKode]
             );
         }
 
-        // Logika untuk update history level
         if (level) {
              await connection.query(
                 `INSERT INTO tcustomer_level_history (clh_cus_kode, clh_tanggal, clh_level) 
