@@ -181,7 +181,7 @@ const getProposalForEdit = async (nomor) => {
     // 5. Ambil data DTF
     const [dtfDataRows] = await pool.query('SELECT * FROM tpengajuanharga_dtf WHERE phd_nomor = ?', [nomor]);
     const dtfData = dtfDataRows.length > 0 ? dtfDataRows[0] : null;
-    
+
     // 6. Cek & kirim URL gambar jika ada
     const cabang = nomor.substring(0, 3);
     const imagePath = path.join(process.cwd(), 'public', 'images', cabang, `${nomor}.jpg`);
@@ -216,7 +216,9 @@ const renameProposalImage = async (tempFilePath, nomor) => {
 };
 
 const saveProposal = async (data) => {
-    const { header, details, bordirItems = [], dtfItems = [], additionalCostItems = [], user, isNew } = data;
+    const { header, details, bordirItems = [], dtfItems = [], additionalCostItems = [],
+        user, isNew, biayaPerCmBordir, bordirMinCharge, bordirCost,
+        biayaPerCmDtf, dtfMinCharge, dtfCost } = data;
     const connection = await pool.getConnection();
 
     try {
@@ -236,8 +238,8 @@ const saveProposal = async (data) => {
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
             `;
             await connection.query(headerQuery, [
-                nomor, header.tanggal, header.ketersediaan === 'Custom' ? 'Y' : 'N', 
-                header.customerKode, header.keterangan, header.jenisKaos, 
+                nomor, header.tanggal, header.ketersediaan === 'Custom' ? 'Y' : 'N',
+                header.customerKode, header.keterangan, header.jenisKaos,
                 header.approval, data.footer.diskon, user.kode
             ]);
         } else {
@@ -253,7 +255,6 @@ const saveProposal = async (data) => {
             ]);
         }
 
-        // 2. Hapus detail lama & Simpan detail ukuran baru (tpengajuanharga_size)
         // 4. Hapus & Simpan data bordir HANYA JIKA ADA
         await connection.query(`DELETE FROM tpengajuanharga_bordir WHERE phb_nomor = ?`, [nomor]);
         if (bordirItems && bordirItems.length > 0) {
@@ -270,21 +271,22 @@ const saveProposal = async (data) => {
                 bordirItems[6].p, bordirItems[6].l, bordirItems[7].p, bordirItems[7].l
             ]);
         }
-        
-        // 5. Hapus & Simpan data DTF HANYA JIKA ADA
+
+        // 5. Hapus DTF lama & Simpan DTF baru HANYA JIKA ADA DATA
         await connection.query(`DELETE FROM tpengajuanharga_dtf WHERE phd_nomor = ?`, [nomor]);
-        if (dtfItems && dtfItems.length > 0) {
+        // Cek jika ada item DTF yang diisi (p atau l > 0)
+        const hasDtfData = dtfItems.some(item => (item.p || 0) > 0 || (item.l || 0) > 0);
+        if (hasDtfData) {
             const dtfQuery = `
-                INSERT INTO tpengajuanharga_dtf
-                (phd_nomor, phd_cmdtf, phd_mindtf, phd_rpdtf, phd_dtfp1, phd_dtfl1, phd_dtfp2, phd_dtfl2, phd_dtfp3, phd_dtfl3, phd_dtfp4, phd_dtfl4, phd_dtfp5, phd_dtfl5, phd_dtfp6, phd_dtfl6, phd_dtfp7, phd_dtfl7, phd_dtfp8, phd_dtfl8)
+                INSERT INTO tpengajuanharga_dtf (phd_nomor, phd_cmdtf, phd_mindtf, phd_rpdtf, phd_dtfp1, phd_dtfl1, phd_dtfp2, phd_dtfl2, phd_dtfp3, phd_dtfl3, phd_dtfp4, phd_dtfl4, phd_dtfp5, phd_dtfl5, phd_dtfp6, phd_dtfl6, phd_dtfp7, phd_dtfl7, phd_dtfp8, phd_dtfl8)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
             await connection.query(dtfQuery, [
-                nomor, data.biayaPerCmDtf, data.dtfMinCharge, data.dtfCost,
-                dtfItems[0].p, dtfItems[0].l, dtfItems[1].p, dtfItems[1].l,
-                dtfItems[2].p, dtfItems[2].l, dtfItems[3].p, dtfItems[3].l,
-                dtfItems[4].p, dtfItems[4].l, dtfItems[5].p, dtfItems[5].l,
-                dtfItems[6].p, dtfItems[6].l, dtfItems[7].p, dtfItems[7].l
+                nomor, biayaPerCmDtf || 0, dtfMinCharge || 0, dtfCost || 0,
+                dtfItems[0]?.p || 0, dtfItems[0]?.l || 0, dtfItems[1]?.p || 0, dtfItems[1]?.l || 0,
+                dtfItems[2]?.p || 0, dtfItems[2]?.l || 0, dtfItems[3]?.p || 0, dtfItems[3]?.l || 0,
+                dtfItems[4]?.p || 0, dtfItems[4]?.l || 0, dtfItems[5]?.p || 0, dtfItems[5]?.l || 0,
+                dtfItems[6]?.p || 0, dtfItems[6]?.l || 0, dtfItems[7]?.p || 0, dtfItems[7]?.l || 0
             ]);
         }
 
