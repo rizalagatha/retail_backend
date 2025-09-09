@@ -396,6 +396,7 @@ const getDataForPrint = async (nomor) => {
     const detailQuery = `
         SELECT 
             IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)), "Jasa Cetak") AS nama_barang,
+            d.pend_ukuran AS ukuran,
             d.pend_jumlah AS qty,
             d.pend_harga AS harga,
             d.pend_diskon AS diskon,
