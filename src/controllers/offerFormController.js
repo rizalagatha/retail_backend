@@ -110,6 +110,18 @@ const searchPriceProposals = async (req, res) => {
     }
 };
 
+const getPrintData = async (req, res) => {
+    try {
+        const { nomor } = req.params;
+        const data = await offerFormService.getDataForPrint(nomor);
+        if (!data) {
+            return res.status(404).json({ message: 'Data penawaran tidak ditemukan.' });
+        }
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
 
 module.exports = {
     getNextNumber,
@@ -120,4 +132,5 @@ module.exports = {
     getDetailsForEdit,
     searchSoDtf,
     searchPriceProposals,
+    getPrintData,
 };

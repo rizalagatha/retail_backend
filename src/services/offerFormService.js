@@ -1,5 +1,6 @@
 const pool = require('../config/database');
 const { format, addDays, parseISO } = require('date-fns');
+const { get } = require('../routes/salesCounterRoute');
 
 /**
  * @description Membuat nomor Penawaran baru (getmaxnomor versi Delphi).
@@ -353,6 +354,65 @@ const searchApprovedPriceProposals = async (params) => {
     return rows;
 };
 
+/**
+ * @description Mengambil semua data yang diperlukan untuk mencetak satu Penawaran.
+ * @param {string} nomor - Nomor Penawaran.
+ * @returns {Promise<object|null>} Objek berisi semua data untuk dicetak.
+ */
+const getDataForPrint = async (nomor) => {
+    // 1. Ambil data Header, Customer, dan Gudang
+    const headerQuery = `
+        SELECT 
+            h.pen_nomor, h.pen_tanggal, h.pen_ket, h.user_create,
+            c.cus_nama, c.cus_alamat, c.cus_telp,
+            g.gdg_inv_nama, g.gdg_inv_alamat, g.gdg_inv_kota, g.gdg_inv_telp,
+            f.total, f.diskon, f.ppn, f.biaya_kirim, f.grand_total
+        FROM tpenawaran_hdr h
+        LEFT JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
+        LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.pen_nomor, 3)
+        LEFT JOIN (
+            SELECT 
+                pend_nomor,
+                SUM(pend_jumlah * (pend_harga - pend_diskon)) as total,
+                (SELECT pen_disc FROM tpenawaran_hdr WHERE pen_nomor = d.pend_nomor) as diskon,
+                (SELECT pen_ppn FROM tpenawaran_hdr WHERE pen_nomor = d.pend_nomor) as ppn,
+                (SELECT pen_bkrm FROM tpenawaran_hdr WHERE pen_nomor = d.pend_nomor) as biaya_kirim,
+                (
+                    SUM(pend_jumlah * (pend_harga - pend_diskon)) - 
+                    (SELECT pen_disc FROM tpenawaran_hdr WHERE pen_nomor = d.pend_nomor) +
+                    ((SELECT pen_ppn FROM tpenawaran_hdr WHERE pen_nomor = d.pend_nomor)/100 * (SUM(pend_jumlah * (pend_harga - pend_diskon)) - (SELECT pen_disc FROM tpenawaran_hdr WHERE pen_nomor = d.pend_nomor))) +
+                    (SELECT pen_bkrm FROM tpenawaran_hdr WHERE pen_nomor = d.pend_nomor)
+                ) as grand_total
+            FROM tpenawaran_dtl d
+            WHERE pend_nomor = ?
+            GROUP BY pend_nomor
+        ) f ON f.pend_nomor = h.pen_nomor
+        WHERE h.pen_nomor = ?
+    `;
+    const [headerRows] = await pool.query(headerQuery, [nomor, nomor]);
+    if (headerRows.length === 0) return null;
+
+    // 2. Ambil data Detail
+    const detailQuery = `
+        SELECT 
+            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)), "Jasa Cetak") AS nama_barang,
+            d.pend_jumlah AS qty,
+            d.pend_harga AS harga,
+            d.pend_diskon AS diskon,
+            (d.pend_jumlah * (d.pend_harga - d.pend_diskon)) as total
+        FROM tpenawaran_dtl d
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.pend_kode
+        WHERE d.pend_nomor = ? 
+        ORDER BY d.pend_nourut
+    `;
+    const [detailRows] = await pool.query(detailQuery, [nomor]);
+
+    return {
+        header: headerRows[0],
+        details: detailRows
+    };
+};
+
 module.exports = {
     generateNewOfferNumber,
     searchCustomers,
@@ -362,4 +422,5 @@ module.exports = {
     getOfferForEdit,
     searchAvailableSoDtf,
     searchApprovedPriceProposals,
+    getDataForPrint,
 };

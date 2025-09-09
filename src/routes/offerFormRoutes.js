@@ -42,4 +42,6 @@ router.get('/search/so-dtf', verifyToken, checkPermission(OFFER_MENU_ID, 'view')
 // GET: Mencari Pengajuan Harga yang sudah disetujui
 router.get('/search/price-proposals', verifyToken, checkPermission(OFFER_MENU_ID, 'view'), offerFormController.searchPriceProposals);
 
+router.get('/print-data/:nomor', verifyToken, checkPermission(OFFER_MENU_ID, 'view'), offerFormController.getPrintData);
+
 module.exports = router;
