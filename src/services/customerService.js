@@ -46,6 +46,11 @@ const saveCustomer = async (customerData) => {
         const cusAktif = status === 'AKTIF' ? 0 : 1;
         let newKode = kode;
 
+        let formattedTglLahir = null;
+        if (tglLahir) {
+            formattedTglLahir = new Date(tglLahir).toISOString().split('T')[0]; 
+        }
+
         if (isNew) {
             // Ganti 'K03' dengan cabang user yang sedang login
             const userCabang = 'K03'; 
