@@ -17,6 +17,6 @@ router.post('/', verifyToken, checkPermission(MENU_ID, 'insert'), soDtfStokFormC
 // PUT: Memperbarui data yang ada
 router.put('/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), soDtfStokFormController.saveData);
 
-// TODO: Tambahkan rute untuk form bantuan lain jika diperlukan (sales, jenis order, dll.)
+router.get('/lookup/jenis-order-stok', verifyToken, checkPermission(MENU_ID, 'view'), soDtfStokFormController.searchJenisOrderStok);
 
 module.exports = router;

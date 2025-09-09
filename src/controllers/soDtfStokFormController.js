@@ -30,8 +30,19 @@ const saveData = async (req, res) => {
     }
 };
 
+const searchJenisOrderStok = async (req, res) => {
+    try {
+        const { term } = req.query;
+        const data = await soDtfStokFormService.searchJenisOrderStok(term);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getTemplateItems,
     loadDataForEdit,
     saveData,
+    searchJenisOrderStok,
 };

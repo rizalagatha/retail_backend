@@ -80,8 +80,25 @@ const saveData = async (nomor, data, user) => {
     }
 };
 
+const searchJenisOrderStok = async (term) => {
+    // Query ini meniru logika dari edtjoKeyDown di Delphi
+    const query = `
+        SELECT 
+            jo_kode AS kode, 
+            jo_nama AS nama 
+        FROM kencanaprint.tjenisorder
+        WHERE jo_kode IN ('SD', 'DP') 
+          AND (jo_kode LIKE ? OR jo_nama LIKE ?)
+        ORDER BY jo_nama
+    `;
+    const searchTerm = `%${term || ''}%`;
+    const [rows] = await pool.query(query, [searchTerm, searchTerm]);
+    return rows;
+};
+
 module.exports = {
     getTemplateItems,
     loadDataForEdit,
     saveData,
+    searchJenisOrderStok,
 };
