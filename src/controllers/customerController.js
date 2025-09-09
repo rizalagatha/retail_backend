@@ -9,10 +9,26 @@ const getAll = async (req, res) => {
     }
 };
 
-const save = async (req, res) => {
+/**
+ * @description Menangani permintaan untuk membuat customer baru.
+ */
+const create = async (req, res) => {
     try {
-        const result = await customerService.saveCustomer(req.body);
+        const result = await customerService.createCustomer(req.body, req.user);
         res.status(201).json(result);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+/**
+ * @description Menangani permintaan untuk memperbarui customer.
+ */
+const update = async (req, res) => {
+    try {
+        const { kode } = req.params;
+        const result = await customerService.updateCustomer(kode, req.body);
+        res.json(result);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -64,7 +80,8 @@ const getLevels = async (req, res) => {
 
 module.exports = { 
     getAll, 
-    save, 
+    create, 
+    update,
     remove, 
     getDetails, 
     getNextCode, 

@@ -33,8 +33,8 @@ router.get('/levels', verifyToken, checkPermission(CUSTOMER_MENU_ID, 'view'), cu
 // Membutuhkan hak 'view' untuk melihat daftar semua customer
 router.get('/', verifyToken, checkPermission(CUSTOMER_MENU_ID, 'view'), customerController.getAll);
 
-// Menggunakan middleware khusus 'checkSavePermission' untuk menangani insert/edit
-router.post('/save', verifyToken, checkSavePermission, customerController.save);
+router.post('/', customerController.create); // POST ke /api/customers untuk membuat data baru
+router.put('/:kode', customerController.update); // PUT ke /api/customers/K0300197 untuk mengubah
 
 // Rute Dinamis
 // Membutuhkan hak 'delete' untuk menghapus
