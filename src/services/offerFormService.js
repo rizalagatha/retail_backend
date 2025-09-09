@@ -113,6 +113,9 @@ const getCustomerDetails = async (kode) => {
  */
 const saveOffer = async (data) => {
     const { header, footer, details, user, isNew } = data;
+    if (!header || !header.tanggal) {
+        throw new Error('Tanggal penawaran tidak boleh kosong.');
+    }
     const connection = await pool.getConnection();
     await connection.beginTransaction();
 
