@@ -1,9 +1,11 @@
 // backend/src/services/customerService.js
 const pool = require('../config/database');
 
+// Di file: src/services/customerService.js
+
 const getAllCustomers = async () => {
-    // Query ini telah diperbarui untuk mengambil kolom tambahan
-    // dan melakukan JOIN dengan tcustomer_level melalui history level terakhir.
+    // Query ini menggunakan correlated subquery yang lebih robust untuk
+    // menjamin hanya satu level (yang terbaru) yang diambil per customer.
     const query = `
         SELECT 
             c.cus_kode AS kode,
@@ -17,16 +19,14 @@ const getAllCustomers = async () => {
             c.cus_top AS top,
             lvl.level_nama AS level
         FROM tcustomer c
-        LEFT JOIN (
-            SELECT h.clh_cus_kode, h.clh_level
-            FROM tcustomer_level_history h
-            WHERE h.clh_tanggal = (
-                SELECT MAX(h2.clh_tanggal)
-                FROM tcustomer_level_history h2
-                WHERE h2.clh_cus_kode = h.clh_cus_kode
-            )
-        ) AS latest_history ON c.cus_kode = latest_history.clh_cus_kode
-        LEFT JOIN tcustomer_level lvl ON latest_history.clh_level = lvl.level_kode
+        LEFT JOIN tcustomer_level_history h ON h.clh_id = (
+            SELECT h2.clh_id
+            FROM tcustomer_level_history h2
+            WHERE h2.clh_cus_kode = c.cus_kode
+            ORDER BY h2.clh_tanggal DESC, h2.clh_id DESC
+            LIMIT 1
+        )
+        LEFT JOIN tcustomer_level lvl ON h.clh_level = lvl.level_kode
         ORDER BY c.cus_kode;
     `;
     const [rows] = await pool.query(query);
