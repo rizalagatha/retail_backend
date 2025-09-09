@@ -2,24 +2,17 @@ const pool = require('../config/database');
 const { format, addDays } = require('date-fns');
 
 // Meniru fungsi getmaxnomor
-const generateNewOfferNumber = async (connection, cabang, tanggal) => {
-    // 'tanggal' yang masuk ke sini adalah string, contoh: "2025-09-09"
-
-    // --- PERBAIKAN ---
-    // Kita ambil langsung dari string 'yyyy-MM-dd' tanpa perlu parsing
-    const yearPart = tanggal.substring(2, 4); // Mengambil '25' dari '2025-09-09'
-    const monthPart = tanggal.substring(5, 7); // Mengambil '09' dari '2025-09-09'
-    const datePrefix = yearPart + monthPart; // Hasilnya menjadi '2509'
-
-    const prefix = `${cabang}.PEN.${datePrefix}`;
+const generateNewOfferNumber = async (cabang, tanggal) => {
+    const prefix = `${cabang}PEN${format(new Date(tanggal), 'yyMM')}`;
     const query = `
-        SELECT IFNULL(MAX(CAST(RIGHT(pen_nomor, 4) AS UNSIGNED)), 0) as maxNum 
+        SELECT IFNULL(MAX(RIGHT(pen_nomor, 4)), 0) as lastNum 
         FROM tpenawaran_hdr 
-        WHERE LEFT(pen_nomor, ${prefix.length}) = ?
+        WHERE LEFT(pen_nomor, 10) = ?
     `;
-    const [rows] = await connection.query(query, [prefix]);
-    const nextNum = rows[0].maxNum + 1;
-    return `${prefix}.${String(nextNum).padStart(4, '0')}`;
+    const [rows] = await pool.query(query, [prefix]);
+    const lastNum = parseInt(rows[0].lastNum, 10);
+    const newNum = (lastNum + 1).toString().padStart(4, '0');
+    return `${prefix}${newNum}`;
 };
 
 // Meniru F1 untuk pencarian customer
