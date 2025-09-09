@@ -1,5 +1,5 @@
 const pool = require('../config/database');
-const { format, addDays } = require('date-fns');
+const { format, addDays, parseISO } = require('date-fns');
 
 // Meniru fungsi getmaxnomor
 const generateNewOfferNumber = async (cabang, tanggal) => {
@@ -122,7 +122,9 @@ const saveOffer = async (data) => {
 
         // 1. Tentukan nomor & simpan/update data Header
         if (isNew) {
-            nomorPenawaran = await generateNewOfferNumber(connection, header.gudang.kode, header.tanggal);
+            const tanggalObjek = parseISO(header.tanggal);
+
+            nomorPenawaran = await generateNewOfferNumber(connection, header.gudang.kode, tanggalObjek);
             
             // MEMBUAT IDREC SEPERTI DI DELPHI
             idrec = `${header.gudang.kode}PEN${format(new Date(), 'yyyyMMddHHmmssSSS')}`;
