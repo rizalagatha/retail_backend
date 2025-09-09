@@ -9,7 +9,10 @@ const PRICE_PROPOSAL_MENU_ID = 38;
 
 // Middleware untuk rute /save yang menangani 'insert' dan 'edit'
 const checkSavePermission = (req, res, next) => {
-    const action = req.body.isNew ? 'insert' : 'edit';
+    // Ambil flag isNew dari body. Jika tidak ada, anggap sebagai insert.
+    const action = req.body.isNew === false ? 'edit' : 'insert';
+    
+    // Jalankan middleware checkPermission yang sudah ada dengan aksi yang benar
     return checkPermission(PRICE_PROPOSAL_MENU_ID, action)(req, res, next);
 };
 
@@ -29,7 +32,7 @@ router.get('/next-number', verifyToken, checkPermission(PRICE_PROPOSAL_MENU_ID, 
 router.get('/:nomor', verifyToken, checkPermission(PRICE_PROPOSAL_MENU_ID, 'edit'), priceProposalFormController.getForEdit);
 
 // Rute 'save' dan 'upload' membutuhkan hak 'insert' ATAU 'edit'
-router.post('/save', verifyToken, checkPermission(PRICE_PROPOSAL_MENU_ID, ['insert', 'edit']), priceProposalFormController.save);
+router.post('/save', verifyToken, checkSavePermission, priceProposalFormController.save);
 router.post(
     '/upload-image/:nomor',
     verifyToken,
