@@ -194,6 +194,21 @@ const saveOffer = async (data) => {
             ]);
         }
 
+        for (const item of details) {
+            if (item.pin) { // Simpan PIN per item
+                const pinItemQuery = 'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_nominal) VALUES (?, "PENAWARAN", "DISKON ITEM", ?, NOW(), ?, ?)';
+                await connection.query(pinItemQuery, [nomorPenawaran, item.barcode, item.pin, item.diskonPersen]);
+            }
+        }
+        if (footer.pinDiskon1) { // Simpan PIN Diskon Faktur 1
+            const pinFaktur1Query = 'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "PENAWARAN", "DISKON FAKTUR", NOW(), ?, ?)';
+            await connection.query(pinFaktur1Query, [nomorPenawaran, footer.pinDiskon1, footer.diskonPersen1]);
+        }
+        if (footer.pinDiskon2) { // Simpan PIN Diskon Faktur 2
+            const pinFaktur2Query = 'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "PENAWARAN", "DISKON FAKTUR 2", NOW(), ?, ?)';
+            await connection.query(pinFaktur2Query, [nomorPenawaran, footer.pinDiskon2, footer.diskonPersen2]);
+        }
+
         await connection.commit();
         return { success: true, message: `Penawaran ${nomorPenawaran} berhasil disimpan.` };
     } catch (error) {
