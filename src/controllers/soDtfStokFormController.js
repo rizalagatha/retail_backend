@@ -64,10 +64,24 @@ const uploadImage = async (req, res) => {
     }
 };
 
+const getPrintData = async (req, res) => {
+    try {
+        const { nomor } = req.params;
+        const data = await soDtfStokFormService.getDataForPrint(nomor);
+        if (!data) {
+            return res.status(404).json({ message: 'Data untuk dicetak tidak ditemukan.' });
+        }
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getTemplateItems,
     loadDataForEdit,
     saveData,
     searchJenisOrderStok,
     uploadImage,
+    getPrintData,
 };

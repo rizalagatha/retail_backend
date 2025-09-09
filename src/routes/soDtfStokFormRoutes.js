@@ -28,4 +28,6 @@ router.post(
     soDtfStokFormController.uploadImage
 );
 
+router.get('/print-data/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), soDtfStokFormController.getPrintData);
+
 module.exports = router;

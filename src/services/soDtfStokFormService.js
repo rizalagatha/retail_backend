@@ -131,10 +131,45 @@ const processSoDtfStokImage = async (tempFilePath, nomorSo) => {
     });
 };
 
+/**
+ * @description Mengambil semua data yang diperlukan untuk mencetak SO DTF Stok.
+ * @param {string} nomor - Nomor SO DTF Stok.
+ * @returns {Promise<object|null>} Objek berisi semua data untuk dicetak.
+ */
+const getDataForPrint = async (nomor) => {
+    const query = `
+        SELECT 
+            h.*,
+            LEFT(h.sd_nomor, 3) AS store,
+            g.pab_nama AS gdg_nama,
+            o.jo_nama,
+            DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
+            IFNULL((SELECT SUM(i.sds_jumlah) FROM tsodtf_stok i WHERE i.sds_nomor = h.sd_nomor), 0) AS jumlah,
+            (SELECT CAST(GROUP_CONCAT(CONCAT(sds_ukuran, "=", sds_jumlah) SEPARATOR ", ") AS CHAR) 
+             FROM tsodtf_stok WHERE sds_nomor = h.sd_nomor AND sds_jumlah <> 0) AS ukuran
+        FROM tsodtf_hdr h
+        LEFT JOIN kencanaprint.tpabrik g ON g.pab_kode = h.sd_workshop
+        LEFT JOIN kencanaprint.tjenisorder o ON h.sd_jo_kode = o.jo_kode
+        WHERE h.sd_nomor = ?
+    `;
+    const [rows] = await pool.query(query, [nomor]);
+    if (rows.length === 0) return null;
+
+    const data = rows[0];
+
+    // Cek gambar sesuai path yang Anda minta (public/images/cabang)
+    const cabang = nomor.substring(0, 3);
+    const imagePath = path.join(process.cwd(), 'public', 'images', cabang, `${nomor}.jpg`);
+    data.imageUrl = fs.existsSync(imagePath) ? `/images/${cabang}/${nomor}.jpg` : null;
+    
+    return data;
+};
+
 module.exports = {
     getTemplateItems,
     loadDataForEdit,
     saveData,
     searchJenisOrderStok,
     processSoDtfStokImage,
+    getDataForPrint,
 };
