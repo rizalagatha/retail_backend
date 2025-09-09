@@ -4,8 +4,7 @@ const pool = require('../config/database');
 // Di file: src/services/customerService.js
 
 const getAllCustomers = async () => {
-    // Query ini menggunakan correlated subquery yang lebih robust untuk
-    // menjamin hanya satu level (yang terbaru) yang diambil per customer.
+    // Query ini telah direvisi total untuk menjamin tidak ada duplikasi dan bebas error.
     const query = `
         SELECT 
             c.cus_kode AS kode,
@@ -17,16 +16,15 @@ const getAllCustomers = async () => {
             IF(c.cus_aktif = 0, 'AKTIF', 'PASIF') AS status,
             c.cus_tgllahir AS tglLahir,
             c.cus_top AS top,
-            lvl.level_nama AS level
+            (
+                SELECT lvl.level_nama
+                FROM tcustomer_level_history h
+                LEFT JOIN tcustomer_level lvl ON h.clh_level = lvl.level_kode
+                WHERE h.clh_cus_kode = c.cus_kode
+                ORDER BY h.clh_tanggal DESC, h.clh_id DESC
+                LIMIT 1
+            ) AS level
         FROM tcustomer c
-        LEFT JOIN tcustomer_level_history h ON h.clh_id = (
-            SELECT h2.clh_id
-            FROM tcustomer_level_history h2
-            WHERE h2.clh_cus_kode = c.cus_kode
-            ORDER BY h2.clh_tanggal DESC, h2.clh_id DESC
-            LIMIT 1
-        )
-        LEFT JOIN tcustomer_level lvl ON h.clh_level = lvl.level_kode
         ORDER BY c.cus_kode;
     `;
     const [rows] = await pool.query(query);
