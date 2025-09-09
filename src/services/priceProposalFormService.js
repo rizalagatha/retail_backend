@@ -175,12 +175,12 @@ const getProposalForEdit = async (nomor) => {
 
     // 2. Ambil data Detail Ukuran
     const [sizeData] = await pool.query(`
-  SELECT d.*,
-         CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",
-                a.brg_jeniskain," ",a.brg_warna) AS nama
-  FROM tpengajuanharga_size d
-  LEFT JOIN tbarangdc a ON a.brg_kode = d.phs_kode
-  WHERE d.phs_nomor = ?
+  SELECT d.*, 
+   CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ',
+          a.brg_jeniskain, ' ', a.brg_warna) AS namaBarang
+FROM tpengajuanharga_size d
+LEFT JOIN tbarangdc a ON a.brg_kode = d.phs_kode
+WHERE d.phs_nomor = ?
 `, [nomor]);
 
     // 3. Ambil data Biaya Tambahan
