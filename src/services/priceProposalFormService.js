@@ -169,7 +169,14 @@ const getProposalForEdit = async (nomor) => {
     const headerData = headerRows[0];
 
     // 2. Ambil data Detail Ukuran
-    const [sizeData] = await pool.query('SELECT * FROM tpengajuanharga_size WHERE phs_nomor = ?', [nomor]);
+    const [sizeData] = await pool.query(`
+  SELECT d.*, 
+         CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ",
+                a.brg_jeniskain, " ", a.brg_warna) AS nama
+  FROM tpengajuanharga_size d
+  LEFT JOIN tbarangdc a ON a.brg_kode = d.phs_kode
+  WHERE d.phs_nomor = ?
+`, [nomor]);
 
     // 3. Ambil data Biaya Tambahan
     const [additionalCosts] = await pool.query('SELECT * FROM tpengajuanharga_tambahan WHERE pht_nomor = ?', [nomor]);
