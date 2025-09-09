@@ -4,8 +4,6 @@ const pool = require('../config/database');
 // Di file: src/services/customerService.js
 
 const getAllCustomers = async () => {
-    // Query ini telah direvisi final sesuai dengan struktur tabel Anda
-    // dan menjamin tidak ada duplikasi.
     const query = `
         SELECT 
             c.cus_kode AS kode,
