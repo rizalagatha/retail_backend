@@ -36,7 +36,8 @@ const getAllCustomers = async () => {
 
 const saveCustomer = async (customerData) => {
     const { 
-        isNew, kode, nama, alamat, kota, telp, namaKontak, 
+        // Kita tidak lagi butuh 'isNew' dari frontend
+        kode, nama, alamat, kota, telp, namaKontak, 
         tglLahir, top, status, level, npwp, namaNpwp, alamatNpwp, kotaNpwp 
     } = customerData;
     
@@ -44,42 +45,47 @@ const saveCustomer = async (customerData) => {
     try {
         await connection.beginTransaction();
         const cusAktif = status === 'AKTIF' ? 0 : 1;
-        let newKode = kode;
+        let customerCode = kode;
 
-        // ✅ Format tanggal lahir ke YYYY-MM-DD
+        // Format tanggal lahir ke YYYY-MM-DD
         let formattedTglLahir = null;
         if (tglLahir) {
             formattedTglLahir = new Date(tglLahir).toISOString().split('T')[0]; 
         }
 
-        if (isNew) {
-            const userCabang = 'K03'; 
-            newKode = await generateNewCustomerCode(userCabang);
+        // --- 👇 LOGIKA BARU YANG LEBIH AMAN 👇 ---
+        // Jika tidak ada 'kode', berarti ini adalah data baru.
+        if (!customerCode) {
+            const userCabang = 'K03'; // Asumsi, bisa didapat dari user login
+            customerCode = await generateNewCustomerCode(userCabang);
 
+            // INSERT data customer baru
             await connection.query(
                 `INSERT INTO tcustomer (cus_kode, cus_nama, cus_alamat, cus_kota, cus_telp, cus_nama_kontak, cus_tgllahir, cus_top, cus_aktif, cus_npwp, cus_nama_npwp, cus_alamat_npwp, cus_kota_npwp) 
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [newKode, nama, alamat, kota, telp, namaKontak, formattedTglLahir, top, cusAktif, npwp, namaNpwp, alamatNpwp, kotaNpwp]
+                [customerCode, nama, alamat, kota, telp, namaKontak, formattedTglLahir, top, cusAktif, npwp, namaNpwp, alamatNpwp, kotaNpwp]
             );
         } else {
+            // Jika ada 'kode', berarti ini adalah update data lama.
             await connection.query(
                 `UPDATE tcustomer SET cus_nama = ?, cus_alamat = ?, cus_kota = ?, cus_telp = ?, cus_nama_kontak = ?, cus_tgllahir = ?, cus_top = ?, cus_aktif = ?, cus_npwp = ?, cus_nama_npwp = ?, cus_alamat_npwp = ?, cus_kota_npwp = ?
                  WHERE cus_kode = ?`,
-                [nama, alamat, kota, telp, namaKontak, formattedTglLahir, top, cusAktif, npwp, namaNpwp, alamatNpwp, kotaNpwp, newKode]
+                [nama, alamat, kota, telp, namaKontak, formattedTglLahir, top, cusAktif, npwp, namaNpwp, alamatNpwp, kotaNpwp, customerCode]
             );
         }
+        // --- 👆 AKHIR LOGIKA BARU 👆 ---
 
         if (level) {
              await connection.query(
                 `INSERT INTO tcustomer_level_history (clh_cus_kode, clh_tanggal, clh_level) 
                  VALUES (?, CURDATE(), ?)
                  ON DUPLICATE KEY UPDATE clh_level = ?`,
-                [newKode, level, level]
-            );
+                [customerCode, level, level]
+             );
         }
 
         await connection.commit();
-        return { success: true, message: `Data customer berhasil disimpan dengan kode ${newKode}.` };
+        return { success: true, message: `Data customer berhasil disimpan dengan kode ${customerCode}.` };
     } catch (error) {
         await connection.rollback();
         console.error("Error saving customer:", error);
