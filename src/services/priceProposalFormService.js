@@ -162,7 +162,12 @@ const searchAdditionalCosts = async () => {
 
 const getProposalForEdit = async (nomor) => {
     // 1. Ambil data Header
-    const [headerRows] = await pool.query('SELECT * FROM tpengajuanharga WHERE ph_nomor = ?', [nomor]);
+    const [headerRows] = await pool.query(`
+  SELECT h.*, c.cus_nama
+  FROM tpengajuanharga h
+  LEFT JOIN tcustomer c ON c.cus_kode = h.ph_kd_cus
+  WHERE ph_nomor = ?
+`, [nomor]);
     if (headerRows.length === 0) {
         throw new Error(`Pengajuan harga dengan nomor ${nomor} tidak ditemukan.`);
     }
@@ -170,9 +175,9 @@ const getProposalForEdit = async (nomor) => {
 
     // 2. Ambil data Detail Ukuran
     const [sizeData] = await pool.query(`
-  SELECT d.*, 
-         CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ",
-                a.brg_jeniskain, " ", a.brg_warna) AS nama
+  SELECT d.*,
+         CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",
+                a.brg_jeniskain," ",a.brg_warna) AS nama
   FROM tpengajuanharga_size d
   LEFT JOIN tbarangdc a ON a.brg_kode = d.phs_kode
   WHERE d.phs_nomor = ?
