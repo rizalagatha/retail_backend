@@ -84,6 +84,31 @@ const getDetailsForEdit = async (req, res) => {
     }
 };
 
+const searchSoDtf = async (req, res) => {
+    try {
+        const { cabang, customerKode } = req.query;
+        if (!cabang || !customerKode) {
+            return res.status(400).json({ message: 'Parameter cabang dan customer diperlukan.' });
+        }
+        const data = await offerFormService.searchAvailableSoDtf(req.query);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+const searchPriceProposals = async (req, res) => {
+    try {
+        const { cabang, customerKode } = req.query;
+        if (!cabang || !customerKode) {
+            return res.status(400).json({ message: 'Parameter cabang dan customer diperlukan.' });
+        }
+        const data = await offerFormService.searchApprovedPriceProposals(req.query);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
 
 
 module.exports = {
@@ -93,4 +118,6 @@ module.exports = {
     saveOffer,
     getDefaultDiscount,
     getDetailsForEdit,
+    searchSoDtf,
+    searchPriceProposals,
 };
