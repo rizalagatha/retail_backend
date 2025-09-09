@@ -255,20 +255,21 @@ const saveProposal = async (data) => {
             ]);
         }
 
-        // 4. Hapus & Simpan data bordir HANYA JIKA ADA
+        // 4. Hapus bordir lama & Simpan bordir baru HANYA JIKA ADA DATA
         await connection.query(`DELETE FROM tpengajuanharga_bordir WHERE phb_nomor = ?`, [nomor]);
-        if (bordirItems && bordirItems.length > 0) {
+        // Cek jika ada item bordir yang diisi (p atau l > 0)
+        const hasBordirData = bordirItems.some(item => (item.p || 0) > 0 || (item.l || 0) > 0);
+        if (hasBordirData) {
             const bordirQuery = `
-                INSERT INTO tpengajuanharga_bordir 
-                (phb_nomor, phb_cmbordir, phb_minbordir, phb_rpbordir, phb_bordirp1, phb_bordirl1, phb_bordirp2, phb_bordirl2, phb_bordirp3, phb_bordirl3, phb_bordirp4, phb_bordirl4, phb_bordirp5, phb_bordirl5, phb_bordirp6, phb_bordirl6, phb_bordirp7, phb_bordirl7, phb_bordirp8, phb_bordirl8)
+                INSERT INTO tpengajuanharga_bordir (phb_nomor, phb_cmbordir, phb_minbordir, phb_rpbordir, phb_bordirp1, phb_bordirl1, phb_bordirp2, phb_bordirl2, phb_bordirp3, phb_bordirl3, phb_bordirp4, phb_bordirl4, phb_bordirp5, phb_bordirl5, phb_bordirp6, phb_bordirl6, phb_bordirp7, phb_bordirl7, phb_bordirp8, phb_bordirl8)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
             await connection.query(bordirQuery, [
-                nomor, data.biayaPerCmBordir, data.bordirMinCharge, data.bordirCost,
-                bordirItems[0].p, bordirItems[0].l, bordirItems[1].p, bordirItems[1].l,
-                bordirItems[2].p, bordirItems[2].l, bordirItems[3].p, bordirItems[3].l,
-                bordirItems[4].p, bordirItems[4].l, bordirItems[5].p, bordirItems[5].l,
-                bordirItems[6].p, bordirItems[6].l, bordirItems[7].p, bordirItems[7].l
+                nomor, biayaPerCmBordir || 0, bordirMinCharge || 0, bordirCost || 0,
+                bordirItems[0]?.p || 0, bordirItems[0]?.l || 0, bordirItems[1]?.p || 0, bordirItems[1]?.l || 0,
+                bordirItems[2]?.p || 0, bordirItems[2]?.l || 0, bordirItems[3]?.p || 0, bordirItems[3]?.l || 0,
+                bordirItems[4]?.p || 0, bordirItems[4]?.l || 0, bordirItems[5]?.p || 0, bordirItems[5]?.l || 0,
+                bordirItems[6]?.p || 0, bordirItems[6]?.l || 0, bordirItems[7]?.p || 0, bordirItems[7]?.l || 0
             ]);
         }
 
