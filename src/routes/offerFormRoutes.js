@@ -36,4 +36,10 @@ router.get('/get-default-discount', verifyToken, checkAccessPermission, offerFor
 
 router.get('/edit-details/:nomor', verifyToken, checkAccessPermission, offerFormController.getDetailsForEdit);
 
+// GET: Mencari SO DTF yang tersedia untuk ditambahkan ke penawaran
+router.get('/search/so-dtf', verifyToken, checkPermission(MENU_ID, 'view'), offerFormController.searchSoDtf);
+
+// GET: Mencari Pengajuan Harga yang sudah disetujui
+router.get('/search/price-proposals', verifyToken, checkPermission(MENU_ID, 'view'), offerFormController.searchPriceProposals);
+
 module.exports = router;

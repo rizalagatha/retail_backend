@@ -1,18 +1,24 @@
 const pool = require('../config/database');
 const { format, addDays, parseISO } = require('date-fns');
 
-// Meniru fungsi getmaxnomor
-const generateNewOfferNumber = async (cabang, tanggal) => {
-    const prefix = `${cabang}PEN${format(new Date(tanggal), 'yyMM')}`;
+/**
+ * @description Membuat nomor Penawaran baru (getmaxnomor versi Delphi).
+ */
+const generateNewOfferNumber = async (connection, cabang, tanggal) => {
+    // 'tanggal' di sini adalah string 'yyyy-MM-dd'
+    const yearPart = tanggal.substring(2, 4);
+    const monthPart = tanggal.substring(5, 7);
+    const datePrefix = yearPart + monthPart;
+
+    const prefix = `${cabang}.PEN.${datePrefix}`;
     const query = `
-        SELECT IFNULL(MAX(RIGHT(pen_nomor, 4)), 0) as lastNum 
+        SELECT IFNULL(MAX(CAST(RIGHT(pen_nomor, 4) AS UNSIGNED)), 0) as maxNum 
         FROM tpenawaran_hdr 
-        WHERE LEFT(pen_nomor, 10) = ?
+        WHERE LEFT(pen_nomor, ${prefix.length}) = ?
     `;
-    const [rows] = await pool.query(query, [prefix]);
-    const lastNum = parseInt(rows[0].lastNum, 10);
-    const newNum = (lastNum + 1).toString().padStart(4, '0');
-    return `${prefix}${newNum}`;
+    const [rows] = await connection.query(query, [prefix]);
+    const nextNum = rows[0].maxNum + 1;
+    return `${prefix}.${String(nextNum).padStart(4, '0')}`;
 };
 
 // Meniru F1 untuk pencarian customer
@@ -71,7 +77,7 @@ const searchCustomers = async (term, gudang, page, itemsPerPage) => {
 };
 
 // Meniru edtCusExit untuk mengambil detail customer
-const getCustomerDetails = async (kode) => {
+const getCustomerDetails = async (kode, gudang) => {
     const query = `
         SELECT 
             c.cus_kode, c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp, c.cus_top, c.cus_franchise,
@@ -84,14 +90,27 @@ const getCustomerDetails = async (kode) => {
             WHERE i.clh_cus_kode = ? ORDER BY i.clh_tanggal DESC LIMIT 1
         ) x ON x.clh_cus_kode = c.cus_kode
         LEFT JOIN tcustomer_level lvl ON lvl.level_kode = x.clh_level
-        WHERE c.cus_kode = ?;
+        WHERE c.cus_aktif = 0 AND c.cus_nama NOT LIKE "RETAIL%" AND c.cus_kode = ?;
     `;
     const [rows] = await pool.query(query, [kode, kode]);
     if (rows.length === 0) {
-        throw { status: 404, message: 'Customer tidak ada di database.' };
+        throw new Error('Customer tersebut tidak ada di database.');
     }
 
     const customer = rows[0];
+
+    // --- Migrasi Logika Validasi dari Delphi ---
+    if (!customer.xlevel) {
+        throw new Error('Level Customer tersebut belum di-setting.');
+    }
+    if (gudang === 'KPR' && customer.cus_franchise !== 'Y') {
+        throw new Error('Customer bukan Customer Prioritas.');
+    }
+    if (gudang !== 'KPR' && customer.cus_franchise === 'Y') {
+        throw new Error('Customer Prioritas hanya bisa transaksi di Store KPR.');
+    }
+    
+    // Jika semua validasi lolos, kembalikan data lengkap
     return {
         kode: customer.cus_kode,
         nama: customer.cus_nama,
@@ -100,10 +119,10 @@ const getCustomerDetails = async (kode) => {
         telp: customer.cus_telp,
         top: customer.cus_top,
         level: customer.xlevel,
-        discountRule: { // Kirim aturan diskon ke frontend
-            diskon1: customer.level_diskon,
-            diskon2: customer.level_diskon2,
-            nominal: customer.level_nominal
+        discountRule: {
+            diskon1: customer.level_diskon || 0,
+            diskon2: customer.level_diskon2 || 0,
+            nominal: customer.level_nominal || 0
         }
     };
 };
@@ -113,23 +132,21 @@ const getCustomerDetails = async (kode) => {
  */
 const saveOffer = async (data) => {
     const { header, footer, details, user, isNew } = data;
-    if (!header || !header.tanggal) {
-        throw new Error('Tanggal penawaran tidak boleh kosong.');
-    }
     const connection = await pool.getConnection();
     await connection.beginTransaction();
 
     try {
+        // Validasi data backend
+        if (!header || !header.tanggal) {
+            throw new Error('Tanggal penawaran tidak boleh kosong.');
+        }
+
         let nomorPenawaran = header.nomor;
         let idrec;
 
         // 1. Tentukan nomor & simpan/update data Header
         if (isNew) {
-            const tanggalObjek = parseISO(header.tanggal);
-
-            nomorPenawaran = await generateNewOfferNumber(connection, header.gudang.kode, tanggalObjek);
-            
-            // MEMBUAT IDREC SEPERTI DI DELPHI
+            nomorPenawaran = await generateNewOfferNumber(connection, header.gudang.kode, header.tanggal);
             idrec = `${header.gudang.kode}PEN${format(new Date(), 'yyyyMMddHHmmssSSS')}`;
 
             const insertHeaderQuery = `
@@ -138,17 +155,15 @@ const saveOffer = async (data) => {
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
             `;
             await connection.query(insertHeaderQuery, [
-                idrec, // <-- TAMBAHKAN nilai idrec
-                nomorPenawaran, header.tanggal, header.top, header.ppnPersen, 
+                idrec, nomorPenawaran, header.tanggal, header.top, header.ppnPersen,
                 footer.diskonRp, footer.diskonPersen1, footer.diskonPersen2, footer.biayaKirim,
                 header.customer.kode, header.customer.level.split(' - ')[0], header.keterangan, user.kode
             ]);
         } else {
-            // Untuk mode edit, kita perlu mengambil idrec yang sudah ada
             const [idrecRows] = await connection.query('SELECT pen_idrec FROM tpenawaran_hdr WHERE pen_nomor = ?', [nomorPenawaran]);
             if (idrecRows.length === 0) throw new Error('Nomor penawaran untuk diupdate tidak ditemukan.');
             idrec = idrecRows[0].pen_idrec;
-            
+
             const updateHeaderQuery = `
                 UPDATE tpenawaran_hdr SET
                 pen_tanggal = ?, pen_top = ?, pen_ppn = ?, pen_disc = ?, pen_disc1 = ?, pen_disc2 = ?, pen_bkrm = ?,
@@ -173,8 +188,7 @@ const saveOffer = async (data) => {
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
             await connection.query(insertDetailQuery, [
-                idrec, // <-- GUNAKAN idrec yang sama untuk detail
-                nomorPenawaran, item.kode, item.noPengajuanHarga, item.noSoDtf, item.ukuran,
+                idrec, nomorPenawaran, item.kode, item.noPengajuanHarga || '', item.noSoDtf || '', item.ukuran,
                 item.jumlah, item.harga, item.diskonPersen, item.diskonRp, index + 1
             ]);
         }
@@ -183,7 +197,7 @@ const saveOffer = async (data) => {
         return { success: true, message: `Penawaran ${nomorPenawaran} berhasil disimpan.` };
     } catch (error) {
         await connection.rollback();
-        console.error("Error in saveOffer service:", error); 
+        console.error("Error in saveOffer service:", error);
         throw new Error('Terjadi kesalahan saat menyimpan data di server.');
     } finally {
         connection.release();
@@ -285,6 +299,60 @@ const getOfferForEdit = async (nomor) => {
     return { headerData, itemsData, footerData };
 };
 
+/**
+ * @description Mencari SO DTF yang belum dipakai untuk Penawaran.
+ */
+const searchAvailableSoDtf = async (params) => {
+    const { cabang, customerKode, term } = params;
+    const searchTerm = `%${term}%`;
+    // Query ini meniru logika Delphi untuk mencari SO DTF yang belum masuk Penawaran/Invoice
+    const query = `
+        SELECT 
+            h.sd_nomor AS nomor,
+            h.sd_tanggal AS tanggal,
+            h.sd_nama AS namaDtf,
+            h.sd_ket AS keterangan
+        FROM tsodtf_hdr h
+        WHERE h.sd_stok = "" 
+          AND LEFT(h.sd_nomor, 3) = ?
+          AND h.sd_cus_kode = ?
+          AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?)
+          AND h.sd_nomor NOT IN (
+              SELECT DISTINCT o.pend_sd_nomor FROM tpenawaran_dtl o WHERE o.pend_sd_nomor IS NOT NULL
+              UNION
+              SELECT DISTINCT i.invd_sd_nomor FROM tinv_dtl i WHERE i.invd_sd_nomor IS NOT NULL
+          )
+        ORDER BY h.sd_tanggal DESC
+    `;
+    const [rows] = await pool.query(query, [cabang, customerKode, searchTerm, searchTerm]);
+    return rows;
+};
+
+/**
+ * @description Mencari Pengajuan Harga yang sudah disetujui.
+ */
+const searchApprovedPriceProposals = async (params) => {
+    const { cabang, customerKode, term } = params;
+    const searchTerm = `%${term}%`;
+    const query = `
+        SELECT 
+            h.ph_nomor AS nomor,
+            h.ph_tanggal AS tanggal,
+            c.cus_nama AS customer,
+            h.ph_jenis AS jenisKaos,
+            h.ph_ket AS keterangan
+        FROM tpengajuanharga h
+        LEFT JOIN tcustomer c ON c.cus_kode = h.ph_kd_cus
+        WHERE h.ph_kd_cus = ?
+          AND h.ph_apv <> ""
+          AND LEFT(h.ph_nomor, 3) = ?
+          AND (h.ph_nomor LIKE ? OR h.ph_ket LIKE ?)
+        ORDER BY h.ph_nomor DESC
+    `;
+    const [rows] = await pool.query(query, [customerKode, cabang, searchTerm, searchTerm]);
+    return rows;
+};
+
 module.exports = {
     generateNewOfferNumber,
     searchCustomers,
@@ -292,4 +360,6 @@ module.exports = {
     saveOffer,
     getDefaultDiscount,
     getOfferForEdit,
+    searchAvailableSoDtf,
+    searchApprovedPriceProposals,
 };
