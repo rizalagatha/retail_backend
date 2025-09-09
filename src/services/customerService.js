@@ -18,15 +18,14 @@ const getAllCustomers = async () => {
             lvl.level_nama AS level
         FROM tcustomer c
         LEFT JOIN (
-            -- Subquery untuk mendapatkan level terbaru untuk setiap customer
-            SELECT h1.clh_cus_kode, h1.clh_level
-            FROM tcustomer_level_history h1
-            INNER JOIN (
-                SELECT clh_cus_kode, MAX(clh_tanggal) as max_date
-                FROM tcustomer_level_history
-                GROUP BY clh_cus_kode
-            ) h2 ON h1.clh_cus_kode = h2.clh_cus_kode AND h1.clh_tanggal = h2.max_date
-        ) as latest_history ON c.cus_kode = latest_history.clh_cus_kode
+            SELECT h.clh_cus_kode, h.clh_level
+            FROM tcustomer_level_history h
+            WHERE h.clh_tanggal = (
+                SELECT MAX(h2.clh_tanggal)
+                FROM tcustomer_level_history h2
+                WHERE h2.clh_cus_kode = h.clh_cus_kode
+            )
+        ) AS latest_history ON c.cus_kode = latest_history.clh_cus_kode
         LEFT JOIN tcustomer_level lvl ON latest_history.clh_level = lvl.level_kode
         ORDER BY c.cus_kode;
     `;
