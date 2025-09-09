@@ -118,21 +118,32 @@ const saveOffer = async (data) => {
 
     try {
         let nomorPenawaran = header.nomor;
+        let idrec;
 
         // 1. Tentukan nomor & simpan/update data Header
         if (isNew) {
             nomorPenawaran = await generateNewOfferNumber(connection, header.gudang.kode, header.tanggal);
+            
+            // MEMBUAT IDREC SEPERTI DI DELPHI
+            idrec = `${header.gudang.kode}PEN${format(new Date(), 'yyyyMMddHHmmssSSS')}`;
+
             const insertHeaderQuery = `
                 INSERT INTO tpenawaran_hdr 
-                (pen_nomor, pen_tanggal, pen_top, pen_ppn, pen_disc, pen_disc1, pen_disc2, pen_bkrm, pen_cus_kode, pen_cus_level, pen_ket, user_create, date_create) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                (pen_idrec, pen_nomor, pen_tanggal, pen_top, pen_ppn, pen_disc, pen_disc1, pen_disc2, pen_bkrm, pen_cus_kode, pen_cus_level, pen_ket, user_create, date_create) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
             `;
             await connection.query(insertHeaderQuery, [
+                idrec, // <-- TAMBAHKAN nilai idrec
                 nomorPenawaran, header.tanggal, header.top, header.ppnPersen, 
                 footer.diskonRp, footer.diskonPersen1, footer.diskonPersen2, footer.biayaKirim,
                 header.customer.kode, header.customer.level.split(' - ')[0], header.keterangan, user.kode
             ]);
         } else {
+            // Untuk mode edit, kita perlu mengambil idrec yang sudah ada
+            const [idrecRows] = await connection.query('SELECT pen_idrec FROM tpenawaran_hdr WHERE pen_nomor = ?', [nomorPenawaran]);
+            if (idrecRows.length === 0) throw new Error('Nomor penawaran untuk diupdate tidak ditemukan.');
+            idrec = idrecRows[0].pen_idrec;
+            
             const updateHeaderQuery = `
                 UPDATE tpenawaran_hdr SET
                 pen_tanggal = ?, pen_top = ?, pen_ppn = ?, pen_disc = ?, pen_disc1 = ?, pen_disc2 = ?, pen_bkrm = ?,
@@ -146,29 +157,28 @@ const saveOffer = async (data) => {
             ]);
         }
 
-        // 2. Hapus detail lama (pola delete-then-insert dari Delphi)
+        // 2. Hapus detail lama
         await connection.query('DELETE FROM tpenawaran_dtl WHERE pend_nomor = ?', [nomorPenawaran]);
 
         // 3. Sisipkan detail baru
         for (const [index, item] of details.entries()) {
             const insertDetailQuery = `
                 INSERT INTO tpenawaran_dtl
-                (pend_nomor, pend_kode, pend_ph_nomor, pend_sd_nomor, pend_ukuran, pend_jumlah, pend_harga, pend_disc, pend_diskon, pend_nourut)
+                (pend_idrec, pend_nomor, pend_kode, pend_ph_nomor, pend_sd_nomor, pend_ukuran, pend_jumlah, pend_harga, pend_disc, pend_diskon, pend_nourut)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
             await connection.query(insertDetailQuery, [
+                idrec, // <-- GUNAKAN idrec yang sama untuk detail
                 nomorPenawaran, item.kode, item.noPengajuanHarga, item.noSoDtf, item.ukuran,
                 item.jumlah, item.harga, item.diskonPersen, item.diskonRp, index + 1
             ]);
         }
-        
-        // TODO: Tambahkan logika untuk menyimpan data otorisasi (totorisasi) jika diperlukan
 
         await connection.commit();
         return { success: true, message: `Penawaran ${nomorPenawaran} berhasil disimpan.` };
     } catch (error) {
         await connection.rollback();
-        console.error("Error in saveOffer service:", error); // Log error detail di backend
+        console.error("Error in saveOffer service:", error); 
         throw new Error('Terjadi kesalahan saat menyimpan data di server.');
     } finally {
         connection.release();
