@@ -20,4 +20,10 @@ router.post('/close', verifyToken, checkPermission(MENU_ID, 'edit'), soDtfStokCo
 // DELETE: Menghapus SO DTF Stok
 router.delete('/:nomor', verifyToken, checkPermission(MENU_ID, 'delete'), soDtfStokController.remove);
 
+// Rute untuk ekspor data header
+router.get('/export-header', verifyToken, checkPermission(MENU_ID, 'view'), soDtfStokController.exportHeader);
+
+// Rute untuk ekspor data detail
+router.get('/export-detail', verifyToken, checkPermission(MENU_ID, 'view'), soDtfStokController.exportDetail);
+
 module.exports = router;
