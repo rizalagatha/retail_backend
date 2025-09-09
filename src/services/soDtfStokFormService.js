@@ -1,4 +1,6 @@
 const pool = require('../config/database');
+const fs = require('fs');
+const path = require('path');
 const { format } = require('date-fns');
 
 // Fungsi untuk mengambil template grid (dari edtjoExit)
@@ -96,9 +98,43 @@ const searchJenisOrderStok = async (term) => {
     return rows;
 };
 
+/**
+ * @description Memproses gambar SO DTF Stok: me-rename dan memindahkan ke folder cabang.
+ * @param {string} tempFilePath - Path file sementara dari multer.
+ * @param {string} nomorSo - Nomor SO DTF Stok final.
+ * @returns {Promise<string>} Path final dari file yang sudah diproses.
+ */
+const processSoDtfStokImage = async (tempFilePath, nomorSo) => {
+    return new Promise((resolve, reject) => {
+        const cabang = nomorSo.substring(0, 3);
+        const finalFileName = `${nomorSo}${path.extname(tempFilePath)}`;
+
+        // Buat path ke folder tujuan (misal: .../public/images/K01)
+        const branchFolderPath = path.join(process.cwd(), 'public', 'images', cabang);
+
+        fs.mkdirSync(branchFolderPath, { recursive: true });
+
+        const finalPath = path.join(branchFolderPath, finalFileName);
+        
+        // Hapus file lama jika ada (untuk mode edit)
+        if (fs.existsSync(finalPath)) {
+            fs.unlinkSync(finalPath);
+        }
+
+        fs.rename(tempFilePath, finalPath, (err) => {
+            if (err) {
+                console.error("Gagal me-rename file SO DTF Stok:", err);
+                return reject(new Error('Gagal memproses file gambar SO DTF Stok.'));
+            }
+            resolve(finalPath);
+        });
+    });
+};
+
 module.exports = {
     getTemplateItems,
     loadDataForEdit,
     saveData,
     searchJenisOrderStok,
+    processSoDtfStokImage,
 };

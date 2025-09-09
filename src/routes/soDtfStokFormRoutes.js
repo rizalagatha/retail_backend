@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const soDtfStokFormController = require('../controllers/soDtfStokFormController');
 const { verifyToken, checkPermission } = require('../middleware/authMiddleware');
+const upload = require('../middleware/uploadMiddleware');
 
 const MENU_ID = '36'; // ID Menu SO DTF Stok
 
@@ -18,5 +19,13 @@ router.post('/', verifyToken, checkPermission(MENU_ID, 'insert'), soDtfStokFormC
 router.put('/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), soDtfStokFormController.saveData);
 
 router.get('/lookup/jenis-order-stok', verifyToken, checkPermission(MENU_ID, 'view'), soDtfStokFormController.searchJenisOrderStok);
+
+router.post(
+    '/upload-image/:nomor', 
+    verifyToken, 
+    checkPermission(MENU_ID, 'edit'),
+    upload.single('image'), // 'image' adalah nama field dari frontend
+    soDtfStokFormController.uploadImage
+);
 
 module.exports = router;
