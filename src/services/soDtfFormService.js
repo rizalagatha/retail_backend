@@ -113,7 +113,7 @@ const create = async (data, user) => {
         await connection.commit();
         const [createdHeader] = await connection.query('SELECT *, sales.sal_nama, j.jo_nama, p.pab_nama FROM tsodtf_hdr h LEFT JOIN kencanaprint.tsales sales ON h.sd_sal_kode = sales.sal_kode LEFT JOIN kencanaprint.tjenisorder j ON h.sd_jo_kode = j.jo_kode LEFT JOIN kencanaprint.tpabrik p ON h.sd_workshop = p.pab_kode WHERE sd_nomor = ?', [newNomor]);
         return { 
-            message: `Data berhasil disimpan dengan nomor: ${nomorSoDtf}`,
+            message: `Data berhasil disimpan dengan nomor: ${newNomor}`,
             header: createdHeader[0] 
         };
     } catch (error) {
