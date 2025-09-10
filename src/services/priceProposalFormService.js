@@ -185,7 +185,14 @@ const getProposalForEdit = async (nomor) => {
     }
 
     // 2. Ambil data detail ukuran/size
-    const sizeQuery = `SELECT * FROM tpengajuanharga_size WHERE phs_nomor = ?`;
+    const sizeQuery = `
+        SELECT 
+            s.*,
+            TRIM(CONCAT_WS(' ', b.brg_jeniskaos, b.brg_tipe, b.brg_lengan, b.brg_jeniskain, b.brg_warna)) AS nama_barang
+        FROM tpengajuanharga_size s 
+        LEFT JOIN tbarangdc b ON b.brg_kode = s.phs_kode AND b.brg_aktif = 0 AND b.brg_logstok = 'Y'
+        WHERE s.phs_nomor = ?
+    `;
     const [sizeRows] = await pool.query(sizeQuery, [nomor]);
 
     // 3. Ambil data bordir
