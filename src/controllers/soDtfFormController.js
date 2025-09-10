@@ -31,7 +31,18 @@ const update = async (req, res) => {
         const { nomor } = req.params;
         const user = req.user;
         const updatedData = await soDtfFormService.update(nomor, req.body, user);
-        res.json({ message: 'Data berhasil diperbarui', data: updatedData });
+        const cabang = nomor.substring(0, 3);
+        const imagePath = path.join(process.cwd(), 'public', 'images', cabang, `${nomor}.jpg`);
+        const imageUrl = fs.existsSync(imagePath)
+            ? `${req.protocol}://${req.get('host')}/images/${cabang}/${nomor}.jpg`
+            : null;
+        res.json({
+            message: 'Data berhasil diperbarui',
+            data: {
+                ...updatedData,
+                imageUrl
+            }
+        });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
