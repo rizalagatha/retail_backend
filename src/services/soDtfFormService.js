@@ -31,7 +31,7 @@ const findById = async (nomor) => {
         const cabang = nomor.substring(0, 3);
         const imagePath = path.join(process.cwd(), 'public', 'images', cabang, `${nomor}.jpg`);
 
-        header.imageUrl = fs.existsSync(imagePath) ? `/images/${cabang}/${nomor}.jpg` : null;
+        header.imageUrl = findImageFile(nomor);
 
         const detailsTitikQuery = 'SELECT sdd2_ket as keterangan, sdd2_size as sizeCetak, sdd2_panjang as panjang, sdd2_lebar as lebar FROM tsodtf_dtl2 WHERE sdd2_nomor = ? ORDER BY sdd2_nourut';
         const [detailsTitikRows] = await connection.query(detailsTitikQuery, [nomor]);
@@ -111,7 +111,11 @@ const create = async (data, user) => {
         }
 
         await connection.commit();
-        return { nomor: newNomor };
+        const [createdHeader] = await connection.query('SELECT *, sales.sal_nama, j.jo_nama, p.pab_nama FROM tsodtf_hdr h LEFT JOIN kencanaprint.tsales sales ON h.sd_sal_kode = sales.sal_kode LEFT JOIN kencanaprint.tjenisorder j ON h.sd_jo_kode = j.jo_kode LEFT JOIN kencanaprint.tpabrik p ON h.sd_workshop = p.pab_kode WHERE sd_nomor = ?', [nomorSoDtf]);
+        return { 
+            message: `Data berhasil disimpan dengan nomor: ${nomorSoDtf}`,
+            header: createdHeader[0] 
+        };
     } catch (error) {
         await connection.rollback();
         console.error("Error in create SO DTF service:", error);
@@ -143,8 +147,8 @@ const update = async (nomor, data, user) => {
         }
 
         await connection.commit();
-        const [updatedHeader] = await connection.query('SELECT *, sales.sal_nama, j.jo_nama, p.pab_nama FROM tsodtf_hdr h LEFT JOIN kencanaprint.tsales sales ON h.sd_sal_kode = sales.sal_kode LEFT JOIN kencanaprint.tjenisorder j ON h.sd_jo_kode = j.jo_kode LEFT JOIN kencanaprint.tpabrik p ON h.sd_workshop = p.pab_kode WHERE sd_nomor = ?', [nomor]);
-        return updatedHeader[0];
+        const updatedData = await getById(nomor);
+        return updatedData;
     } catch (error) {
         await connection.rollback();
         console.error(`Error in update SO DTF service for nomor ${nomor}:`, error);
@@ -435,6 +439,24 @@ const getDataForPrint = async (nomor) => {
     data.imageUrl = fs.existsSync(imagePath) ? `/images/${cabang}/${imageFileName}` : null;
 
     return data;
+};
+
+const findImageFile = (nomor) => {
+    const cabang = nomor.substring(0, 3);
+    const directoryPath = path.join(process.cwd(), 'public', 'images', cabang);
+
+    if (!fs.existsSync(directoryPath)) {
+        return null;
+    }
+
+    const files = fs.readdirSync(directoryPath);
+    // Cari file yang namanya dimulai dengan nomor SO + titik (contoh: "KDC.TG.2509.0111.")
+    const fileName = files.find(file => file.startsWith(nomor + '.'));
+
+    if (fileName) {
+        return `/images/${cabang}/${fileName}`; // Kembalikan URL publik
+    }
+    return null;
 };
 
 module.exports = {
