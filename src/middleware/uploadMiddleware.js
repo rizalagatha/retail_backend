@@ -1,20 +1,43 @@
-// di file: src/middleware/uploadMiddleware.js
+// uploadMiddleware.js
 const multer = require('multer');
 const path = require('path');
 
-// Tentukan folder penyimpanan
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        // Simpan file di folder public/images
-        cb(null, path.join(__dirname, '..', 'public', 'images'));
+        // Simpan sementara di folder temp
+        const tempDir = path.join(process.cwd(), 'temp');
+        
+        // Buat folder temp jika belum ada
+        const fs = require('fs');
+        if (!fs.existsSync(tempDir)) {
+            fs.mkdirSync(tempDir, { recursive: true });
+        }
+        
+        cb(null, tempDir);
     },
     filename: function (req, file, cb) {
-        // Beri nama sementara dengan timestamp. Kita akan rename nanti.
+        // Buat nama file sementara yang unik
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+        cb(null, 'temp-' + uniqueSuffix + path.extname(file.originalname));
     }
 });
 
-const upload = multer({ storage: storage });
+const fileFilter = (req, file, cb) => {
+    // Validasi tipe file
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png'];
+    if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true);
+    } else {
+        cb(new Error('Hanya file JPG, JPEG, dan PNG yang diizinkan'), false);
+    }
+};
+
+const upload = multer({
+    storage: storage,
+    limits: {
+        fileSize: 5 * 1024 * 1024 // 5MB
+    },
+    fileFilter: fileFilter
+});
 
 module.exports = upload;

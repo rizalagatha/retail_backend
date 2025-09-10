@@ -221,6 +221,15 @@ const renameProposalImage = async (tempFilePath, nomor) => {
     return new Promise((resolve, reject) => {
         console.log('Renaming image:', { tempFilePath, nomor });
         
+        // Cek apakah file sumber ada
+        const fs = require('fs');
+        const path = require('path');
+        
+        if (!fs.existsSync(tempFilePath)) {
+            console.error('Source file does not exist:', tempFilePath);
+            return reject(new Error('File sumber tidak ditemukan.'));
+        }
+
         // Ambil 3 karakter pertama dari nomor sebagai kode cabang
         const cabang = nomor.substring(0, 3);
         const finalFileName = `${nomor}${path.extname(tempFilePath)}`;
@@ -243,20 +252,30 @@ const renameProposalImage = async (tempFilePath, nomor) => {
         console.log('Moving file from:', tempFilePath);
         console.log('Moving file to:', finalPath);
 
-        // Cek apakah file sumber ada
-        if (!fs.existsSync(tempFilePath)) {
-            console.error('Source file does not exist:', tempFilePath);
-            return reject(new Error('File sumber tidak ditemukan.'));
-        }
-
         fs.rename(tempFilePath, finalPath, (err) => {
             if (err) {
                 console.error("Gagal me-rename file:", err);
-                return reject(new Error('Gagal memproses file gambar: ' + err.message));
+                // Coba copy jika rename gagal (berbeda filesystem)
+                fs.copyFile(tempFilePath, finalPath, (copyErr) => {
+                    if (copyErr) {
+                        console.error("Gagal copy file:", copyErr);
+                        return reject(new Error('Gagal memproses file gambar: ' + copyErr.message));
+                    }
+                    
+                    // Hapus file sumber setelah copy berhasil
+                    fs.unlink(tempFilePath, (unlinkErr) => {
+                        if (unlinkErr) {
+                            console.warn('Warning: Could not delete temp file:', tempFilePath);
+                        }
+                    });
+                    
+                    console.log('File successfully copied to:', finalPath);
+                    resolve(finalPath);
+                });
+            } else {
+                console.log('File successfully moved to:', finalPath);
+                resolve(finalPath);
             }
-            
-            console.log('File successfully moved to:', finalPath);
-            resolve(finalPath);
         });
     });
 };

@@ -42,24 +42,53 @@ const uploadImage = async (req, res) => {
             return res.status(400).json({ message: 'Tidak ada file yang diunggah.' });
         }
         
-        // Ambil nomor pengajuan dari URL params (bukan dari body)
+        // Ambil nomor pengajuan dari URL params
         const { nomor } = req.params;
         if (!nomor) {
             // Hapus file sementara jika nomor tidak ada
+            const fs = require('fs');
             fs.unlinkSync(req.file.path); 
             return res.status(400).json({ message: 'Nomor pengajuan diperlukan.' });
         }
 
-        // Buat nama file final (contoh: K07.2025.00001.jpg)
-        const finalFileName = `${nomor}${path.extname(req.file.originalname)}`;
+        console.log('Upload request received:', {
+            nomor: nomor,
+            originalFile: req.file.originalname,
+            tempPath: req.file.path,
+            fileSize: req.file.size
+        });
         
-        // Panggil service untuk me-rename file
+        // Panggil service untuk me-rename dan move file ke lokasi yang benar
         const finalPath = await priceProposalFormService.renameProposalImage(req.file.path, nomor);
 
-        res.status(200).json({ message: 'Gambar berhasil diunggah.', filePath: finalPath });
+        // Buat URL yang bisa diakses
+        const cabang = nomor.substring(0, 3);
+        const imageUrl = `${process.env.BASE_URL || 'http://192.168.1.73:8000'}/images/${cabang}/${nomor}${path.extname(req.file.originalname)}`;
+
+        console.log('Upload successful:', {
+            finalPath: finalPath,
+            imageUrl: imageUrl
+        });
+
+        res.status(200).json({ 
+            message: 'Gambar berhasil diunggah.', 
+            filePath: finalPath,
+            imageUrl: imageUrl
+        });
 
     } catch (error) {
         console.error("Upload Image Error:", error);
+        
+        // Cleanup file jika ada error
+        if (req.file && req.file.path) {
+            try {
+                const fs = require('fs');
+                fs.unlinkSync(req.file.path);
+            } catch (cleanupError) {
+                console.error('Error cleaning up temp file:', cleanupError);
+            }
+        }
+        
         res.status(500).json({ message: error.message });
     }
 };

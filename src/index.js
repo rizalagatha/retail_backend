@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
 const path = require('path');
 require('dotenv/config'); // Memuat variabel dari .env
 
@@ -39,6 +40,11 @@ const allowedOrigins = [
   "http://134.209.106.4:8080"     // frontend di VPS
 ];
 const imageFolderPath = path.join(process.cwd(), 'public', 'images');
+const requiredDirs = [
+    path.join(process.cwd(), 'temp'),
+    path.join(process.cwd(), 'public'),
+    path.join(process.cwd(), 'public', 'images')
+];
 
 // Middleware
 app.use(cors({
@@ -59,6 +65,12 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use('/images', express.static(imageFolderPath));
 app.disable('etag');
+requiredDirs.forEach(dir => {
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+        console.log('Created directory:', dir);
+    }
+});
 
 // Menggunakan Rute
 app.use('/api/auth', authRoutes);
