@@ -32,6 +32,8 @@ const DasborDtfRoutes = require('./routes/dasborDtfRoutes');
 const soDtfStokRoutes = require('./routes/SoDtfStokRoutes');
 const soDtfStokFormRoutes = require('./routes/soDtfStokFormRoutes');
 const lhkSoDtfStokRoutes = require('./routes/lhkSoDtfStokRoutes');
+const lhkSoDtfStokFormRoutes = require('./routes/lhkSoDtfStokFormRoutes');
+const soRoutes = require('./routes/soRoutes');
 const laporanStokRoutes = require('./routes/laporanStokRoutes');
 
 const app = express();
@@ -102,6 +104,8 @@ app.use('/api/dasbor-dtf', DasborDtfRoutes);
 app.use('/api/so-dtf-stok', soDtfStokRoutes);
 app.use('/api/so-dtf-stok-form', soDtfStokFormRoutes);
 app.use('/api/lhk-so-dtf-stok', lhkSoDtfStokRoutes);
+app.use('/api/lhk-so-dtf-stok-form', lhkSoDtfStokFormRoutes);
+app.use('/api/so', soRoutes);
 app.use('/api/laporan-stok', laporanStokRoutes);
 
 // Menjalankan Server

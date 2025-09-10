@@ -80,8 +80,61 @@ const save = async (data, user) => {
     }
 };
 
+const getSudah = async (connection, soNomor, kode, ukuran, excludeLhkNomor) => {
+    const query = `
+        SELECT IFNULL(SUM(dsd_jumlah), 0) AS total 
+        FROM tdtfstok_dtl
+        JOIN tdtfstok_hdr ON ds_nomor = dsd_nomor
+        WHERE ds_nomor <> ? AND ds_sd_nomor = ? AND dsd_kode = ? AND dsd_ukuran = ?
+    `;
+    const [rows] = await connection.query(query, [excludeLhkNomor, soNomor, kode, ukuran]);
+    return rows[0].total;
+};
+
 // Fungsi untuk memuat data saat mode Ubah
-const loadForEdit = async (nomor) => { /* ... Implementasi ... */ };
+const loadForEdit = async (nomor) => {
+    const connection = await pool.getConnection();
+    try {
+        // 1. Ambil data header
+        const [headerRows] = await connection.query('SELECT * FROM tdtfstok_hdr WHERE ds_nomor = ?', [nomor]);
+        if (headerRows.length === 0) {
+            throw new Error('Data LHK tidak ditemukan.');
+        }
+        const header = headerRows[0];
+
+        // 2. Ambil "template" item dari SO Stok terkait (mirip loaddataall bagian pertama)
+        const templateQuery = `
+            SELECT 
+                d.sds_kode AS kode, a.brg_warna AS nama, d.sds_ukuran AS ukuran,
+                d.sds_jumlah AS qtyso
+            FROM tsodtf_stok d
+            JOIN tbarangdc a ON a.brg_kode = d.sds_kode
+            WHERE d.sds_nomor = ? ORDER BY d.sds_nourut
+        `;
+        const [templateItems] = await connection.query(templateQuery, [header.ds_sd_nomor]);
+
+        // 3. Ambil detail LHK yang sudah disimpan
+        const [savedDetails] = await connection.query('SELECT * FROM tdtfstok_dtl WHERE dsd_nomor = ?', [nomor]);
+
+        // 4. Gabungkan data: hitung 'sudah', 'belum', dan isi 'jumlah'
+        const items = [];
+        for (const item of templateItems) {
+            const sudah = await getSudah(connection, header.ds_sd_nomor, item.kode, item.ukuran, nomor);
+            const savedItem = savedDetails.find(d => d.dsd_kode === item.kode && d.dsd_ukuran === item.ukuran);
+            
+            items.push({
+                ...item,
+                sudah: sudah,
+                belum: item.qtyso - sudah,
+                jumlah: savedItem ? savedItem.dsd_jumlah : 0,
+            });
+        }
+
+        return { header, items };
+    } finally {
+        connection.release();
+    }
+};
 
 module.exports = {
     searchSoStok,
