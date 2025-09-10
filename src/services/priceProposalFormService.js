@@ -219,6 +219,8 @@ const getProposalForEdit = async (nomor) => {
 
 const renameProposalImage = async (tempFilePath, nomor) => {
     return new Promise((resolve, reject) => {
+        console.log('Renaming image:', { tempFilePath, nomor });
+        
         // Ambil 3 karakter pertama dari nomor sebagai kode cabang
         const cabang = nomor.substring(0, 3);
         const finalFileName = `${nomor}${path.extname(tempFilePath)}`;
@@ -227,16 +229,33 @@ const renameProposalImage = async (tempFilePath, nomor) => {
         const branchFolderPath = path.join(process.cwd(), 'public', 'images', cabang);
 
         // Buat folder cabang jika belum ada
-        fs.mkdirSync(branchFolderPath, { recursive: true });
+        try {
+            fs.mkdirSync(branchFolderPath, { recursive: true });
+            console.log('Branch folder created/exists:', branchFolderPath);
+        } catch (mkdirError) {
+            console.error('Error creating directory:', mkdirError);
+            return reject(new Error('Gagal membuat direktori gambar.'));
+        }
 
         // Tentukan path tujuan final di dalam folder cabang
         const finalPath = path.join(branchFolderPath, finalFileName);
+        
+        console.log('Moving file from:', tempFilePath);
+        console.log('Moving file to:', finalPath);
+
+        // Cek apakah file sumber ada
+        if (!fs.existsSync(tempFilePath)) {
+            console.error('Source file does not exist:', tempFilePath);
+            return reject(new Error('File sumber tidak ditemukan.'));
+        }
 
         fs.rename(tempFilePath, finalPath, (err) => {
             if (err) {
                 console.error("Gagal me-rename file:", err);
-                return reject(new Error('Gagal memproses file gambar.'));
+                return reject(new Error('Gagal memproses file gambar: ' + err.message));
             }
+            
+            console.log('File successfully moved to:', finalPath);
             resolve(finalPath);
         });
     });
@@ -292,6 +311,7 @@ const saveProposal = async (data) => {
             `;
             for (const item of details) {
                 if (item.qty > 0) { // Hanya simpan yang qty > 0
+                    console.log('Saving item:', item); // Debug log
                     await connection.query(sizeQuery, [
                         nomor, item.kodeBarang || '', item.size, item.qty, item.hargaPcs || 0
                     ]);
@@ -364,7 +384,6 @@ const saveProposal = async (data) => {
         connection.release(); // Selalu lepaskan koneksi
     }
 };
-
 
 module.exports = {
     generateNewProposalNumber,
