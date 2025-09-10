@@ -23,6 +23,7 @@ const findById = async (nomor) => {
             WHERE sd_nomor = ?`;
         const [headerRows] = await connection.query(headerQuery, [nomor]);
         if (headerRows.length === 0) return null;
+        const header = headerRows[0];
 
         const detailsUkuranQuery = 'SELECT sdd_ukuran as ukuran, sdd_jumlah as jumlah, sdd_harga as harga FROM tsodtf_dtl WHERE sdd_nomor = ? ORDER BY sdd_nourut';
         const [detailsUkuranRows] = await connection.query(detailsUkuranQuery, [nomor]);
@@ -31,7 +32,7 @@ const findById = async (nomor) => {
         const imagePath = path.join(process.cwd(), 'public', 'images', cabang, `${nomor}.jpg`);
 
         header.imageUrl = fs.existsSync(imagePath) ? `/images/${cabang}/${nomor}.jpg` : null;
-        
+
         const detailsTitikQuery = 'SELECT sdd2_ket as keterangan, sdd2_size as sizeCetak, sdd2_panjang as panjang, sdd2_lebar as lebar FROM tsodtf_dtl2 WHERE sdd2_nomor = ? ORDER BY sdd2_nourut';
         const [detailsTitikRows] = await connection.query(detailsTitikQuery, [nomor]);
 
