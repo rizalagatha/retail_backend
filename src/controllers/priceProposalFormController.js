@@ -42,8 +42,8 @@ const uploadImage = async (req, res) => {
             return res.status(400).json({ message: 'Tidak ada file yang diunggah.' });
         }
         
-        // Ambil nomor pengajuan dari body request
-        const { nomor } = req.body;
+        // Ambil nomor pengajuan dari URL params (bukan dari body)
+        const { nomor } = req.params;
         if (!nomor) {
             // Hapus file sementara jika nomor tidak ada
             fs.unlinkSync(req.file.path); 
@@ -54,11 +54,12 @@ const uploadImage = async (req, res) => {
         const finalFileName = `${nomor}${path.extname(req.file.originalname)}`;
         
         // Panggil service untuk me-rename file
-        const finalPath = await priceProposalFormService.renameProposalImage(req.file.path, finalFileName);
+        const finalPath = await priceProposalFormService.renameProposalImage(req.file.path, nomor);
 
         res.status(200).json({ message: 'Gambar berhasil diunggah.', filePath: finalPath });
 
     } catch (error) {
+        console.error("Upload Image Error:", error);
         res.status(500).json({ message: error.message });
     }
 };
