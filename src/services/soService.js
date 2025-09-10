@@ -109,11 +109,70 @@ const getDetails = async (nomor) => {
     return rows;
 };
 
+/**
+ * @description Mengambil semua data yang diperlukan untuk mencetak satu Surat Pesanan.
+ */
+const getDataForPrint = async (nomor) => {
+    // 1. Ambil data Header, Customer, dan Gudang
+    const headerQuery = `
+        SELECT 
+            h.so_nomor, h.so_tanggal, h.so_top, h.so_ket, h.so_sc, h.user_create,
+            DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
+            c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
+            g.gdg_inv_nama, g.gdg_inv_alamat, g.gdg_inv_kota, g.gdg_inv_telp
+        FROM tso_hdr h
+        LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
+        LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.so_nomor, 3)
+        WHERE h.so_nomor = ?
+    `;
+    const [headerRows] = await pool.query(headerQuery, [nomor]);
+    if (headerRows.length === 0) return null;
+    const header = headerRows[0];
+
+    // 2. Ambil data Detail
+    const detailQuery = `
+        SELECT 
+            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)), f.sd_nama) AS nama_barang,
+            d.sod_ukuran AS ukuran,
+            d.sod_jumlah AS qty,
+            d.sod_harga AS harga,
+            d.sod_diskon AS diskon,
+            (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS total
+        FROM tso_dtl d
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
+        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_kode
+        WHERE d.sod_so_nomor = ? 
+        ORDER BY d.sod_nourut
+    `;
+    const [details] = await pool.query(detailQuery, [nomor]);
+
+    // 3. Kalkulasi Total & Terbilang di backend agar konsisten
+    const total = details.reduce((sum, item) => sum + item.total, 0);
+    const diskon_faktur = header.so_disc || 0;
+    const netto = total - diskon_faktur;
+    const ppn = header.so_ppn ? netto * (header.so_ppn / 100) : 0;
+    const grand_total = netto + ppn + (header.so_bkrm || 0);
+    const belumbayar = grand_total - (header.so_dp || 0);
+
+    const summary = {
+        total,
+        diskon: diskon_faktur,
+        biaya_kirim: header.so_bkrm || 0,
+        grand_total,
+        dp: header.so_dp || 0,
+        belumbayar,
+        terbilang: capitalize(terbilang(grand_total)) + " Rupiah",
+    };
+
+    return { header, details, summary };
+};
+
 // ... (Implementasi fungsi lain seperti getCabangList, close, remove)
 
 module.exports = {
     getList,
     getCabangList,
     getDetails,
+    getDataForPrint,
     // ...
 };

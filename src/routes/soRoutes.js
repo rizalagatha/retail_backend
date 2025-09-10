@@ -20,4 +20,6 @@ router.post('/close', verifyToken, checkPermission(MENU_ID, 'edit'), soControlle
 // DELETE: Menghapus Surat Pesanan
 router.delete('/:nomor', verifyToken, checkPermission(MENU_ID, 'delete'), soController.remove);
 
+router.get('/print-data/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), soController.getPrintData);
+
 module.exports = router;

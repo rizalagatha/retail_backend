@@ -47,10 +47,19 @@ const remove = async (req, res) => {
     }
 };
 
+const getPrintData = async (req, res) => {
+    try {
+        const { nomor } = req.params;
+        const data = await soService.getDataForPrint(nomor);
+        res.json(data);
+    } catch (error) { res.status(500).json({ message: error.message }); }
+};
+
 module.exports = {
     getAll,
     getDetails,
     getCabangList,
     close,
     remove,
+    getPrintData,
 };
