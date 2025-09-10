@@ -281,31 +281,42 @@ const getSisaKuota = async (cabang, tanggalKerja) => {
  */
 const processSoDtfImage = async (tempFilePath, nomorSo) => {
     return new Promise((resolve, reject) => {
-        // Ambil 3 karakter pertama dari nomor sebagai kode cabang
-        const cabang = nomorSo.substring(0, 3);
-        const finalFileName = `${nomorSo}${path.extname(tempFilePath)}`;
-
-        // Buat path ke folder tujuan (misal: .../public/images/sodtf/K01)
-        // Menambahkan subfolder 'sodtf' agar lebih terorganisir
-        const branchFolderPath = path.join(process.cwd(), 'public', 'images', 'sodtf', cabang);
-
-        // Buat folder cabang jika belum ada
-        fs.mkdirSync(branchFolderPath, { recursive: true });
-
-        // Tentukan path tujuan final di dalam folder cabang
-        const finalPath = path.join(branchFolderPath, finalFileName);
-        
-        // Hapus file lama jika ada (untuk mode edit)
-        if (fs.existsSync(finalPath)) {
-            fs.unlinkSync(finalPath);
+        // 1. Pastikan file sumber ada sebelum melanjutkan
+        if (!fs.existsSync(tempFilePath)) {
+            return reject(new Error('File sumber sementara tidak ditemukan.'));
         }
 
+        // 2. Ambil kode cabang dan siapkan nama file & path tujuan
+        const cabang = nomorSo.substring(0, 3);
+        const finalFileName = `${nomorSo}${path.extname(tempFilePath)}`;
+        
+        // Menggunakan path yang Anda minta: public/images/cabang
+        const branchFolderPath = path.join(process.cwd(), 'public', 'images', cabang);
+
+        // 3. Buat folder cabang jika belum ada
+        fs.mkdirSync(branchFolderPath, { recursive: true });
+
+        const finalPath = path.join(branchFolderPath, finalFileName);
+
+        // 4. Coba rename file (lebih cepat)
         fs.rename(tempFilePath, finalPath, (err) => {
             if (err) {
-                console.error("Gagal me-rename file SO DTF:", err);
-                return reject(new Error('Gagal memproses file gambar SO DTF.'));
+                // 5. Jika rename gagal (misalnya karena beda partisi), coba copy & hapus
+                console.warn(`Rename gagal (error: ${err.code}), mencoba copy & unlink...`);
+                fs.copyFile(tempFilePath, finalPath, (copyErr) => {
+                    if (copyErr) {
+                        return reject(new Error('Gagal menyalin file gambar.'));
+                    }
+                    // Hapus file sementara setelah berhasil di-copy
+                    fs.unlink(tempFilePath, (unlinkErr) => {
+                        if (unlinkErr) console.error('Peringatan: Gagal menghapus file sementara:', tempFilePath);
+                    });
+                    resolve(finalPath);
+                });
+            } else {
+                // Jika rename berhasil
+                resolve(finalPath);
             }
-            resolve(finalPath);
         });
     });
 };

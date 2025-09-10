@@ -1,4 +1,6 @@
 const soDtfFormService = require('../services/soDtfFormService');
+const fs = require('fs');
+const path = require('path');
 
 const getById = async (req, res) => {
     try {
@@ -16,7 +18,7 @@ const getById = async (req, res) => {
 const create = async (req, res) => {
     try {
         // user didapat dari middleware verifyToken
-        const user = req.user; 
+        const user = req.user;
         const newData = await soDtfFormService.create(req.body, user);
         res.status(201).json(newData);
     } catch (error) {
@@ -93,23 +95,30 @@ const uploadImage = async (req, res) => {
         if (!req.file) {
             return res.status(400).json({ message: 'Tidak ada file yang diunggah.' });
         }
-        
-        // Ambil nomor SO dari parameter URL
+
         const { nomor } = req.params;
         if (!nomor) {
-            // Hapus file sementara jika nomor tidak ada
-            fs.unlinkSync(req.file.path); 
+            fs.unlinkSync(req.file.path);
             return res.status(400).json({ message: 'Nomor SO DTF diperlukan.' });
         }
 
-        // Panggil service untuk memproses gambar
         const finalPath = await soDtfFormService.processSoDtfImage(req.file.path, nomor);
 
-        res.status(200).json({ message: 'Gambar berhasil diunggah.', filePath: finalPath });
+        // --- PENAMBAHAN LOGIKA ---
+        // Buat URL yang bisa diakses oleh frontend
+        const cabang = nomor.substring(0, 3);
+        // Pastikan Anda sudah mengimpor 'path' di atas: const path = require('path');
+        const imageUrl = `${req.protocol}://${req.get('host')}/images/${cabang}/${nomor}${path.extname(req.file.originalname)}`;
+
+        // Kirim respons yang lebih lengkap
+        res.status(200).json({
+            message: 'Gambar berhasil diunggah.',
+            filePath: finalPath,
+            imageUrl: imageUrl // <-- Termasuk URL gambar
+        });
 
     } catch (error) {
-        // Hapus file sementara jika terjadi error lain
-        if (req.file) {
+        if (req.file && fs.existsSync(req.file.path)) {
             fs.unlinkSync(req.file.path);
         }
         res.status(500).json({ message: error.message });
