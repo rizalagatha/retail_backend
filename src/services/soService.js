@@ -57,6 +57,24 @@ const getList = async (filters) => {
     return rows;
 };
 
+const getCabangList = async (user) => {
+    let query;
+    // Logika dari FormCreate Delphi
+    if (user.cabang === 'KDC') {
+        // Untuk KDC, ambil semua cabang kecuali KBS dan KPS
+        query = `SELECT gdg_kode as kode, gdg_nama as nama FROM tgudang WHERE gdg_kode NOT IN ("KBS", "KPS") ORDER BY gdg_kode`;
+    } else {
+        // Untuk cabang biasa, hanya ambil cabangnya sendiri
+        query = `SELECT gdg_kode as kode, gdg_nama as nama FROM tgudang WHERE gdg_kode = ?`;
+    }
+    const [rows] = await pool.query(query, [user.cabang]);
+    
+    // Tambahkan opsi "ALL" untuk kemudahan filter di frontend jika user KDC
+    if (user.cabang === 'KDC') {
+        return [{ kode: 'ALL', nama: 'SEMUA CABANG' }, ...rows];
+    }
+    return rows;
+};
 
 // Mengambil data detail (SQLDetail)
 const getDetails = async (nomor, filters) => {
@@ -67,5 +85,6 @@ const getDetails = async (nomor, filters) => {
 
 module.exports = {
     getList,
+    getCabangList,
     // ...
 };
