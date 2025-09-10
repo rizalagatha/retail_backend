@@ -61,7 +61,7 @@ const generateNewSoNumber = async (connection, data, user) => {
     if (!branchCode || !orderType) {
         throw new Error('Kode cabang dan jenis order harus ada untuk membuat nomor SO.');
     }
-    
+
     // 1. Membuat prefix. Contoh: K01.SD.2509
     const datePrefix = format(tanggal, 'yyMM');
     const fullPrefix = `${branchCode}.${orderType}.${datePrefix}`;
@@ -72,16 +72,16 @@ const generateNewSoNumber = async (connection, data, user) => {
         SELECT IFNULL(MAX(CAST(RIGHT(sd_nomor, 4) AS UNSIGNED)), 0) as maxNum 
         FROM tsodtf_hdr 
         WHERE LEFT(sd_nomor, ${fullPrefix.length}) = ?`;
-        
+
     const [rows] = await connection.query(query, [fullPrefix]);
-    
+
     // 3. Menentukan nomor urut berikutnya.
     const maxNum = rows[0].maxNum;
     const nextNum = maxNum + 1;
-    
+
     // 4. Padding dengan nol di depan, meniru RightStr(IntToStr(10000 + ...)) Delphi.
     const sequentialPart = String(nextNum).padStart(4, '0'); // Contoh: '0001' atau '0016'
-    
+
     // 5. Menggabungkan menjadi nomor SO lengkap.
     return `${fullPrefix}.${sequentialPart}`;
 };
@@ -92,7 +92,7 @@ const create = async (data, user) => {
     try {
         // Panggil fungsi generateNewSoNumber untuk mendapatkan nomor baru
         const newNomor = await generateNewSoNumber(connection, data, user);
-        
+
         const header = data.header;
         // Simpan header dengan nomor baru
         const headerQuery = `INSERT INTO tsodtf_hdr (sd_nomor, sd_tanggal, sd_datekerja, sd_dateline, sd_cus_kode, sd_customer, sd_sal_kode, sd_jo_kode, sd_nama, sd_kain, sd_finishing, sd_desain, sd_workshop, sd_ket, user_create, date_create) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
@@ -109,7 +109,7 @@ const create = async (data, user) => {
             const detailTitikQuery = 'INSERT INTO tsodtf_dtl2 (sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut) VALUES (?, ?, ?, ?, ?, ?)';
             await connection.query(detailTitikQuery, [newNomor, detail.keterangan, detail.sizeCetak, detail.panjang, detail.lebar, index + 1]);
         }
-        
+
         await connection.commit();
         return { nomor: newNomor };
     } catch (error) {
@@ -128,7 +128,7 @@ const update = async (nomor, data, user) => {
         const header = data.header;
         const headerQuery = `UPDATE tsodtf_hdr SET sd_tanggal = ?, sd_datekerja = ?, sd_dateline = ?, sd_cus_kode = ?, sd_customer = ?, sd_sal_kode = ?, sd_jo_kode = ?, sd_nama = ?, sd_kain = ?, sd_finishing = ?, sd_desain = ?, sd_workshop = ?, sd_ket = ?, user_modified = ?, date_modified = NOW() WHERE sd_nomor = ?`;
         await connection.query(headerQuery, [header.tanggal, header.tglPengerjaan, header.datelineCustomer, header.customerKode, header.customerNama, header.salesKode, header.jenisOrderKode, header.namaDtf, header.kain, header.finishing, header.desain, header.workshopKode, header.keterangan, user.kode, nomor]);
-        
+
         await connection.query('DELETE FROM tsodtf_dtl WHERE sdd_nomor = ?', [nomor]);
         await connection.query('DELETE FROM tsodtf_dtl2 WHERE sdd2_nomor = ?', [nomor]);
 
@@ -141,9 +141,10 @@ const update = async (nomor, data, user) => {
             const detailTitikQuery = 'INSERT INTO tsodtf_dtl2 (sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut) VALUES (?, ?, ?, ?, ?, ?)';
             await connection.query(detailTitikQuery, [nomor, detail.keterangan, detail.sizeCetak, detail.panjang, detail.lebar, index + 1]);
         }
-        
+
         await connection.commit();
-        return { nomor };
+        const [updatedHeader] = await connection.query('SELECT *, sales.sal_nama, j.jo_nama, p.pab_nama FROM tsodtf_hdr h LEFT JOIN kencanaprint.tsales sales ON h.sd_sal_kode = sales.sal_kode LEFT JOIN kencanaprint.tjenisorder j ON h.sd_jo_kode = j.jo_kode LEFT JOIN kencanaprint.tpabrik p ON h.sd_workshop = p.pab_kode WHERE sd_nomor = ?', [nomor]);
+        return updatedHeader[0];
     } catch (error) {
         await connection.rollback();
         console.error(`Error in update SO DTF service for nomor ${nomor}:`, error);
@@ -180,7 +181,7 @@ const searchSales = async (term, page, itemsPerPage) => {
 
     const [items] = await pool.query(dataQuery, [searchTerm, searchTerm, itemsPerPage, offset]);
     const [totalRows] = await pool.query(countQuery, [searchTerm, searchTerm]);
-    
+
     // Kembalikan data dalam format yang diharapkan frontend
     return {
         items: items,
@@ -225,7 +226,7 @@ const searchJenisKain = async (term, page, itemsPerPage) => {
 
     const [items] = await pool.query(dataQuery, [searchTerm, parseInt(itemsPerPage), offset]);
     const [totalRows] = await pool.query(countQuery, [searchTerm]);
-    
+
     return {
         items: items.map(row => ({ nama: row.nama })),
         total: totalRows[0].total
@@ -268,7 +269,7 @@ const getSisaKuota = async (cabang, tanggalKerja) => {
     // Parameter tetap sama, berjumlah 5
     const params = [cabang, cabang, tanggalKerja, cabang, tanggalKerja];
     const [rows] = await pool.query(query, params);
-    
+
     if (rows.length > 0) {
         const { dq_kuota, jumlah, titik } = rows[0];
         // Kalkulasi akhir dilakukan di sini, lebih aman dan mudah dibaca
@@ -295,14 +296,14 @@ const processSoDtfImage = async (tempFilePath, nomorSo) => {
         // 2. Siapkan nama file & path tujuan sesuai standar baru
         const cabang = nomorSo.substring(0, 3);
         const finalFileName = `${nomorSo}${path.extname(tempFilePath)}`;
-        
+
         // Path baru sesuai permintaan Anda
         const branchFolderPath = path.join(process.cwd(), 'public', 'images', cabang);
 
         // 3. Buat folder cabang jika belum ada
         fs.mkdirSync(branchFolderPath, { recursive: true });
         const finalPath = path.join(branchFolderPath, finalFileName);
-        
+
         // 4. Coba rename file (lebih cepat)
         fs.rename(tempFilePath, finalPath, (err) => {
             if (err) {
@@ -338,7 +339,7 @@ const getUkuranKaosList = async () => {
     `;
     const [rows] = await pool.query(query);
     // Ubah array of objects [{Ukuran: 'S'}] menjadi array of strings ['S']
-    return rows.map(row => row.Ukuran); 
+    return rows.map(row => row.Ukuran);
 };
 
 const getUkuranSodtfDetail = async (jenisOrder, ukuran) => {
@@ -432,7 +433,7 @@ const getDataForPrint = async (nomor) => {
     const imageFileName = `${nomor}.jpg`;
     const imagePath = path.join(process.cwd(), 'public', 'images', cabang, imageFileName);
     data.imageUrl = fs.existsSync(imagePath) ? `/images/${cabang}/${imageFileName}` : null;
-    
+
     return data;
 };
 
@@ -446,10 +447,10 @@ module.exports = {
     searchWorkshop,
     getSisaKuota,
     processSoDtfImage,
-    getUkuranKaosList, 
+    getUkuranKaosList,
     getUkuranSodtfDetail,
     calculateDtgPrice,
     getSizeCetakList,
-    getDataForPrint,   
+    getDataForPrint,
 };
 
