@@ -109,15 +109,34 @@ const getDetails = async (nomor) => {
     return rows;
 };
 
-/**
- * @description Mengambil semua data yang diperlukan untuk mencetak satu Surat Pesanan.
- */
+function terbilang(n) {
+    if (n === null || n === undefined || n === 0) return "Nol";
+    if (n < 0) return "minus " + terbilang(-n);
+    const ang = ["", "satu", "dua", "tiga", "empat", "lima", "enam", "tujuh", "delapan", "sembilan", "sepuluh", "sebelas"];
+    const terbilangRecursive = (num) => {
+        if (num < 12) return ang[num];
+        if (num < 20) return terbilangRecursive(num - 10) + " belas";
+        if (num < 100) return ang[Math.floor(num / 10)] + " puluh " + terbilangRecursive(num % 10);
+        if (num < 200) return "seratus " + terbilangRecursive(num - 100);
+        if (num < 1000) return terbilangRecursive(Math.floor(num / 100)) + " ratus " + terbilangRecursive(num % 100);
+        if (num < 2000) return "seribu " + terbilangRecursive(num - 1000);
+        if (num < 1000000) return terbilangRecursive(Math.floor(num / 1000)) + " ribu " + terbilangRecursive(num % 1000);
+        if (num < 1000000000) return terbilangRecursive(Math.floor(num / 1000000)) + " juta " + terbilangRecursive(n % 1000000);
+        return "angka terlalu besar";
+    };
+    return terbilangRecursive(Math.floor(n)).replace(/\s+/g, ' ').trim();
+}
+const capitalize = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : '');
+// --- Akhir Fungsi Helper ---
+
+
 const getDataForPrint = async (nomor) => {
     // 1. Ambil data Header, Customer, dan Gudang
     const headerQuery = `
         SELECT 
             h.so_nomor, h.so_tanggal, h.so_top, h.so_ket, h.so_sc, h.user_create,
             DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
+            h.so_disc, h.so_ppn, h.so_bkrm, h.so_dp,
             c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
             g.gdg_inv_nama, g.gdg_inv_alamat, g.gdg_inv_kota, g.gdg_inv_telp
         FROM tso_hdr h
@@ -146,7 +165,7 @@ const getDataForPrint = async (nomor) => {
     `;
     const [details] = await pool.query(detailQuery, [nomor]);
 
-    // 3. Kalkulasi Total & Terbilang di backend agar konsisten
+    // 3. Kalkulasi Total & Terbilang di backend
     const total = details.reduce((sum, item) => sum + item.total, 0);
     const diskon_faktur = header.so_disc || 0;
     const netto = total - diskon_faktur;
@@ -157,6 +176,7 @@ const getDataForPrint = async (nomor) => {
     const summary = {
         total,
         diskon: diskon_faktur,
+        ppn: ppn,
         biaya_kirim: header.so_bkrm || 0,
         grand_total,
         dp: header.so_dp || 0,
