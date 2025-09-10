@@ -54,49 +54,36 @@ const findById = async (nomor) => {
  * @returns {Promise<string>} Nomor SO DTF yang baru. Contoh: K01.SD.2509.0001
  */
 const generateNewSoNumber = async (connection, data, user) => {
-    console.log('--- [DEBUG] Memulai generateNewSoNumber ---');
-    try {
-        // Ambil semua variabel yang dibutuhkan
-        const tanggal = data?.header?.tanggal;
-        const branchCode = user?.cabang;
-        const orderType = data?.header?.jenisOrderKode;
+    const tanggal = new Date(data.header.tanggal);
+    const branchCode = user.cabang;
+    const orderType = data.header.jenisOrderKode;
 
-        // Tampilkan semua variabel yang kita terima
-        console.log(`[DEBUG] Tanggal diterima: ${tanggal}`);
-        console.log(`[DEBUG] User diterima: ${JSON.stringify(user)}`);
-        console.log(`[DEBUG] Cabang (dari user): ${branchCode}`);
-        console.log(`[DEBUG] Jenis Order (dari header): ${orderType}`);
-
-        // Validasi ketat
-        if (!branchCode || !orderType || !tanggal) {
-            console.error('!!! KESALAHAN: Salah satu dari Cabang, Jenis Order, atau Tanggal kosong!');
-            throw new Error('Data tidak lengkap untuk membuat nomor SO.');
-        }
-
-        const tglObjek = new Date(tanggal);
-        if (isNaN(tglObjek.getTime())) {
-            console.error(`!!! KESALAHAN: Format tanggal tidak valid: ${tanggal}`);
-            throw new Error('Format tanggal tidak valid.');
-        }
-        const datePrefix = format(tglObjek, 'yyMM');
-        
-        const fullPrefix = `${branchCode}.${orderType}.${datePrefix}`;
-        console.log(`[DEBUG] Prefix yang dibuat: ${fullPrefix}`);
-
-        const query = `SELECT IFNULL(MAX(CAST(RIGHT(sd_nomor, 4) AS UNSIGNED)), 0) as maxNum FROM tsodtf_hdr WHERE LEFT(sd_nomor, ${fullPrefix.length}) = ?`;
-        const [maxRows] = await connection.query(query, [fullPrefix]);
-        
-        const nextNum = maxRows[0].maxNum + 1;
-        const finalResult = `${fullPrefix}.${String(nextNum).padStart(4, '0')}`;
-        
-        console.log(`[DEBUG] Nomor final yang akan dikembalikan: ${finalResult}`);
-        console.log('--- [DEBUG] Selesai generateNewSoNumber ---');
-        return finalResult;
-
-    } catch (error) {
-        console.error('!!! ERROR di dalam generateNewSoNumber:', error);
-        throw error; // Lempar kembali error agar bisa ditangkap oleh controller
+    if (!branchCode || !orderType) {
+        throw new Error('Kode cabang dan jenis order harus ada untuk membuat nomor SO.');
     }
+
+    // 1. Membuat prefix. Contoh: K01.SD.2509
+    const datePrefix = format(tanggal, 'yyMM');
+    const fullPrefix = `${branchCode}.${orderType}.${datePrefix}`;
+
+    // 2. Query untuk mencari nomor urut maksimal, mirip seperti di Delphi.
+    // CAST(... AS UNSIGNED) untuk memastikan '0009' dibandingkan sebagai angka 9.
+    const query = `
+        SELECT IFNULL(MAX(CAST(RIGHT(sd_nomor, 4) AS UNSIGNED)), 0) as maxNum 
+        FROM tsodtf_hdr 
+        WHERE LEFT(sd_nomor, ${fullPrefix.length}) = ?`;
+
+    const [rows] = await connection.query(query, [fullPrefix]);
+
+    // 3. Menentukan nomor urut berikutnya.
+    const maxNum = rows[0].maxNum;
+    const nextNum = maxNum + 1;
+
+    // 4. Padding dengan nol di depan, meniru RightStr(IntToStr(10000 + ...)) Delphi.
+    const sequentialPart = String(nextNum).padStart(4, '0'); // Contoh: '0001' atau '0016'
+
+    // 5. Menggabungkan menjadi nomor SO lengkap.
+    return `${fullPrefix}.${sequentialPart}`;
 };
 
 const create = async (data, user) => {
@@ -124,7 +111,7 @@ const create = async (data, user) => {
         }
 
         await connection.commit();
-        const [createdHeader] = await connection.query('SELECT *, sales.sal_nama, j.jo_nama, p.pab_nama FROM tsodtf_hdr h LEFT JOIN kencanaprint.tsales sales ON h.sd_sal_kode = sales.sal_kode LEFT JOIN kencanaprint.tjenisorder j ON h.sd_jo_kode = j.jo_kode LEFT JOIN kencanaprint.tpabrik p ON h.sd_workshop = p.pab_kode WHERE sd_nomor = ?', [nomorSoDtf]);
+        const [createdHeader] = await connection.query('SELECT *, sales.sal_nama, j.jo_nama, p.pab_nama FROM tsodtf_hdr h LEFT JOIN kencanaprint.tsales sales ON h.sd_sal_kode = sales.sal_kode LEFT JOIN kencanaprint.tjenisorder j ON h.sd_jo_kode = j.jo_kode LEFT JOIN kencanaprint.tpabrik p ON h.sd_workshop = p.pab_kode WHERE sd_nomor = ?', [newNomor]);
         return { 
             message: `Data berhasil disimpan dengan nomor: ${nomorSoDtf}`,
             header: createdHeader[0] 
