@@ -20,7 +20,6 @@ const getList = async (filters) => {
             y.QtySO, y.QtyInv, y.Belum, y.AlasanClose, y.StatusKirim, y.kdcus, y.Nama, 
             y.Alamat, y.Kota, y.Level, y.Keterangan, y.Aktif, y.SC,
             (CASE
-                WHEN y.sts = 1 THEN "CLOSE"
                 WHEN y.sts = 2 THEN "DICLOSE"
                 WHEN y.StatusKirim = "TERKIRIM" THEN "CLOSE"
                 WHEN y.StatusKirim = "BELUM" AND y.keluar = 0 AND y.minta = "" AND y.pesan = 0 THEN "OPEN"
@@ -30,7 +29,7 @@ const getList = async (filters) => {
         FROM (
             SELECT 
                 x.*,
-                IF(x.QtyInv = 0, "BELUM", IF(x.QtyInv >= x.QtySO, "TERKIRIM", "TERKIRIM SEBAGIAN")) AS StatusKirim,
+                IF(x.QtyInv = 0, "BELUM", IF(x.QtyInv >= x.QtySO, "TERKIRIM", "SEBAGIAN")) AS StatusKirim,
                 IFNULL((SELECT SUM(m.mst_stok_out) FROM tmasterstok m WHERE m.mst_noreferensi IN (SELECT o.mo_nomor FROM tmutasiout_hdr o WHERE o.mo_so_nomor = x.Nomor) AND mid(m.mst_noreferensi, 4, 3) NOT IN ("MSO", "MSI")), 0) AS keluar,
                 IFNULL((SELECT m.mt_nomor FROM tmintabarang_hdr m WHERE m.mt_so = x.Nomor LIMIT 1), "") AS minta,
                 IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstokso m WHERE m.mst_aktif = "Y" AND m.mst_nomor_so = x.Nomor), 0) AS pesan
