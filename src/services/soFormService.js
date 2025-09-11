@@ -80,6 +80,7 @@ const searchAvailablePenawaran = async (filters) => {
             h.pen_ket AS keterangan
         FROM tpenawaran_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
+        LEFT JOIN tcustomer_level v ON v.level_kode = h.pen_cus_level
         WHERE h.pen_alasan = ""
           AND LEFT(h.pen_nomor, 3) = ?
           AND h.pen_cus_kode = ?
