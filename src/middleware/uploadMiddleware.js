@@ -1,41 +1,44 @@
-// uploadMiddleware.js
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
+
+// Pastikan folder temp ada
+const tempDir = path.join(process.cwd(), 'temp');
+if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+    console.log('Created temp directory:', tempDir);
+}
 
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        // Simpan sementara di folder temp
-        const tempDir = path.join(process.cwd(), 'temp');
-        
-        // Buat folder temp jika belum ada
-        const fs = require('fs');
-        if (!fs.existsSync(tempDir)) {
-            fs.mkdirSync(tempDir, { recursive: true });
-        }
-        
         cb(null, tempDir);
     },
     filename: function (req, file, cb) {
-        // Buat nama file sementara yang unik
+        // Nama file temporary dengan timestamp
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, 'temp-' + uniqueSuffix + path.extname(file.originalname));
+        const tempName = 'temp-' + uniqueSuffix + path.extname(file.originalname);
+        console.log('Generated temp filename:', tempName); // DEBUG
+        cb(null, tempName);
     }
 });
 
 const fileFilter = (req, file, cb) => {
-    // Validasi tipe file
-    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png'];
-    if (allowedTypes.includes(file.mimetype)) {
+    console.log('File filter - mimetype:', file.mimetype); // DEBUG
+    console.log('File filter - originalname:', file.originalname); // DEBUG
+    
+    // Accept image files
+    if (file.mimetype.startsWith('image/')) {
         cb(null, true);
     } else {
-        cb(new Error('Hanya file JPG, JPEG, dan PNG yang diizinkan'), false);
+        cb(new Error('File harus berupa gambar (JPG, PNG, GIF, dll.)'), false);
     }
 };
 
 const upload = multer({
     storage: storage,
     limits: {
-        fileSize: 5 * 1024 * 1024 // 5MB
+        fileSize: 1024 * 1024, // 1MB
+        files: 1
     },
     fileFilter: fileFilter
 });

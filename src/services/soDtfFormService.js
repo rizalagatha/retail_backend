@@ -21,23 +21,23 @@ const findById = async (nomor) => {
             LEFT JOIN kencanaprint.tjenisorder jo ON h.sd_jo_kode = jo.jo_kode
             LEFT JOIN kencanaprint.tpabrik p ON h.sd_workshop = p.pab_kode
             WHERE sd_nomor = ?`;
+        
         const [headerRows] = await connection.query(headerQuery, [nomor]);
         if (headerRows.length === 0) return null;
+
         const header = headerRows[0];
+        
+        // PERBAIKAN: Set imageUrl di header, bukan sebagai property terpisah
+        header.imageUrl = findImageFile(nomor);
 
         const detailsUkuranQuery = 'SELECT sdd_ukuran as ukuran, sdd_jumlah as jumlah, sdd_harga as harga FROM tsodtf_dtl WHERE sdd_nomor = ? ORDER BY sdd_nourut';
         const [detailsUkuranRows] = await connection.query(detailsUkuranQuery, [nomor]);
-
-        const cabang = nomor.substring(0, 3);
-        const imagePath = path.join(process.cwd(), 'public', 'images', cabang, `${nomor}.jpg`);
-
-        header.imageUrl = findImageFile(nomor);
 
         const detailsTitikQuery = 'SELECT sdd2_ket as keterangan, sdd2_size as sizeCetak, sdd2_panjang as panjang, sdd2_lebar as lebar FROM tsodtf_dtl2 WHERE sdd2_nomor = ? ORDER BY sdd2_nourut';
         const [detailsTitikRows] = await connection.query(detailsTitikQuery, [nomor]);
 
         return {
-            header: headerRows[0],
+            header: header,  // header sudah include imageUrl
             detailsUkuran: detailsUkuranRows,
             detailsTitik: detailsTitikRows
         };
@@ -147,8 +147,11 @@ const update = async (nomor, data, user) => {
         }
 
         await connection.commit();
-        const updatedData = await getById(nomor);
+        
+        // PERBAIKAN: Panggil findById untuk mendapatkan data lengkap dengan imageUrl
+        const updatedData = await findById(nomor);
         return updatedData;
+        
     } catch (error) {
         await connection.rollback();
         console.error(`Error in update SO DTF service for nomor ${nomor}:`, error);
@@ -444,18 +447,29 @@ const getDataForPrint = async (nomor) => {
 const findImageFile = (nomor) => {
     const cabang = nomor.substring(0, 3);
     const directoryPath = path.join(process.cwd(), 'public', 'images', cabang);
+    
+    console.log('Looking for image in:', directoryPath); // DEBUG
+    console.log('Nomor:', nomor); // DEBUG
 
     if (!fs.existsSync(directoryPath)) {
+        console.log('Directory does not exist:', directoryPath); // DEBUG
         return null;
     }
 
     const files = fs.readdirSync(directoryPath);
-    // Cari file yang namanya dimulai dengan nomor SO + titik (contoh: "KDC.TG.2509.0111.")
+    console.log('Files in directory:', files); // DEBUG
+    
+    // Cari file yang namanya dimulai dengan nomor SO + titik
     const fileName = files.find(file => file.startsWith(nomor + '.'));
+    console.log('Found file:', fileName); // DEBUG
 
     if (fileName) {
-        return `/images/${cabang}/${fileName}`; // Kembalikan URL publik
+        const imageUrl = `/images/${cabang}/${fileName}`;
+        console.log('Generated imageUrl:', imageUrl); // DEBUG
+        return imageUrl;
     }
+    
+    console.log('No image file found for:', nomor); // DEBUG
     return null;
 };
 
