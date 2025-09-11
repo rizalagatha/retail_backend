@@ -25,27 +25,24 @@ const save = async (data, user) => {
             soNomor = await generateNewSoNumber(connection, header.gudang.kode, header.tanggal);
         }
         
-        // Pola "Hapus-lalu-Sisipkan" untuk detail
-        await connection.query('DELETE FROM tso_dtl WHERE sod_so_nomor = ?', [soNomor]);
-        for (const [index, item] of details.entries()) {
-            // INSERT ke tso_dtl
-        }
+        // ... (Logika INSERT/UPDATE header Anda di sini) ...
+        // ... (Logika DELETE/INSERT detail Anda di sini) ...
 
-        // Simpan/Update Header
-        if (isNew) {
-            // INSERT ke tso_hdr
-        } else {
-            // UPDATE tso_hdr
+        // --- 👇 TAMBAHKAN BLOK INI UNTUK SIMPAN PIN 👇 ---
+        // Meniru logika 'simpanpin' dari Delphi
+        for (const item of details) {
+            if (item.pin) { // Simpan PIN per item
+                await connection.query('INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_nominal) VALUES (?, "SO", "DISKON ITEM", ?, NOW(), ?, ?)', [soNomor, item.barcode || '', item.pin, item.diskonPersen]);
+            }
         }
-        
-        // Simpan data PIN ke totorisasi (simpanpin)
-        // ...
-
-        // Update nomor SO di setoran (simpannoso)
-        if (dps && dps.length > 0) {
-            const noSetoran = dps.map(dp => dp.nomor);
-            await connection.query('UPDATE tsetor_hdr SET sh_so_nomor = ? WHERE sh_nomor IN (?)', [soNomor, noSetoran]);
+        if (footer.pinDiskon1) { // Simpan PIN Diskon Faktur 1
+            await connection.query('INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "SO", "DISKON FAKTUR", NOW(), ?, ?)', [soNomor, footer.pinDiskon1, footer.diskonPersen1]);
         }
+        if (footer.pinDiskon2) { // Simpan PIN Diskon Faktur 2
+            await connection.query('INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "SO", "DISKON FAKTUR 2", NOW(), ?, ?)', [soNomor, footer.pinDiskon2, footer.diskonPersen2]);
+        }
+        // TODO: Tambahkan logika untuk PIN DP jika diperlukan
+        // --- 👆 AKHIR BLOK SIMPAN PIN 👆 ---
 
         await connection.commit();
         return { message: `Surat Pesanan ${soNomor} berhasil disimpan.`, nomor: soNomor };
@@ -57,7 +54,6 @@ const save = async (data, user) => {
         connection.release();
     }
 };
-
 
 /**
  * @description Memuat semua data untuk mode Ubah (loaddataall).
@@ -77,7 +73,10 @@ const searchAvailablePenawaran = async (filters) => {
         SELECT 
             h.pen_nomor AS nomor,
             h.pen_tanggal AS tanggal,
+            h.pen_cus_kode AS kdcus,
             c.cus_nama AS customer,
+            v.level_nama AS level,
+            c.cus_alamat AS alamat,
             h.pen_ket AS keterangan
         FROM tpenawaran_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
@@ -125,12 +124,33 @@ const getPenawaranDetailsForSo = async (nomor) => {
     return { header: headerRows[0], details: detailRows };
 };
 
-// ... (Implementasi fungsi-fungsi lookup/bantuan lainnya)
+const getDefaultDiscount = async (level, total, gudang) => {
+    let discount = 0;
+    
+    // Logika khusus untuk gudang KPR
+    if (gudang === 'KPR') {
+        discount = 15;
+    } else {
+        const query = 'SELECT * FROM tcustomer_level WHERE level_kode = ?';
+        const [levelRows] = await pool.query(query, [level]);
+
+        if (levelRows.length > 0) {
+            const levelData = levelRows[0];
+            if (total >= levelData.level_nominal) {
+                discount = levelData.level_diskon;
+            } else {
+                discount = levelData.level_diskon2;
+            }
+        }
+    }
+    return { discount };
+};
 
 module.exports = {
     save,
     getSoForEdit,
     getPenawaranDetailsForSo,
     searchAvailablePenawaran,
+    getDefaultDiscount,
     // ...
 };

@@ -38,9 +38,19 @@ const getPenawaranDetails = async (req, res) => {
     }
 };
 
+const getDefaultDiscount = async (req, res) => {
+    try {
+        const { level, total, gudang } = req.query;
+        const levelCode = level ? level.split(' - ')[0] : '';
+        const result = await soFormService.getDefaultDiscount(levelCode, total, gudang);
+        res.json(result);
+    } catch (error) { res.status(500).json({ message: error.message }); }
+};
+
 module.exports = {
     getForEdit,
     save,
     searchPenawaran,
     getPenawaranDetails,
+    getDefaultDiscount,
 };
