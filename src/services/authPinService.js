@@ -1,29 +1,29 @@
-/**
- * Memvalidasi PIN otorisasi berdasarkan kode yang diberikan.
- * Logika ini meniru perhitungan yang ada di aplikasi Delphi:
- * StrToFloat(edtkodeo.Text)*21+53*4 = noto
- */
 const validatePin = async (code, pin) => {
-    // 1. Konversi input ke tipe data angka (Number)
-    const numericCode = parseFloat(code);
-    const numericPin = parseFloat(pin);
-
-    // 2. Lakukan pengecekan untuk memastikan input valid
-    if (isNaN(numericCode) || isNaN(numericPin)) {
-        throw new Error('Kode atau PIN tidak valid.');
+    // 1. Validasi dasar
+    if (!pin || pin.length < 2) { // PIN harus punya setidaknya 1 angka dan 1 huruf
+        throw new Error('Format PIN tidak valid.');
     }
 
-    // 3. Lakukan perhitungan sesuai formula Delphi
+    // 2. Pisahkan angka dan karakter otorisator (seperti di Delphi)
+    const numericPinString = pin.substring(0, pin.length - 1);
+    const authorizerChar = pin.substring(pin.length - 1);
+    
+    // 3. Konversi ke angka
+    const numericCode = parseFloat(code);
+    const numericPin = parseFloat(numericPinString);
+    if (isNaN(numericCode) || isNaN(numericPin)) {
+        throw new Error('Kode atau PIN mengandung karakter angka yang tidak valid.');
+    }
+
+    // 4. Lakukan perhitungan sesuai formula Delphi
     const expectedPin = (numericCode * 21) + (53 * 4);
 
-    // 4. Bandingkan hasilnya
-    const isValid = (numericPin === expectedPin);
-
-    if (!isValid) {
+    // 5. Bandingkan hasilnya
+    // TODO: Tambahkan validasi untuk authorizerChar jika perlu (meniru `isotoritator`)
+    if (numericPin !== expectedPin) {
         throw new Error('Otorisasi salah.');
     }
 
-    // Jika valid, kembalikan status sukses
     return { success: true, message: 'Otorisasi berhasil.' };
 };
 
