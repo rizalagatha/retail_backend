@@ -19,15 +19,28 @@ const save = async (req, res) => {
     }
 };
 
-// --- Controller untuk Form Bantuan ---
-const searchCustomers = async (req, res) => { /* ... implementasi ... */ };
-const searchPenawaran = async (req, res) => { /* ... implementasi ... */ };
-const searchProducts = async (req, res) => { /* ... implementasi ... */ };
+const searchPenawaran = async (req, res) => {
+    try {
+        const data = await soFormService.searchAvailablePenawaran(req.query);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+const getPenawaranDetails = async (req, res) => {
+    try {
+        const { nomor } = req.params;
+        const data = await soFormService.getPenawaranDetailsForSo(nomor);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
 
 module.exports = {
     getForEdit,
     save,
-    searchCustomers,
     searchPenawaran,
-    searchProducts,
+    getPenawaranDetails,
 };

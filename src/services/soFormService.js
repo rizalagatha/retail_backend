@@ -67,10 +67,70 @@ const getSoForEdit = async (nomor) => {
     // Akan mengembalikan objek { header, details, dps }
 };
 
+/**
+ * @description Mencari Penawaran yang valid (belum jadi SO, belum di-close).
+ */
+const searchAvailablePenawaran = async (filters) => {
+    const { cabang, customerKode, term } = filters;
+    const searchTerm = `%${term}%`;
+    const query = `
+        SELECT 
+            h.pen_nomor AS nomor,
+            h.pen_tanggal AS tanggal,
+            c.cus_nama AS customer,
+            h.pen_ket AS keterangan
+        FROM tpenawaran_hdr h
+        LEFT JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
+        WHERE h.pen_alasan = ""
+          AND LEFT(h.pen_nomor, 3) = ?
+          AND h.pen_cus_kode = ?
+          AND h.pen_nomor NOT IN (SELECT so_pen_nomor FROM tso_hdr WHERE so_pen_nomor <> "")
+          AND (h.pen_nomor LIKE ? OR c.cus_nama LIKE ?)
+        ORDER BY h.pen_nomor DESC
+    `;
+    const [rows] = await pool.query(query, [cabang, customerKode, searchTerm, searchTerm]);
+    return rows;
+};
+
+/**
+ * @description Mengambil semua data dari Penawaran untuk diimpor ke SO.
+ */
+const getPenawaranDetailsForSo = async (nomor) => {
+    // 1. Ambil Header
+    const [headerRows] = await pool.query('SELECT * FROM tpenawaran_hdr WHERE pen_nomor = ?', [nomor]);
+    if (headerRows.length === 0) throw new Error('Data Penawaran tidak ditemukan.');
+    
+    // 2. Ambil Detail
+    const [detailRows] = await pool.query(`
+        SELECT 
+            d.pend_kode AS kode,
+            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)), f.sd_nama) AS nama,
+            d.pend_ukuran AS ukuran,
+            d.pend_jumlah AS jumlah,
+            d.pend_harga AS harga,
+            d.pend_disc AS diskonPersen,
+            d.pend_diskon AS diskonRp,
+            (d.pend_jumlah * (d.pend_harga - d.pend_diskon)) AS total,
+            b.brgd_barcode as barcode,
+            d.pend_sd_nomor as noSoDtf,
+            d.pend_ph_nomor as noPengajuanHarga
+        FROM tpenawaran_dtl d
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.pend_kode
+        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.pend_kode AND b.brgd_ukuran = d.pend_ukuran
+        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.pend_kode
+        WHERE d.pend_nomor = ? 
+        ORDER BY d.pend_nourut
+    `, [nomor]);
+
+    return { header: headerRows[0], details: detailRows };
+};
+
 // ... (Implementasi fungsi-fungsi lookup/bantuan lainnya)
 
 module.exports = {
     save,
     getSoForEdit,
+    getPenawaranDetailsForSo,
+    searchAvailablePenawaran,
     // ...
 };

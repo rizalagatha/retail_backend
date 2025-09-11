@@ -12,9 +12,8 @@ router.get('/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), soFormContr
 router.post('/save', verifyToken, checkPermission(MENU_ID, ['insert', 'edit']), soFormController.save);
 
 // --- Rute untuk Form Bantuan (Lookups) ---
-router.get('/lookup/customer', verifyToken, checkPermission(MENU_ID, 'view'), soFormController.searchCustomers);
 router.get('/lookup/penawaran', verifyToken, checkPermission(MENU_ID, 'view'), soFormController.searchPenawaran);
-router.get('/lookup/product', verifyToken, checkPermission(MENU_ID, 'view'), soFormController.searchProducts);
+router.get('/lookup/penawaran-details/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), soFormController.getPenawaranDetails);
 // ... tambahkan rute lookup lain jika perlu
 
 module.exports = router;
