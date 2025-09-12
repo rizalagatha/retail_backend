@@ -170,7 +170,7 @@ const getSoForEdit = async (nomor) => {
             },
             levelKode: String(mainRows[0].so_cus_level || ''),
             levelNama: mainRows[0].level_nama || '',
-            level: `${mainRows[0].so_cus_level} - ${mainRows[0].level_nama}`,
+            level: mainRows[0].xLevel || '',
             top: mainRows[0].so_top,
             ppnPersen: mainRows[0].so_ppn,
             statusSo: mainRows[0].so_aktif === 'Y' ? 'AKTIF' : 'PASIF',
