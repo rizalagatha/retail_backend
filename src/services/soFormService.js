@@ -167,6 +167,8 @@ const getSoForEdit = async (nomor) => {
                 kota: mainRows[0].cus_kota,
                 telp: mainRows[0].cus_telp,
             },
+            levelKode: mainRows[0].so_cus_level,   // tambahan
+            levelNama: mainRows[0].level_nama,     // tambahan
             level: mainRows[0].xLevel,
             top: mainRows[0].so_top,
             ppnPersen: mainRows[0].so_ppn,
@@ -238,7 +240,7 @@ const getPenawaranDetailsForSo = async (nomor) => {
     // 1. Ambil Header
     const [headerRows] = await pool.query('SELECT * FROM tpenawaran_hdr WHERE pen_nomor = ?', [nomor]);
     if (headerRows.length === 0) throw new Error('Data Penawaran tidak ditemukan.');
-    
+
     // 2. Ambil Detail
     const [detailRows] = await pool.query(`
         SELECT 
@@ -266,7 +268,7 @@ const getPenawaranDetailsForSo = async (nomor) => {
 
 const getDefaultDiscount = async (level, total, gudang) => {
     let discount = 0;
-    
+
     // Logika khusus untuk gudang KPR
     if (gudang === 'KPR') {
         discount = 15;
@@ -319,7 +321,7 @@ const searchAvailableSetoran = async (filters) => {
 const generateNewDpNumber = async (connection, cabang, tanggal) => {
     // Format tanggal ke 'yymm'
     const datePrefix = format(new Date(tanggal), 'yyMM');
-    
+
     // Buat prefix lengkap, contoh: K01.STR.2509
     const prefix = `${cabang}.STR.${datePrefix}`;
 
@@ -328,7 +330,7 @@ const generateNewDpNumber = async (connection, cabang, tanggal) => {
         FROM tsetor_hdr 
         WHERE LEFT(sh_nomor, 12) = ?
     `;
-    
+
     const [rows] = await connection.query(query, [prefix]);
     const lastNum = parseInt(rows[0].lastNum, 10);
     const newNum = lastNum + 1;
@@ -353,7 +355,7 @@ const saveNewDp = async (dpData, user) => {
         const [maxRows] = await connection.query(`SELECT IFNULL(MAX(RIGHT(sh_nomor, 4)), 0) as maxNum FROM tsetor_hdr WHERE LEFT(sh_nomor, 12) = ?`, [prefix]);
         const nextNum = parseInt(maxRows[0].maxNum, 10) + 1;
         const dpNomor = `${prefix}.${String(10000 + nextNum).slice(1)}`;
-        
+
         let query, params;
         const jenisNum = jenis === 'TUNAI' ? 0 : (jenis === 'TRANSFER' ? 1 : 2);
 
@@ -363,11 +365,11 @@ const saveNewDp = async (dpData, user) => {
         } else if (jenis === 'TRANSFER') {
             query = `INSERT INTO tsetor_hdr (sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_akun, sh_norek, sh_tgltransfer, sh_ket, user_create, date_create) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
             params = [dpNomor, customerKode, tanggal, jenisNum, nominal, bankData.akun, bankData.norek, bankData.tglTransfer, keterangan, user.kode];
-        } else if (jenis === 'GIRO') { 
+        } else if (jenis === 'GIRO') {
             query = `INSERT INTO tsetor_hdr (sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_giro, sh_tglgiro, sh_tempogiro, sh_ket, user_create, date_create) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
             params = [dpNomor, customerKode, tanggal, jenisNum, nominal, giroData.noGiro, giroData.tglGiro, giroData.tglJatuhTempo, keterangan, user.kode];
         }
-        
+
         await connection.query(query, params);
         await connection.commit();
 
@@ -408,7 +410,7 @@ function terbilang(n) {
     n = Math.floor(Math.abs(n));
 
     const ang = ["", "satu", "dua", "tiga", "empat", "lima", "enam", "tujuh", "delapan", "sembilan", "sepuluh", "sebelas"];
-    
+
     const terbilangRecursive = (num) => {
         if (num < 12) return ang[num];
         if (num < 20) return terbilangRecursive(num - 10) + " belas";
@@ -475,7 +477,7 @@ module.exports = {
     getDefaultDiscount,
     searchAvailableSetoran,
     generateNewDpNumber,
-    saveNewDp, 
+    saveNewDp,
     searchRekening,
     getDataForDpPrint,
     // ...
