@@ -391,6 +391,45 @@ const searchApprovedPriceProposals = async (params) => {
 };
 
 /**
+ * @description Mengambil semua detail dari Pengajuan Harga untuk diimpor.
+ */
+const getPriceProposalDetailsForSo = async (nomor) => {
+    // 1. Ambil Header
+    const [headerRows] = await pool.query('SELECT * FROM tpengajuanharga WHERE ph_nomor = ?', [nomor]);
+    if (headerRows.length === 0) throw new Error('Data Pengajuan Harga tidak ditemukan.');
+    
+    // 2. Ambil Detail
+    const detailQuery = `
+        SELECT 
+            d.phs_kode AS kode,
+            b.brgd_barcode as barcode,
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)) AS nama,
+            d.phs_size AS ukuran,
+            d.phs_jumlah AS jumlah,
+            (d.phs_harga + IFNULL(t.tambahan, 0) + IFNULL(brd.bordir, 0) + IFNULL(dt.dtf, 0)) AS harga,
+            (d.phs_jumlah * (d.phs_harga + IFNULL(t.tambahan, 0) + IFNULL(brd.bordir, 0) + IFNULL(dt.dtf, 0))) as total,
+            IFNULL(stok.Stok, 0) as stok
+        FROM tpengajuanharga_size d
+        LEFT JOIN tpengajuanharga h ON h.ph_nomor = d.phs_nomor
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.phs_kode
+        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.phs_kode AND b.brgd_ukuran = d.phs_size
+        LEFT JOIN (SELECT pht_nomor, SUM(pht_harga) AS tambahan FROM tpengajuanharga_tambahan GROUP BY pht_nomor) t ON t.pht_nomor = d.phs_nomor
+        LEFT JOIN (SELECT phb_nomor, phb_rpbordir AS bordir FROM tpengajuanharga_bordir GROUP BY phb_nomor) brd ON brd.phb_nomor = d.phs_nomor
+        LEFT JOIN (SELECT phd_nomor, phd_rpdtf AS dtf FROM tpengajuanharga_dtf GROUP BY phd_nomor) dt ON dt.phd_nomor = d.phs_nomor
+        LEFT JOIN (
+            SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_in - mst_stok_out) AS Stok 
+            FROM tmasterstok 
+            WHERE mst_aktif = "Y" AND mst_cab = LEFT(?, 3)
+            GROUP BY mst_brg_kode, mst_ukuran
+        ) stok ON stok.mst_brg_kode = d.phs_kode AND stok.mst_ukuran = d.phs_size
+        WHERE d.phs_nomor = ?
+    `;
+    const [detailRows] = await pool.query(detailQuery, [nomor, nomor]);
+
+    return { headerData: headerRows[0], itemsData: detailRows };
+};
+
+/**
  * @description Mengambil semua data yang diperlukan untuk mencetak satu Penawaran.
  * @param {string} nomor - Nomor Penawaran.
  * @returns {Promise<object|null>} Objek berisi semua data untuk dicetak.
@@ -460,5 +499,6 @@ module.exports = {
     searchAvailableSoDtf,
     getSoDtfDetailsForSo,
     searchApprovedPriceProposals,
+    getPriceProposalDetailsForSo,
     getDataForPrint,
 };

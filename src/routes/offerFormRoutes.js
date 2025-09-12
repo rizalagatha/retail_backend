@@ -42,6 +42,7 @@ router.get('/search/so-dtf-details/:nomor', verifyToken, checkPermission(OFFER_M
 
 // GET: Mencari Pengajuan Harga yang sudah disetujui
 router.get('/search/price-proposals', verifyToken, checkPermission(OFFER_MENU_ID, 'view'), offerFormController.searchPriceProposals);
+router.get('/search/price-proposal-details/:nomor', verifyToken, checkPermission(OFFER_MENU_ID, 'view'), offerFormController.getPriceProposalDetails);
 
 router.get('/print-data/:nomor', verifyToken, checkPermission(OFFER_MENU_ID, 'view'), offerFormController.getPrintData);
 

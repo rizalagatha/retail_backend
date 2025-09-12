@@ -120,6 +120,16 @@ const searchPriceProposals = async (req, res) => {
     }
 };
 
+const getPriceProposalDetails = async (req, res) => {
+    try {
+        const { nomor } = req.params;
+        const data = await offerFormService.getPriceProposalDetailsForSo(nomor);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 const getPrintData = async (req, res) => {
     try {
         const { nomor } = req.params;
@@ -143,5 +153,6 @@ module.exports = {
     searchSoDtf,
     getSoDtfDetails,
     searchPriceProposals,
+    getPriceProposalDetails,
     getPrintData,
 };
