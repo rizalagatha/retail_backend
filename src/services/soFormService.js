@@ -147,11 +147,78 @@ const getDefaultDiscount = async (level, total, gudang) => {
     return { discount };
 };
 
+const searchAvailableSetoran = async (filters) => {
+    const { cabang, customerKode, soNomor, term } = filters;
+    const searchTerm = `%${term}%`;
+    const query = `
+        SELECT x.Nomor, x.Tanggal, x.Jenis, x.Posting, x.Fsk, x.Nominal 
+        FROM (
+            SELECT 
+                h.sh_nomor AS Nomor, h.sh_tanggal AS Tanggal, 
+                IF(h.sh_jenis=0, "TUNAI", IF(h.sh_jenis=1, "TRANSFER", "GIRO")) AS Jenis, 
+                h.sh_nominal AS Nominal,
+                IFNULL((SELECT SUM(d.sd_bayar) FROM tsetor_dtl d WHERE d.sd_sh_nomor = h.sh_nomor), 0) AS Terpakai,
+                IF(j.jur_no IS NULL, "BELUM", "SUDAH") AS Posting,
+                IF(f.fskd_nomor IS NULL, "N", "Y") AS fsk
+            FROM tsetor_hdr h
+            LEFT JOIN tform_setorkasir_dtl f ON f.fskd_sh_nomor = h.sh_nomor
+            LEFT JOIN finance.tjurnal j ON j.jur_nomor = h.sh_nomor
+            WHERE h.sh_otomatis = "N" 
+              AND (h.sh_so_nomor = "" OR h.sh_so_nomor = ?) 
+              AND LEFT(h.sh_nomor, 3) = ? AND h.sh_cus_kode = ?
+              AND h.sh_nomor LIKE ?
+        ) x 
+        WHERE (x.Nominal - x.Terpakai) > 0
+    `;
+    const [rows] = await pool.query(query, [soNomor, cabang, customerKode, searchTerm]);
+    return rows;
+};
+
+/**
+ * @description Menyimpan data DP baru.
+ */
+const saveNewDp = async (dpData, user) => {
+    const { customerKode, tanggal, jenis, nominal, keterangan, bankData } = dpData;
+    const connection = await pool.getConnection();
+    await connection.beginTransaction();
+    try {
+        const cabang = user.cabang;
+        // getmaxdp logic
+        const prefix = `${cabang}.STR.${format(new Date(tanggal), 'yyMM')}`;
+        const [maxRows] = await connection.query(`SELECT IFNULL(MAX(RIGHT(sh_nomor, 4)), 0) as maxNum FROM tsetor_hdr WHERE LEFT(sh_nomor, 12) = ?`, [prefix]);
+        const nextNum = parseInt(maxRows[0].maxNum, 10) + 1;
+        const dpNomor = `${prefix}.${String(10000 + nextNum).slice(1)}`;
+        
+        let query, params;
+        const jenisNum = jenis === 'TUNAI' ? 0 : (jenis === 'TRANSFER' ? 1 : 2);
+
+        if (jenis === 'TUNAI') {
+            query = `INSERT INTO tsetor_hdr (sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_ket, user_create, date_create) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`;
+            params = [dpNomor, customerKode, tanggal, jenisNum, nominal, keterangan, user.kode];
+        } else if (jenis === 'TRANSFER') {
+            query = `INSERT INTO tsetor_hdr (sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_akun, sh_norek, sh_tgltransfer, sh_ket, user_create, date_create) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
+            params = [dpNomor, customerKode, tanggal, jenisNum, nominal, bankData.akun, bankData.norek, bankData.tglTransfer, keterangan, user.kode];
+        } // Tambahkan logika untuk GIRO jika perlu
+        
+        await connection.query(query, params);
+        await connection.commit();
+
+        return { success: true, message: `Setoran DP ${dpNomor} berhasil disimpan.`, newDp: { nomor: dpNomor, jenis, nominal, posting: 'BELUM' } };
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    } finally {
+        connection.release();
+    }
+};
+
 module.exports = {
     save,
     getSoForEdit,
     getPenawaranDetailsForSo,
     searchAvailablePenawaran,
     getDefaultDiscount,
+    searchAvailableSetoran,
+    saveNewDp, 
     // ...
 };

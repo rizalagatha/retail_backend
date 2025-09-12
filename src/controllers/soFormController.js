@@ -47,10 +47,31 @@ const getDefaultDiscount = async (req, res) => {
     } catch (error) { res.status(500).json({ message: error.message }); }
 };
 
+const searchSetoran = async (req, res) => {
+    try {
+        const data = await soFormService.searchAvailableSetoran(req.query);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+const saveDp = async (req, res) => {
+    try {
+        const result = await soFormService.saveNewDp(req.body, req.user);
+        res.status(201).json(result);
+    } catch (error) {
+        res.status(400).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getForEdit,
     save,
     searchPenawaran,
     getPenawaranDetails,
     getDefaultDiscount,
+    searchSetoran,
+    saveDp,
+    // ...
 };

@@ -15,5 +15,10 @@ router.post('/save', verifyToken, checkPermission(MENU_ID, ['insert', 'edit']), 
 router.get('/lookup/penawaran', verifyToken, checkPermission(MENU_ID, 'view'), soFormController.searchPenawaran);
 router.get('/lookup/penawaran-details/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), soFormController.getPenawaranDetails);
 router.get('/lookup/default-discount', verifyToken, checkPermission(MENU_ID, 'view'), soFormController.getDefaultDiscount);
+// GET: Mencari setoran yang tersedia untuk di-link sebagai DP
+router.get('/lookup/setoran', verifyToken, checkPermission(MENU_ID, 'view'), soFormController.searchSetoran);
+
+// POST: Menyimpan data DP baru dari modal
+router.post('/save-dp', verifyToken, checkPermission(MENU_ID, 'insert'), soFormController.saveDp);
 
 module.exports = router;
