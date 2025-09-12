@@ -120,6 +120,7 @@ const getSoForEdit = async (nomor) => {
                 h.*, d.*, c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
                 DATE_FORMAT(c.cus_tgllahir, "%d-%m-%Y") AS tgllahir,
                 b.brgd_barcode,
+                l.level_nama,
                 CONCAT(h.so_cus_level, " - ", l.level_nama) AS xLevel,
                 IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)), f.sd_nama) AS NamaBarang,
                 (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS total,
@@ -167,9 +168,9 @@ const getSoForEdit = async (nomor) => {
                 kota: mainRows[0].cus_kota,
                 telp: mainRows[0].cus_telp,
             },
-            levelKode: String(mainRows[0].so_cus_level || ''),   // paksa string ✅
-            levelNama: mainRows[0].level_nama || '',             // simpan nama doang
-            level: `${mainRows[0].so_cus_level} - ${mainRows[0].level_nama}`, // kalau masih mau gabungan
+            levelKode: String(mainRows[0].so_cus_level || ''),
+            levelNama: mainRows[0].level_nama || '',
+            level: `${mainRows[0].so_cus_level} - ${mainRows[0].level_nama}`,
             top: mainRows[0].so_top,
             ppnPersen: mainRows[0].so_ppn,
             statusSo: mainRows[0].so_aktif === 'Y' ? 'AKTIF' : 'PASIF',
