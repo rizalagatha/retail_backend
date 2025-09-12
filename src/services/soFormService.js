@@ -121,6 +121,8 @@ const getSoForEdit = async (nomor) => {
                 DATE_FORMAT(c.cus_tgllahir, "%d-%m-%Y") AS tgllahir,
                 b.brgd_barcode,
                 l.level_nama,
+                g.gdg_kode,
+                g.gdg_nama,
                 CONCAT(h.so_cus_level, " - ", l.level_nama) AS xLevel,
                 IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)), f.sd_nama) AS NamaBarang,
                 (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS total,
@@ -132,6 +134,7 @@ const getSoForEdit = async (nomor) => {
             LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
             LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
             LEFT JOIN tcustomer_level l ON l.level_kode = h.so_cus_level
+            LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.so_nomor,3)
             WHERE h.so_nomor = ?
             ORDER BY d.sod_nourut
         `;
@@ -161,6 +164,10 @@ const getSoForEdit = async (nomor) => {
             penawaran: mainRows[0].so_pen_nomor,
             keterangan: mainRows[0].so_ket,
             salesCounter: mainRows[0].so_sc,
+            gudang: {
+                kode: mainRows[0].gdg_kode,
+                nama: mainRows[0].gdg_nama,
+            },
             customer: {
                 kode: mainRows[0].so_cus_kode,
                 nama: mainRows[0].cus_nama,
