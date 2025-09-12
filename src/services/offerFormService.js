@@ -68,7 +68,13 @@ const searchCustomers = async (term, gudang, page, itemsPerPage) => {
                 LEFT JOIN tcustomer_level l ON l.level_kode = v.clh_level
                 WHERE v.clh_cus_kode = c.cus_kode
                 ORDER BY v.clh_tanggal DESC LIMIT 1
-            ), "") AS level
+            ), "") AS level_nama,
+            IFNULL((
+                SELECT v.clh_level
+                FROM tcustomer_level_history v
+                WHERE v.clh_cus_kode = c.cus_kode
+                ORDER BY v.clh_tanggal DESC LIMIT 1
+            ), "") AS level_kode
         ${baseQuery}
         ORDER BY c.cus_nama
         LIMIT ? OFFSET ?
