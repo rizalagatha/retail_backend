@@ -175,6 +175,32 @@ const searchAvailableSetoran = async (filters) => {
 };
 
 /**
+ * @description Membuat nomor Setoran DP baru (getmaxdp versi Delphi).
+ */
+const generateNewDpNumber = async (connection, cabang, tanggal) => {
+    // Format tanggal ke 'yymm'
+    const datePrefix = format(new Date(tanggal), 'yyMM');
+    
+    // Buat prefix lengkap, contoh: K01.STR.2509
+    const prefix = `${cabang}.STR.${datePrefix}`;
+
+    const query = `
+        SELECT IFNULL(MAX(RIGHT(sh_nomor, 4)), 0) as lastNum 
+        FROM tsetor_hdr 
+        WHERE LEFT(sh_nomor, 12) = ?
+    `;
+    
+    const [rows] = await connection.query(query, [prefix]);
+    const lastNum = parseInt(rows[0].lastNum, 10);
+    const newNum = lastNum + 1;
+
+    // Format nomor urut menjadi 4 digit dengan padding nol
+    const sequentialPart = String(newNum).padStart(4, '0');
+
+    return `${prefix}.${sequentialPart}`;
+};
+
+/**
  * @description Menyimpan data DP baru.
  */
 const saveNewDp = async (dpData, user) => {
@@ -198,7 +224,10 @@ const saveNewDp = async (dpData, user) => {
         } else if (jenis === 'TRANSFER') {
             query = `INSERT INTO tsetor_hdr (sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_akun, sh_norek, sh_tgltransfer, sh_ket, user_create, date_create) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
             params = [dpNomor, customerKode, tanggal, jenisNum, nominal, bankData.akun, bankData.norek, bankData.tglTransfer, keterangan, user.kode];
-        } // Tambahkan logika untuk GIRO jika perlu
+        } else if (jenis === 'GIRO') { 
+            query = `INSERT INTO tsetor_hdr (sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_giro, sh_tglgiro, sh_tempogiro, sh_ket, user_create, date_create) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
+            params = [dpNomor, customerKode, tanggal, jenisNum, nominal, giroData.noGiro, giroData.tglGiro, giroData.tglJatuhTempo, keterangan, user.kode];
+        }
         
         await connection.query(query, params);
         await connection.commit();
@@ -238,6 +267,7 @@ module.exports = {
     searchAvailablePenawaran,
     getDefaultDiscount,
     searchAvailableSetoran,
+    generateNewDpNumber,
     saveNewDp, 
     searchRekening,
     // ...
