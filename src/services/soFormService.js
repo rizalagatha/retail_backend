@@ -167,9 +167,9 @@ const getSoForEdit = async (nomor) => {
                 kota: mainRows[0].cus_kota,
                 telp: mainRows[0].cus_telp,
             },
-            levelKode: mainRows[0].so_cus_level,   // tambahan
-            levelNama: mainRows[0].level_nama,     // tambahan
-            level: mainRows[0].xLevel,
+            levelKode: String(mainRows[0].so_cus_level || ''),   // paksa string ✅
+            levelNama: mainRows[0].level_nama || '',             // simpan nama doang
+            level: `${mainRows[0].so_cus_level} - ${mainRows[0].level_nama}`, // kalau masih mau gabungan
             top: mainRows[0].so_top,
             ppnPersen: mainRows[0].so_ppn,
             statusSo: mainRows[0].so_aktif === 'Y' ? 'AKTIF' : 'PASIF',
