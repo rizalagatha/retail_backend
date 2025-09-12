@@ -5,11 +5,16 @@ const { verifyToken, checkPermission } = require('../middleware/authMiddleware')
 
 const MENU_ID = '26'; // ID Menu Surat Pesanan
 
+const checkSavePermission = (req, res, next) => {
+    const action = req.body.isNew ? 'insert' : 'edit';
+    return checkPermission(MENU_ID, action)(req, res, next);
+};
+
 // GET: Memuat semua data yang dibutuhkan untuk form mode "Ubah"
 router.get('/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), soFormController.getForEdit);
 
 // POST: Menyimpan data SO (bisa untuk baru atau update)
-router.post('/save', verifyToken, checkPermission(MENU_ID, ['insert', 'edit']), soFormController.save);
+router.post('/save', verifyToken, checkSavePermission, soFormController.save);
 
 // --- Rute untuk Form Bantuan (Lookups) ---
 router.get('/lookup/penawaran', verifyToken, checkPermission(MENU_ID, 'view'), soFormController.searchPenawaran);
