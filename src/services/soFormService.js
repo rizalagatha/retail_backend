@@ -108,8 +108,98 @@ const save = async (data, user) => {
  * @description Memuat semua data untuk mode Ubah (loaddataall).
  */
 const getSoForEdit = async (nomor) => {
-    // ... (Query kompleks untuk JOIN tso_hdr, tso_dtl, tcustomer, tsetor_hdr, dll.)
-    // Akan mengembalikan objek { header, details, dps }
+    const connection = await pool.getConnection();
+    try {
+        // 1. Cek jika SO sudah menjadi invoice
+        const [invoiceRows] = await connection.query('SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor_so = ?', [nomor]);
+        const isInvoiced = invoiceRows.length > 0;
+
+        // 2. Ambil data Header Utama & Detail Item dalam satu query
+        const mainQuery = `
+            SELECT 
+                h.*, d.*, c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
+                DATE_FORMAT(c.cus_tgllahir, "%d-%m-%Y") AS tgllahir,
+                b.brgd_barcode,
+                CONCAT(h.so_cus_level, " - ", l.level_nama) AS xLevel,
+                IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)), f.sd_nama) AS NamaBarang,
+                (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS total,
+                IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif="Y" AND m.mst_cab=LEFT(h.so_nomor,3) AND m.mst_brg_kode=d.sod_kode AND m.mst_ukuran=d.sod_ukuran), 0) AS Stok
+            FROM tso_hdr h
+            JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor
+            LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
+            LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_kode
+            LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
+            LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
+            LEFT JOIN tcustomer_level l ON l.level_kode = h.so_cus_level
+            WHERE h.so_nomor = ?
+            ORDER BY d.sod_nourut
+        `;
+        const [mainRows] = await connection.query(mainQuery, [nomor]);
+        if (mainRows.length === 0) {
+            throw new Error(`Surat Pesanan dengan nomor ${nomor} tidak ditemukan.`);
+        }
+
+        // 3. Ambil data DP
+        const dpQuery = `
+            SELECT 
+                h.sh_nomor AS nomor,
+                IF(h.sh_jenis=0, "TUNAI", IF(h.sh_jenis=1, "TRANSFER", "GIRO")) AS jenis,
+                h.sh_nominal AS nominal,
+                IF(j.jur_no IS NULL, "BELUM", "SUDAH") AS posting
+            FROM tsetor_hdr h
+            LEFT JOIN finance.tjurnal j ON j.jur_nomor = h.sh_nomor
+            WHERE h.sh_otomatis = "N" AND h.sh_so_nomor = ?
+        `;
+        const [dpRows] = await connection.query(dpQuery, [nomor]);
+
+        // 4. Proses dan format data untuk dikirim ke frontend
+        const headerData = {
+            nomor: mainRows[0].so_nomor,
+            tanggal: mainRows[0].so_tanggal,
+            dateline: mainRows[0].so_dateline,
+            penawaran: mainRows[0].so_pen_nomor,
+            keterangan: mainRows[0].so_ket,
+            salesCounter: mainRows[0].so_sc,
+            customer: {
+                kode: mainRows[0].so_cus_kode,
+                nama: mainRows[0].cus_nama,
+                alamat: mainRows[0].cus_alamat,
+                kota: mainRows[0].cus_kota,
+                telp: mainRows[0].cus_telp,
+            },
+            level: mainRows[0].xLevel,
+            top: mainRows[0].so_top,
+            ppnPersen: mainRows[0].so_ppn,
+            statusSo: mainRows[0].so_aktif === 'Y' ? 'AKTIF' : 'PASIF',
+            canEdit: !isInvoiced // Kirim flag apakah form bisa diedit
+        };
+
+        const itemsData = mainRows.map(row => ({
+            kode: row.sod_kode,
+            nama: row.NamaBarang,
+            ukuran: row.sod_ukuran,
+            stok: row.Stok,
+            jumlah: row.sod_jumlah,
+            harga: row.sod_harga,
+            diskonPersen: row.sod_disc,
+            diskonRp: row.sod_diskon,
+            total: row.total,
+            barcode: row.brgd_barcode,
+            noSoDtf: row.sod_sd_nomor,
+            noPengajuanHarga: row.sod_ph_nomor,
+        }));
+
+        const footerData = {
+            diskonRp: mainRows[0].so_disc,
+            diskonPersen1: mainRows[0].so_disc1,
+            diskonPersen2: mainRows[0].so_disc2,
+            biayaKirim: mainRows[0].so_bkrm,
+        };
+
+        return { headerData, itemsData, dpItemsData: dpRows, footerData };
+    } finally {
+        connection.release();
+    }
 };
 
 /**

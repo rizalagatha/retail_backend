@@ -3,8 +3,13 @@ const soFormService = require('../services/soFormService');
 const getForEdit = async (req, res) => {
     try {
         const { nomor } = req.params;
+        // Panggil fungsi service yang sudah kita buat
         const data = await soFormService.getSoForEdit(nomor);
-        res.json(data);
+        if (data) {
+            res.json(data);
+        } else {
+            res.status(404).json({ message: 'Data Surat Pesanan tidak ditemukan.' });
+        }
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -81,6 +86,7 @@ const getDpPrintData = async (req, res) => {
         res.json(data);
     } catch (error) { res.status(500).json({ message: error.message }); }
 };
+
 
 module.exports = {
     getForEdit,

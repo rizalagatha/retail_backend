@@ -73,12 +73,9 @@ const searchCustomers = async (term, gudang, page, itemsPerPage) => {
                 SELECT v.clh_level
                 FROM tcustomer_level_history v
                 WHERE v.clh_cus_kode = c.cus_kode
-                ORDER BY v.clh_tanggal DESC LIMIT 1    
-            ), "") AS level_kode,
-            c.cus_franchise AS franchise
-        FROM tcustomer c
-        WHERE c.cus_aktif = 0 AND c.cus_nama NOT LIKE "RETAIL%"
-        -- filter franchise di sini
+                ORDER BY v.clh_tanggal DESC LIMIT 1
+            ), "") AS level_kode
+        ${baseQuery}
         ORDER BY c.cus_nama
         LIMIT ? OFFSET ?
     `;
