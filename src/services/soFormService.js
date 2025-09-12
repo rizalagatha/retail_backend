@@ -216,7 +216,7 @@ const saveNewDp = async (dpData, user) => {
  * @description Mencari rekening bank yang tersedia untuk cabang tertentu.
  */
 const searchRekening = async (filters) => {
-    const { term } = filters;
+    const { cabang, term } = filters;
     const searchTerm = `%${term || ''}%`;
     const query = `
         SELECT 
