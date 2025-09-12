@@ -38,7 +38,7 @@ const save = async (data, user) => {
             await connection.query(insertHeaderQuery, [
                 idrec, soNomor, header.tanggal, header.dateline, header.penawaran, header.top || 0, header.ppnPersen || 0,
                 footer.diskonRp, footer.diskonPersen1, footer.diskonPersen2, footer.biayaKirim, footer.totalDp,
-                header.customer.kode, header.customer.level, footer.pinTanpaDp, header.keterangan, aktifStatus, header.salesCounter, user.kode
+                header.customer.kode, header.level, footer.pinTanpaDp, header.keterangan, aktifStatus, header.salesCounter, user.kode
             ]);
         } else {
             const [idrecRows] = await connection.query('SELECT so_idrec FROM tso_hdr WHERE so_nomor = ?', [soNomor]);
@@ -52,7 +52,7 @@ const save = async (data, user) => {
                 WHERE so_nomor = ?
             `;
             await connection.query(updateHeaderQuery, [
-                header.customer.kode, header.penawaran, header.customer.level, header.tanggal, header.dateline, header.top || 0, header.ppnPersen || 0, footer.pinTanpaDp, header.keterangan,
+                header.customer.kode, header.penawaran, header.level, header.tanggal, header.dateline, header.top || 0, header.ppnPersen || 0, footer.pinTanpaDp, header.keterangan,
                 footer.diskonRp, footer.diskonPersen1, footer.diskonPersen2, footer.biayaKirim, footer.totalDp, aktifStatus, header.salesCounter, user.kode,
                 soNomor
             ]);
