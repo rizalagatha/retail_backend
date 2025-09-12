@@ -36,7 +36,7 @@ const save = async (data, user) => {
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
             `;
             await connection.query(insertHeaderQuery, [
-                idrec, soNomor, header.tanggal, header.dateline, header.penawaran, header.top || 0,, header.ppnPersen,
+                idrec, soNomor, header.tanggal, header.dateline, header.penawaran, header.top || 0, header.ppnPersen || 0,
                 footer.diskonRp, footer.diskonPersen1, footer.diskonPersen2, footer.biayaKirim, footer.totalDp,
                 header.customer.kode, header.level.split(' - ')[0], footer.pinTanpaDp, header.keterangan, aktifStatus, header.salesCounter, user.kode
             ]);
@@ -52,7 +52,7 @@ const save = async (data, user) => {
                 WHERE so_nomor = ?
             `;
             await connection.query(updateHeaderQuery, [
-                header.customer.kode, header.penawaran, header.level.split(' - ')[0], header.tanggal, header.dateline, header.top || 0, header.ppnPersen, footer.pinTanpaDp, header.keterangan,
+                header.customer.kode, header.penawaran, header.level.split(' - ')[0], header.tanggal, header.dateline, header.top || 0, header.ppnPersen || 0, footer.pinTanpaDp, header.keterangan,
                 footer.diskonRp, footer.diskonPersen1, footer.diskonPersen2, footer.biayaKirim, footer.totalDp, aktifStatus, header.salesCounter, user.kode,
                 soNomor
             ]);
