@@ -212,6 +212,25 @@ const saveNewDp = async (dpData, user) => {
     }
 };
 
+/**
+ * @description Mencari rekening bank yang tersedia untuk cabang tertentu.
+ */
+const searchRekening = async (filters) => {
+    const { cabang, term } = filters;
+    const searchTerm = `%${term || ''}%`;
+    const query = `
+        SELECT 
+            rek_kode AS kode,
+            rek_nama AS nama,
+            rek_rekening AS rekening
+        FROM finance.trekening 
+        WHERE rek_kaosan LIKE ? 
+          AND (rek_kode LIKE ? OR rek_nama LIKE ?)
+    `;
+    const [rows] = await pool.query(query, [`%${cabang}%`, searchTerm, searchTerm]);
+    return rows;
+};
+
 module.exports = {
     save,
     getSoForEdit,
@@ -220,5 +239,6 @@ module.exports = {
     getDefaultDiscount,
     searchAvailableSetoran,
     saveNewDp, 
+    searchRekening,
     // ...
 };

@@ -65,6 +65,15 @@ const saveDp = async (req, res) => {
     }
 };
 
+const searchRekening = async (req, res) => {
+    try {
+        const data = await soFormService.searchRekening(req.query);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getForEdit,
     save,
@@ -73,5 +82,6 @@ module.exports = {
     getDefaultDiscount,
     searchSetoran,
     saveDp,
+    searchRekening, 
     // ...
 };
