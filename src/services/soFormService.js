@@ -262,17 +262,50 @@ const searchRekening = async (filters) => {
 };
 
 /**
+ * Mengubah angka menjadi format teks Rupiah.
+ * Contoh: 12345 -> "dua belas ribu tiga ratus empat puluh lima"
+ */
+function terbilang(n) {
+    if (n === null || n === undefined || isNaN(n)) return "Nol";
+    n = Math.floor(Math.abs(n));
+
+    const ang = ["", "satu", "dua", "tiga", "empat", "lima", "enam", "tujuh", "delapan", "sembilan", "sepuluh", "sebelas"];
+    
+    const terbilangRecursive = (num) => {
+        if (num < 12) return ang[num];
+        if (num < 20) return terbilangRecursive(num - 10) + " belas";
+        if (num < 100) return (ang[Math.floor(num / 10)] || "") + " puluh " + terbilangRecursive(num % 10);
+        if (num < 200) return "seratus " + terbilangRecursive(num - 100);
+        if (num < 1000) return terbilangRecursive(Math.floor(num / 100)) + " ratus " + terbilangRecursive(num % 100);
+        if (num < 2000) return "seribu " + terbilangRecursive(num - 1000);
+        if (num < 1000000) return terbilangRecursive(Math.floor(num / 1000)) + " ribu " + terbilangRecursive(num % 1000);
+        if (num < 1000000000) return terbilangRecursive(Math.floor(num / 1000000)) + " juta " + terbilangRecursive(n % 1000000);
+        // Bisa ditambahkan Miliar, Triliun, dst.
+        return "angka terlalu besar";
+    };
+
+    return terbilangRecursive(n).replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Helper untuk membuat huruf pertama menjadi kapital.
+ * Contoh: "dua belas ribu" -> "Dua belas ribu"
+ */
+const capitalize = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : '');
+
+/**
  * @description Mengambil semua data yang diperlukan untuk mencetak Cash Receipt (DP).
  */
 const getDataForDpPrint = async (nomorSetoran) => {
-    // Query ini meniru logika dari 'cetakdp' di Delphi
+    // Query ini telah dibuat lebih aman dengan IFNULL
     const query = `
         SELECT 
             h.sh_nomor, h.sh_tanggal, h.sh_nominal, h.sh_ket,
-            IF(h.sh_jenis=0, "TUNAI", IF(h.sh_jenis=1, "TRANSFER", "GIRO")) AS jenis_pembayaran,
+            IF(h.sh_jenis=0, 'TUNAI', IF(h.sh_jenis=1, 'TRANSFER', 'GIRO')) AS jenis_pembayaran,
             c.cus_nama, c.cus_alamat, c.cus_telp,
             h.sh_so_nomor,
-            r.rek_nama AS nama_akun, r.rek_rekening AS no_rekening,
+            IFNULL(r.rek_nama, '') AS nama_akun, 
+            IFNULL(r.rek_rekening, '') AS no_rekening,
             DATE_FORMAT(h.sh_tgltransfer, "%d-%m-%Y") AS tgl_transfer,
             h.user_create
         FROM tsetor_hdr h
@@ -284,7 +317,14 @@ const getDataForDpPrint = async (nomorSetoran) => {
     if (rows.length === 0) return null;
 
     const data = rows[0];
-    data.terbilang = capitalize(terbilang(data.sh_nominal)) + " Rupiah";
+
+    // Tambahkan pengecekan keamanan sebelum memanggil terbilang
+    const nominal = parseFloat(data.sh_nominal);
+    if (!isNaN(nominal)) {
+        data.terbilang = capitalize(terbilang(nominal)) + " Rupiah";
+    } else {
+        data.terbilang = "Nominal tidak valid";
+    }
 
     return data;
 };
