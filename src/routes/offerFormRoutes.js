@@ -38,6 +38,7 @@ router.get('/edit-details/:nomor', verifyToken, checkAccessPermission, offerForm
 
 // GET: Mencari SO DTF yang tersedia untuk ditambahkan ke penawaran
 router.get('/search/so-dtf', verifyToken, checkPermission(OFFER_MENU_ID, 'view'), offerFormController.searchSoDtf);
+router.get('/search/so-dtf-details/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), offerFormController.getSoDtfDetails);
 
 // GET: Mencari Pengajuan Harga yang sudah disetujui
 router.get('/search/price-proposals', verifyToken, checkPermission(OFFER_MENU_ID, 'view'), offerFormController.searchPriceProposals);

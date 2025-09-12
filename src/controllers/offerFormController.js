@@ -97,6 +97,16 @@ const searchSoDtf = async (req, res) => {
     }
 };
 
+const getSoDtfDetails = async (req, res) => {
+    try {
+        const { nomor } = req.params;
+        const data = await offerFormService.getSoDtfDetailsForSo(nomor);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 const searchPriceProposals = async (req, res) => {
     try {
         const { cabang, customerKode } = req.query;
@@ -131,6 +141,7 @@ module.exports = {
     getDefaultDiscount,
     getDetailsForEdit,
     searchSoDtf,
+    getSoDtfDetails,
     searchPriceProposals,
     getPrintData,
 };

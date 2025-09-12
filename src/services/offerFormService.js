@@ -319,10 +319,9 @@ const getOfferForEdit = async (nomor) => {
 /**
  * @description Mencari SO DTF yang belum dipakai untuk Penawaran.
  */
-const searchAvailableSoDtf = async (params) => {
-    const { cabang, customerKode, term } = params;
+const searchAvailableSoDtf = async (filters) => {
+    const { cabang, customerKode, term } = filters;
     const searchTerm = `%${term}%`;
-    // Query ini meniru logika Delphi untuk mencari SO DTF yang belum masuk Penawaran/Invoice
     const query = `
         SELECT 
             h.sd_nomor AS nomor,
@@ -330,18 +329,39 @@ const searchAvailableSoDtf = async (params) => {
             h.sd_nama AS namaDtf,
             h.sd_ket AS keterangan
         FROM tsodtf_hdr h
-        WHERE h.sd_stok = "" 
+        WHERE h.sd_stok = "" AND h.sd_alasan = "" 
           AND LEFT(h.sd_nomor, 3) = ?
           AND h.sd_cus_kode = ?
-          AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?)
           AND h.sd_nomor NOT IN (
-              SELECT DISTINCT o.pend_sd_nomor FROM tpenawaran_dtl o WHERE o.pend_sd_nomor IS NOT NULL
-              UNION
-              SELECT DISTINCT i.invd_sd_nomor FROM tinv_dtl i WHERE i.invd_sd_nomor IS NOT NULL
+              SELECT DISTINCT o.sod_sd_nomor FROM tso_dtl o WHERE o.sod_sd_nomor IS NOT NULL AND o.sod_sd_nomor <> ''
+              UNION ALL
+              SELECT DISTINCT i.invd_sd_nomor FROM tinv_dtl i WHERE i.invd_sd_nomor IS NOT NULL AND i.invd_sd_nomor <> ''
           )
+          AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?)
         ORDER BY h.sd_tanggal DESC
     `;
     const [rows] = await pool.query(query, [cabang, customerKode, searchTerm, searchTerm]);
+    return rows;
+};
+
+/**
+ * @description Mengambil semua detail dari SO DTF untuk diimpor.
+ */
+const getSoDtfDetailsForSo = async (nomor) => {
+    const query = `
+        SELECT 
+            h.sd_nomor,
+            h.sd_nama AS nama,
+            d.sdd_ukuran AS ukuran,
+            d.sdd_jumlah AS jumlah,
+            d.sdd_harga AS harga,
+            (d.sdd_jumlah * d.sdd_harga) AS total
+        FROM tsodtf_dtl d
+        JOIN tsodtf_hdr h ON h.sd_nomor = d.sdd_nomor
+        WHERE d.sdd_nomor = ?
+        ORDER BY d.sdd_nourut
+    `;
+    const [rows] = await pool.query(query, [nomor]);
     return rows;
 };
 
@@ -438,6 +458,7 @@ module.exports = {
     getDefaultDiscount,
     getOfferForEdit,
     searchAvailableSoDtf,
+    getSoDtfDetailsForSo,
     searchApprovedPriceProposals,
     getDataForPrint,
 };
