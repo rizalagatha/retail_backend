@@ -1,5 +1,6 @@
 const pool = require('../config/database');
 const { format } = require('date-fns');
+const { get } = require('../routes/salesCounterRoute');
 
 /**
  * @description Membuat nomor SO baru (getmaxnomor).
@@ -260,6 +261,34 @@ const searchRekening = async (filters) => {
     return rows;
 };
 
+/**
+ * @description Mengambil semua data yang diperlukan untuk mencetak Cash Receipt (DP).
+ */
+const getDataForDpPrint = async (nomorSetoran) => {
+    // Query ini meniru logika dari 'cetakdp' di Delphi
+    const query = `
+        SELECT 
+            h.sh_nomor, h.sh_tanggal, h.sh_nominal, h.sh_ket,
+            IF(h.sh_jenis=0, "TUNAI", IF(h.sh_jenis=1, "TRANSFER", "GIRO")) AS jenis_pembayaran,
+            c.cus_nama, c.cus_alamat, c.cus_telp,
+            h.sh_so_nomor,
+            r.rek_nama AS nama_akun, r.rek_rekening AS no_rekening,
+            DATE_FORMAT(h.sh_tgltransfer, "%d-%m-%Y") AS tgl_transfer,
+            h.user_create
+        FROM tsetor_hdr h
+        LEFT JOIN tcustomer c ON c.cus_kode = h.sh_cus_kode
+        LEFT JOIN finance.trekening r ON r.rek_kode = h.sh_akun
+        WHERE h.sh_nomor = ?
+    `;
+    const [rows] = await pool.query(query, [nomorSetoran]);
+    if (rows.length === 0) return null;
+
+    const data = rows[0];
+    data.terbilang = capitalize(terbilang(data.sh_nominal)) + " Rupiah";
+
+    return data;
+};
+
 module.exports = {
     save,
     getSoForEdit,
@@ -270,5 +299,6 @@ module.exports = {
     generateNewDpNumber,
     saveNewDp, 
     searchRekening,
+    getDataForDpPrint,
     // ...
 };

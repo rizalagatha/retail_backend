@@ -74,6 +74,14 @@ const searchRekening = async (req, res) => {
     }
 };
 
+const getDpPrintData = async (req, res) => {
+    try {
+        const { nomor } = req.params;
+        const data = await soFormService.getDataForDpPrint(nomor);
+        res.json(data);
+    } catch (error) { res.status(500).json({ message: error.message }); }
+};
+
 module.exports = {
     getForEdit,
     save,
@@ -83,5 +91,6 @@ module.exports = {
     searchSetoran,
     saveDp,
     searchRekening, 
+    getDpPrintData,
     // ...
 };

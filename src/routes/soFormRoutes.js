@@ -19,6 +19,8 @@ router.get('/lookup/default-discount', verifyToken, checkPermission(MENU_ID, 'vi
 router.get('/lookup/setoran', verifyToken, checkPermission(MENU_ID, 'view'), soFormController.searchSetoran);
 router.get('/lookup/rekening', verifyToken, checkPermission(MENU_ID, 'view'), soFormController.searchRekening);
 
+router.get('/print-data/dp/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), soFormController.getDpPrintData);
+
 // POST: Menyimpan data DP baru dari modal
 router.post('/save-dp', verifyToken, checkPermission(MENU_ID, 'insert'), soFormController.saveDp);
 
