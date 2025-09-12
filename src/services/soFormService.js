@@ -22,28 +22,76 @@ const save = async (data, user) => {
     await connection.beginTransaction();
     try {
         let soNomor = header.nomor;
+        let idrec;
+        const aktifStatus = header.statusSo === 'AKTIF' ? 'Y' : 'N';
+
+        // 1. Tentukan nomor & simpan/update data Header
         if (isNew) {
             soNomor = await generateNewSoNumber(connection, header.gudang.kode, header.tanggal);
-        }
-        
-        // ... (Logika INSERT/UPDATE header Anda di sini) ...
-        // ... (Logika DELETE/INSERT detail Anda di sini) ...
+            idrec = `${header.gudang.kode}SO${format(new Date(), 'yyyyMMddHHmmssSSS')}`;
 
-        // --- 👇 TAMBAHKAN BLOK INI UNTUK SIMPAN PIN 👇 ---
-        // Meniru logika 'simpanpin' dari Delphi
+            const insertHeaderQuery = `
+                INSERT INTO tso_hdr 
+                (so_idrec, so_nomor, so_tanggal, so_dateline, so_pen_nomor, so_top, so_ppn, so_disc, so_disc1, so_disc2, so_bkrm, so_dp, so_cus_kode, so_cus_level, so_accdp, so_ket, so_aktif, so_sc, user_create, date_create) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            `;
+            await connection.query(insertHeaderQuery, [
+                idrec, soNomor, header.tanggal, header.dateline, header.penawaran, header.top, header.ppnPersen,
+                footer.diskonRp, footer.diskonPersen1, footer.diskonPersen2, footer.biayaKirim, footer.totalDp,
+                header.customer.kode, header.level.split(' - ')[0], footer.pinTanpaDp, header.keterangan, aktifStatus, header.salesCounter, user.kode
+            ]);
+        } else {
+            const [idrecRows] = await connection.query('SELECT so_idrec FROM tso_hdr WHERE so_nomor = ?', [soNomor]);
+            if (idrecRows.length === 0) throw new Error('Nomor SO untuk diupdate tidak ditemukan.');
+            idrec = idrecRows[0].so_idrec;
+
+            const updateHeaderQuery = `
+                UPDATE tso_hdr SET
+                so_cus_kode = ?, so_pen_nomor = ?, so_cus_level = ?, so_tanggal = ?, so_dateline = ?, so_top = ?, so_ppn = ?, so_accdp = ?, so_ket = ?,
+                so_disc = ?, so_disc1 = ?, so_disc2 = ?, so_bkrm = ?, so_dp = ?, so_aktif = ?, so_sc = ?, user_modified = ?, date_modified = NOW()
+                WHERE so_nomor = ?
+            `;
+            await connection.query(updateHeaderQuery, [
+                header.customer.kode, header.penawaran, header.level.split(' - ')[0], header.tanggal, header.dateline, header.top, header.ppnPersen, footer.pinTanpaDp, header.keterangan,
+                footer.diskonRp, footer.diskonPersen1, footer.diskonPersen2, footer.biayaKirim, footer.totalDp, aktifStatus, header.salesCounter, user.kode,
+                soNomor
+            ]);
+        }
+
+        // 2. Hapus detail lama dan sisipkan yang baru
+        await connection.query('DELETE FROM tso_dtl WHERE sod_so_nomor = ?', [soNomor]);
+        for (const [index, item] of details.entries()) {
+            const insertDetailQuery = `
+                INSERT INTO tso_dtl (sod_idrec, sod_so_nomor, sod_kode, sod_ph_nomor, sod_sd_nomor, sod_ukuran, sod_jumlah, sod_harga, sod_disc, sod_diskon, sod_nourut) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `;
+            await connection.query(insertDetailQuery, [
+                idrec, soNomor, item.kode, item.noPengajuanHarga || '', item.noSoDtf || '', item.ukuran,
+                item.jumlah, item.harga, item.diskonPersen, item.diskonRp, index + 1
+            ]);
+        }
+
+        // 3. Simpan PIN Otorisasi (logika simpanpin)
         for (const item of details) {
-            if (item.pin) { // Simpan PIN per item
+            if (item.pin) {
                 await connection.query('INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_nominal) VALUES (?, "SO", "DISKON ITEM", ?, NOW(), ?, ?)', [soNomor, item.barcode || '', item.pin, item.diskonPersen]);
             }
         }
-        if (footer.pinDiskon1) { // Simpan PIN Diskon Faktur 1
+        if (footer.pinDiskon1) {
             await connection.query('INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "SO", "DISKON FAKTUR", NOW(), ?, ?)', [soNomor, footer.pinDiskon1, footer.diskonPersen1]);
         }
-        if (footer.pinDiskon2) { // Simpan PIN Diskon Faktur 2
+        if (footer.pinDiskon2) {
             await connection.query('INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "SO", "DISKON FAKTUR 2", NOW(), ?, ?)', [soNomor, footer.pinDiskon2, footer.diskonPersen2]);
         }
-        // TODO: Tambahkan logika untuk PIN DP jika diperlukan
-        // --- 👆 AKHIR BLOK SIMPAN PIN 👆 ---
+        if (footer.pinTanpaDp) {
+            await connection.query('INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "SO", "TANPA DP", NOW(), ?, ?)', [soNomor, footer.pinTanpaDp, footer.belumDibayar]);
+        }
+
+        // 4. Update nomor SO di setoran (logika simpannoso)
+        if (dps && dps.length > 0) {
+            const noSetoran = dps.map(dp => dp.nomor);
+            await connection.query('UPDATE tsetor_hdr SET sh_so_nomor = ? WHERE sh_nomor IN (?)', [soNomor, noSetoran]);
+        }
 
         await connection.commit();
         return { message: `Surat Pesanan ${soNomor} berhasil disimpan.`, nomor: soNomor };
