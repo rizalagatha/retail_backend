@@ -37,7 +37,11 @@ const searchProducts = async (term, category, gudang, page, itemsPerPage) => {
 
     // Filter pencarian (mencari di kode, nama, atau barcode)
     if (term) {
-        whereClause += ` AND (a.brg_kode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)) LIKE ? OR b.brgd_barcode LIKE ?)`;
+        whereClause += ` AND (
+                        a.brg_kode LIKE ? 
+                        OR TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) LIKE ?
+                        OR b.brgd_barcode LIKE ?
+                        )`;
         params.push(searchTerm, searchTerm, searchTerm);
     }
     
