@@ -59,8 +59,26 @@ const createCustomer = async (customerData, user) => {
             );
         }
 
+        const [newCustomerRows] = await connection.query(`
+            SELECT 
+                c.cus_kode AS kode, c.cus_nama AS nama, c.cus_alamat AS alamat, c.cus_kota AS kota, c.cus_telp AS telp, c.cus_top as top,
+                IFNULL(CONCAT(x.clh_level, " - " ,x.level_nama), "") AS level
+            FROM tcustomer c
+            LEFT JOIN (
+                SELECT i.clh_cus_kode, i.clh_level, l.level_nama FROM tcustomer_level_history i 
+                LEFT JOIN tcustomer_level l ON l.level_kode = i.clh_level
+                WHERE i.clh_cus_kode = ? ORDER BY i.clh_tanggal DESC LIMIT 1
+            ) x ON x.clh_cus_kode = c.cus_kode
+            WHERE c.cus_kode = ?
+        `, [newKode, newKode]);
+        
         await connection.commit();
-        return { success: true, message: `Customer baru berhasil disimpan dengan kode ${newKode}.` };
+
+        return { 
+            success: true, 
+            message: `Customer baru berhasil disimpan dengan kode ${newKode}.`,
+            newCustomer: newCustomerRows[0] 
+        };
     } catch (error) {
         await connection.rollback();
         console.error("Error creating customer:", error);
