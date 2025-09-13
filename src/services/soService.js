@@ -191,7 +191,7 @@ const getDataForPrint = async (nomor) => {
 // Di file: src/services/soService.js
 
 const close = async (data, user) => {
-    const { nomor, alasan } = data;
+    const { nomor, alasan, user } = data;
 
     // 1. Ambil status SO saat ini dengan query yang benar untuk validasi
     // Query ini adalah versi ringkas dari query getList, khusus untuk satu nomor SO
