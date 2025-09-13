@@ -36,6 +36,7 @@ const lhkSoDtfStokFormRoutes = require('./routes/lhkSoDtfStokFormRoutes');
 const soRoutes = require('./routes/soRoutes');
 const soFormRoutes = require('./routes/soFormRoutes');  
 const mutasiOutRoutes = require('./routes/mutasiOutRoutes');
+const mutasiOutFormRoutes = require('./routes/mutasiOutFormRoutes');
 const laporanStokRoutes = require('./routes/laporanStokRoutes');
 
 const app = express();
@@ -110,6 +111,7 @@ app.use('/api/lhk-so-dtf-stok-form', lhkSoDtfStokFormRoutes);
 app.use('/api/so', soRoutes);
 app.use('/api/so-form', soFormRoutes);
 app.use('/api/mutasi-out', mutasiOutRoutes);
+app.use('/api/mutasi-out-form', mutasiOutFormRoutes);
 app.use('/api/laporan-stok', laporanStokRoutes);
 
 // Menjalankan Server
