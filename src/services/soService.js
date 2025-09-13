@@ -190,7 +190,7 @@ const getDataForPrint = async (nomor) => {
 
 // Di file: src/services/soService.js
 
-const close = async (data, user) => {
+const close = async (data) => {
     const { nomor, alasan, user } = data;
 
     // 1. Ambil status SO saat ini dengan query yang benar untuk validasi
