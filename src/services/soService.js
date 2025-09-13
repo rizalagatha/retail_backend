@@ -282,6 +282,42 @@ const remove = async (nomor, user) => {
     }
 };
 
+const getExportDetails = async (filters) => {
+    const { startDate, endDate, cabang } = filters;
+    let params = [startDate, endDate];
+    let branchFilter = '';
+    if (cabang === 'KDC') {
+        branchFilter = 'AND LEFT(h.so_nomor, 3) IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)';
+    } else {
+        branchFilter = 'AND LEFT(h.so_nomor, 3) = ?';
+        params.push(cabang);
+    }
+
+    // Query ini menggabungkan header dan detail
+    const query = `
+        SELECT 
+            h.so_nomor AS 'Nomor SO',
+            h.so_tanggal AS 'Tanggal',
+            c.cus_nama AS 'Customer',
+            d.sod_kode AS 'Kode Barang',
+            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)), f.sd_nama) AS 'Nama Barang',
+            d.sod_ukuran AS 'Ukuran',
+            d.sod_jumlah AS 'Qty',
+            d.sod_harga AS 'Harga',
+            d.sod_diskon AS 'Diskon',
+            (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS 'Total'
+        FROM tso_hdr h
+        JOIN tso_dtl d ON h.so_nomor = d.sod_so_nomor
+        LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
+        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_kode
+        WHERE h.so_tanggal BETWEEN ? AND ? ${branchFilter}
+        ORDER BY h.so_nomor, d.sod_nourut;
+    `;
+    const [rows] = await pool.query(query, params);
+    return rows;
+};
+
 module.exports = {
     getList,
     getCabangList,
@@ -289,5 +325,6 @@ module.exports = {
     getDataForPrint,
     close,
     remove,
+    getExportDetails,
     // ...
 };
