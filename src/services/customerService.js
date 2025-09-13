@@ -39,7 +39,7 @@ const createCustomer = async (customerData, user) => {
     try {
         await connection.beginTransaction();
         const cusAktif = status === 'AKTIF' ? 0 : 1;
-        
+
         // Buat kode baru
         const userCabang = user.cabang || 'K03'; // Ambil cabang dari user yang login
         const newKode = await generateNewCustomerCode(userCabang);
@@ -51,33 +51,42 @@ const createCustomer = async (customerData, user) => {
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [newKode, nama, alamat, kota, telp, namaKontak, formattedTglLahir, top, cusAktif, npwp, namaNpwp, alamatNpwp, kotaNpwp]
         );
-        
+
         if (level) {
             await connection.query(
-               `INSERT INTO tcustomer_level_history (clh_cus_kode, clh_tanggal, clh_level) VALUES (?, CURDATE(), ?)`,
-               [newKode, level]
+                `INSERT INTO tcustomer_level_history (clh_cus_kode, clh_tanggal, clh_level) VALUES (?, CURDATE(), ?)`,
+                [newKode, level]
             );
         }
 
         const [newCustomerRows] = await connection.query(`
             SELECT 
-                c.cus_kode AS kode, c.cus_nama AS nama, c.cus_alamat AS alamat, c.cus_kota AS kota, c.cus_telp AS telp, c.cus_top as top,
-                IFNULL(CONCAT(x.clh_level, " - " ,x.level_nama), "") AS level
+                c.cus_kode AS kode, 
+                c.cus_nama AS nama, 
+                c.cus_alamat AS alamat, 
+                c.cus_kota AS kota, 
+                c.cus_telp AS telp, 
+                c.cus_top AS top,
+                x.clh_level AS levelKode,
+                x.level_nama AS levelNama
             FROM tcustomer c
             LEFT JOIN (
-                SELECT i.clh_cus_kode, i.clh_level, l.level_nama FROM tcustomer_level_history i 
+                SELECT i.clh_cus_kode, i.clh_level, l.level_nama 
+                FROM tcustomer_level_history i 
                 LEFT JOIN tcustomer_level l ON l.level_kode = i.clh_level
-                WHERE i.clh_cus_kode = ? ORDER BY i.clh_tanggal DESC LIMIT 1
+                WHERE i.clh_cus_kode = ? 
+                ORDER BY i.clh_tanggal DESC 
+                LIMIT 1
             ) x ON x.clh_cus_kode = c.cus_kode
             WHERE c.cus_kode = ?
         `, [newKode, newKode]);
-        
+
         await connection.commit();
 
-        return { 
-            success: true, 
+        return {
+            success: true,
             message: `Customer baru berhasil disimpan dengan kode ${newKode}.`,
-            newCustomer: newCustomerRows[0] 
+            newCustomer: newCustomerRows[0]
         };
     } catch (error) {
         await connection.rollback();
@@ -104,14 +113,14 @@ const updateCustomer = async (kode, customerData) => {
              WHERE cus_kode = ?`,
             [nama, alamat, kota, telp, namaKontak, formattedTglLahir, top, cusAktif, npwp, namaNpwp, alamatNpwp, kotaNpwp, kode]
         );
-        
+
         if (level) {
-             await connection.query(
+            await connection.query(
                 `INSERT INTO tcustomer_level_history (clh_cus_kode, clh_tanggal, clh_level) 
                  VALUES (?, CURDATE(), ?)
                  ON DUPLICATE KEY UPDATE clh_level = ?`,
                 [kode, level, level]
-             );
+            );
         }
 
         await connection.commit();
