@@ -110,11 +110,16 @@ const save = async (data, user) => {
 const getSoForEdit = async (nomor) => {
     const connection = await pool.getConnection();
     try {
+        console.log(`🔍 Getting SO data for: ${nomor}`);
+        
         // 1. Cek jika SO sudah menjadi invoice
+        console.log('📋 Checking invoice status...');
         const [invoiceRows] = await connection.query('SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor_so = ?', [nomor]);
         const isInvoiced = invoiceRows.length > 0;
+        console.log(`💰 Invoice status: ${isInvoiced ? 'INVOICED' : 'NOT_INVOICED'}`);
 
         // 2. Ambil data Header Utama & Detail Item dalam satu query
+        console.log('🔄 Executing main query...');
         const mainQuery = `
             SELECT 
                 h.*, d.*, c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
@@ -138,12 +143,29 @@ const getSoForEdit = async (nomor) => {
             WHERE h.so_nomor = ?
             ORDER BY d.sod_nourut
         `;
+        
         const [mainRows] = await connection.query(mainQuery, [nomor]);
+        console.log(`📊 Main query returned ${mainRows.length} rows`);
+        
         if (mainRows.length === 0) {
+            console.error(`❌ SO ${nomor} not found`);
             throw new Error(`Surat Pesanan dengan nomor ${nomor} tidak ditemukan.`);
         }
 
+        // Debug first row structure
+        console.log('🔍 First row sample:', {
+            so_nomor: mainRows[0].so_nomor,
+            so_tanggal: mainRows[0].so_tanggal,
+            so_cus_kode: mainRows[0].so_cus_kode,
+            so_cus_level: mainRows[0].so_cus_level,
+            level_nama: mainRows[0].level_nama,
+            cus_nama: mainRows[0].cus_nama,
+            gdg_kode: mainRows[0].gdg_kode,
+            gdg_nama: mainRows[0].gdg_nama
+        });
+
         // 3. Ambil data DP
+        console.log('💳 Getting DP data...');
         const dpQuery = `
             SELECT 
                 h.sh_nomor AS nomor,
@@ -155,60 +177,104 @@ const getSoForEdit = async (nomor) => {
             WHERE h.sh_otomatis = "N" AND h.sh_so_nomor = ?
         `;
         const [dpRows] = await connection.query(dpQuery, [nomor]);
+        console.log(`💰 DP query returned ${dpRows.length} rows`);
 
         // 4. Proses dan format data untuk dikirim ke frontend
+        console.log('🏗️ Building response data...');
+        
+        const firstRow = mainRows[0];
+        
+        // Format tanggal dengan proper handling
+        const formatDate = (dateValue) => {
+            if (!dateValue) return null;
+            if (dateValue instanceof Date) {
+                return dateValue.toISOString().split('T')[0];
+            }
+            // Jika string, coba convert
+            const date = new Date(dateValue);
+            return isNaN(date.getTime()) ? null : date.toISOString().split('T')[0];
+        };
+
         const headerData = {
-            nomor: mainRows[0].so_nomor,
-            tanggal: mainRows[0].so_tanggal,
-            dateline: mainRows[0].so_dateline,
-            penawaran: mainRows[0].so_pen_nomor,
-            keterangan: mainRows[0].so_ket,
-            salesCounter: mainRows[0].so_sc,
+            nomor: firstRow.so_nomor,
+            tanggal: formatDate(firstRow.so_tanggal),
+            dateline: formatDate(firstRow.so_dateline),
+            penawaran: firstRow.so_pen_nomor || '',
+            keterangan: firstRow.so_ket || '',
+            salesCounter: firstRow.so_sc || '',
             gudang: {
-                kode: mainRows[0].gdg_kode,
-                nama: mainRows[0].gdg_nama,
+                kode: firstRow.gdg_kode || '',
+                nama: firstRow.gdg_nama || '',
             },
             customer: {
-                kode: mainRows[0].so_cus_kode,
-                nama: mainRows[0].cus_nama,
-                alamat: mainRows[0].cus_alamat,
-                kota: mainRows[0].cus_kota,
-                telp: mainRows[0].cus_telp,
+                kode: firstRow.so_cus_kode || '',
+                nama: firstRow.cus_nama || '',
+                alamat: firstRow.cus_alamat || '',
+                kota: firstRow.cus_kota || '',
+                telp: firstRow.cus_telp || '',
             },
-            levelKode: String(mainRows[0].so_cus_level || ''),
-            levelNama: mainRows[0].level_nama || '',
-            level: mainRows[0].xLevel || '',
-            top: mainRows[0].so_top,
-            ppnPersen: mainRows[0].so_ppn,
-            statusSo: mainRows[0].so_aktif === 'Y' ? 'AKTIF' : 'PASIF',
-            canEdit: !isInvoiced // Kirim flag apakah form bisa diedit
+            levelKode: String(firstRow.so_cus_level || ''),
+            levelNama: firstRow.level_nama || '',
+            level: firstRow.xLevel || '',
+            top: Number(firstRow.so_top || 0),
+            ppnPersen: Number(firstRow.so_ppn || 0),
+            statusSo: firstRow.so_aktif === 'Y' ? 'AKTIF' : 'PASIF',
+            canEdit: !isInvoiced
         };
 
-        const itemsData = mainRows.map(row => ({
-            kode: row.sod_kode,
-            nama: row.NamaBarang,
-            ukuran: row.sod_ukuran,
-            stok: row.Stok,
-            jumlah: row.sod_jumlah,
-            harga: row.sod_harga,
-            diskonPersen: row.sod_disc,
-            diskonRp: row.sod_diskon,
-            total: row.total,
-            barcode: row.brgd_barcode,
-            noSoDtf: row.sod_sd_nomor,
-            noPengajuanHarga: row.sod_ph_nomor,
-        }));
+        console.log('🏷️ Header data built:', headerData);
+
+        const itemsData = mainRows.map((row, index) => {
+            const item = {
+                kode: row.sod_kode || '',
+                nama: row.NamaBarang || '',
+                ukuran: row.sod_ukuran || '',
+                stok: Number(row.Stok || 0),
+                jumlah: Number(row.sod_jumlah || 0),
+                harga: Number(row.sod_harga || 0),
+                diskonPersen: Number(row.sod_disc || 0),
+                diskonRp: Number(row.sod_diskon || 0),
+                total: Number(row.total || 0),
+                barcode: row.brgd_barcode || '',
+                noSoDtf: row.sod_sd_nomor || '',
+                noPengajuanHarga: row.sod_ph_nomor || '',
+            };
+            console.log(`📦 Item ${index}:`, item);
+            return item;
+        });
 
         const footerData = {
-            diskonRp: mainRows[0].so_disc,
-            diskonPersen1: mainRows[0].so_disc1,
-            diskonPersen2: mainRows[0].so_disc2,
-            biayaKirim: mainRows[0].so_bkrm,
+            diskonRp: Number(firstRow.so_disc || 0),
+            diskonPersen1: Number(firstRow.so_disc1 || 0),
+            diskonPersen2: Number(firstRow.so_disc2 || 0),
+            biayaKirim: Number(firstRow.so_bkrm || 0),
         };
 
-        return { headerData, itemsData, dpItemsData: dpRows, footerData };
+        console.log('📊 Footer data built:', footerData);
+        console.log('💳 DP items:', dpRows);
+
+        const responseData = { 
+            headerData, 
+            itemsData, 
+            dpItemsData: dpRows, 
+            footerData 
+        };
+
+        console.log('✅ Complete response data:', responseData);
+        
+        return responseData;
+        
+    } catch (error) {
+        console.error('💥 Error in getSoForEdit:', error);
+        console.error('📍 Error details:', {
+            message: error.message,
+            stack: error.stack,
+            nomor: nomor
+        });
+        throw error;
     } finally {
         connection.release();
+        console.log('🔌 Database connection released');
     }
 };
 
