@@ -188,12 +188,40 @@ const getDataForPrint = async (nomor) => {
     return { header, details, summary };
 };
 
-// ... (Implementasi fungsi lain seperti getCabangList, close, remove)
+const close = async (data, user) => {
+    const { nomor, alasan } = data;
+
+    // 1. Ambil status SO saat ini untuk validasi
+    const [rows] = await pool.query('SELECT so_close, StatusKirim FROM /* ... (Query lengkap Anda dari getList) ... */ WHERE Nomor = ?', [nomor]);
+    if (rows.length === 0) {
+        throw new Error('Surat Pesanan tidak ditemukan.');
+    }
+    const currentStatus = rows[0].Status; // Asumsi 'Status' adalah hasil kalkulasi CASE
+
+    // 2. Validasi dari Delphi
+    if (currentStatus === 'CLOSE' || currentStatus === 'DICLOSE') {
+        throw new Error('Surat Pesanan ini sudah berstatus CLOSE.');
+    }
+
+    // 3. Update data di database
+    const query = `
+        UPDATE tso_hdr 
+        SET so_close = 2, -- '2' untuk status DICLOSE
+            so_alasan = ?, 
+            user_modified = ?, 
+            date_modified = NOW() 
+        WHERE so_nomor = ?
+    `;
+    await pool.query(query, [alasan, user.kode, nomor]);
+    
+    return { success: true, message: `Surat Pesanan ${nomor} berhasil di-close.` };
+};
 
 module.exports = {
     getList,
     getCabangList,
     getDetails,
     getDataForPrint,
+    close,
     // ...
 };
