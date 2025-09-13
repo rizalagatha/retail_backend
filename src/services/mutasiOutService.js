@@ -48,7 +48,7 @@ const getDetails = async (nomor) => {
         FROM tmutasiout_dtl d
         LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.mod_kode
         WHERE d.mod_nomor = ?
-        ORDER BY d.mod_nourut
+        ORDER BY d.mod_kode, d.mod_ukuran
     `;
     const [rows] = await pool.query(query, [nomor]);
     return rows;
