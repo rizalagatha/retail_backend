@@ -241,7 +241,7 @@ const close = async (data, user) => {
             date_modified = NOW() 
         WHERE so_nomor = ?
     `;
-    await pool.query(updateQuery, [alasan, user.kode, nomor]);
+    await pool.query(updateQuery, [alasan, user, nomor]);
     
     return { success: true, message: `Surat Pesanan ${nomor} berhasil di-close.` };
 };
