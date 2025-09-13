@@ -246,11 +246,48 @@ const close = async (data) => {
     return { success: true, message: `Surat Pesanan ${nomor} berhasil di-close.` };
 };
 
+const remove = async (nomor, user) => {
+    // 1. Ambil data SO untuk validasi
+    const [rows] = await pool.query('SELECT so_nomor, so_close FROM tso_hdr WHERE so_nomor = ?', [nomor]);
+    if (rows.length === 0) {
+        throw new Error('Surat Pesanan tidak ditemukan.');
+    }
+    const so = rows[0];
+
+    // 2. Migrasi Validasi dari Delphi
+    // Validasi Status: hanya boleh 'OPEN' (so_close = 0)
+    if (so.so_close !== 0) {
+        throw new Error('SO yang sudah diproses atau di-close tidak bisa dihapus.');
+    }
+
+    // Validasi Kepemilikan Cabang
+    const cabangSo = nomor.substring(0, 3);
+    if (user.cabang !== 'KDC' && user.cabang !== cabangSo) {
+        throw new Error(`Anda tidak berhak menghapus data milik cabang ${cabangSo}.`);
+    }
+
+    // 3. Jika semua validasi lolos, hapus data
+    const connection = await pool.getConnection();
+    await connection.beginTransaction();
+    try {
+        // Asumsi foreign key dari tso_dtl ke tso_hdr diset ON DELETE CASCADE
+        await connection.query('DELETE FROM tso_hdr WHERE so_nomor = ?', [nomor]);
+        await connection.commit();
+        return { success: true, message: `Surat Pesanan ${nomor} berhasil dihapus.` };
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    } finally {
+        connection.release();
+    }
+};
+
 module.exports = {
     getList,
     getCabangList,
     getDetails,
     getDataForPrint,
     close,
+    remove,
     // ...
 };
