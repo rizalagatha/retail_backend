@@ -40,6 +40,7 @@ const getList = async (filters) => {
 };
 
 const getDetails = async (nomor) => {
+    // Query ini telah diperbaiki ORDER BY-nya
     const query = `
         SELECT 
             d.mtd_kode AS Kode,
@@ -60,7 +61,7 @@ const getDetails = async (nomor) => {
         LEFT JOIN tbarangdc a ON a.brg_kode = d.mtd_kode
         LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mtd_kode AND b.brgd_ukuran = d.mtd_ukuran
         WHERE d.mtd_nomor = ?
-        ORDER BY d.mtd_nourut
+        ORDER BY d.mtd_kode, d.mtd_ukuran -- <-- PERBAIKAN: Urutkan berdasarkan kode dan ukuran
     `;
     const [rows] = await pool.query(query, [nomor]);
     return rows;
