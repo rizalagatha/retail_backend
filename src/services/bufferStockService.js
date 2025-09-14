@@ -158,7 +158,21 @@ const getList = async (filters) => {
     return rows;
 };
 
-const getCabangList = async (user) => { /* ... (Logika getCabangList sama seperti sebelumnya) ... */ };
+const getCabangList = async (user) => {
+    let query;
+    if (user.cabang === 'KDC') {
+        // Query untuk KDC tetap sama
+        query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode="KDC" OR gdg_dc=0 ORDER BY gdg_kode';
+    } else {
+        // Query untuk cabang lain tetap sama
+        query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ?';
+    }
+    const [rows] = await pool.query(query, [user.cabang]);
+    
+    // Langsung kembalikan hasilnya tanpa menambahkan "ALL"
+    return rows;
+};
+
 
 const saveSetting = async (data, user) => {
     const { kode, ukuran, min, max } = data;
