@@ -70,16 +70,25 @@ const getDetails = async (nomor) => {
 
 const getCabangList = async (user) => {
     let query;
+    let params = [];
+
+    // Logika dari FormCreate Delphi
     if (user.cabang === 'KDC') {
-        // Query untuk KDC tetap sama
-        query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode="KDC" OR gdg_dc=0 ORDER BY gdg_kode';
+        // Untuk KDC, ambil gudang dengan tipe 0 (Biasa) atau 3 (Prioritas)
+        query = `SELECT gdg_kode as kode, gdg_nama as nama FROM tgudang WHERE gdg_dc IN (0, 3) ORDER BY gdg_kode`;
     } else {
-        // Query untuk cabang lain tetap sama
-        query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ?';
+        // Untuk cabang biasa, hanya ambil cabangnya sendiri
+        query = `SELECT gdg_kode as kode, gdg_nama as nama FROM tgudang WHERE gdg_kode = ? ORDER BY gdg_kode`;
+        params.push(user.cabang);
     }
-    const [rows] = await pool.query(query, [user.cabang]);
     
-    // Langsung kembalikan hasilnya tanpa menambahkan "ALL"
+    const [rows] = await pool.query(query, params);
+    
+    // Tambahkan opsi "ALL" untuk KDC, sesuai logika Delphi
+    if (user.cabang === 'KDC') {
+        return [{ kode: 'ALL', nama: 'SEMUA CABANG' }, ...rows];
+    }
+
     return rows;
 };
 
