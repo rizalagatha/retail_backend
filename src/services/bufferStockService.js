@@ -93,12 +93,14 @@ const updateBufferStock = async (updateDc, updateStore) => {
     }
 };
 
+// Di file: src/services/bufferStokService.js
+
 const getList = async (filters) => {
     const { cabang, tampilkanBufferNol, kaosan, reszo } = filters;
-    let params = [cabang, cabang];
-
+    let params = [cabang, cabang, cabang];
+    
     let bufferFilter = '';
-    if (tampilkanBufferNol === 'false') { // Diterima sebagai string dari query params
+    if (tampilkanBufferNol === 'false') {
         bufferFilter = (cabang === 'KDC') ? 'AND b.brgd_mindc <> 0' : 'AND b.brgd_min <> 0';
     }
 
@@ -111,27 +113,37 @@ const getList = async (filters) => {
 
     const query = `
         SELECT 
-            y.KtgProduk, y.Kode, y.Barcode, y.Nama, y.Ukuran, y.Stok, y.MinBuffer, y.MaxBuffer,
-            (IF(y.Stok < y.MinBuffer AND y.MinBuffer > 0, y.MaxBuffer - y.Stok, 0)) AS Harus_Minta,
-            IFNULL((
-                SELECT SUM(d.mtd_jumlah) FROM tmintabarang_dtl d 
-                WHERE LEFT(d.mtd_nomor, 3) = ?
-                  AND d.mtd_kode = y.Kode AND d.mtd_ukuran = y.Ukuran 
-                  AND d.mtd_nomor NOT IN (
-                      SELECT j.sj_mt_nomor FROM tdc_sj_hdr j 
-                      WHERE j.sj_noterima = "" AND j.sj_kecab = ? AND j.sj_mt_nomor <> ""
-                  )
-            ), 0) AS Sudah_Minta
+            y.*,
+            -- Logika untuk menentukan status berdasarkan Harus Minta dan Sudah Minta
+            CASE
+                WHEN y.Harus_Minta > 0 THEN 'Harus Minta'
+                WHEN y.Sudah_Minta > 0 THEN 'Sudah Minta'
+                ELSE 'Cukup'
+            END AS Status
         FROM (
             SELECT 
                 a.brg_ktgp AS KtgProduk, a.brg_kode AS Kode, 
-                TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)) AS Nama,
+                TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS Nama,
                 b.brgd_ukuran AS Ukuran, b.brgd_barcode AS Barcode,
                 IFNULL(b.brgd_min, 0) AS MinBuffer, IFNULL(b.brgd_max, 0) AS MaxBuffer,
                 IFNULL((
                     SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m
                     WHERE m.mst_aktif = "Y" AND m.mst_cab = ? AND m.mst_brg_kode = a.brg_kode AND m.mst_ukuran = b.brgd_ukuran
-                ), 0) AS Stok
+                ), 0) AS Stok,
+                (IF(
+                    IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif = "Y" AND m.mst_cab = ? AND m.mst_brg_kode = a.brg_kode AND m.mst_ukuran = b.brgd_ukuran), 0) < IFNULL(b.brgd_min, 0) AND IFNULL(b.brgd_min, 0) > 0, 
+                    IFNULL(b.brgd_max, 0) - IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif = "Y" AND m.mst_cab = ? AND m.mst_brg_kode = a.brg_kode AND m.mst_ukuran = b.brgd_ukuran), 0), 
+                    0
+                )) AS Harus_Minta,
+                IFNULL((
+                    SELECT SUM(d.mtd_jumlah) FROM tmintabarang_dtl d 
+                    WHERE LEFT(d.mtd_nomor, 3) = ?
+                      AND d.mtd_kode = a.brg_kode AND d.mtd_ukuran = b.brgd_ukuran 
+                      AND d.mtd_nomor NOT IN (
+                          SELECT j.sj_mt_nomor FROM tdc_sj_hdr j 
+                          WHERE j.sj_noterima = "" AND j.sj_kecab = ? AND j.sj_mt_nomor <> ""
+                      )
+                ), 0) AS Sudah_Minta
             FROM tbarangdc a
             JOIN tbarangdc_dtl b ON b.brgd_kode = a.brg_kode
             WHERE a.brg_aktif = 0 AND a.brg_logstok = "Y" AND a.brg_ktgp = "REGULER"
@@ -140,8 +152,8 @@ const getList = async (filters) => {
         ) y 
         ORDER BY y.Nama, y.Ukuran
     `;
-    params.unshift(cabang, cabang); // Tambahkan parameter cabang di awal untuk subquery
-
+    params.push(cabang, cabang);
+    
     const [rows] = await pool.query(query, params);
     return rows;
 };
