@@ -1,22 +1,20 @@
 const pool = require('../config/database');
 
+// Di file: src/services/mintaBarangService.js
+
 const getList = async (filters) => {
     const { startDate, endDate, cabang, jenisPermintaan } = filters;
     let params = [startDate, endDate];
-
-    let branchFilter = '';
+    let branchFilter = '', jenisFilter = '';
+    
     if (cabang !== 'ALL') {
         branchFilter = 'AND LEFT(h.mt_nomor, 3) = ?';
         params.push(cabang);
     }
-
-    let jenisFilter = '';
-    if (jenisPermintaan === 'manual') {
-        jenisFilter = 'AND h.mt_otomatis = "N"';
-    } else if (jenisPermintaan === 'otomatis') {
-        jenisFilter = 'AND h.mt_otomatis = "Y"';
-    }
+    if (jenisPermintaan === 'manual') jenisFilter = 'AND h.mt_otomatis = "N"';
+    else if (jenisPermintaan === 'otomatis') jenisFilter = 'AND h.mt_otomatis = "Y"';
     
+    // Query ini telah dilengkapi dengan semua kolom yang Anda minta
     const query = `
         SELECT 
             h.mt_nomor AS Nomor,
