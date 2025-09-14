@@ -43,26 +43,31 @@ const getDetails = async (nomor) => {
     // Query ini telah diperbaiki ORDER BY-nya
     const query = `
         SELECT 
+            h.mt_nomor AS Nomor,
             d.mtd_kode AS Kode,
             b.brgd_barcode AS Barcode,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)) AS Nama,
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS Nama,
             d.mtd_ukuran AS Ukuran,
             IFNULL(b.brgd_min, 0) AS StokMinimal,
             IFNULL(b.brgd_max, 0) AS StokMaximal,
             d.mtd_jumlah AS Jumlah,
             IFNULL((
-                SELECT SUM(i.sjd_jumlah) FROM tdc_sj_hdr j
+                SELECT SUM(i.sjd_jumlah) 
+                FROM tdc_sj_hdr j
                 JOIN tdc_sj_dtl i ON i.sjd_nomor = j.sj_nomor
-                WHERE j.sj_mt_nomor = d.mtd_nomor 
-                  AND i.sjd_kode = d.mtd_kode 
-                  AND i.sjd_ukuran = d.mtd_ukuran
-            ), 0) AS SJ
-        FROM tmintabarang_dtl d
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.mtd_kode
-        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mtd_kode AND b.brgd_ukuran = d.mtd_ukuran
-        WHERE d.mtd_nomor = ?
-        ORDER BY d.mtd_kode, d.mtd_ukuran -- <-- PERBAIKAN: Urutkan berdasarkan kode dan ukuran
-    `;
+                WHERE j.sj_mt_nomor = h.mt_nomor
+                    AND i.sjd_kode = d.mtd_kode
+                    AND i.sjd_ukuran = d.mtd_ukuran
+                ), 0) AS SJ
+            FROM tmintabarang_dtl d
+            INNER JOIN tmintabarang_hdr h ON d.mtd_nomor = h.mt_nomor
+            LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.mtd_kode
+            LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mtd_kode 
+                                    AND b.brgd_ukuran = d.mtd_ukuran
+            WHERE h.mt_tanggal >= :startdate
+                AND h.mt_tanggal <= :enddate
+            ORDER BY d.mtd_kode, d.mtd_ukuran;
+            `;
     const [rows] = await pool.query(query, [nomor]);
     return rows;
 };
