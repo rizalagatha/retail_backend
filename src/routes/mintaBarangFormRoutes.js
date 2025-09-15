@@ -5,8 +5,13 @@ const { verifyToken, checkPermission } = require('../middleware/authMiddleware')
 
 const MENU_ID = '37'; // ID Menu untuk Minta Barang
 
+const checkSavePermission = (req, res, next) => {
+    const action = req.body.isNew ? 'insert' : 'edit';
+    return checkPermission(MENU_ID, action)(req, res, next);
+};
+
 // POST: Menyimpan data Minta Barang (baru atau ubah)
-router.post('/save', verifyToken, checkPermission(MENU_ID, ['insert', 'edit']), mintaBarangFormController.save);
+router.post('/save', verifyToken, checkSavePermission, mintaBarangFormController.save);
 
 // GET: Memuat data Minta Barang yang sudah ada untuk mode "Ubah"
 router.get('/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), mintaBarangFormController.loadForEdit);
