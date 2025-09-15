@@ -52,5 +52,5 @@ module.exports = {
     getDetails,
     getCabangList,
     remove,
-    getExportDetais,
+    getExportDetails,
 };
