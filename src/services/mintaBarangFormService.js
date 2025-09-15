@@ -12,9 +12,6 @@ const getSudah = async (connection, soNomor, kode, ukuran, excludeMtNomor) => {
     return rows[0].total;
 };
 
-const searchSo = async (filters, user) => { /* ... (Implementasi dari modul SO) ... */ };
-const searchCustomers = async (filters, user) => { /* ... (Implementasi dari modul SO) ... */ };
-
 const getSoDetailsForGrid = async (soNomor, user) => {
     const connection = await pool.getConnection();
     try {
@@ -51,5 +48,8 @@ const save = async (data, user) => { /* ... (Implementasi lengkap dari simpandat
 const loadForEdit = async (nomor, user) => { /* ... (Implementasi lengkap dari loaddataall) ... */ };
 
 module.exports = {
-    searchSo, getSoDetailsForGrid, getBufferStokItems, save, loadForEdit, searchCustomers
+    getSoDetailsForGrid, 
+    getBufferStokItems, 
+    save, 
+    loadForEdit,
 };

@@ -56,6 +56,8 @@ const getSoDetailsForGrid = async (soNomor, user) => {
                 IFNULL(b.brgd_barcode, '') AS barcode,
                 IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)), d.sod_kode) AS nama,
                 d.sod_ukuran AS ukuran,
+                IFNULL(b.brgd_min, 0) AS stokmin,   
+                IFNULL(b.brgd_max, 0) AS stokmax,   
                 IFNULL((
                     SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
                     FROM tmasterstok m 
