@@ -1,71 +1,202 @@
 const pool = require('../config/database');
 
+/**
+ * Mengambil daftar header Surat Jalan berdasarkan filter.
+ * @param {object} filters - Objek berisi startDate, endDate, kodeBarang.
+ * @returns {Promise<Array>}
+ */
 const getList = async (filters) => {
-    const { startDate, endDate, productCode } = filters;
-    let params = [startDate, endDate];
+    const { startDate, endDate, kodeBarang } = filters;
     
-    let productFilter = '';
-    if (productCode) {
-        productFilter = 'AND d.sjd_kode = ?';
-        params.push(productCode);
+    let params = [startDate, endDate];
+    let itemFilter = '';
+    
+    if (kodeBarang) {
+        itemFilter = 'AND d.sjd_kode = ?';
+        params.push(kodeBarang);
     }
     
     const query = `
-        SELECT DISTINCT 
-            h.sj_nomor AS Nomor, h.sj_tanggal AS Tanggal, h.sj_kecab AS Store,
-            g.gdg_nama AS Nama_Store, h.sj_mt_nomor AS NoMinta, m.mt_tanggal AS TglMinta,
-            IFNULL(m.mt_otomatis, "") AS MintaOtomatis, h.sj_noterima AS NomorTerima,
-            t.tj_tanggal AS TglTerima, h.sj_ket AS Keterangan, h.sj_stbj AS NoSTBJ,
+        SELECT 
+            h.sj_nomor AS Nomor,
+            h.sj_tanggal AS Tanggal,
+            h.sj_kecab AS Store,
+            g.gdg_nama AS Nama_Store,
+            h.sj_mt_nomor AS NoMinta,
+            m.mt_tanggal AS TglMinta,
+            IFNULL(m.mt_otomatis, "") AS MintaOtomatis,
+            h.sj_noterima AS NomorTerima,
+            t.tj_tanggal AS TglTerima,
+            h.sj_ket AS Keterangan,
+            sj_stbj AS NoSTBJ,
             IFNULL((
-                SELECT CASE 
-                    WHEN pin_acc = "" AND pin_dipakai = "" THEN "WAIT"
-                    WHEN pin_acc = "Y" AND pin_dipakai = "" THEN "ACC"
-                    WHEN pin_acc = "N" THEN "TOLAK"
-                    ELSE ""
-                END
+                SELECT IFNULL(
+                    IF(pin_acc="" AND pin_dipakai="", "WAIT",
+                        IF(pin_acc="Y" AND pin_dipakai="", "ACC",
+                            IF(pin_acc="Y" AND pin_dipakai="Y", "",
+                                IF(pin_acc="N", "TOLAK", "")
+                            )
+                        )
+                    ), ""
+                )
                 FROM kencanaprint.tspk_pin5 
-                WHERE pin_trs = "SURAT JALAN" AND pin_nomor = h.sj_nomor 
+                WHERE pin_trs="SURAT JALAN" AND pin_nomor=h.sj_nomor 
                 ORDER BY pin_urut DESC LIMIT 1
             ), "") AS Ngedit,
             h.user_create AS Usr,
-            h.sj_closing AS Closing
+            sj_closing AS Closing
         FROM tdc_sj_hdr h
-        JOIN tdc_sj_dtl d ON d.sjd_nomor = h.sj_nomor
+        INNER JOIN tdc_sj_dtl d ON d.sjd_nomor = h.sj_nomor
         LEFT JOIN retail.tgudang g ON g.gdg_kode = h.sj_kecab
         LEFT JOIN retail.ttrm_sj_hdr t ON t.tj_nomor = h.sj_noterima
         LEFT JOIN retail.tmintabarang_hdr m ON m.mt_nomor = h.sj_mt_nomor
-        WHERE h.sj_peminta = "" AND h.sj_tanggal BETWEEN ? AND ?
-        ${productFilter}
+        WHERE h.sj_peminta = "" 
+          AND h.sj_tanggal BETWEEN ? AND ?
+          ${itemFilter}
+        GROUP BY h.sj_nomor 
         ORDER BY h.date_create DESC
     `;
+    
     const [rows] = await pool.query(query, params);
     return rows;
 };
 
-// Tambahkan fungsi baru ini
-const searchProducts = async (filters) => {
-    const { term } = filters;
-    const searchTerm = `%${term || ''}%`;
+/**
+ * Mengambil detail item dari sebuah Surat Jalan.
+ * @param {string} nomor - Nomor Surat Jalan.
+ * @returns {Promise<Array>}
+ */
+const getDetails = async (nomor) => {
     const query = `
         SELECT 
-            a.brg_kode AS kode,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan)) AS nama
-        FROM retail.tbarangdc a
-        WHERE a.brg_kode LIKE ? OR a.brg_jeniskaos LIKE ? OR a.brg_tipe LIKE ?
-        ORDER BY a.brg_jeniskaos, a.brg_tipe
+            d.sjd_kode AS Kode,
+            CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna) AS Nama,
+            d.sjd_ukuran AS Ukuran,
+            d.sjd_jumlah AS Jumlah
+        FROM tdc_sj_dtl d
+        LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.sjd_kode
+        WHERE d.sjd_nomor = ?
+        ORDER BY d.sjd_kode;
     `;
-    const [rows] = await pool.query(query, [searchTerm, searchTerm, searchTerm]);
+    const [rows] = await pool.query(query, [nomor]);
     return rows;
 };
 
-const getDetails = async (nomor) => { /* ... (Implementasi query detail) ... */ };
-const remove = async (nomor, user) => { /* ... (Implementasi remove dengan validasi dari Delphi) ... */ };
-const requestChange = async (data, user) => { /* ... (Implementasi INSERT ke tspk_pin5) ... */ };
+/**
+ * Menghapus data Surat Jalan.
+ * @param {string} nomor - Nomor Surat Jalan.
+ * @returns {Promise<object>}
+ */
+const remove = async (nomor) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
 
-module.exports = { 
-    getList, 
-    getDetails, 
-    remove, 
-    requestChange,
-    searchProducts, 
+        const [headers] = await connection.query('SELECT NomorTerima, NoSTBJ, Closing FROM tdc_sj_hdr WHERE sj_nomor = ?', [nomor]);
+        if (headers.length === 0) {
+            throw new Error('Data tidak ditemukan.');
+        }
+        const sj = headers[0];
+
+        // Migrasi Validasi dari Delphi (cxButton4Click)
+        if (sj.NomorTerima) {
+            throw new Error('Sudah ada penerimaan. Tidak bisa dihapus.');
+        }
+        if (sj.NoSTBJ) {
+            throw new Error('SJ Otomatis dari Terima STBJ. Tidak bisa dihapus.');
+        }
+        if (sj.Closing === 'Y') {
+            throw new Error('Sudah Closing Stok Opname. Tidak bisa dihapus.');
+        }
+        
+        await connection.query('DELETE FROM tdc_sj_hdr WHERE sj_nomor = ?', [nomor]);
+        await connection.query('DELETE FROM tdc_sj_dtl WHERE sjd_nomor = ?', [nomor]);
+
+        // Log sinkronisasi (jika diperlukan)
+        const ccab = nomor.substring(0, 3);
+        if (['K02', 'K03', 'K04', 'K05', 'K06', 'K07', 'K08'].includes(ccab)) {
+             const logSql = `
+                INSERT INTO kencanaprint.tlog_sync (log_tabel, log_nomor, log_cab, log_task, log_sync) 
+                VALUES ('tdc_sj_hdr', ?, ?, "DELETE", "Y") 
+                ON DUPLICATE KEY UPDATE log_sync="Y"
+             `;
+             await connection.query(logSql, [nomor, ccab]);
+        }
+        
+        await connection.commit();
+        return { message: `Surat Jalan ${nomor} berhasil dihapus.` };
+
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    } finally {
+        connection.release();
+    }
+};
+
+/**
+ * Mendapatkan status terakhir pengajuan perubahan.
+ * @param {string} nomor - Nomor Surat Jalan.
+ * @returns {Promise<object>}
+ */
+const getRequestStatus = async (nomor) => {
+    const query = `
+        SELECT pin_urut, pin_alasan, pin_dipakai 
+        FROM kencanaprint.tspk_pin5 
+        WHERE pin_trs="SURAT JALAN" AND pin_nomor = ?
+        ORDER BY pin_urut DESC LIMIT 1
+    `;
+    const [rows] = await pool.query(query, [nomor]);
+    
+    if (rows.length === 0) {
+        return { nextUrut: 1, alasan: '' };
+    }
+    
+    const lastRequest = rows[0];
+    if (lastRequest.pin_dipakai === '') {
+        return { nextUrut: lastRequest.pin_urut, alasan: lastRequest.pin_alasan };
+    } else {
+        return { nextUrut: lastRequest.pin_urut + 1, alasan: '' };
+    }
+};
+
+/**
+ * Mengajukan permintaan perubahan data.
+ * @param {object} payload - Data pengajuan.
+ * @returns {Promise<object>}
+ */
+const submitRequest = async (payload) => {
+    const { nomor, tanggal, keterangan, alasan, urut, kdUser } = payload;
+    
+    if (!alasan || !alasan.trim()) {
+        throw new Error('Alasan harus diisi.');
+    }
+    
+    const query = `
+        INSERT INTO kencanaprint.tspk_pin5 (
+            pin_trs, pin_nomor, pin_urut, pin_tgl_trs, pin_ket, 
+            pin_tgl_minta, pin_user_minta, pin_alasan
+        ) VALUES (
+            "SURAT JALAN", ?, ?, ?, ?, NOW(), ?, ?
+        ) ON DUPLICATE KEY UPDATE 
+            pin_tgl_trs = VALUES(pin_tgl_trs),
+            pin_ket = VALUES(pin_ket),
+            pin_acc = "",
+            pin_dipakai = "",
+            pin_tgl_minta = NOW(),
+            pin_user_minta = VALUES(pin_user_minta),
+            pin_alasan = VALUES(pin_alasan)
+    `;
+    
+    await pool.query(query, [nomor, urut, tanggal, keterangan, kdUser, alasan]);
+    return { message: 'Pengajuan perubahan berhasil. Menunggu ACC.' };
+};
+
+
+module.exports = {
+    getList,
+    getDetails,
+    remove,
+    getRequestStatus,
+    submitRequest,
 };

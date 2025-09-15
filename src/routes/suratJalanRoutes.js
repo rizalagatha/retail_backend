@@ -3,18 +3,14 @@ const router = express.Router();
 const suratJalanController = require('../controllers/suratJalanController');
 const { verifyToken, checkPermission } = require('../middleware/authMiddleware');
 
-const MENU_ID = '213'; 
+const MENU_ID = '213'; // ID Menu untuk Surat Jalan ke Store
 
-// GET: Mengambil daftar Surat Jalan berdasarkan filter
-router.get('/', verifyToken, checkPermission(MENU_ID, 'view'), suratJalanController.getAll);
-
-// GET: Mengambil detail untuk satu Surat Jalan
+router.get('/', verifyToken, checkPermission(MENU_ID, 'view'), suratJalanController.getList);
 router.get('/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), suratJalanController.getDetails);
-
-// DELETE: Menghapus satu entri Surat Jalan
 router.delete('/:nomor', verifyToken, checkPermission(MENU_ID, 'delete'), suratJalanController.remove);
 
-// POST: Mengajukan perubahan data
-router.post('/request-change', verifyToken, checkPermission(MENU_ID, 'edit'), suratJalanController.requestChange);
+// Endpoint untuk pengajuan perubahan data
+router.get('/request-status/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), suratJalanController.getRequestStatus);
+router.post('/submit-request', verifyToken, checkPermission(MENU_ID, 'edit'), suratJalanController.submitRequest);
 
 module.exports = router;

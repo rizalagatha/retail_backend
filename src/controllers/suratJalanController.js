@@ -1,6 +1,6 @@
 const suratJalanService = require('../services/suratJalanService');
 
-const getAll = async (req, res) => {
+const getList = async (req, res) => {
     try {
         const data = await suratJalanService.getList(req.query);
         res.json(data);
@@ -22,16 +22,28 @@ const getDetails = async (req, res) => {
 const remove = async (req, res) => {
     try {
         const { nomor } = req.params;
-        const result = await suratJalanService.remove(nomor, req.user);
+        const result = await suratJalanService.remove(nomor);
         res.json(result);
     } catch (error) {
         res.status(400).json({ message: error.message });
     }
 };
 
-const requestChange = async (req, res) => {
+const getRequestStatus = async(req, res) => {
     try {
-        const result = await suratJalanService.requestChange(req.body, req.user);
+        const { nomor } = req.params;
+        const data = await suratJalanService.getRequestStatus(nomor);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+const submitRequest = async (req, res) => {
+    try {
+        // Menambahkan kdUser dari token ke dalam payload
+        const payload = { ...req.body, kdUser: req.user.id };
+        const result = await suratJalanService.submitRequest(payload);
         res.json(result);
     } catch (error) {
         res.status(400).json({ message: error.message });
@@ -39,8 +51,9 @@ const requestChange = async (req, res) => {
 };
 
 module.exports = {
-    getAll,
+    getList,
     getDetails,
     remove,
-    requestChange,
+    getRequestStatus,
+    submitRequest,
 };
