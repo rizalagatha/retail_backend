@@ -17,6 +17,6 @@ router.get('/lookup/cabang', verifyToken, checkPermission(MENU_ID, 'view'), mint
 // DELETE: Menghapus satu entri Minta Barang
 router.delete('/:nomor', verifyToken, checkPermission(MENU_ID, 'delete'), mintaBarangController.remove);
 
-router.get('/export-detail', verifyToken, checkPermission(MENU_ID, 'view'), mintaBarangController.exportDetail);
+router.get('/export-details', verifyToken, checkPermission(MENU_ID, 'view'), mintaBarangController.getExportDetails);
 
 module.exports = router;

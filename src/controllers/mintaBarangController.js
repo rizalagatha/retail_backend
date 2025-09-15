@@ -38,10 +38,10 @@ const remove = async (req, res) => {
     }
 };
 
-const exportDetail = async (req, res) => {
+const getExportDetails = async (req, res) => {
     try {
-        const data = await mintaBarangService.exportDetail(req.query);
-        res.json(data); // Kirim sebagai JSON biasa
+        const data = await mintaBarangService.getExportDetails(req.query);
+        res.json(data);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -52,5 +52,5 @@ module.exports = {
     getDetails,
     getCabangList,
     remove,
-    exportDetail,
+    getExportDetais,
 };
