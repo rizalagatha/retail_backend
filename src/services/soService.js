@@ -127,8 +127,6 @@ function terbilang(n) {
     return terbilangRecursive(Math.floor(n)).replace(/\s+/g, ' ').trim();
 }
 const capitalize = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : '');
-// --- Akhir Fungsi Helper ---
-
 
 const getDataForPrint = async (nomor) => {
     // 1. Ambil data Header, Customer, dan Gudang

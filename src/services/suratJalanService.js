@@ -197,24 +197,24 @@ const submitRequest = async (payload) => {
  * @param {string} nomor - Nomor Surat Jalan.
  * @returns {Promise<object>}
  */
+// GANTI FUNGSI LAMA DENGAN INI:
 const getPrintData = async (nomor) => {
-    // Query untuk header, mengambil data SJ dan data store tujuan
-    // Menggunakan Qperusahaan seperti di FastReport untuk info perusahaan
+    // 1. Query untuk header, mengambil data SJ, data store tujuan, dan data perusahaan pengirim
     const headerQuery = `
         SELECT 
             h.sj_nomor,
             h.sj_tanggal,
             h.sj_mt_nomor,
             h.sj_ket,
-            CONCAT(h.sj_kecab, ' - ', g.gdg_nama) AS store,
             h.user_create,
-            h.date_create,
-            qp.perush_alamat,
-            qp.perush_telp,
-            'KAOSAN.OFFICIAL' AS perush_nama
+            DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS date_create,
+            CONCAT(h.sj_kecab, ' - ', g.gdg_nama) AS store,
+            src.gdg_inv_nama AS perush_nama,
+            src.gdg_inv_alamat AS perush_alamat,
+            src.gdg_inv_telp AS perush_telp
         FROM tdc_sj_hdr h
-        LEFT JOIN retail.tgudang g ON g.gdg_kode = h.sj_kecab
-        LEFT JOIN qlik.qperusahaan qp ON qp.perush_kode = LEFT(h.sj_nomor, 3)
+        LEFT JOIN tgudang g ON g.gdg_kode = h.sj_kecab
+        LEFT JOIN tgudang src ON src.gdg_kode = LEFT(h.sj_nomor, 3)
         WHERE h.sj_nomor = ?;
     `;
     const [headerRows] = await pool.query(headerQuery, [nomor]);
@@ -222,7 +222,7 @@ const getPrintData = async (nomor) => {
         throw new Error('Data Surat Jalan tidak ditemukan.');
     }
 
-    // Query untuk detail item
+    // 2. Query untuk detail item
     const detailQuery = `
         SELECT 
             d.sjd_kode,
@@ -230,7 +230,7 @@ const getPrintData = async (nomor) => {
             d.sjd_ukuran,
             d.sjd_jumlah
         FROM tdc_sj_dtl d
-        LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.sjd_kode
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.sjd_kode
         WHERE d.sjd_nomor = ?
         ORDER BY d.sjd_nourut;
     `;
@@ -241,7 +241,6 @@ const getPrintData = async (nomor) => {
         details: detailRows,
     };
 };
-
 
 module.exports = {
     getList,
