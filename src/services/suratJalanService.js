@@ -207,7 +207,7 @@ const getPrintData = async (nomor) => {
             h.sj_mt_nomor,
             h.sj_ket,
             h.user_create,
-            DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS date_create,
+            h.date_create,
             CONCAT(h.sj_kecab, ' - ', g.gdg_nama) AS store,
             src.gdg_inv_nama AS perush_nama,
             src.gdg_inv_alamat AS perush_alamat,
