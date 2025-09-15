@@ -44,12 +44,9 @@ const searchSo = async (filters, user) => {
 /**
  * @description Mengambil detail SO untuk mengisi grid (logika edtsoExit).
  */
-// Ganti fungsi getSoDetailsForGrid Anda dengan yang ini
-
 const getSoDetailsForGrid = async (soNomor, user) => {
     const connection = await pool.getConnection();
     try {
-        // Query ini telah diperbaiki agar lebih tangguh (robust)
         const query = `
             SELECT 
                 d.sod_kode AS kode, 
@@ -63,27 +60,40 @@ const getSoDetailsForGrid = async (soNomor, user) => {
                     FROM tmasterstok m 
                     WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_brg_kode=d.sod_kode AND m.mst_ukuran=d.sod_ukuran
                 ), 0) AS stok,
-                d.sod_jumlah AS qtyso
+                d.sod_jumlah AS qtyso,
+                c.cus_kode, c.cus_nama, c.cus_alamat
             FROM tso_dtl d
             JOIN tso_hdr h ON d.sod_so_nomor = h.so_nomor
             LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode AND a.brg_logstok="Y"
             LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
+            LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
             WHERE h.so_aktif = "Y" AND h.so_nomor = ?
             ORDER BY d.sod_nourut
         `;
         const [rows] = await connection.query(query, [user.cabang, soNomor]);
+
+        const customerData = rows.length > 0 ? {
+            kode: rows[0].cus_kode,
+            nama: rows[0].cus_nama,
+            alamat: rows[0].cus_alamat
+        } : null;
         
         const items = [];
         for (const row of rows) {
             const sudah = await getSudah(connection, soNomor, row.kode, row.ukuran, '');
             items.push({
-                ...row,
+                kode: row.kode,
+                barcode: row.barcode,
+                nama: row.nama,
+                ukuran: row.ukuran,
+                stok: row.stok,
+                qtyso: row.qtyso,
                 sudah: sudah,
                 belum: row.qtyso - sudah,
-                jumlah: 0, // Default Qty Out
+                jumlah: 0,
             });
         }
-        return items;
+        return { items, customer: customerData };
     } finally {
         connection.release();
     }
