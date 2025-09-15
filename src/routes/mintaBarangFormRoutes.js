@@ -13,6 +13,7 @@ router.get('/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), mintaBarang
 
 // GET: Mengambil data dari Buffer Stok untuk di-load ke grid
 router.get('/lookup/buffer-stok', verifyToken, checkPermission(MENU_ID, 'view'), mintaBarangFormController.getBufferStokItems);
+router.get('/lookup/so-details/:soNomor', verifyToken, checkPermission(MENU_ID, 'view'), mintaBarangFormController.getSoDetailsForGrid);
 router.get('/lookup/product-details', verifyToken, checkPermission(MENU_ID, 'view'), mintaBarangFormController.getProductDetails);
 
 module.exports = router;
