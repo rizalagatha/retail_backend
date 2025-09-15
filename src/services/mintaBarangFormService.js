@@ -144,7 +144,67 @@ const getProductDetailsForGrid = async (filters, user) => {
 
 const getBufferStokItems = async (user) => { /* ... (Implementasi query dari btnRefreshClick PanelPSM) ... */ };
 
-const save = async (data, user) => { /* ... (Implementasi lengkap dari simpandata) ... */ };
+/**
+ * @description Menyimpan data Minta Barang (baru atau ubah).
+ */
+const save = async (data, user) => {
+    const { header, items, isNew } = data;
+    const connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    try {
+        let mtNomor = header.nomor;
+        let idrec;
+
+        if (isNew) {
+            // Logika getmaxnomor dari Delphi
+            const prefix = `${user.cabang}MT${format(new Date(header.tanggal), 'yyMM')}`;
+            const [maxRows] = await connection.query(`SELECT IFNULL(MAX(RIGHT(mt_nomor, 4)), 0) as maxNum FROM tmintabarang_hdr WHERE LEFT(mt_nomor, 9) = ?`, [prefix]);
+            const nextNum = parseInt(maxRows[0].maxNum, 10) + 1;
+            mtNomor = `${prefix}${String(10000 + nextNum).slice(1)}`;
+            idrec = `${user.cabang}MT${format(new Date(), 'yyyyMMddHHmmssSSS')}`;
+
+            const insertHeaderQuery = `
+                INSERT INTO tmintabarang_hdr (mt_idrec, mt_nomor, mt_tanggal, mt_so, mt_cus, mt_ket, user_create, date_create) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+            `;
+            await connection.query(insertHeaderQuery, [idrec, mtNomor, header.tanggal, header.soNomor, header.customer?.kode, header.keterangan, user.kode]);
+        } else {
+            const [idrecRows] = await connection.query('SELECT mt_idrec FROM tmintabarang_hdr WHERE mt_nomor = ?', [mtNomor]);
+            if (idrecRows.length === 0) throw new Error('Nomor Minta Barang tidak ditemukan.');
+            idrec = idrecRows[0].mt_idrec;
+
+            const updateHeaderQuery = `
+                UPDATE tmintabarang_hdr SET
+                    mt_tanggal = ?, mt_so = ?, mt_cus = ?, mt_ket = ?,
+                    user_modified = ?, date_modified = NOW()
+                WHERE mt_nomor = ?
+            `;
+            await connection.query(updateHeaderQuery, [header.tanggal, header.soNomor, header.customer?.kode, header.keterangan, user.kode, mtNomor]);
+        }
+
+        // Pola "hapus-lalu-sisipkan" untuk detail
+        await connection.query('DELETE FROM tmintabarang_dtl WHERE mtd_nomor = ?', [mtNomor]);
+
+        const validItems = items.filter(item => item.kode && (item.jumlah || 0) > 0);
+        for (const item of validItems) {
+            await connection.query(
+                'INSERT INTO tmintabarang_dtl (mtd_idrec, mtd_nomor, mtd_kode, mtd_ukuran, mtd_jumlah) VALUES (?, ?, ?, ?, ?)',
+                [idrec, mtNomor, item.kode, item.ukuran, item.jumlah]
+            );
+        }
+
+        await connection.commit();
+        return { message: `Permintaan Barang ${mtNomor} berhasil disimpan.`, nomor: mtNomor };
+    } catch (error) {
+        await connection.rollback();
+        console.error("Save Minta Barang Error:", error);
+        throw new Error('Gagal menyimpan Permintaan Barang.');
+    } finally {
+        connection.release();
+    }
+};
+
 const loadForEdit = async (nomor, user) => { /* ... (Implementasi lengkap dari loaddataall) ... */ };
 
 module.exports = {
