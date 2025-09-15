@@ -21,8 +21,8 @@ const getSoDetailsForGrid = async (soNomor, user) => {
                 IFNULL(b.brgd_barcode, '') AS barcode,
                 IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), d.sod_kode) AS nama,
                 d.sod_ukuran AS ukuran,
-                IFNULL(b.brgd_min, 0) AS stokmin,   
-                IFNULL(b.brgd_max, 0) AS stokmax,   
+                IFNULL(b.brgd_min, 0) AS stokmin,
+                IFNULL(b.brgd_max, 0) AS stokmax,
                 IFNULL((
                     SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
                     FROM tmasterstok m 
@@ -69,7 +69,6 @@ const getSoDetailsForGrid = async (soNomor, user) => {
     }
 };
 
-
 const getProductDetailsForGrid = async (filters, user) => {
     const { kode, ukuran } = filters;
     const connection = await pool.getConnection();
@@ -79,7 +78,7 @@ const getProductDetailsForGrid = async (filters, user) => {
             SELECT 
                 b.brgd_kode AS kode,
                 b.brgd_barcode AS barcode,
-                IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), d.sod_kode) AS nama,
+                IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
                 b.brgd_ukuran AS ukuran,
                 IFNULL(b.brgd_min, 0) AS stokmin,
                 IFNULL(b.brgd_max, 0) AS stokmax,
