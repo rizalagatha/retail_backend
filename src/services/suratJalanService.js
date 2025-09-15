@@ -224,15 +224,15 @@ const getPrintData = async (nomor) => {
 
     // 2. Query untuk detail item
     const detailQuery = `
-        SELECT 
-            d.sjd_kode,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama_barang,
-            d.sjd_ukuran,
-            d.sjd_jumlah
-        FROM tdc_sj_dtl d
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.sjd_kode
-        WHERE d.sjd_nomor = ?
-        ORDER BY d.sjd_nourut;
+    SELECT 
+        d.sjd_kode,
+        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama_barang,
+        d.sjd_ukuran,
+        d.sjd_jumlah
+    FROM tdc_sj_dtl d
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.sjd_kode
+    WHERE d.sjd_nomor = ?
+    ORDER BY d.sjd_kode, d.sjd_ukuran;
     `;
     const [detailRows] = await pool.query(detailQuery, [nomor]);
 
