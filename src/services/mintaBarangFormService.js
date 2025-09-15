@@ -205,7 +205,82 @@ const save = async (data, user) => {
     }
 };
 
-const loadForEdit = async (nomor, user) => { /* ... (Implementasi lengkap dari loaddataall) ... */ };
+const loadForEdit = async (nomor, user) => {
+    const connection = await pool.getConnection();
+    try {
+        // Query ini adalah migrasi dari 'loaddataall' di Delphi
+        const query = `
+            SELECT 
+                h.mt_nomor, h.mt_tanggal, h.mt_so, h.mt_cus, h.mt_ket,
+                c.cus_nama, c.cus_alamat,
+                d.mtd_kode, d.mtd_ukuran, d.mtd_jumlah,
+                b.brgd_barcode, 
+                IFNULL(b.brgd_min, 0) AS stokmin, 
+                IFNULL(b.brgd_max, 0) AS stokmax,
+                TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)) AS nama,
+                IFNULL((
+                    SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m
+                    WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_brg_kode=d.mtd_kode AND m.mst_ukuran=d.mtd_ukuran
+                ), 0) AS stok,
+                IFNULL((
+                    SELECT SUM(prev_mtd.mtd_jumlah) FROM tmintabarang_hdr prev_mth
+                    JOIN tmintabarang_dtl prev_mtd ON prev_mtd.mtd_nomor = prev_mth.mt_nomor
+                    WHERE prev_mth.mt_closing='N' AND prev_mth.mt_nomor <> ? AND prev_mth.mt_so = h.mt_so
+                      AND prev_mtd.mtd_kode = d.mtd_kode AND prev_mtd.mtd_ukuran = d.mtd_ukuran
+                ), 0) AS sudahminta,
+                IFNULL((
+                    SELECT SUM(sjd.sjd_jumlah) FROM tdc_sj_hdr sjh
+                    JOIN tdc_sj_dtl sjd ON sjd.sjd_nomor = sjh.sj_nomor
+                    WHERE sjh.sj_kecab=? AND sjh.sj_noterima='' 
+                      AND sjd.sjd_kode = d.mtd_kode AND sjd.sjd_ukuran = d.mtd_ukuran
+                ), 0) AS sj
+            FROM tmintabarang_hdr h
+            LEFT JOIN tmintabarang_dtl d ON d.mtd_nomor = h.mt_nomor
+            LEFT JOIN tbarangdc a ON a.brg_kode = d.mtd_kode
+            LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mtd_kode AND b.brgd_ukuran = d.mtd_ukuran
+            LEFT JOIN tcustomer c ON c.cus_kode = h.mt_cus
+            WHERE h.mt_nomor = ?
+        `;
+        const [rows] = await connection.query(query, [user.cabang, nomor, user.cabang, nomor]);
+        if (rows.length === 0) {
+            throw new Error('Data Permintaan Barang tidak ditemukan.');
+        }
+
+        // Proses dan format data untuk dikirim ke frontend
+        const header = {
+            nomor: rows[0].mt_nomor,
+            tanggal: rows[0].mt_tanggal,
+            soNomor: rows[0].mt_so,
+            customer: {
+                kode: rows[0].mt_cus,
+                nama: rows[0].cus_nama,
+                alamat: rows[0].cus_alamat,
+            },
+            keterangan: rows[0].mt_ket,
+        };
+
+        const items = rows.map(row => {
+            const mino = row.stokmax - (row.stok + row.sudahminta + row.sj);
+            return {
+                kode: row.mtd_kode,
+                nama: row.nama,
+                ukuran: row.mtd_ukuran,
+                stokmin: row.stokmin,
+                stokmax: row.stokmax,
+                sudahminta: row.sudahminta,
+                sj: row.sj,
+                stok: row.stok,
+                mino: mino > 0 ? mino : 0,
+                jumlah: row.mtd_jumlah,
+                barcode: row.brgd_barcode,
+            };
+        });
+
+        return { header, items };
+    } finally {
+        connection.release();
+    }
+};
 
 module.exports = {
     getSoDetailsForGrid, 
