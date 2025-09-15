@@ -45,7 +45,7 @@ const getSoDetailsForGrid = async (soNomor, user) => {
             nama: rows[0].cus_nama,
             alamat: rows[0].cus_alamat
         } : null;
-
+        
         const items = [];
         for (const row of rows) {
             const sudah = await getSudah(connection, soNomor, row.kode, row.ukuran, '');
@@ -56,7 +56,7 @@ const getSoDetailsForGrid = async (soNomor, user) => {
                 ukuran: row.ukuran,
                 stok: row.stok,
                 qtyso: row.qtyso,
-                stokmin: row.stokmin, 
+                stokmin: row.stokmin,
                 stokmax: row.stokmax,
                 sudah: sudah,
                 belum: row.qtyso - sudah,
