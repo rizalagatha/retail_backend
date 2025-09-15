@@ -54,7 +54,7 @@ const getSoDetailsForGrid = async (soNomor, user) => {
             SELECT 
                 d.sod_kode AS kode, 
                 IFNULL(b.brgd_barcode, '') AS barcode,
-                IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)), d.sod_kode) AS nama,
+                IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), d.sod_kode) AS nama,
                 d.sod_ukuran AS ukuran,
                 IFNULL(b.brgd_min, 0) AS stokmin,   
                 IFNULL(b.brgd_max, 0) AS stokmax,   
