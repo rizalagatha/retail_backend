@@ -39,10 +39,7 @@ const getList = async (filters) => {
     return rows;
 };
 
-// Di file: src/services/mintaBarangService.js
-
 const getDetails = async (nomor) => {
-    // Query ini telah disesuaikan untuk mengambil semua kolom yang dibutuhkan
     const query = `
         SELECT 
             d.mtd_kode AS Kode,
