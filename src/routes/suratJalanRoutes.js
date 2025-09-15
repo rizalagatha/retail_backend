@@ -13,4 +13,6 @@ router.delete('/:nomor', verifyToken, checkPermission(MENU_ID, 'delete'), suratJ
 router.get('/request-status/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), suratJalanController.getRequestStatus);
 router.post('/submit-request', verifyToken, checkPermission(MENU_ID, 'edit'), suratJalanController.submitRequest);
 
+router.get('/print-data/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), suratJalanController.getPrintData);
+
 module.exports = router;

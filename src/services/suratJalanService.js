@@ -192,6 +192,56 @@ const submitRequest = async (payload) => {
     return { message: 'Pengajuan perubahan berhasil. Menunggu ACC.' };
 };
 
+/**
+ * Mengambil data yang diformat untuk cetak Surat Jalan.
+ * @param {string} nomor - Nomor Surat Jalan.
+ * @returns {Promise<object>}
+ */
+const getPrintData = async (nomor) => {
+    // Query untuk header, mengambil data SJ dan data store tujuan
+    // Menggunakan Qperusahaan seperti di FastReport untuk info perusahaan
+    const headerQuery = `
+        SELECT 
+            h.sj_nomor,
+            h.sj_tanggal,
+            h.sj_mt_nomor,
+            h.sj_ket,
+            CONCAT(h.sj_kecab, ' - ', g.gdg_nama) AS store,
+            h.user_create,
+            h.date_create,
+            qp.perush_alamat,
+            qp.perush_telp,
+            'KAOSAN.OFFICIAL' AS perush_nama
+        FROM tdc_sj_hdr h
+        LEFT JOIN retail.tgudang g ON g.gdg_kode = h.sj_kecab
+        LEFT JOIN qlik.qperusahaan qp ON qp.perush_kode = LEFT(h.sj_nomor, 3)
+        WHERE h.sj_nomor = ?;
+    `;
+    const [headerRows] = await pool.query(headerQuery, [nomor]);
+    if (headerRows.length === 0) {
+        throw new Error('Data Surat Jalan tidak ditemukan.');
+    }
+
+    // Query untuk detail item
+    const detailQuery = `
+        SELECT 
+            d.sjd_kode,
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama_barang,
+            d.sjd_ukuran,
+            d.sjd_jumlah
+        FROM tdc_sj_dtl d
+        LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.sjd_kode
+        WHERE d.sjd_nomor = ?
+        ORDER BY d.sjd_nourut;
+    `;
+    const [detailRows] = await pool.query(detailQuery, [nomor]);
+
+    return {
+        header: headerRows[0],
+        details: detailRows,
+    };
+};
+
 
 module.exports = {
     getList,
@@ -199,4 +249,5 @@ module.exports = {
     remove,
     getRequestStatus,
     submitRequest,
+    getPrintData,
 };

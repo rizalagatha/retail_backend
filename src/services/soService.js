@@ -188,8 +188,6 @@ const getDataForPrint = async (nomor) => {
     return { header, details, summary };
 };
 
-// Di file: src/services/soService.js
-
 const close = async (data) => {
     const { nomor, alasan, user } = data;
 
@@ -326,5 +324,4 @@ module.exports = {
     close,
     remove,
     getExportDetails,
-    // ...
 };

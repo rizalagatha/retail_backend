@@ -50,10 +50,21 @@ const submitRequest = async (req, res) => {
     }
 };
 
+const getPrintData = async (req, res) => {
+    try {
+        const { nomor } = req.params;
+        const data = await suratJalanService.getPrintData(nomor);
+        res.json(data);
+    } catch (error) {
+        res.status(404).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getList,
     getDetails,
     remove,
     getRequestStatus,
     submitRequest,
+    getPrintData,
 };
