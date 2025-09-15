@@ -90,6 +90,44 @@ const getCabangList = async (user) => {
     return rows;
 };
 
-const remove = async (nomor, user) => { /* ... (Logika remove dengan validasi dari Delphi) ... */ };
+const remove = async (nomor, user) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        // 1. Ambil data untuk validasi
+        const [rows] = await connection.query('SELECT mt_otomatis, (SELECT sj_nomor FROM tdc_sj_hdr WHERE sj_mt_nomor = mt_nomor LIMIT 1) AS NoSJ, mt_closing FROM tmintabarang_hdr WHERE mt_nomor = ?', [nomor]);
+        if (rows.length === 0) {
+            throw new Error('Data tidak ditemukan.');
+        }
+        const item = rows[0];
+
+        // 2. Migrasi Validasi dari Delphi
+        if (item.mt_otomatis === 'Y') {
+            throw new Error('Permintaan Otomatis tidak bisa dihapus.');
+        }
+        if (item.NoSJ) {
+            throw new Error('Sudah dibuatkan SJ, tidak bisa dihapus.');
+        }
+        if (user.cabang !== nomor.substring(0, 3)) {
+            throw new Error(`Anda tidak berhak menghapus data milik cabang ${nomor.substring(0, 3)}.`);
+        }
+        if (item.mt_closing === 'Y') {
+            throw new Error('Transaksi sudah Closing, tidak bisa dihapus.');
+        }
+
+        // 3. Jika validasi lolos, hapus data
+        // Asumsi foreign key dari tdtfstok_dtl ke tdtfstok_hdr diset ON DELETE CASCADE
+        await connection.query('DELETE FROM tmintabarang_hdr WHERE mt_nomor = ?', [nomor]);
+        await connection.commit();
+        
+        return { message: `Permintaan Barang ${nomor} berhasil dihapus.` };
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    } finally {
+        connection.release();
+    }
+};
 
 module.exports = { getList, getDetails, getCabangList, remove };
