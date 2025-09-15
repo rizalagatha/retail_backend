@@ -19,9 +19,25 @@ const getSudah = async (connection, soNomor, kode, ukuran, excludeMoNomor) => {
  * @description Mencari SO yang valid untuk diinput (form bantuan F1).
  */
 const searchSo = async (filters, user) => {
-    const { term } = filters;
+    const { term, page = 1, itemsPerPage = 10 } = filters;
     const searchTerm = `%${term}%`;
-    const query = `
+    const offset = (page - 1) * itemsPerPage;
+
+    const countQuery = `
+        SELECT COUNT(*) as total FROM (
+            SELECT h.so_nomor
+            FROM tso_hdr h
+            LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
+            WHERE h.so_aktif = "Y" AND h.so_close = 0 AND LEFT(h.so_nomor, 3) = ?
+              AND (h.so_nomor LIKE ? OR c.cus_nama LIKE ?)
+              AND IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_dtl dd JOIN tinv_hdr hh ON hh.inv_nomor = dd.invd_inv_nomor WHERE hh.inv_sts_pro=0 AND hh.inv_nomor_so = h.so_nomor), 0) < 
+                  IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0)
+        ) x
+    `;
+    const [totalRows] = await pool.query(countQuery, [user.cabang, searchTerm, searchTerm]);
+    const total = totalRows[0].total;
+
+    const dataQuery = `
         SELECT x.Nomor, x.Tanggal, x.KdCus, x.Customer, x.Alamat, x.Kota
         FROM (
             SELECT 
@@ -36,9 +52,11 @@ const searchSo = async (filters, user) => {
         ) x 
         WHERE x.qtyinv < x.qtyso
         ORDER BY x.Nomor DESC
+        LIMIT ? OFFSET ?
     `;
-    const [rows] = await pool.query(query, [user.cabang, searchTerm, searchTerm]);
-    return rows;
+    const [items] = await pool.query(dataQuery, [user.cabang, searchTerm, searchTerm, parseInt(itemsPerPage, 10), offset]);
+    
+    return { items, total };
 };
 
 /**
