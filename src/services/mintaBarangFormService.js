@@ -70,61 +70,77 @@ const getSoDetailsForGrid = async (soNomor, user) => {
 };
 
 const getProductDetailsForGrid = async (filters, user) => {
-    const { kode, ukuran } = filters;
+    const { kode, ukuran, barcode } = filters;
     const connection = await pool.getConnection();
     try {
-        // Query ini adalah migrasi dari 'loadbrg' di Delphi
-        const query = `
+        let query = `
             SELECT 
                 b.brgd_kode AS kode,
                 b.brgd_barcode AS barcode,
-                IFNULL(
-                    TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)),
-                    ''
-                ) AS nama,
+                IFNULL(TRIM(CONCAT(
+                    a.brg_jeniskaos, " ", a.brg_tipe, " ",
+                    a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna
+                )), '') AS nama,
                 b.brgd_ukuran AS ukuran,
                 IFNULL(b.brgd_min, 0) AS stokmin,
                 IFNULL(b.brgd_max, 0) AS stokmax,
                 IFNULL((
-                    SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m 
-                    WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_brg_kode=b.brgd_kode AND m.mst_ukuran=b.brgd_ukuran
+                    SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
+                    FROM tmasterstok m 
+                    WHERE m.mst_aktif="Y" AND m.mst_cab=? 
+                      AND m.mst_brg_kode=b.brgd_kode AND m.mst_ukuran=b.brgd_ukuran
                 ), 0) AS stok,
                 IFNULL((
-                    SELECT SUM(mtd.mtd_jumlah) FROM tmintabarang_hdr mth 
+                    SELECT SUM(mtd.mtd_jumlah) 
+                    FROM tmintabarang_hdr mth 
                     JOIN tmintabarang_dtl mtd ON mtd.mtd_nomor = mth.mt_nomor 
-                    WHERE mth.mt_closing='N' AND LEFT(mth.mt_nomor,3)=? 
-                      AND mtd.mtd_kode=b.brgd_kode AND mtd.mtd_ukuran=b.brgd_ukuran 
-                      AND mth.mt_nomor NOT IN (SELECT sj_mt_nomor FROM tdc_sj_hdr WHERE sj_mt_nomor<>"")
+                    WHERE mth.mt_closing='N' 
+                      AND LEFT(mth.mt_nomor,3)=? 
+                      AND mtd.mtd_kode=b.brgd_kode 
+                      AND mtd.mtd_ukuran=b.brgd_ukuran 
+                      AND mth.mt_nomor NOT IN (
+                          SELECT sj_mt_nomor FROM tdc_sj_hdr WHERE sj_mt_nomor<>""
+                      )
                 ), 0) AS sudahminta,
                 IFNULL((
-                    SELECT SUM(sjd.sjd_jumlah) FROM tdc_sj_hdr sjh 
+                    SELECT SUM(sjd.sjd_jumlah) 
+                    FROM tdc_sj_hdr sjh 
                     JOIN tdc_sj_dtl sjd ON sjd.sjd_nomor=sjh.sj_nomor 
                     WHERE sjh.sj_kecab=? AND sjh.sj_noterima='' 
-                      AND sjd.sjd_kode=b.brgd_kode AND sjd.sjd_ukuran=b.brgd_ukuran
+                      AND sjd.sjd_kode=b.brgd_kode 
+                      AND sjd.sjd_ukuran=b.brgd_ukuran
                 ), 0) AS sj
             FROM tbarangdc_dtl b
             JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
-            WHERE a.brg_aktif = 0 AND a.brg_logstok = "Y"
-              AND b.brgd_kode = ? AND b.brgd_ukuran = ?
+            WHERE a.brg_logstok = "Y"
         `;
-        const [rows] = await connection.query(query, [user.cabang, user.cabang, user.cabang, kode, ukuran]);
+
+        const params = [user.cabang, user.cabang, user.cabang];
+
+        if (barcode) {
+            query += ` AND b.brgd_barcode = ?`;
+            params.push(barcode);
+        } else {
+            query += ` AND b.brgd_kode = ? AND b.brgd_ukuran = ?`;
+            params.push(kode, ukuran);
+        }
+
+        const [rows] = await connection.query(query, params);
         if (rows.length === 0) {
             throw new Error('Detail produk tidak ditemukan.');
         }
 
         const product = rows[0];
-        
-        // Kalkulasi 'mino' (minta otomatis) di backend
         const mino = product.stokmax - (product.stok + product.sudahminta + product.sj);
         product.mino = mino > 0 ? mino : 0;
-        product.jumlah = product.mino; // Pre-fill 'jumlah' dengan 'mino'
+        product.jumlah = product.mino;
 
         return product;
-
     } finally {
         connection.release();
     }
 };
+
 
 const getBufferStokItems = async (user) => { /* ... (Implementasi query dari btnRefreshClick PanelPSM) ... */ };
 
