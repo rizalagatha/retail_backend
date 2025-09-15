@@ -52,6 +52,7 @@ const searchSo = async (filters, user) => {
         ) x 
         WHERE x.qtyinv < x.qtyso
         ORDER BY x.Nomor DESC
+        LIMIT ? OFFSET ?
     `;
     const [items] = await pool.query(dataQuery, [user.cabang, searchTerm, searchTerm, parseInt(itemsPerPage, 10), offset]);
     
@@ -61,12 +62,9 @@ const searchSo = async (filters, user) => {
 /**
  * @description Mengambil detail SO untuk mengisi grid (logika edtsoExit).
  */
-// Ganti fungsi getSoDetailsForGrid Anda dengan yang ini
-
 const getSoDetailsForGrid = async (soNomor, user) => {
     const connection = await pool.getConnection();
     try {
-        // Query ini telah diperbaiki agar lebih tangguh (robust)
         const query = `
             SELECT 
                 d.sod_kode AS kode, 
