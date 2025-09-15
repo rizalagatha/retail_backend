@@ -77,7 +77,7 @@ const getSoDetailsForGrid = async (soNomor, user) => {
             nama: rows[0].cus_nama,
             alamat: rows[0].cus_alamat
         } : null;
-        
+
         const items = [];
         for (const row of rows) {
             const sudah = await getSudah(connection, soNomor, row.kode, row.ukuran, '');
@@ -88,6 +88,8 @@ const getSoDetailsForGrid = async (soNomor, user) => {
                 ukuran: row.ukuran,
                 stok: row.stok,
                 qtyso: row.qtyso,
+                stokmin: row.stokmin, 
+                stokmax: row.stokmax,
                 sudah: sudah,
                 belum: row.qtyso - sudah,
                 jumlah: 0,
@@ -147,7 +149,7 @@ const loadForEdit = async (nomor, user) => {
         const [headerRows] = await connection.query('SELECT * FROM tmutasiout_hdr WHERE mo_nomor = ?', [nomor]);
         if (headerRows.length === 0) throw new Error('Data Mutasi Out tidak ditemukan.');
         const header = headerRows[0];
-        
+
         const [savedDetails] = await connection.query('SELECT * FROM tmutasiout_dtl WHERE mod_nomor = ?', [nomor]);
         const templateItems = await getSoDetailsForGrid(header.mo_so_nomor, user);
 
