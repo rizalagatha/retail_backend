@@ -47,10 +47,21 @@ const save = async (req, res) => {
     }
 };
 
+const getProductDetails = async (req, res) => {
+    try {
+        // req.query akan berisi { kode: '...', ukuran: '...' }
+        const data = await mintaBarangFormService.getProductDetailsForGrid(req.query, req.user);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     loadForEdit,
     searchSo,
     getSoDetailsForGrid,
     getBufferStokItems,
     save,
+    getProductDetails,
 };
