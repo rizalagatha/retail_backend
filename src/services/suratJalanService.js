@@ -42,8 +42,30 @@ const getList = async (filters) => {
     return rows;
 };
 
+// Tambahkan fungsi baru ini
+const searchProducts = async (filters) => {
+    const { term } = filters;
+    const searchTerm = `%${term || ''}%`;
+    const query = `
+        SELECT 
+            a.brg_kode AS kode,
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan)) AS nama
+        FROM retail.tbarangdc a
+        WHERE a.brg_kode LIKE ? OR a.brg_jeniskaos LIKE ? OR a.brg_tipe LIKE ?
+        ORDER BY a.brg_jeniskaos, a.brg_tipe
+    `;
+    const [rows] = await pool.query(query, [searchTerm, searchTerm, searchTerm]);
+    return rows;
+};
+
 const getDetails = async (nomor) => { /* ... (Implementasi query detail) ... */ };
 const remove = async (nomor, user) => { /* ... (Implementasi remove dengan validasi dari Delphi) ... */ };
 const requestChange = async (data, user) => { /* ... (Implementasi INSERT ke tspk_pin5) ... */ };
 
-module.exports = { getList, getDetails, remove, requestChange };
+module.exports = { 
+    getList, 
+    getDetails, 
+    remove, 
+    requestChange,
+    searchProducts, 
+};
