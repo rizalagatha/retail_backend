@@ -79,7 +79,7 @@ const getProductDetailsForGrid = async (filters, user) => {
             SELECT 
                 b.brgd_kode AS kode,
                 b.brgd_barcode AS barcode,
-                TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)) AS nama,
+                IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), d.sod_kode) AS nama,
                 b.brgd_ukuran AS ukuran,
                 IFNULL(b.brgd_min, 0) AS stokmin,
                 IFNULL(b.brgd_max, 0) AS stokmax,
