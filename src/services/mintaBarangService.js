@@ -39,12 +39,14 @@ const getList = async (filters) => {
     return rows;
 };
 
+// Di file: src/services/mintaBarangService.js
+
 const getDetails = async (nomor) => {
-    // Query ini telah diperbaiki ORDER BY-nya
+    // Query ini telah disesuaikan untuk mengambil semua kolom yang dibutuhkan
     const query = `
         SELECT 
             d.mtd_kode AS Kode,
-            b.brgd_barcode AS Barcode,
+            IFNULL(b.brgd_barcode, '') AS Barcode,
             TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)) AS Nama,
             d.mtd_ukuran AS Ukuran,
             IFNULL(b.brgd_min, 0) AS StokMinimal,
@@ -61,7 +63,7 @@ const getDetails = async (nomor) => {
         LEFT JOIN tbarangdc a ON a.brg_kode = d.mtd_kode
         LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mtd_kode AND b.brgd_ukuran = d.mtd_ukuran
         WHERE d.mtd_nomor = ?
-        ORDER BY d.mtd_kode, d.mtd_ukuran -- <-- PERBAIKAN: Urutkan berdasarkan kode dan ukuran
+        ORDER BY d.mtd_kode, d.mtd_ukuran
     `;
     const [rows] = await pool.query(query, [nomor]);
     return rows;
