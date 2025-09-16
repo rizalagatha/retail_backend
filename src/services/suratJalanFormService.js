@@ -51,7 +51,14 @@ const getItemsForLoad = async (nomor, gudang) => {
                 b.brgd_barcode AS barcode,
                 TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)) AS nama,
                 d.mtd_ukuran AS ukuran,
-                d.mtd_jumlah AS jumlah,
+                d.mtd_jumlah AS minta, 
+                IFNULL(b.brgd_min, 0) AS minstok, 
+                IFNULL(b.brgd_max, 0) AS maxstok, 
+                IFNULL((
+                    SELECT SUM(sjd.sjd_jumlah) FROM tdc_sj_dtl sjd
+                    JOIN tdc_sj_hdr sjh ON sjd.sjd_nomor = sjh.sj_nomor
+                    WHERE sjh.sj_mt_nomor = d.mtd_nomor AND sjd.sjd_kode = d.mtd_kode AND sjd.sjd_ukuran = d.mtd_ukuran
+                ), 0) AS sudah,
                 IFNULL((
                     SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m 
                     WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_brg_kode=d.mtd_kode AND m.mst_ukuran=d.mtd_ukuran
