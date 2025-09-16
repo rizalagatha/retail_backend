@@ -5,8 +5,6 @@ const { verifyToken, checkPermission } = require('../middleware/authMiddleware')
 
 const MENU_ID = '213'; // Menu ID Surat Jalan ke Store
 
-// Generic lookup
-router.get('/lookup/:type', verifyToken, checkPermission(MENU_ID, 'view'), sjFormController.getLookupData);
 router.get('/lookup/stores', verifyToken, checkPermission(MENU_ID, 'view'), sjFormController.searchStores);
 // Load items from Permintaan or Terima RB
 router.get('/load-items', verifyToken, checkPermission(MENU_ID, 'view'), sjFormController.getItemsForLoad);

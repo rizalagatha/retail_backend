@@ -1,15 +1,5 @@
 const sjFormService = require('../services/suratJalanFormService');
 
-const getLookupData = async (req, res) => {
-    try {
-        const { type } = req.params;
-        const data = await sjFormService.getLookupData(type, req.user, req.query);
-        res.json(data);
-    } catch (error) {
-        res.status(400).json({ message: error.message });
-    }
-};
-
 const getItemsForLoad = async (req, res) => {
     try {
         const { nomor, gudang } = req.query;
@@ -53,7 +43,6 @@ const searchStores = async (req, res) => {
 };
 
 module.exports = {
-    getLookupData,
     getItemsForLoad,
     save,
     loadForEdit,
