@@ -1,6 +1,11 @@
 const pool = require('../config/database');
 const jwt = require('jsonwebtoken');
 
+/**
+ * Mengambil hak akses (permissions) untuk seorang user.
+ * @param {string} userKode - Kode user.
+ * @returns {Promise<Array>}
+ */
 const getPermissions = async (userKode) => {
     const query = `
         SELECT 
@@ -25,6 +30,12 @@ const getPermissions = async (userKode) => {
     }));
 };
 
+/**
+ * Membuat payload final untuk login (token, user, permissions).
+ * @param {object} user - Objek data user dari database.
+ * @param {string} selectedCabang - Kode cabang yang dipilih.
+ * @returns {Promise<object>}
+ */
 const generateFinalPayload = async (user, selectedCabang) => {
     const userForToken = {
         kode: user.user_kode,
@@ -42,8 +53,14 @@ const generateFinalPayload = async (user, selectedCabang) => {
     };
 };
 
+/**
+ * Memproses percobaan login awal.
+ * @param {string} kodeUser - Kode user yang login.
+ * @param {string} password - Password user.
+ * @returns {Promise<object>}
+ */
 const loginUser = async (kodeUser, password) => {
-    // 1. Verifikasi user dan password
+    // 1. Verifikasi user dan password, ambil semua entri yang cocok
     const [users] = await pool.query(
         'SELECT * FROM tuser WHERE user_kode = ? AND user_password = ?',
         [kodeUser, password]
@@ -53,7 +70,7 @@ const loginUser = async (kodeUser, password) => {
         throw new Error('User atau password salah.');
     }
     
-    // 2. Cek apakah user aktif
+    // 2. Cek apakah user aktif (cukup cek dari entri pertama)
     const firstUser = users[0];
     if (firstUser.user_aktif === 1) {
         throw new Error('User ini sudah tidak aktif.');
@@ -62,20 +79,19 @@ const loginUser = async (kodeUser, password) => {
     // 3. Cek jumlah cabang, sama seperti di Delphi
     if (users.length > 1) {
         // User punya banyak cabang, minta frontend untuk memilih
-        const branches = users.map(user => ({
-            kode: user.user_cab,
-            nama: user.user_cab, // Placeholder, kita akan join nanti
-        }));
+        const branchCodes = users.map(user => user.user_cab);
         
-        // Ambil nama cabang dari tgudang
-        const branchCodes = branches.map(b => b.kode);
+        // Ambil nama cabang dari tgudang untuk ditampilkan
         const [gudangRows] = await pool.query(
             'SELECT gdg_kode, gdg_nama FROM tgudang WHERE gdg_kode IN (?)',
             [branchCodes]
         );
         
         const branchMap = new Map(gudangRows.map(g => [g.gdg_kode, g.gdg_nama]));
-        const detailedBranches = branches.map(b => ({ ...b, nama: branchMap.get(b.kode) || b.nama }));
+        const detailedBranches = users.map(user => ({
+            kode: user.user_cab,
+            nama: branchMap.get(user.user_cab) || user.user_cab 
+        }));
 
         // Buat token temporer yang hanya valid untuk memilih cabang
         const tempToken = jwt.sign({ kode: kodeUser, password }, process.env.JWT_SECRET, { expiresIn: '5m' });
@@ -95,6 +111,12 @@ const loginUser = async (kodeUser, password) => {
     }
 };
 
+/**
+ * Menyelesaikan proses login setelah user memilih cabang.
+ * @param {string} tempToken - Token temporer dari percobaan login awal.
+ * @param {string} selectedCabang - Kode cabang yang dipilih.
+ * @returns {Promise<object>}
+ */
 const finalizeLoginWithBranch = async (tempToken, selectedCabang) => {
     // 1. Verifikasi token temporer
     let decoded;
