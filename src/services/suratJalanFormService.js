@@ -84,7 +84,7 @@ const saveData = async (payload, user) => {
     try {
         await connection.beginTransaction();
 
-        // --- VALIDASI DARI DELPHI (btnSimpanClick) ---
+        // --- VALIDASI ---
         if (!header.gudang?.kode) throw new Error('Gudang harus diisi.');
         if (!header.store?.kode) throw new Error('Store tujuan harus diisi.');
         if (items.length === 0) throw new Error('Detail barang harus diisi.');
@@ -92,12 +92,11 @@ const saveData = async (payload, user) => {
         let totalQty = 0;
         for (const item of items) {
             if (item.jumlah > item.stok) {
-                throw new Error(`Jumlah untuk barang ${item.nama} (${item.ukuran}) melebihi stok yang tersedia.`);
+                throw new Error(`Jumlah untuk barang ${item.nama} (${item.ukuran}) melebihi stok.`);
             }
             totalQty += item.jumlah;
         }
         if (totalQty <= 0) throw new Error('Total jumlah barang tidak boleh nol.');
-        // (Logika validasi tanggal periode close bisa ditambahkan di sini jika diperlukan)
         // --- AKHIR VALIDASI ---
 
         let sjNomor = header.nomor;
@@ -119,11 +118,24 @@ const saveData = async (payload, user) => {
         
         await connection.query('DELETE FROM tdc_sj_dtl WHERE sjd_nomor = ?', [sjNomor]);
 
+        // --- PERBAIKAN DI SINI ---
+        // 1. Ganti 'sjd_nourut' menjadi 'sjd_iddrec'
         const detailSql = `
-            INSERT INTO tdc_sj_dtl (sjd_nomor, sjd_kode, sjd_ukuran, sjd_jumlah, sjd_nourut)
+            INSERT INTO tdc_sj_dtl (sjd_iddrec, sjd_nomor, sjd_kode, sjd_ukuran, sjd_jumlah)
             VALUES ?;
         `;
-        const detailValues = items.map((item, index) => [sjNomor, item.kode, item.ukuran, item.jumlah, index + 1]);
+
+        // 2. Sesuaikan data yang akan di-insert
+        const detailValues = items
+            .filter(item => item.kode && item.jumlah > 0)
+            .map((item, index) => {
+                const nourut = index + 1;
+                // Buat iddrec sesuai logika Delphi (Nomor + No Urut)
+                const iddrec = `${sjNomor}${nourut}`; 
+                return [iddrec, sjNomor, item.kode, item.ukuran, item.jumlah];
+            });
+        // --- AKHIR PERBAIKAN ---
+
 
         if (detailValues.length > 0) {
             await connection.query(detailSql, [detailValues]);
