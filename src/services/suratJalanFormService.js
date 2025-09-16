@@ -256,6 +256,40 @@ const searchTerimaRb = async (term, page, itemsPerPage, user) => {
     return { items, total };
 };
 
+const findByBarcode = async (barcode, gudang) => {
+    const query = `
+        SELECT
+            d.brgd_barcode AS barcode,
+            d.brgd_kode AS kode,
+            TRIM(CONCAT(h.brg_jeniskaos, " ", h.brg_tipe, " ", h.brg_lengan, " ", h.brg_jeniskain, " ", h.brg_warna)) AS nama,
+            d.brgd_ukuran AS ukuran,
+            d.brgd_harga AS harga,
+            
+            IFNULL((
+                SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
+                FROM tmasterstok m 
+                WHERE m.mst_aktif = 'Y' 
+                  AND m.mst_cab = ? 
+                  AND m.mst_brg_kode = d.brgd_kode 
+                  AND m.mst_ukuran = d.brgd_ukuran
+            ), 0) AS stok
+
+        FROM tbarangdc_dtl d
+        LEFT JOIN tbarangdc h ON h.brg_kode = d.brgd_kode
+        WHERE h.brg_aktif = 0 
+          AND h.brg_logstok <> 'N'
+          AND d.brgd_barcode = ?;
+    `;
+    
+    // Parameter 'gudang' sekarang digunakan untuk subquery stok
+    const [rows] = await pool.query(query, [gudang, barcode]);
+    
+    if (rows.length === 0) {
+        throw new Error('Barcode tidak ditemukan atau barang tidak aktif.');
+    }
+    return rows[0];
+};
+
 module.exports = {
     getItemsForLoad,
     saveData,
@@ -263,4 +297,5 @@ module.exports = {
     searchStores,
     searchPermintaan,
     searchTerimaRb,
+    findByBarcode,
 };

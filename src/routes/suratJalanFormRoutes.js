@@ -8,6 +8,7 @@ const MENU_ID = '213'; // Menu ID Surat Jalan ke Store
 router.get('/lookup/stores', verifyToken, checkPermission(MENU_ID, 'view'), sjFormController.searchStores);
 router.get('/search/permintaan', verifyToken, checkPermission(MENU_ID, 'view'), sjFormController.searchPermintaan);
 router.get('/search/terima-rb', verifyToken, checkPermission(MENU_ID, 'view'), sjFormController.searchTerimaRb);
+router.get('/by-barcode/:barcode', verifyToken, sjFormController.getByBarcode);
 // Load items from Permintaan or Terima RB
 router.get('/load-items', verifyToken, checkPermission(MENU_ID, 'view'), sjFormController.getItemsForLoad);
 // Save data

@@ -65,6 +65,20 @@ const searchTerimaRb = async (req, res) => {
     }
 };
 
+const getByBarcode = async (req, res) => {
+    try {
+        const { barcode } = req.params;
+        const { gudang } = req.query; // Gudang diambil dari query parameter
+        if (!gudang) {
+            return res.status(400).json({ message: 'Parameter gudang diperlukan.' });
+        }
+        const product = await sjFormService.findByBarcode(barcode, gudang);
+        res.json(product);
+    } catch (error) {
+        res.status(404).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getItemsForLoad,
     save,
@@ -72,4 +86,5 @@ module.exports = {
     searchStores,
     searchPermintaan,
     searchTerimaRb,
+    getByBarcode,
 };
