@@ -189,7 +189,6 @@ const searchStores = async (term, page, itemsPerPage) => {
 };
 
 module.exports = {
-    getLookupData,
     getItemsForLoad,
     saveData,
     loadForEdit,
