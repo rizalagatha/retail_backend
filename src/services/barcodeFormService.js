@@ -14,45 +14,55 @@ const getNextBarcodeNumber = async (cabang, tanggal) => {
     return `${prefix}${newNum}`;
 };
 
-const searchProducts = async (term, category, gudang, page, itemsPerPage) => {
+// GANTI FUNGSI LAMA searchProducts DENGAN VERSI BARU INI
+
+const searchProducts = async (term, category, gudang, page, itemsPerPage, source) => {
     const offset = (page - 1) * itemsPerPage;
     const searchTerm = `%${term}%`;
     let params = [];
     
-    // Base query untuk menggabungkan tabel master dan detail barang
     let fromClause = `
         FROM tbarangdc_dtl b
         INNER JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
     `;
 
-    // Filter
-    let whereClause = 'WHERE a.brg_logstok="Y" AND a.brg_aktif=0';
-    
-    // Filter kategori
-    if (category === 'Kaosan') {
-        whereClause += ' AND (a.brg_ktg IS NULL OR a.brg_ktg = "")';
-    } else { // Asumsi selain Kaosan adalah Reszo
-        whereClause += ' AND a.brg_ktg IS NOT NULL AND a.brg_ktg <> ""';
-    }
+    // --- LOGIKA FILTER DINAMIS BERDASARKAN SOURCE ---
+    let whereClause = 'WHERE a.brg_aktif=0'; // Filter dasar: barang harus aktif
 
-    // Filter pencarian (mencari di kode, nama, atau barcode)
+    if (source === 'minta-barang') {
+        // Filter khusus untuk halaman "Minta Barang ke DC"
+        // (Ini menggunakan logika yang sudah kita perbaiki sebelumnya)
+        if (gudang === 'K04') {
+            whereClause += ' AND a.brg_ktg <> ""';
+        } else if (gudang === 'K05') {
+            whereClause += ' AND a.brg_ktg = ""';
+        }
+    } else {
+        // Filter default untuk halaman lain (seperti Penawaran, dll)
+        whereClause += ' AND a.brg_logstok="Y"';
+
+        if (category === 'Kaosan') {
+            whereClause += ' AND (a.brg_ktg IS NULL OR a.brg_ktg = "")';
+        } else { // Asumsi selain Kaosan adalah Reszo
+            whereClause += ' AND a.brg_ktg IS NOT NULL AND a.brg_ktg <> ""';
+        }
+    }
+    // --- AKHIR LOGIKA FILTER DINAMIS ---
+    
     if (term) {
         whereClause += ` AND (
-                        a.brg_kode LIKE ? 
-                        OR TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) LIKE ?
-                        OR b.brgd_barcode LIKE ?
-                        )`;
+                            a.brg_kode LIKE ? 
+                            OR TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) LIKE ?
+                            OR b.brgd_barcode LIKE ?
+                            )`;
         params.push(searchTerm, searchTerm, searchTerm);
     }
     
     const baseQuery = `${fromClause} ${whereClause}`;
-
-    // Query untuk menghitung total
     const countQuery = `SELECT COUNT(*) as total ${baseQuery}`;
     const [countRows] = await pool.query(countQuery, params);
     const total = countRows[0].total;
 
-    // Query untuk mengambil data per halaman, lengkap dengan kalkulasi stok
     const dataQuery = `
         SELECT 
             a.brg_kode AS kode,
@@ -63,16 +73,13 @@ const searchProducts = async (term, category, gudang, page, itemsPerPage) => {
             IFNULL((
                 SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
                 FROM tmasterstok m 
-                WHERE m.mst_aktif = "Y" 
-                AND m.mst_cab = ? 
-                AND m.mst_brg_kode = b.brgd_kode 
-                AND m.mst_ukuran = b.brgd_ukuran
+                WHERE m.mst_aktif = "Y" AND m.mst_cab = ? 
+                AND m.mst_brg_kode = b.brgd_kode AND m.mst_ukuran = b.brgd_ukuran
             ), 0) AS stok
         ${baseQuery}
         ORDER BY nama, b.brgd_barcode
         LIMIT ? OFFSET ?
     `;
-    // Tambahkan 'gudang' di awal parameter untuk kalkulasi stok
     const dataParams = [gudang, ...params, itemsPerPage, offset];
     const [items] = await pool.query(dataQuery, dataParams);
 
