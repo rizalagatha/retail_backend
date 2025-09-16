@@ -6,8 +6,21 @@ const login = async (req, res) => {
         const result = await authService.loginUser(kodeUser, password);
         res.json(result);
     } catch (error) {
-        res.status(401).json({ message: error.message }); // 401 Unauthorized
+        res.status(401).json({ message: error.message });
     }
 };
 
-module.exports = { login };
+const selectBranch = async (req, res) => {
+    try {
+        const { tempToken, selectedCabang } = req.body;
+        const result = await authService.finalizeLoginWithBranch(tempToken, selectedCabang);
+        res.json(result);
+    } catch (error) {
+        res.status(401).json({ message: error.message });
+    }
+};
+
+module.exports = {
+    login,
+    selectBranch, 
+};
