@@ -496,7 +496,6 @@ const getDataForPrint = async (nomor) => {
 };
 
 const findByBarcode = async (barcode, gudang) => {
-    // Query ini mencari barcode di tbarangdc_dtl dan mengambil info utama dari tbarangdc
     const query = `
         SELECT
             d.brgd_barcode AS barcode,
@@ -504,14 +503,29 @@ const findByBarcode = async (barcode, gudang) => {
             TRIM(CONCAT(h.brg_jeniskaos, " ", h.brg_tipe, " ", h.brg_lengan, " ", h.brg_jeniskain, " ", h.brg_warna)) AS nama,
             d.brgd_ukuran AS ukuran,
             d.brgd_hrg AS harga,
-            (SELECT IFNULL(SUM(st_akhir), 0) FROM tstok WHERE st_kode = d.brgd_kode AND st_ukuran = d.brgd_ukuran AND st_cab = ?) AS stok
+            
+            -- Logika perhitungan stok dari Delphi menggunakan tmasterstok --
+            IFNULL((
+                SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
+                FROM tmasterstok m 
+                WHERE m.mst_aktif = 'Y' 
+                  AND m.mst_cab = ? 
+                  AND m.mst_brg_kode = d.brgd_kode 
+                  AND m.mst_ukuran = d.brgd_ukuran
+            ), 0) AS stok
+
         FROM tbarangdc_dtl d
         LEFT JOIN tbarangdc h ON h.brg_kode = d.brgd_kode
-        WHERE d.brgd_barcode = ?;
+        WHERE h.brg_aktif = 0 
+          AND h.brg_logstok <> 'N'
+          AND d.brgd_barcode = ?;
     `;
+    
+    // Parameter 'gudang' sekarang digunakan untuk subquery stok
     const [rows] = await pool.query(query, [gudang, barcode]);
+    
     if (rows.length === 0) {
-        throw new Error('Barcode tidak ditemukan.');
+        throw new Error('Barcode tidak ditemukan atau barang tidak aktif.');
     }
     return rows[0];
 };
