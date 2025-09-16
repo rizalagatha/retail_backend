@@ -150,7 +150,7 @@ const getByBarcode = async (req, res) => {
         if (!gudang) {
             return res.status(400).json({ message: 'Parameter gudang diperlukan.' });
         }
-        const product = await productService.findByBarcode(barcode, gudang);
+        const product = await offerFormService.findByBarcode(barcode, gudang);
         res.json(product);
     } catch (error) {
         res.status(404).json({ message: error.message });
