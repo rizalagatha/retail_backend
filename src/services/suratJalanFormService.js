@@ -206,12 +206,11 @@ const loadForEdit = async (nomor, user) => {
     return { header: headerRows[0], items };
 };
 
-const searchStore = async (term, page, itemsPerPage) => {
+const search = async (term, page, itemsPerPage) => {
     const offset = (page - 1) * itemsPerPage;
     const searchTerm = `%${term || ''}%`;
     const params = [searchTerm, searchTerm];
     
-    // Filter dari Delphi: gdg_dc = 0 (Store Biasa) atau 3 (Store Prioritas)
     const baseWhere = 'WHERE (gdg_dc = 0 OR gdg_dc = 3)';
     const searchWhere = `AND (gdg_kode LIKE ? OR gdg_nama LIKE ?)`;
     
