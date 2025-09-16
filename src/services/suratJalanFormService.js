@@ -26,7 +26,8 @@ const getItemsForLoad = async (nomor, gudang) => {
     let query = '';
     const params = [gudang, nomor];
 
-    if (nomor.includes('RB')) { // Berdasarkan nomor Terima RB
+    // Cek apakah nomor adalah Terima RB atau Permintaan
+    if (nomor.includes('RB')) {
         query = `
             SELECT 
                 d.rbd_kode AS kode,
@@ -43,7 +44,7 @@ const getItemsForLoad = async (nomor, gudang) => {
             LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.rbd_kode AND b.brgd_ukuran = d.rbd_ukuran
             WHERE d.rbd_nomor = ?;
         `;
-    } else { // Berdasarkan nomor Permintaan
+    } else { // Asumsi lainnya adalah Nomor Permintaan
         query = `
             SELECT
                 d.mtd_kode AS kode,
@@ -217,10 +218,42 @@ const searchPermintaan = async (term, page, itemsPerPage, storeKode) => {
     return { items, total };
 };
 
+const searchTerimaRb = async (term, page, itemsPerPage, user) => {
+    const offset = (page - 1) * itemsPerPage;
+    const searchTerm = `%${term || ''}%`;
+    const params = [user.cabang, searchTerm, searchTerm, searchTerm];
+
+    const baseFrom = `
+        FROM tdcrb_hdr h
+        LEFT JOIN trbdc_hdr r ON r.rb_noterima = h.rb_nomor
+        LEFT JOIN tgudang g ON g.gdg_kode = LEFT(r.rb_nomor, 3)
+        WHERE LEFT(h.rb_nomor, 3) = ?
+    `;
+    const searchWhere = `AND (h.rb_nomor LIKE ? OR r.rb_nomor LIKE ? OR g.gdg_nama LIKE ?)`;
+    
+    const countQuery = `SELECT COUNT(*) AS total ${baseFrom} ${searchWhere}`;
+    const [countRows] = await pool.query(countQuery, params);
+    const total = countRows[0].total;
+
+    const dataQuery = `
+        SELECT h.rb_nomor AS nomor, h.rb_tanggal AS tanggal, 
+               r.rb_nomor AS no_rb, r.rb_tanggal AS tgl_rb,
+               CONCAT(LEFT(r.rb_nomor, 3), ' - ', g.gdg_nama) AS dari_store
+        ${baseFrom} ${searchWhere}
+        ORDER BY h.date_create DESC
+        LIMIT ? OFFSET ?;
+    `;
+    const dataParams = [...params, itemsPerPage, offset];
+    const [items] = await pool.query(dataQuery, dataParams);
+    
+    return { items, total };
+};
+
 module.exports = {
     getItemsForLoad,
     saveData,
     loadForEdit,
     searchStores,
     searchPermintaan,
+    searchTerimaRb,
 };

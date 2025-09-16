@@ -55,10 +55,21 @@ const searchPermintaan = async (req, res) => {
     }
 };
 
+const searchTerimaRb = async (req, res) => {
+    try {
+        const { term, page = 1, itemsPerPage = 10 } = req.query;
+        const result = await sjFormService.searchTerimaRb(term, Number(page), Number(itemsPerPage), req.user);
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getItemsForLoad,
     save,
     loadForEdit,
     searchStores,
     searchPermintaan,
+    searchTerimaRb,
 };
