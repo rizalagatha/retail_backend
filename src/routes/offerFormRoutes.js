@@ -45,7 +45,7 @@ router.get('/search/price-proposals', verifyToken, checkPermission(OFFER_MENU_ID
 router.get('/search/price-proposal-details/:nomor', verifyToken, checkPermission(OFFER_MENU_ID, 'view'), offerFormController.getPriceProposalDetails);
 
 // Endpoint: GET /api/products/by-barcode/12345?gudang=KDC
-router.get('/by-barcode/:barcode', verifyToken, productController.getByBarcode);
+router.get('/by-barcode/:barcode', verifyToken, offerFormController.getByBarcode);
 
 router.get('/print-data/:nomor', verifyToken, checkPermission(OFFER_MENU_ID, 'view'), offerFormController.getPrintData);
 
