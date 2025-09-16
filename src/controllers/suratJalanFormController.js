@@ -42,9 +42,20 @@ const loadForEdit = async (req, res) => {
     }
 };
 
+const searchStore = async (req, res) => {
+    try {
+        const { term, page = 1, itemsPerPage = 10 } = req.query;
+        const result = await suratJalanFormService.searchStore(term, Number(page), Number(itemsPerPage));
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getLookupData,
     getItemsForLoad,
     save,
     loadForEdit,
+    searchStore,
 };

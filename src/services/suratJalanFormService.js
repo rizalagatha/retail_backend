@@ -206,9 +206,38 @@ const loadForEdit = async (nomor, user) => {
     return { header: headerRows[0], items };
 };
 
+const searchStore = async (term, page, itemsPerPage) => {
+    const offset = (page - 1) * itemsPerPage;
+    const searchTerm = `%${term || ''}%`;
+    const params = [searchTerm, searchTerm];
+    
+    // Filter dari Delphi: gdg_dc = 0 (Store Biasa) atau 3 (Store Prioritas)
+    const baseWhere = 'WHERE (gdg_dc = 0 OR gdg_dc = 3)';
+    const searchWhere = `AND (gdg_kode LIKE ? OR gdg_nama LIKE ?)`;
+    
+    // Query untuk menghitung total item
+    const countQuery = `SELECT COUNT(*) as total FROM tgudang ${baseWhere} ${searchWhere}`;
+    const [countRows] = await pool.query(countQuery, params);
+    const total = countRows[0].total;
+
+    // Query untuk mengambil data per halaman
+    const dataQuery = `
+        SELECT gdg_kode AS kode, gdg_nama AS nama 
+        FROM tgudang 
+        ${baseWhere} ${searchWhere}
+        ORDER BY gdg_kode
+        LIMIT ? OFFSET ?;
+    `;
+    const dataParams = [...params, itemsPerPage, offset];
+    const [items] = await pool.query(dataQuery, dataParams);
+
+    return { items, total };
+};
+
 module.exports = {
     getLookupData,
     getItemsForLoad,
     saveData,
     loadForEdit,
+    searchStore,
 };
