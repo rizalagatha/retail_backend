@@ -188,9 +188,39 @@ const searchStores = async (term, page, itemsPerPage) => {
     return { items, total };
 };
 
+const searchPermintaan = async (term, page, itemsPerPage, storeKode) => {
+    const offset = (page - 1) * itemsPerPage;
+    const searchTerm = `%${term || ''}%`;
+    const params = [storeKode, searchTerm, searchTerm, searchTerm, searchTerm];
+
+    // Query dari Delphi
+    const baseFrom = `
+        FROM tmintabarang_hdr h
+        WHERE LEFT(h.mt_nomor, 3) = ? 
+          AND h.mt_nomor NOT IN (SELECT sj_mt_nomor FROM tdc_sj_hdr WHERE sj_mt_nomor <> "")
+    `;
+    const searchWhere = `AND (h.mt_nomor LIKE ? OR h.mt_tanggal LIKE ? OR h.mt_otomatis LIKE ? OR h.mt_ket LIKE ?)`;
+    
+    const countQuery = `SELECT COUNT(*) AS total ${baseFrom} ${searchWhere}`;
+    const [countRows] = await pool.query(countQuery, params);
+    const total = countRows[0].total;
+
+    const dataQuery = `
+        SELECT h.mt_nomor AS nomor, h.mt_tanggal AS tanggal, h.mt_otomatis AS otomatis, h.mt_ket AS keterangan
+        ${baseFrom} ${searchWhere}
+        ORDER BY h.date_create DESC
+        LIMIT ? OFFSET ?;
+    `;
+    const dataParams = [...params, itemsPerPage, offset];
+    const [items] = await pool.query(dataQuery, dataParams);
+    
+    return { items, total };
+};
+
 module.exports = {
     getItemsForLoad,
     saveData,
     loadForEdit,
     searchStores,
+    searchPermintaan,
 };

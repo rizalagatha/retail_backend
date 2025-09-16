@@ -42,9 +42,23 @@ const searchStores = async (req, res) => {
     }
 };
 
+const searchPermintaan = async (req, res) => {
+    try {
+        const { term, page = 1, itemsPerPage = 10, storeKode } = req.query;
+        if (!storeKode) {
+            return res.status(400).json({ message: 'Kode store diperlukan.' });
+        }
+        const result = await sjFormService.searchPermintaan(term, Number(page), Number(itemsPerPage), storeKode);
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getItemsForLoad,
     save,
     loadForEdit,
     searchStores,
+    searchPermintaan,
 };
