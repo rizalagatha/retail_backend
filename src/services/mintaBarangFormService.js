@@ -112,7 +112,7 @@ const getProductDetailsForGrid = async (filters, user) => {
                 ), 0) AS sj
             FROM tbarangdc_dtl b
             JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
-            WHERE a.brg_aktif = 0 AND a.brg_logstok <> "N"
+            WHERE a.brg_aktif = 0
         `;
 
         // Parameter untuk subquery di SELECT, perlu dipertahankan
