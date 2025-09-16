@@ -20,5 +20,6 @@ router.get('/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), mintaBarang
 router.get('/lookup/buffer-stok', verifyToken, checkPermission(MENU_ID, 'view'), mintaBarangFormController.getBufferStokItems);
 router.get('/lookup/so-details/:soNomor', verifyToken, checkPermission(MENU_ID, 'view'), mintaBarangFormController.getSoDetailsForGrid);
 router.get('/lookup/product-details', verifyToken, checkPermission(MENU_ID, 'view'), mintaBarangFormController.getProductDetails);
+router.get('/by-barcode/:barcode', verifyToken, mintaBarangFormController.getByBarcode);
 
 module.exports = router;
