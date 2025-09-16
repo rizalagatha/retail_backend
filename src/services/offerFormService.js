@@ -502,7 +502,7 @@ const findByBarcode = async (barcode, gudang) => {
             d.brgd_kode AS kode,
             TRIM(CONCAT(h.brg_jeniskaos, " ", h.brg_tipe, " ", h.brg_lengan, " ", h.brg_jeniskain, " ", h.brg_warna)) AS nama,
             d.brgd_ukuran AS ukuran,
-            d.brgd_hrg AS harga,
+            d.brgd_harga AS harga,
             
             -- Logika perhitungan stok dari Delphi menggunakan tmasterstok --
             IFNULL((
