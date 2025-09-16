@@ -277,7 +277,6 @@ const findByBarcode = async (barcode, gudang) => {
         FROM tbarangdc_dtl d
         LEFT JOIN tbarangdc h ON h.brg_kode = d.brgd_kode
         WHERE h.brg_aktif = 0 
-          AND h.brg_logstok <> 'N'
           AND d.brgd_barcode = ?;
     `;
     
