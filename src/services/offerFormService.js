@@ -495,6 +495,27 @@ const getDataForPrint = async (nomor) => {
     };
 };
 
+const findByBarcode = async (barcode, gudang) => {
+    // Query ini mencari barcode di tbarangdc_dtl dan mengambil info utama dari tbarangdc
+    const query = `
+        SELECT
+            d.brgd_barcode AS barcode,
+            d.brgd_kode AS kode,
+            TRIM(CONCAT(h.brg_jeniskaos, " ", h.brg_tipe, " ", h.brg_lengan, " ", h.brg_jeniskain, " ", h.brg_warna)) AS nama,
+            d.brgd_ukuran AS ukuran,
+            d.brgd_hrg AS harga,
+            (SELECT IFNULL(SUM(st_akhir), 0) FROM tstok WHERE st_kode = d.brgd_kode AND st_ukuran = d.brgd_ukuran AND st_cab = ?) AS stok
+        FROM tbarangdc_dtl d
+        LEFT JOIN tbarangdc h ON h.brg_kode = d.brgd_kode
+        WHERE d.brgd_barcode = ?;
+    `;
+    const [rows] = await pool.query(query, [gudang, barcode]);
+    if (rows.length === 0) {
+        throw new Error('Barcode tidak ditemukan.');
+    }
+    return rows[0];
+};
+
 module.exports = {
     generateNewOfferNumber,
     searchCustomers,
@@ -507,4 +528,5 @@ module.exports = {
     searchApprovedPriceProposals,
     getPriceProposalDetailsForSo,
     getDataForPrint,
+    findByBarcode,
 };
