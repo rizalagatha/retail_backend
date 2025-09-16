@@ -112,10 +112,19 @@ const getProductDetailsForGrid = async (filters, user) => {
                 ), 0) AS sj
             FROM tbarangdc_dtl b
             JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
-            WHERE a.brg_logstok = "Y"
+            WHERE a.brg_aktif = 0 AND a.brg_logstok <> "N"
         `;
 
+        // Parameter untuk subquery di SELECT, perlu dipertahankan
         const params = [user.cabang, user.cabang, user.cabang];
+
+        // --- PENAMBAHAN FILTER KONDISIONAL DARI DELPHI ---
+        if (user.cabang === 'K04') {
+            query += ' AND a.brg_ktg <> ""';
+        } else if (user.cabang === 'K05') {
+            query += ' AND a.brg_ktg = ""';
+        }
+        // --- AKHIR PENAMBAHAN ---
 
         if (barcode) {
             query += ` AND b.brgd_barcode = ?`;
@@ -127,9 +136,10 @@ const getProductDetailsForGrid = async (filters, user) => {
 
         const [rows] = await connection.query(query, params);
         if (rows.length === 0) {
-            throw new Error('Detail produk tidak ditemukan.');
+            throw new Error('Detail produk tidak ditemukan atau tidak valid untuk cabang ini.');
         }
 
+        // Kalkulasi mino dan jumlah tetap sama
         const product = rows[0];
         const mino = product.stokmax - (product.stok + product.sudahminta + product.sj);
         product.mino = mino > 0 ? mino : 0;
@@ -140,7 +150,6 @@ const getProductDetailsForGrid = async (filters, user) => {
         connection.release();
     }
 };
-
 
 const getBufferStokItems = async (user) => { /* ... (Implementasi query dari btnRefreshClick PanelPSM) ... */ };
 
