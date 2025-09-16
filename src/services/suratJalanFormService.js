@@ -206,7 +206,7 @@ const loadForEdit = async (nomor, user) => {
     return { header: headerRows[0], items };
 };
 
-const search = async (term, page, itemsPerPage) => {
+const searchStore = async (term, page, itemsPerPage) => {
     const offset = (page - 1) * itemsPerPage;
     const searchTerm = `%${term || ''}%`;
     const params = [searchTerm, searchTerm];
