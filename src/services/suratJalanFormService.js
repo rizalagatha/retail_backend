@@ -177,7 +177,7 @@ const loadForEdit = async (nomor, user) => {
         SELECT
             d.sjd_kode AS kode,
             b.brgd_barcode AS barcode,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)) AS nama,
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
             d.sjd_ukuran AS ukuran,
             d.sjd_jumlah AS jumlah,
             IFNULL((
