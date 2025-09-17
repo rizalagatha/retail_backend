@@ -7,7 +7,7 @@ router.get('/next-number', barcodeFormController.getNextNumber);
 
 // GET /api/barcode-form/search-products -> Mencari produk
 router.get('/search-products', barcodeFormController.searchProducts);
-router.get('/master-search', verifyToken, barcodeFormController.searchMaster);
+router.get('/master-search', barcodeFormController.searchMaster);
 
 // GET /api/barcode-form/product-details/:productCode -> Mendapatkan detail ukuran & barcode produk
 router.get('/product-details/:productCode', barcodeFormController.getProductDetails);
