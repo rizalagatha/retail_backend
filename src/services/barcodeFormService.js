@@ -135,10 +135,37 @@ const saveBarcode = async (data) => {
     }
 };
 
+const searchMaster = async (term, page, itemsPerPage) => {
+    const offset = (page - 1) * itemsPerPage;
+    const searchTerm = `%${term || ''}%`;
+    const params = [searchTerm, searchTerm];
+    
+    // Query dari Delphi (hanya dari tbarangdc)
+    const baseFrom = `FROM tbarangdc a WHERE a.brg_aktif = 0`;
+    const searchWhere = `AND (a.brg_kode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)) LIKE ?)`;
+    
+    const countQuery = `SELECT COUNT(*) as total ${baseFrom} ${searchWhere}`;
+    const [countRows] = await pool.query(countQuery, params);
+    const total = countRows[0].total;
+
+    const dataQuery = `
+        SELECT 
+            a.brg_kode AS kode, 
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama
+        ${baseFrom} ${searchWhere}
+        ORDER BY nama
+        LIMIT ? OFFSET ?;
+    `;
+    const dataParams = [...params, itemsPerPage, offset];
+    const [items] = await pool.query(dataQuery, dataParams);
+
+    return { items, total };
+};
 
 module.exports = {
     getNextBarcodeNumber,
     searchProducts,
     getProductDetails,
     saveBarcode,
+    searchMaster,
 };
