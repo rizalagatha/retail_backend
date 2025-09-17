@@ -14,8 +14,6 @@ const getNextBarcodeNumber = async (cabang, tanggal) => {
     return `${prefix}${newNum}`;
 };
 
-// GANTI FUNGSI LAMA searchProducts DENGAN VERSI BARU INI
-
 const searchProducts = async (term, category, gudang, page, itemsPerPage, source) => {
     const offset = (page - 1) * itemsPerPage;
     const searchTerm = `%${term}%`;

@@ -49,7 +49,7 @@ const getItemsForLoad = async (nomor, gudang) => {
             SELECT
                 d.mtd_kode AS kode,
                 b.brgd_barcode AS barcode,
-                TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)) AS nama,
+                TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
                 d.mtd_ukuran AS ukuran,
                 d.mtd_jumlah AS minta, 
                 IFNULL(b.brgd_min, 0) AS minstok, 

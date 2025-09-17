@@ -92,20 +92,23 @@ const remove = async (nomor) => {
     try {
         await connection.beginTransaction();
 
-        const [headers] = await connection.query('SELECT NomorTerima, NoSTBJ, Closing FROM tdc_sj_hdr WHERE sj_nomor = ?', [nomor]);
+        const [headers] = await connection.query(
+            'SELECT sj_noterima, sj_stbj, sj_closing FROM tdc_sj_hdr WHERE sj_nomor = ?', 
+            [nomor]
+        );
         if (headers.length === 0) {
             throw new Error('Data tidak ditemukan.');
         }
         const sj = headers[0];
 
         // Migrasi Validasi dari Delphi (cxButton4Click)
-        if (sj.NomorTerima) {
+        if (sj.sj_noterima) {
             throw new Error('Sudah ada penerimaan. Tidak bisa dihapus.');
         }
-        if (sj.NoSTBJ) {
+        if (sj.sj_stbj) {
             throw new Error('SJ Otomatis dari Terima STBJ. Tidak bisa dihapus.');
         }
-        if (sj.Closing === 'Y') {
+        if (sj.sj_closing === 'Y') {
             throw new Error('Sudah Closing Stok Opname. Tidak bisa dihapus.');
         }
         
