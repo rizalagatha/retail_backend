@@ -314,6 +314,41 @@ const findByBarcode = async (barcode, gudang) => {
     return rows[0];
 };
 
+const getExportDetails = async (filters) => {
+    const { startDate, endDate, kodeBarang } = filters;
+    
+    let params = [startDate, endDate];
+    let itemFilter = '';
+    
+    if (kodeBarang) {
+        itemFilter = 'AND d.sjd_kode = ?';
+        params.push(kodeBarang);
+    }
+
+    const query = `
+        SELECT 
+            h.sj_nomor AS 'Nomor SJ',
+            h.sj_tanggal AS 'Tanggal SJ',
+            h.sj_kecab AS 'Kode Store',
+            g.gdg_nama AS 'Nama Store',
+            d.sjd_kode AS 'Kode Barang',
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)) AS 'Nama Barang',
+            d.sjd_ukuran AS 'Ukuran',
+            d.sjd_jumlah AS 'Jumlah'
+        FROM tdc_sj_hdr h
+        JOIN tdc_sj_dtl d ON h.sj_nomor = d.sjd_nomor
+        LEFT JOIN retail.tgudang g ON g.gdg_kode = h.sj_kecab
+        LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.sjd_kode
+        WHERE h.sj_peminta = "" 
+          AND h.sj_tanggal BETWEEN ? AND ?
+          ${itemFilter}
+        ORDER BY h.sj_nomor, d.sjd_kode, d.sjd_ukuran;
+    `;
+    
+    const [rows] = await pool.query(query, params);
+    return rows;
+};
+
 module.exports = {
     getItemsForLoad,
     saveData,
@@ -322,4 +357,5 @@ module.exports = {
     searchPermintaan,
     searchTerimaRb,
     findByBarcode,
+    getExportDetails,
 };

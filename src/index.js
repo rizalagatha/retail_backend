@@ -41,6 +41,7 @@ const mintaBarangRoutes = require('./routes/mintaBarangRoutes');
 const mintaBarangFormRoutes = require('./routes/mintaBarangFormRoutes');
 const suratJalanRoutes = require('./routes/suratJalanRoutes');
 const suratJalanFormRoutes = require('./routes/suratJalanFormRoutes');
+const terimaSjRoutes = require('./routes/terimaSjRoutes');
 const laporanStokRoutes = require('./routes/laporanStokRoutes');
 
 const app = express();
@@ -120,6 +121,7 @@ app.use('/api/minta-barang', mintaBarangRoutes);
 app.use('/api/minta-barang-form', mintaBarangFormRoutes);
 app.use('/api/surat-jalan', suratJalanRoutes);
 app.use('/api/surat-jalan-form', suratJalanFormRoutes);
+app.use('/api/terima-sj', terimaSjRoutes);
 app.use('/api/laporan-stok', laporanStokRoutes);
 
 // Menjalankan Server
