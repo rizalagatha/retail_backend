@@ -59,6 +59,8 @@ const loadInitialData = async (nomorSj) => {
 /**
  * Menyimpan data Terima SJ.
  */
+// GANTI FUNGSI saveData YANG LAMA DENGAN VERSI BARU INI:
+
 const saveData = async (payload, user) => {
     const { header, items } = payload;
     const connection = await pool.getConnection();
@@ -71,27 +73,41 @@ const saveData = async (payload, user) => {
         }
 
         const tjNomor = await generateNewTjNumber(user.cabang, header.tanggalTerima);
+-
+        
+        // 1. Generate `idrec` untuk header, sesuai logika Delphi
+        const timestamp = format(new Date(), 'yyyyMMddHHmmssSSS');
+        const idrec = `${user.cabang}TJ${timestamp}`;
 
-        // 1. Insert ke header penerimaan (ttrm_sj_hdr)
+        // 2. Perbarui query INSERT untuk header
         const headerSql = `
-            INSERT INTO ttrm_sj_hdr (tj_nomor, tj_tanggal, tj_mt_nomor, tj_cab, user_create, date_create)
+            INSERT INTO ttrm_sj_hdr (tj_idrec, tj_nomor, tj_tanggal, tj_mt_nomor, user_create, date_create)
             VALUES (?, ?, ?, ?, ?, NOW());
         `;
-        await connection.query(headerSql, [tjNomor, header.tanggalTerima, header.nomorSj, user.cabang, user.kode]);
+        await connection.query(headerSql, [idrec, tjNomor, header.tanggalTerima, header.nomorMinta, user.kode]);
+        
+        await connection.query('DELETE FROM ttrm_sj_dtl WHERE tjd_nomor = ?', [tjNomor]);
 
-        // 2. Insert ke detail penerimaan (ttrm_sj_dtl)
+        // 3. Perbarui query INSERT untuk detail
         const detailSql = `
-            INSERT INTO ttrm_sj_dtl (tjd_nomor, tjd_kode, tjd_ukuran, tjd_jumlah) VALUES ?;
+            INSERT INTO ttrm_sj_dtl (tjd_idrec, tjd_iddrec, tjd_nomor, tjd_kode, tjd_ukuran, tjd_jumlah) 
+            VALUES ?;
         `;
+        
+        // 4. Sesuaikan data yang akan di-insert ke detail
         const detailValues = items
             .filter(item => item.jumlahTerima > 0)
-            .map(item => [tjNomor, item.kode, item.ukuran, item.jumlahTerima]);
+            .map((item, index) => {
+                const nourut = index + 1;
+                const iddrec = `${idrec}${nourut}`; // Buat composite key untuk detail
+                return [idrec, iddrec, tjNomor, item.kode, item.ukuran, item.jumlahTerima];
+            });
         
         if (detailValues.length > 0) {
             await connection.query(detailSql, [detailValues]);
         }
         
-        // 3. Update nomor terima di Surat Jalan header (tdc_sj_hdr)
+        // Update nomor terima di Surat Jalan header (tdc_sj_hdr)
         const updateSjSql = 'UPDATE tdc_sj_hdr SET sj_noterima = ? WHERE sj_nomor = ?';
         await connection.query(updateSjSql, [tjNomor, header.nomorSj]);
 
