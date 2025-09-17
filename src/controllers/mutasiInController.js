@@ -35,4 +35,14 @@ const remove = async (req, res) => {
     } catch (error) { res.status(400).json({ message: error.message }); }
 };
 
-module.exports = { getCabangList, getList, getDetails, exportDetails, remove };
+const getPrintData = async (req, res) => {
+    try {
+        const { nomor } = req.params;
+        const data = await service.getPrintData(nomor);
+        res.json(data);
+    } catch (error) {
+        res.status(404).json({ message: error.message });
+    }
+};
+
+module.exports = { getCabangList, getList, getDetails, exportDetails, remove, getPrintData };
