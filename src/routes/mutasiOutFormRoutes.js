@@ -23,6 +23,6 @@ router.get('/lookup/so-details/:soNomor', verifyToken, checkPermission(MENU_ID, 
 // POST: Menyimpan data Mutasi Out
 router.post('/save', verifyToken, checkSavePermission, mutasiOutFormController.save);
 
-router.get('/export-details', verifyToken, checkPermission(MENU_ID, 'view'), controller.exportDetails);
+router.get('/export-details', verifyToken, checkPermission(MENU_ID, 'view'), mutasiOutFormController.exportDetails);
 
 module.exports = router;
