@@ -39,9 +39,20 @@ const save = async (req, res) => {
     }
 };
 
+const getPrintData = async (req, res) => {
+    try {
+        const { nomor } = req.params;
+        const data = await mutasiOutFormService.getPrintData(nomor, req.user);
+        res.json(data);
+    } catch (error) {
+        res.status(404).json({ message: error.message });
+    }
+};
+
 module.exports = {
     loadForEdit,
     searchSo,
     getSoDetailsForGrid,
     save,
+    getPrintData,
 };

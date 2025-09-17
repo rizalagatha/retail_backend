@@ -168,10 +168,53 @@ const loadForEdit = async (nomor, user) => {
     }
 };
 
+const getPrintData = async (nomor, user) => {
+    // Query ini diadaptasi dari query 'cetak' di Delphi Anda
+    const query = `
+        SELECT 
+            h.mo_nomor, h.mo_tanggal, h.mo_so_nomor, h.mo_kecab, h.mo_ket,
+            g.pab_nama,
+            d.mod_kode, d.mod_ukuran, d.mod_jumlah,
+            b.brgd_barcode,
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+            DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
+            h.user_create,
+            src.gdg_inv_nama AS perush_nama,
+            src.gdg_inv_alamat AS perush_alamat,
+            src.gdg_inv_telp AS perush_telp
+        FROM tmutasiout_hdr h
+        LEFT JOIN tmutasiout_dtl d ON d.mod_nomor = h.mo_nomor
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.mod_kode
+        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mod_kode AND b.brgd_ukuran = d.mod_ukuran
+        LEFT JOIN kencanaprint.tpabrik g ON g.pab_kode = h.mo_kecab
+        LEFT JOIN tgudang src ON src.gdg_kode = LEFT(h.mo_nomor, 3)
+        WHERE h.mo_nomor = ?
+        ORDER BY d.mod_kode, right(b.brgd_barcode, 1);
+    `;
+    
+    const [rows] = await pool.query(query, [nomor]);
+    if (rows.length === 0) {
+        throw new Error('Data Mutasi Out tidak ditemukan.');
+    }
+
+    // Olah data menjadi format header dan details
+    const header = {
+        ...rows[0], // Ambil semua data header dari baris pertama
+    };
+    const details = rows.map(row => ({
+        mod_kode: row.mod_kode,
+        nama: row.nama,
+        mod_ukuran: row.mod_ukuran,
+        mod_jumlah: row.mod_jumlah,
+    }));
+
+    return { header, details };
+};
 
 module.exports = {
     searchSo,
     getSoDetailsForGrid,
     save,
     loadForEdit,
+    getPrintData,
 };

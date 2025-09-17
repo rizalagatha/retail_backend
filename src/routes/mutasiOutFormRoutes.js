@@ -12,6 +12,7 @@ const checkSavePermission = (req, res, next) => {
 
 // GET: Memuat data Mutasi Out yang ada untuk mode "Ubah"
 router.get('/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), mutasiOutFormController.loadForEdit);
+router.get('/print/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), mutasiOutFormController.getPrintData);
 
 // GET: Mencari SO yang valid untuk diinput (form bantuan)
 router.get('/lookup/so', verifyToken, checkPermission(MENU_ID, 'view'), mutasiOutFormController.searchSo);
