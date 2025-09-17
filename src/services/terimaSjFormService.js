@@ -74,7 +74,7 @@ const saveData = async (payload, user) => {
 
         // 1. Insert ke header penerimaan (ttrm_sj_hdr)
         const headerSql = `
-            INSERT INTO ttrm_sj_hdr (tj_nomor, tj_tanggal, tj_sj_nomor, tj_cab, user_create, date_create)
+            INSERT INTO ttrm_sj_hdr (tj_nomor, tj_tanggal, tj_mt_nomor, tj_cab, user_create, date_create)
             VALUES (?, ?, ?, ?, ?, NOW());
         `;
         await connection.query(headerSql, [tjNomor, header.tanggalTerima, header.nomorSj, user.cabang, user.kode]);
