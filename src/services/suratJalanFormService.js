@@ -332,7 +332,7 @@ const getExportDetails = async (filters) => {
             h.sj_kecab AS 'Kode Store',
             g.gdg_nama AS 'Nama Store',
             d.sjd_kode AS 'Kode Barang',
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)) AS 'Nama Barang',
+            TRIM(CONCAT(h.brg_jeniskaos, " ", h.brg_tipe, " ", h.brg_lengan, " ", h.brg_jeniskain, " ", h.brg_warna)) AS nama,
             d.sjd_ukuran AS 'Ukuran',
             d.sjd_jumlah AS 'Jumlah'
         FROM tdc_sj_hdr h

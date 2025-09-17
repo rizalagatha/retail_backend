@@ -1,9 +1,8 @@
 const pool = require('../config/database');
-const { format } = require('date-fns');
+const { format } = require('date-fns'); // Pastikan import ini ada di paling atas
 
 /**
  * Menghasilkan nomor Terima SJ (TJ) baru.
- * Format: K01.TJ.YYMM.NNNN
  */
 const generateNewTjNumber = async (gudang, tanggal) => {
     const date = new Date(tanggal);
@@ -24,7 +23,6 @@ const generateNewTjNumber = async (gudang, tanggal) => {
  * Memuat data awal untuk form dari Surat Jalan yang dipilih.
  */
 const loadInitialData = async (nomorSj) => {
-    // Query untuk mengambil data header dari SJ
     const headerQuery = `
         SELECT 
             h.sj_nomor, h.sj_tanggal, h.sj_mt_nomor, h.sj_ket AS keterangan,
@@ -37,12 +35,11 @@ const loadInitialData = async (nomorSj) => {
     const [headerRows] = await pool.query(headerQuery, [nomorSj]);
     if (headerRows.length === 0) throw new Error('Data Surat Jalan tidak ditemukan.');
 
-    // Query untuk mengambil detail item dari SJ
     const itemsQuery = `
         SELECT
             d.sjd_kode AS kode,
             b.brgd_barcode AS barcode,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)) AS nama,
+            TRIM(CONCAT(h.brg_jeniskaos, " ", h.brg_tipe, " ", h.brg_lengan, " ", h.brg_jeniskain, " ", h.brg_warna)) AS nama,
             d.sjd_ukuran AS ukuran,
             d.sjd_jumlah AS jumlahKirim
         FROM tdc_sj_dtl d
@@ -59,47 +56,43 @@ const loadInitialData = async (nomorSj) => {
 /**
  * Menyimpan data Terima SJ.
  */
-// GANTI FUNGSI saveData YANG LAMA DENGAN VERSI BARU INI:
-
 const saveData = async (payload, user) => {
     const { header, items } = payload;
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
 
-        // Validasi
         if (items.some(item => item.jumlahTerima > item.jumlahKirim)) {
             throw new Error('Jumlah terima tidak boleh melebihi jumlah kirim.');
         }
 
         const tjNomor = await generateNewTjNumber(user.cabang, header.tanggalTerima);
--
-        
-        // 1. Generate `idrec` untuk header, sesuai logika Delphi
+
+        // Generate `idrec` untuk header, sesuai logika Delphi
         const timestamp = format(new Date(), 'yyyyMMddHHmmssSSS');
         const idrec = `${user.cabang}TJ${timestamp}`;
 
-        // 2. Perbarui query INSERT untuk header
+        // Insert ke header penerimaan (ttrm_sj_hdr)
         const headerSql = `
             INSERT INTO ttrm_sj_hdr (tj_idrec, tj_nomor, tj_tanggal, tj_mt_nomor, user_create, date_create)
             VALUES (?, ?, ?, ?, ?, NOW());
         `;
         await connection.query(headerSql, [idrec, tjNomor, header.tanggalTerima, header.nomorMinta, user.kode]);
-        
+
+        // Hapus detail lama (jika ada, untuk kasus edit di masa depan)
         await connection.query('DELETE FROM ttrm_sj_dtl WHERE tjd_nomor = ?', [tjNomor]);
 
-        // 3. Perbarui query INSERT untuk detail
+        // Insert ke detail penerimaan (ttrm_sj_dtl)
         const detailSql = `
             INSERT INTO ttrm_sj_dtl (tjd_idrec, tjd_iddrec, tjd_nomor, tjd_kode, tjd_ukuran, tjd_jumlah) 
             VALUES ?;
         `;
         
-        // 4. Sesuaikan data yang akan di-insert ke detail
         const detailValues = items
             .filter(item => item.jumlahTerima > 0)
             .map((item, index) => {
                 const nourut = index + 1;
-                const iddrec = `${idrec}${nourut}`; // Buat composite key untuk detail
+                const iddrec = `${idrec}${nourut}`;
                 return [idrec, iddrec, tjNomor, item.kode, item.ukuran, item.jumlahTerima];
             });
         
