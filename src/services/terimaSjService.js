@@ -108,9 +108,48 @@ const remove = async (nomorSj, nomorTerima, user) => {
     }
 };
 
+const getExportDetails = async (filters) => {
+    const { startDate, endDate, cabang, kodeBarang } = filters;
+    let params = [cabang, startDate, endDate];
+    let itemFilter = '';
+
+    if (kodeBarang) {
+        itemFilter = 'AND d.sjd_kode = ?';
+        params.push(kodeBarang);
+    }
+
+    const query = `
+        SELECT 
+            h.sj_nomor AS 'Nomor SJ',
+            h.sj_tanggal AS 'Tanggal SJ',
+            h.sj_noterima AS 'Nomor Terima',
+            t.tj_tanggal AS 'Tanggal Terima',
+            h.sj_kecab AS 'Kode Store',
+            g.gdg_nama AS 'Nama Store',
+            d.sjd_kode AS 'Kode Barang',
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS 'Nama Barang',
+            d.sjd_ukuran AS 'Ukuran',
+            d.sjd_jumlah AS 'Jumlah Kirim'
+        FROM tdc_sj_hdr h
+        JOIN tdc_sj_dtl d ON h.sj_nomor = d.sjd_nomor
+        LEFT JOIN ttrm_sj_hdr t ON t.tj_nomor = h.sj_noterima
+        LEFT JOIN tgudang g ON g.gdg_kode = h.sj_kecab
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.sjd_kode
+        WHERE h.sj_peminta = ""
+          AND h.sj_kecab = ?
+          AND h.sj_tanggal BETWEEN ? AND ?
+          ${itemFilter}
+        ORDER BY h.sj_nomor, d.sjd_kode;
+    `;
+    
+    const [rows] = await pool.query(query, params);
+    return rows;
+};
+
 module.exports = {
     getCabangList,
     getList,
     getDetails,
     remove,
+    getExportDetails,
 };

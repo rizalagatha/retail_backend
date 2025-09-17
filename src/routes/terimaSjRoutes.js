@@ -14,4 +14,6 @@ router.get('/lookup/cabang', verifyToken, checkPermission(MENU_ID, 'view'), teri
 // Batalkan penerimaan
 router.delete('/:nomorSj/:nomorTerima', verifyToken, checkPermission(MENU_ID, 'delete'), terimaSjController.remove);
 
+router.get('/export-details', verifyToken, checkPermission(MENU_ID, 'view'), terimaSjController.exportDetails);
+
 module.exports = router;

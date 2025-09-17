@@ -38,9 +38,19 @@ const remove = async (req, res) => {
     }
 };
 
+const exportDetails = async (req, res) => {
+    try {
+        const data = await terimaSjService.getExportDetails(req.query);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getCabangList,
     getList,
     getDetails,
     remove,
+    exportDetails,
 };
