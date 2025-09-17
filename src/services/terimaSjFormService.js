@@ -39,7 +39,7 @@ const loadInitialData = async (nomorSj) => {
         SELECT
             d.sjd_kode AS kode,
             b.brgd_barcode AS barcode,
-            TRIM(CONCAT(h.brg_jeniskaos, " ", h.brg_tipe, " ", h.brg_lengan, " ", h.brg_jeniskain, " ", h.brg_warna)) AS nama,
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
             d.sjd_ukuran AS ukuran,
             d.sjd_jumlah AS jumlahKirim
         FROM tdc_sj_dtl d
