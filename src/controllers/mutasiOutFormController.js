@@ -49,10 +49,20 @@ const getPrintData = async (req, res) => {
     }
 };
 
+const exportDetails = async (req, res) => {
+    try {
+        const data = await service.getExportDetails(req.query);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     loadForEdit,
     searchSo,
     getSoDetailsForGrid,
     save,
     getPrintData,
+    exportDetails,
 };

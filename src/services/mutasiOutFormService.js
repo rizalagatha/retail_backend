@@ -211,6 +211,32 @@ const getPrintData = async (nomor, user) => {
     return { header, details };
 };
 
+const getExportDetails = async (filters) => {
+    const { startDate, endDate } = filters;
+    const query = `
+        SELECT 
+            h.mo_nomor AS 'Nomor Mutasi',
+            h.mo_tanggal AS 'Tanggal',
+            h.mo_so_nomor AS 'No SO',
+            h.mo_kecab AS 'Ke Cabang',
+            p.pab_nama AS 'Nama Cabang',
+            h.mo_ket AS 'Keterangan',
+            d.mod_kode AS 'Kode Barang',
+            -- Query nama barang lengkap
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS 'Nama Barang',
+            d.mod_ukuran AS 'Ukuran',
+            d.mod_jumlah AS 'Qty Out'
+        FROM tmutasiout_hdr h
+        JOIN tmutasiout_dtl d ON h.mo_nomor = d.mod_nomor
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.mod_kode
+        LEFT JOIN kencanaprint.tpabrik p ON p.pab_kode = h.mo_kecab
+        WHERE h.mo_tanggal BETWEEN ? AND ?
+        ORDER BY h.mo_nomor;
+    `;
+    const [rows] = await pool.query(query, [startDate, endDate]);
+    return rows;
+};
+
 module.exports = {
     searchSo,
     getSoDetailsForGrid,
