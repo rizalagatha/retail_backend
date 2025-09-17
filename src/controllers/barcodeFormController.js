@@ -66,7 +66,7 @@ const save = async (req, res) => {
 const searchMaster = async (req, res) => {
     try {
         const { term, page = 1, itemsPerPage = 10 } = req.query;
-        const result = await productService.searchMaster(term, Number(page), Number(itemsPerPage));
+        const result = await barcodeFormService.searchMaster(term, Number(page), Number(itemsPerPage));
         res.json(result);
     } catch (error) {
         res.status(500).json({ message: error.message });
