@@ -17,7 +17,7 @@ router.get('/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), mutasiOutFo
 router.get('/lookup/so', verifyToken, checkPermission(MENU_ID, 'view'), mutasiOutFormController.searchSo);
 
 // GET: Mengambil detail item dari SO terpilih untuk mengisi grid
-router.get('/lookup/so-details/:soNomor', verifyToken, checkPermission(MENU_ID, 'view'), mutasiOutFormController.getSoDetailsForGrid);
+router.get('/lookup/so-details/:soNomor', verifyToken, checkSavePermission(MENU_ID, 'view'), mutasiOutFormController.getSoDetailsForGrid);
 
 // POST: Menyimpan data Mutasi Out
 router.post('/save', verifyToken, checkPermission, mutasiOutFormController.save);
