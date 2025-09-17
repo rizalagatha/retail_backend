@@ -7,7 +7,7 @@ const MENU_ID = '43'; // ID Menu Mutasi Out
 
 const checkSavePermission = (req, res, next) => {
     const action = req.body.isNew ? 'insert' : 'edit';
-    return checkPermission(OFFER_MENU_ID, action)(req, res, next);
+    return checkPermission(MENU_ID, action)(req, res, next);
 };
 
 // GET: Memuat data Mutasi Out yang ada untuk mode "Ubah"
