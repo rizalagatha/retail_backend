@@ -44,6 +44,7 @@ const suratJalanFormRoutes = require('./routes/suratJalanFormRoutes');
 const terimaSjRoutes = require('./routes/terimaSjRoutes');
 const terimaSjFormRoutes = require('./routes/terimaSjFormRoutes');
 const mutasiInRoutes = require('./routes/mutasiInRoutes');
+const mutasiInFormRoutes = require('./routes/mutasiInFormRoutes');
 const laporanStokRoutes = require('./routes/laporanStokRoutes');
 
 const app = express();
@@ -126,6 +127,7 @@ app.use('/api/surat-jalan-form', suratJalanFormRoutes);
 app.use('/api/terima-sj', terimaSjRoutes);
 app.use('/api/terima-sj-form', terimaSjFormRoutes);
 app.use('/api/mutasi-in', mutasiInRoutes);
+app.use('/api/mutasi-in-form', mutasiInFormRoutes);
 app.use('/api/laporan-stok', laporanStokRoutes);
 
 // Menjalankan Server
