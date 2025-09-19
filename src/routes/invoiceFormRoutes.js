@@ -16,6 +16,8 @@ const checkSavePermission = (req, res, next) => {
 // Memuat data Invoice yang sudah ada untuk mode "Ubah"
 router.get('/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), controller.loadForEdit);
 
+router.get('/print/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), controller.getPrintData);
+
 // Menyimpan data (baru atau yang diubah)
 router.post('/save', verifyToken, checkSavePermission, controller.save);
 

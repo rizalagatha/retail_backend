@@ -389,6 +389,94 @@ const getDefaultCustomer = async (cabang) => {
     return customerRows[0] || null;
 };
 
+/**
+ * Mengubah angka menjadi format teks Rupiah.
+ * Contoh: 12345 -> "dua belas ribu tiga ratus empat puluh lima"
+ */
+function terbilang(n) {
+    if (n === null || n === undefined || isNaN(n)) return "Nol";
+    n = Math.floor(Math.abs(n));
+
+    const ang = ["", "satu", "dua", "tiga", "empat", "lima", "enam", "tujuh", "delapan", "sembilan", "sepuluh", "sebelas"];
+
+    const terbilangRecursive = (num) => {
+        if (num < 12) return ang[num];
+        if (num < 20) return terbilangRecursive(num - 10) + " belas";
+        if (num < 100) return (ang[Math.floor(num / 10)] || "") + " puluh " + terbilangRecursive(num % 10);
+        if (num < 200) return "seratus " + terbilangRecursive(num - 100);
+        if (num < 1000) return terbilangRecursive(Math.floor(num / 100)) + " ratus " + terbilangRecursive(num % 100);
+        if (num < 2000) return "seribu " + terbilangRecursive(num - 1000);
+        if (num < 1000000) return terbilangRecursive(Math.floor(num / 1000)) + " ribu " + terbilangRecursive(num % 1000);
+        if (num < 1000000000) return terbilangRecursive(Math.floor(num / 1000000)) + " juta " + terbilangRecursive(n % 1000000);
+        return "angka terlalu besar";
+    };
+
+    return terbilangRecursive(n).replace(/\s+/g, ' ').trim();
+}
+
+const capitalize = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : '');
+
+const getPrintData = async (nomor) => {
+    // Query ini diadaptasi dari query 'cetak' di Delphi Anda
+    const query = `
+        SELECT 
+            h.inv_nomor, h.inv_tanggal, h.inv_nomor_so, h.inv_top, h.inv_ket, h.inv_sc,
+            DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY) AS tempo,
+            c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
+            d.invd_kode, d.invd_ukuran, d.invd_jumlah, d.invd_harga, d.invd_diskon,
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama_barang,
+            (d.invd_jumlah * (d.invd_harga - d.invd_diskon)) AS total,
+            src.gdg_inv_nama AS perush_nama,
+            src.gdg_inv_alamat AS perush_alamat,
+            src.gdg_inv_telp AS perush_telp
+        FROM tinv_hdr h
+        LEFT JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+        LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
+        LEFT JOIN tgudang src ON src.gdg_kode = LEFT(h.inv_nomor, 3)
+        WHERE h.inv_nomor = ?
+        ORDER BY d.invd_nourut;
+    `;
+    const [rows] = await pool.query(query, [nomor]);
+    if (rows.length === 0) throw new Error('Data Invoice tidak ditemukan.');
+
+    // Olah data menjadi format header dan details
+    const header = { ...rows[0] };
+    const details = rows.map(row => ({
+        invd_kode: row.invd_kode,
+        nama_barang: row.nama_barang,
+        invd_ukuran: row.invd_ukuran,
+        invd_jumlah: row.invd_jumlah,
+        invd_harga: row.invd_harga,
+        invd_diskon: row.invd_diskon,
+        total: row.total,
+    }));
+
+    // Kalkulasi summary dari header dan detail
+    const subTotal = details.reduce((sum, item) => sum + item.total, 0);
+    const diskonFaktur = header.inv_disc || 0;
+    const netto = subTotal - diskonFaktur;
+    const ppn = (header.inv_ppn / 100) * netto;
+    const grandTotal = netto + ppn + (header.inv_bkrm || 0);
+
+    header.summary = {
+        subTotal,
+        diskon: diskonFaktur,
+        netto,
+        ppn,
+        biayaKirim: header.inv_bkrm || 0,
+        dp: header.inv_dp || 0,
+        grandTotal,
+        bayar: header.inv_rptunai + header.inv_rpcard, // Contoh
+        pundiAmal: header.inv_pundiamal,
+        kembali: (header.inv_rptunai + header.inv_rpcard) - (grandTotal - (header.inv_dp || 0))
+    };
+    header.terbilang = capitalize(terbilang(header.summary.grandTotal)) + " Rupiah";
+
+    return { header, details };
+};
+
+
 module.exports = {
     searchSo,
     getSoDetailsForGrid,
@@ -400,5 +488,6 @@ module.exports = {
     getMemberByHp,
     saveMember,
     getDefaultCustomer,
+    getPrintData,
 };
 

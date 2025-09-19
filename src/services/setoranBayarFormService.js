@@ -252,8 +252,6 @@ function terbilang(n) {
 
 const capitalize = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : '');
 
-// --- FUNGSI UTAMA ---
-
 const getPrintData = async (nomor) => {
     // 1. Query untuk mengambil data header
     const headerQuery = `
