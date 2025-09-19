@@ -1,6 +1,5 @@
 const pool = require('../config/database');
 const { format } = require('date-fns');
-const { search } = require('../routes/invoiceFormRoutes');
 
 // --- FUNGSI GENERATE NOMOR ---
 const generateNewInvNumber = async (gudang, tanggal) => {
