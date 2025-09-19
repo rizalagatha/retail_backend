@@ -48,6 +48,11 @@ const mutasiInFormRoutes = require('./routes/mutasiInFormRoutes');
 const mutasiStokRoutes = require('./routes/mutasiStokRoutes');
 const mutasiStokFormRoutes = require('./routes/mutasiStokFormRoutes');
 const setoranBayarRoutes = require('./routes/setoranBayarRoutes');
+const setoranBayarFormRoutes = require('./routes/setoranBayarFormRoutes');
+const fskRoutes = require('./routes/fskRoutes');
+const fskFormRoutes = require('./routes/fskFormRoutes');
+const invoiceRoutes = require('./routes/invoiceRoutes');
+const invoiceFormRoutes = require('./routes/invoiceFormRoutes');
 const laporanStokRoutes = require('./routes/laporanStokRoutes');
 
 const app = express();
@@ -134,6 +139,11 @@ app.use('/api/mutasi-in-form', mutasiInFormRoutes);
 app.use('/api/mutasi-stok', mutasiStokRoutes);
 app.use('/api/mutasi-stok-form', mutasiStokFormRoutes);
 app.use('/api/setoran-bayar', setoranBayarRoutes);
+app.use('/api/setoran-bayar-form', setoranBayarFormRoutes);
+app.use('/api/fsk', fskRoutes);
+app.use('/api/fsk-form', fskFormRoutes);
+app.use('/api/invoices', invoiceRoutes);
+app.use('/api/invoice-form', invoiceFormRoutes);
 app.use('/api/laporan-stok', laporanStokRoutes);
 
 // Menjalankan Server
