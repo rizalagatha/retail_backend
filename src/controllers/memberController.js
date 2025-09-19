@@ -28,4 +28,4 @@ const remove = async (req, res) => {
     }
 };
 
-module.exports = { getAll, save, remove };
+module.exports = { getAll, save, remove, };

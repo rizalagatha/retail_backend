@@ -52,13 +52,6 @@ const uploadImage = async (req, res) => {
             fs.unlinkSync(req.file.path); 
             return res.status(400).json({ message: 'Nomor pengajuan diperlukan.' });
         }
-
-        console.log('Upload request received:', {
-            nomor: nomor,
-            originalFile: req.file.originalname,
-            tempPath: req.file.path,
-            fileSize: req.file.size
-        });
         
         // Panggil service untuk me-rename dan move file ke lokasi yang benar
         const finalPath = await priceProposalFormService.renameProposalImage(req.file.path, nomor);
@@ -66,11 +59,6 @@ const uploadImage = async (req, res) => {
         // Buat URL yang bisa diakses
         const cabang = nomor.substring(0, 3);
         const imageUrl = `${process.env.BASE_URL || 'http://192.168.1.73:8000'}/images/${cabang}/${nomor}${path.extname(req.file.originalname)}`;
-
-        console.log('Upload successful:', {
-            finalPath: finalPath,
-            imageUrl: imageUrl
-        });
 
         res.status(200).json({ 
             message: 'Gambar berhasil diunggah.', 

@@ -219,7 +219,6 @@ const getProposalForEdit = async (nomor) => {
 
 const renameProposalImage = async (tempFilePath, nomor) => {
     return new Promise((resolve, reject) => {
-        console.log('Renaming image:', { tempFilePath, nomor });
         
         // Cek apakah file sumber ada
         const fs = require('fs');
@@ -240,7 +239,6 @@ const renameProposalImage = async (tempFilePath, nomor) => {
         // Buat folder cabang jika belum ada
         try {
             fs.mkdirSync(branchFolderPath, { recursive: true });
-            console.log('Branch folder created/exists:', branchFolderPath);
         } catch (mkdirError) {
             console.error('Error creating directory:', mkdirError);
             return reject(new Error('Gagal membuat direktori gambar.'));
@@ -249,9 +247,6 @@ const renameProposalImage = async (tempFilePath, nomor) => {
         // Tentukan path tujuan final di dalam folder cabang
         const finalPath = path.join(branchFolderPath, finalFileName);
         
-        console.log('Moving file from:', tempFilePath);
-        console.log('Moving file to:', finalPath);
-
         fs.rename(tempFilePath, finalPath, (err) => {
             if (err) {
                 console.error("Gagal me-rename file:", err);
@@ -269,11 +264,9 @@ const renameProposalImage = async (tempFilePath, nomor) => {
                         }
                     });
                     
-                    console.log('File successfully copied to:', finalPath);
                     resolve(finalPath);
                 });
             } else {
-                console.log('File successfully moved to:', finalPath);
                 resolve(finalPath);
             }
         });
@@ -330,7 +323,6 @@ const saveProposal = async (data) => {
             `;
             for (const item of details) {
                 if (item.qty > 0) { // Hanya simpan yang qty > 0
-                    console.log('Saving item:', item); // Debug log
                     await connection.query(sizeQuery, [
                         nomor, item.kodeBarang || '', item.size, item.qty, item.hargaPcs || 0
                     ]);

@@ -110,16 +110,10 @@ const save = async (data, user) => {
 const getSoForEdit = async (nomor) => {
     const connection = await pool.getConnection();
     try {
-        console.log(`🔍 Getting SO data for: ${nomor}`);
-        
-        // 1. Cek jika SO sudah menjadi invoice
-        console.log('📋 Checking invoice status...');
         const [invoiceRows] = await connection.query('SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor_so = ?', [nomor]);
         const isInvoiced = invoiceRows.length > 0;
-        console.log(`💰 Invoice status: ${isInvoiced ? 'INVOICED' : 'NOT_INVOICED'}`);
 
         // 2. Ambil data Header Utama & Detail Item dalam satu query
-        console.log('🔄 Executing main query...');
         const mainQuery = `
             SELECT 
                 h.*, d.*, c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
@@ -145,27 +139,12 @@ const getSoForEdit = async (nomor) => {
         `;
         
         const [mainRows] = await connection.query(mainQuery, [nomor]);
-        console.log(`📊 Main query returned ${mainRows.length} rows`);
         
         if (mainRows.length === 0) {
             console.error(`❌ SO ${nomor} not found`);
             throw new Error(`Surat Pesanan dengan nomor ${nomor} tidak ditemukan.`);
         }
 
-        // Debug first row structure
-        console.log('🔍 First row sample:', {
-            so_nomor: mainRows[0].so_nomor,
-            so_tanggal: mainRows[0].so_tanggal,
-            so_cus_kode: mainRows[0].so_cus_kode,
-            so_cus_level: mainRows[0].so_cus_level,
-            level_nama: mainRows[0].level_nama,
-            cus_nama: mainRows[0].cus_nama,
-            gdg_kode: mainRows[0].gdg_kode,
-            gdg_nama: mainRows[0].gdg_nama
-        });
-
-        // 3. Ambil data DP
-        console.log('💳 Getting DP data...');
         const dpQuery = `
             SELECT 
                 h.sh_nomor AS nomor,
@@ -177,10 +156,6 @@ const getSoForEdit = async (nomor) => {
             WHERE h.sh_otomatis = "N" AND h.sh_so_nomor = ?
         `;
         const [dpRows] = await connection.query(dpQuery, [nomor]);
-        console.log(`💰 DP query returned ${dpRows.length} rows`);
-
-        // 4. Proses dan format data untuk dikirim ke frontend
-        console.log('🏗️ Building response data...');
         
         const firstRow = mainRows[0];
         
@@ -222,8 +197,6 @@ const getSoForEdit = async (nomor) => {
             canEdit: !isInvoiced
         };
 
-        console.log('🏷️ Header data built:', headerData);
-
         const itemsData = mainRows.map((row, index) => {
             const item = {
                 kode: row.sod_kode || '',
@@ -239,7 +212,6 @@ const getSoForEdit = async (nomor) => {
                 noSoDtf: row.sod_sd_nomor || '',
                 noPengajuanHarga: row.sod_ph_nomor || '',
             };
-            console.log(`📦 Item ${index}:`, item);
             return item;
         });
 
@@ -250,17 +222,12 @@ const getSoForEdit = async (nomor) => {
             biayaKirim: Number(firstRow.so_bkrm || 0),
         };
 
-        console.log('📊 Footer data built:', footerData);
-        console.log('💳 DP items:', dpRows);
-
         const responseData = { 
             headerData, 
             itemsData, 
             dpItemsData: dpRows, 
             footerData 
         };
-
-        console.log('✅ Complete response data:', responseData);
         
         return responseData;
         
@@ -274,7 +241,6 @@ const getSoForEdit = async (nomor) => {
         throw error;
     } finally {
         connection.release();
-        console.log('🔌 Database connection released');
     }
 };
 

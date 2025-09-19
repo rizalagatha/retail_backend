@@ -45,24 +45,6 @@ const getSoDetailsForGrid = async (req, res) => {
     }
 };
 
-const searchCustomer = async (req, res) => {
-    try {
-        const data = await service.searchCustomer(req.query, req.user);
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
-
-const searchRekening = async (req, res) => {
-    try {
-        const data = await service.searchRekening(req.query, req.user);
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
-
 const searchUnpaidDp = async (req, res) => {
     try {
         const { customerKode } = req.params;
@@ -80,14 +62,57 @@ const getSalesCounters = async (req, res) => {
     } catch (error) { res.status(500).json({ message: error.message }); }
 };
 
+const searchPromo = async (req, res) => {
+    try {
+        const data = await service.searchPromo(req.query, req.user);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+const getMemberByHp = async (req, res) => {
+    try {
+        const data = await service.getMemberByHp(req.params.hp);
+        if (data) { res.json(data); } 
+        else { res.status(404).json({ message: 'Member tidak ditemukan.' }); }
+    } catch (error) { res.status(500).json({ message: error.message }); }
+};
+
+const saveMember = async (req, res) => {
+    try {
+        const result = await service.saveMember(req.body, req.user);
+        res.json({ message: `Member ${result.nama} berhasil disimpan.`, savedMember: result });
+    } catch (error) { res.status(400).json({ message: error.message }); }
+};
+
+const getDefaultCustomer = async (req, res) => {
+    try {
+        // Ambil cabang dari user atau fallback ke query parameter
+        const cabang = req.user?.cabang || req.query.cabang;
+        
+        if (!cabang) {
+            return res.json(null);
+        }
+        
+        const data = await service.getDefaultCustomer(cabang);
+        res.json(data);
+    } catch (error) { 
+        console.error('Error in getDefaultCustomer:', error);
+        res.status(500).json({ message: error.message }); 
+    }
+};
+
 module.exports = {
     loadForEdit,
     save,
     searchSo,
     getSoDetailsForGrid,
-    searchCustomer,
-    searchRekening,
     searchUnpaidDp,
     getSalesCounters,
+    searchPromo,
+    getMemberByHp,
+    saveMember,
+    getDefaultCustomer,
 };
 

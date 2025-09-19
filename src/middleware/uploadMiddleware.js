@@ -6,7 +6,6 @@ const fs = require('fs');
 const tempDir = path.join(process.cwd(), 'temp');
 if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir, { recursive: true });
-    console.log('Created temp directory:', tempDir);
 }
 
 const storage = multer.diskStorage({
@@ -17,15 +16,11 @@ const storage = multer.diskStorage({
         // Nama file temporary dengan timestamp
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         const tempName = 'temp-' + uniqueSuffix + path.extname(file.originalname);
-        console.log('Generated temp filename:', tempName); // DEBUG
         cb(null, tempName);
     }
 });
 
 const fileFilter = (req, file, cb) => {
-    console.log('File filter - mimetype:', file.mimetype); // DEBUG
-    console.log('File filter - originalname:', file.originalname); // DEBUG
-    
     // Accept image files
     if (file.mimetype.startsWith('image/')) {
         cb(null, true);

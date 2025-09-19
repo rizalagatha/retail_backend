@@ -5,15 +5,11 @@ const path = require('path');
 const getById = async (req, res) => {
     try {
         const { nomor } = req.params;
-        console.log('Getting data for nomor:', nomor); // DEBUG
         
         const data = await soDtfFormService.findById(nomor);
         if (!data) {
             return res.status(404).json({ message: 'Data tidak ditemukan' });
         }
-        
-        console.log('Data from service:', JSON.stringify(data, null, 2)); // DEBUG
-        console.log('Header imageUrl:', data.header?.imageUrl); // DEBUG
         
         res.json(data);
     } catch (error) {
@@ -104,22 +100,13 @@ const getSisaKuota = async (req, res) => {
 };
 
 const uploadImage = async (req, res) => {
-    console.log('=== UPLOAD IMAGE REQUEST ===');
-    console.log('Method:', req.method);
-    console.log('URL:', req.url);
-    console.log('Params:', req.params);
-    console.log('File:', req.file);
-    console.log('Body:', req.body);
-    
     try {
         if (!req.file) {
-            console.log('ERROR: No file uploaded');
             return res.status(400).json({ message: 'Tidak ada file yang diunggah.' });
         }
 
         const { nomor } = req.params;
         if (!nomor) {
-            console.log('ERROR: No nomor provided');
             // Hapus file temp jika nomor tidak ada
             if (fs.existsSync(req.file.path)) {
                 fs.unlinkSync(req.file.path);
@@ -127,21 +114,14 @@ const uploadImage = async (req, res) => {
             return res.status(400).json({ message: 'Nomor SO DTF diperlukan.' });
         }
 
-        console.log('Processing image for nomor:', nomor);
-        console.log('Temp file path:', req.file.path);
-        console.log('File size:', req.file.size);
-        console.log('File mimetype:', req.file.mimetype);
-
         // Proses gambar (rename & pindah ke folder cabang)
         const finalPath = await soDtfFormService.processSoDtfImage(req.file.path, nomor);
-        console.log('Final image path:', finalPath);
 
         // Buat URL yang bisa diakses frontend
         const cabang = nomor.substring(0, 3);
         const fileExtension = path.extname(req.file.originalname);
         const imageUrl = `/images/${cabang}/${nomor}${fileExtension}`;
         
-        console.log('Generated imageUrl:', imageUrl);
 
         res.status(200).json({
             success: true,
@@ -158,7 +138,6 @@ const uploadImage = async (req, res) => {
         if (req.file && fs.existsSync(req.file.path)) {
             try {
                 fs.unlinkSync(req.file.path);
-                console.log('Cleaned up temp file:', req.file.path);
             } catch (cleanupError) {
                 console.error('Failed to cleanup temp file:', cleanupError);
             }

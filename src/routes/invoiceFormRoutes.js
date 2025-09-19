@@ -20,18 +20,19 @@ router.get('/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), controller.
 router.post('/save', verifyToken, checkSavePermission, controller.save);
 
 // --- LOOKUP ROUTES ---
-
 // Mencari SO yang valid untuk diinput
 router.get('/lookup/so', verifyToken, checkPermission(MENU_ID, 'view'), controller.searchSo);
 
+router.get('/lookup/promo', verifyToken, checkPermission(MENU_ID, 'view'), controller.searchPromo);
+
+router.get('/lookup/member/:hp', verifyToken, checkPermission(MENU_ID, 'view'), controller.getMemberByHp);
+
+router.get('/lookup/default-customer', verifyToken, controller.getDefaultCustomer);
+
+router.post('/save-member', verifyToken, checkPermission(MENU_ID, 'insert'), controller.saveMember);
+
 // Mengambil detail item dari SO yang dipilih untuk mengisi grid
 router.get('/lookup/so-details/:soNomor', verifyToken, checkPermission(MENU_ID, 'view'), controller.getSoDetailsForGrid);
-
-// Mencari customer
-router.get('/lookup/customer', verifyToken, checkPermission(MENU_ID, 'view'), controller.searchCustomer);
-
-// Mencari akun bank/rekening
-router.get('/lookup/rekening', verifyToken, checkPermission(MENU_ID, 'view'), controller.searchRekening);
 
 router.get('/lookup/sales-counters', verifyToken, checkPermission(MENU_ID, 'view'), controller.getSalesCounters);
 

@@ -447,29 +447,21 @@ const getDataForPrint = async (nomor) => {
 const findImageFile = (nomor) => {
     const cabang = nomor.substring(0, 3);
     const directoryPath = path.join(process.cwd(), 'public', 'images', cabang);
-    
-    console.log('Looking for image in:', directoryPath); // DEBUG
-    console.log('Nomor:', nomor); // DEBUG
 
     if (!fs.existsSync(directoryPath)) {
-        console.log('Directory does not exist:', directoryPath); // DEBUG
         return null;
     }
 
     const files = fs.readdirSync(directoryPath);
-    console.log('Files in directory:', files); // DEBUG
     
     // Cari file yang namanya dimulai dengan nomor SO + titik
     const fileName = files.find(file => file.startsWith(nomor + '.'));
-    console.log('Found file:', fileName); // DEBUG
 
     if (fileName) {
         const imageUrl = `/images/${cabang}/${fileName}`;
-        console.log('Generated imageUrl:', imageUrl); // DEBUG
         return imageUrl;
     }
     
-    console.log('No image file found for:', nomor); // DEBUG
     return null;
 };
 
