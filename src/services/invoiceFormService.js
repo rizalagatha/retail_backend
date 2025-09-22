@@ -1,5 +1,6 @@
 const pool = require('../config/database');
 const { format } = require('date-fns');
+const { getByBarcode } = require('../controllers/invoiceFormController');
 
 // --- FUNGSI GENERATE NOMOR ---
 const generateNewInvNumber = async (gudang, tanggal) => {
@@ -126,7 +127,10 @@ const getSoDetailsForGrid = async (soNomor, user) => {
         itemsQuery = `
             SELECT 
                 d.sod_kode AS kode, b.brgd_barcode AS barcode,
-                TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+                COALESCE(
+                    TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)),
+                    f.sd_nama
+                ) AS nama,
                 d.sod_ukuran AS ukuran,
                 d.sod_harga AS harga, d.sod_diskon AS diskonRp, d.sod_disc AS diskonPersen,
                 d.sod_sd_nomor AS noSoDtf,     
@@ -137,6 +141,7 @@ const getSoDetailsForGrid = async (soNomor, user) => {
             FROM tso_dtl d
             LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
             LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
+            LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_kode
             WHERE d.sod_so_nomor = ?;
         `;
     }
@@ -183,10 +188,11 @@ const searchUnpaidDp = async (customerKode, user) => {
 const loadForEdit = async (nomor, user) => { /* ... (Logika load data edit dari Delphi loaddataall) ... */ };
 
 const saveData = async (payload, user) => {
-    const { header, items, dps, payment, isNew } = payload;
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
+        const { header, items, dps, payment, isNew, totals } = payload;
+
         if (!header.customer.kode) throw new Error('Customer harus diisi.');
         if (!header.customer.level) throw new Error('Level customer belum di-setting.');
         const validItems = items.filter(i => i.kode);
@@ -199,16 +205,21 @@ const saveData = async (payload, user) => {
             }
         }
 
+        let nomorSetoran = payment.transfer.nomorSetoran || '';
+        if ((payment.transfer.nominal || 0) > 0 && !nomorSetoran) {
+            nomorSetoran = await generateNewSetorNumber(connection, user.cabang, header.tanggal);
+        }
+
         const invNomor = isNew ? await generateNewInvNumber(header.gudang.kode, header.tanggal) : header.nomor;
         const idrec = isNew ? `${header.gudang.kode}INV${format(new Date(), 'yyyyMMddHHmmssSSS')}` : header.idrec;
 
         // 1. INSERT/UPDATE tinv_hdr
         if (isNew) {
             const headerSql = `
-                INSERT INTO tinv_hdr (inv_idrec, inv_nomor, inv_nomor_so, inv_tanggal, inv_cus_kode, inv_cus_level, inv_top, inv_ppn, inv_disc, inv_disc1, inv_disc2, inv_bkrm, inv_dp, inv_ket, inv_sc, inv_rptunai, inv_novoucher, inv_rpvoucher, inv_nocard, inv_rpcard, inv_nosetor, inv_rj_nomor, inv_rj_rp, inv_pundiamal, inv_mem_hp, inv_mem_nama, user_create, date_create)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
+                INSERT INTO tinv_hdr (inv_idrec, inv_nomor, inv_nomor_so, inv_tanggal, inv_cus_kode, inv_ket, inv_sc, inv_rptunai, inv_novoucher, inv_rpvoucher, inv_rpcard, inv_nosetor, user_create, date_create)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
             `;
-            await connection.query(headerSql, [idrec, invNomor, header.nomorSo, header.tanggal, header.customer.kode, header.customer.level.split(' - ')[0], header.top, header.ppnPersen, header.diskonRp, header.diskonPersen1, header.diskonPersen2, header.biayaKirim, totals.totalDp, header.keterangan, header.salesCounter, payment.tunai, payment.voucher.nomor, payment.voucher.nominal, payment.transfer.akun.rekening, payment.transfer.nominal, payment.transfer.nomorSetoran, payment.retur.nomor, payment.retur.nominal, payment.pundiAmal, header.memberHp, header.memberNama, user.kode]);
+            await connection.query(headerSql, [idrec, invNomor, header.nomorSo, header.tanggal, header.customer.kode, header.keterangan, header.salesCounter, payment.tunai, payment.voucher.nomor, payment.voucher.nominal, payment.transfer.nominal, nomorSetoran, user.kode]);
         } else {
             // Logika UPDATE untuk header jika diperlukan
         }
@@ -219,10 +230,10 @@ const saveData = async (payload, user) => {
                 INSERT INTO tinv_dtl (invd_idrec, invd_inv_nomor, invd_kode, invd_ukuran, invd_jumlah, invd_harga, invd_hpp, invd_disc, invd_diskon, invd_nourut) 
                 VALUES ?;
             `;
-            const detailValues = validItems.map((item, index) => [idrec, invNomor, item.kode, item.ukuran, item.jumlah, item.harga, item.hpp, item.diskonPersen, item.diskonRp, index + 1]);
+            const detailValues = validItems.map((item, index) => [idrec, invNomor, item.kode, item.ukuran, item.jumlah, item.harga, item.hpp || 0, item.diskonPersen, item.diskonRp, index + 1]);
             await connection.query(detailSql, [detailValues]);
         }
-        
+
         // 3. DELETE/INSERT tpiutang_hdr & tpiutang_dtl
         const piutangNomor = `${header.customer.kode}${invNomor}`;
         await connection.query('DELETE FROM tpiutang_hdr WHERE ph_inv_nomor = ?', [invNomor]);
@@ -242,7 +253,7 @@ const saveData = async (payload, user) => {
             await connection.query(piutangDtlSql, [piutangDtlValues]);
         }
 
-       // (7) Logika untuk INSERT/UPDATE tmember (dari edthpExit)
+        // (7) Logika untuk INSERT/UPDATE tmember (dari edthpExit)
         if (header.memberHp) {
             const memberSql = `
                 INSERT INTO tmember (mem_hp, mem_nama, mem_alamat, mem_gender, mem_usia, mem_referensi, user_create, date_create)
@@ -256,36 +267,46 @@ const saveData = async (payload, user) => {
                     user_modified = ?,
                     date_modified = NOW();
             `;
-            // Asumsi data member ada di payload.header
+            // Gunakan properti yang sudah kita definisikan di header frontend
             await connection.query(memberSql, [
-                header.memberHp, header.memberNama, header.customer.alamat, 
+                header.memberHp, header.memberNama, header.memberAlamat,
                 header.memberGender, header.memberUsia, header.memberReferensi,
                 user.kode, user.kode
             ]);
         }
 
-        // (8) Logika untuk INSERT tinv_kupon (Promo)
-        // Catatan: Logika promo di Delphi sangat kompleks dan bergantung pada banyak
-        // aturan bisnis. Ini adalah versi sederhana. Kita bisa kembangkan lebih lanjut nanti.
-        // Untuk saat ini, kita akan lewati bagian ini agar tidak terlalu rumit.
-        // Jika ada promo yang aktif, kodenya akan seperti ini:
-        /*
-        if (header.nomorPromo) {
-            const kuponSql = `INSERT INTO tinv_kupon (...) VALUES (...)`;
-            await connection.query(kuponSql, [...]);
-        }
-        */
+        const { pinDiskon1, pinDiskon2 } = payload.pins || {};
+        const { pinBelumLunas } = payload.payment || {};
 
-        // --- TAMBAHAN: LOG OTORISASI BELUM LUNAS ---
-        if (payment.pinBelumLunas) {
-            const sisaPiutang = totals.sisaPiutang; // Asumsi totals ada di payload
+        // Cek dan simpan PIN untuk Diskon Faktur 1
+        if (pinDiskon1) {
             const authLogSql = `
-                INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) 
-                VALUES (?, 'INVOICE', 'BELUM LUNAS', NOW(), ?, ?);
+                INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_pin, o_nominal, o_created) 
+                VALUES (?, 'INVOICE', 'DISKON FAKTUR', ?, ?, NOW());
             `;
-            await connection.query(authLogSql, [newNomor, payment.pinBelumLunas, sisaPiutang]);
+            await connection.query(authLogSql, [invNomor, pinDiskon1, header.diskonPersen1]);
         }
-        // --- AKHIR TAMBAHAN ---
+
+        // Cek dan simpan PIN untuk Diskon Faktur 2
+        if (pinDiskon2) {
+            const authLogSql = `
+                INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_pin, o_nominal, o_created) 
+                VALUES (?, 'INVOICE', 'DISKON FAKTUR 2', ?, ?, NOW());
+            `;
+            await connection.query(authLogSql, [invNomor, pinDiskon2, header.diskonPersen2]);
+        }
+
+        // Cek dan simpan PIN untuk Invoice Belum Lunas
+        if (pinBelumLunas) {
+            const authLogSql = `
+                INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_pin, o_nominal, o_created) 
+                VALUES (?, 'INVOICE', 'BELUM LUNAS', ?, ?, NOW());
+            `;
+            await connection.query(authLogSql, [invNomor, pinBelumLunas, totals.sisaPiutang]);
+        }
+
+        await handlePromotions(connection, { header, totals, user }, invNomor, idrec);
+
         await connection.commit();
         return { message: `Invoice ${invNomor} berhasil disimpan.`, nomor: invNomor };
     } catch (error) {
@@ -357,13 +378,13 @@ const getDefaultCustomer = async (cabang) => {
         `;
         params = [cabang];
     }
-    
+
     const [rows] = await pool.query(query, params);
-    
+
     if (rows.length === 0) {
         return null;
     }
-    
+
     const customerKode = rows[0].cus_kode;
 
     // Perbaiki query detail customer dengan JOIN yang benar
@@ -383,9 +404,9 @@ const getDefaultCustomer = async (cabang) => {
         ) x ON x.clh_cus_kode = c.cus_kode
         WHERE c.cus_kode = ?
     `;
-    
+
     const [customerRows] = await pool.query(detailQuery, [customerKode, customerKode]);
-    
+
     return customerRows[0] || null;
 };
 
@@ -421,27 +442,40 @@ const getPrintData = async (nomor) => {
     const query = `
         SELECT 
             h.inv_nomor, h.inv_tanggal, h.inv_nomor_so, h.inv_top, h.inv_ket, h.inv_sc,
+            h.inv_disc, h.inv_ppn, h.inv_bkrm, h.inv_dp, h.inv_pundiamal,
+            h.inv_rptunai, h.inv_rpcard, h.inv_rpvoucher,
             DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY) AS tempo,
             c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
             d.invd_kode, d.invd_ukuran, d.invd_jumlah, d.invd_harga, d.invd_diskon,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama_barang,
+            COALESCE(
+                TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)),
+                f.sd_nama
+            ) AS nama_barang,
             (d.invd_jumlah * (d.invd_harga - d.invd_diskon)) AS total,
+            h.user_create, DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
             src.gdg_inv_nama AS perush_nama,
             src.gdg_inv_alamat AS perush_alamat,
-            src.gdg_inv_telp AS perush_telp
+            src.gdg_inv_telp AS perush_telp,
+            src.gdg_inv_instagram,
+            src.gdg_inv_fb
         FROM tinv_hdr h
         LEFT JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
         LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
         LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
+        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
         LEFT JOIN tgudang src ON src.gdg_kode = LEFT(h.inv_nomor, 3)
         WHERE h.inv_nomor = ?
         ORDER BY d.invd_nourut;
     `;
+
     const [rows] = await pool.query(query, [nomor]);
     if (rows.length === 0) throw new Error('Data Invoice tidak ditemukan.');
 
-    // Olah data menjadi format header dan details
+    // --- PENGOLAHAN DATA ---
     const header = { ...rows[0] };
+    
+
+    // Ini adalah bagian yang sebelumnya placeholder, sekarang sudah diisi lengkap
     const details = rows.map(row => ({
         invd_kode: row.invd_kode,
         nama_barang: row.nama_barang,
@@ -451,6 +485,7 @@ const getPrintData = async (nomor) => {
         invd_diskon: row.invd_diskon,
         total: row.total,
     }));
+    // --- AKHIR PENGOLAHAN ---
 
     // Kalkulasi summary dari header dan detail
     const subTotal = details.reduce((sum, item) => sum + item.total, 0);
@@ -458,6 +493,7 @@ const getPrintData = async (nomor) => {
     const netto = subTotal - diskonFaktur;
     const ppn = (header.inv_ppn / 100) * netto;
     const grandTotal = netto + ppn + (header.inv_bkrm || 0);
+    const totalBayar = (header.inv_rptunai || 0) + (header.inv_rpcard || 0) + (header.inv_rpvoucher || 0);
 
     header.summary = {
         subTotal,
@@ -467,15 +503,361 @@ const getPrintData = async (nomor) => {
         biayaKirim: header.inv_bkrm || 0,
         dp: header.inv_dp || 0,
         grandTotal,
-        bayar: header.inv_rptunai + header.inv_rpcard, // Contoh
+        bayar: totalBayar,
         pundiAmal: header.inv_pundiamal,
-        kembali: (header.inv_rptunai + header.inv_rpcard) - (grandTotal - (header.inv_dp || 0))
+        kembali: totalBayar - (grandTotal - (header.inv_dp || 0))
     };
     header.terbilang = capitalize(terbilang(header.summary.grandTotal)) + " Rupiah";
 
     return { header, details };
 };
 
+const generateKuponNumber = async (connection, cabang, tanggal) => {
+    const date = new Date(tanggal);
+    // Asumsi tidak dalam mode 'BAZAR' untuk penyederhanaan
+    const prefix = `${cabang}${format(date, 'yy')}`;
+    const query = `
+        SELECT IFNULL(MAX(RIGHT(invk_kupon, 5)), 0) + 1 AS next_num
+        FROM tinv_kupon 
+        WHERE invk_kupon LIKE ?;
+    `;
+    const [rows] = await connection.query(query, [`${prefix}%`]);
+    const nextNumber = rows[0].next_num.toString().padStart(5, '0');
+
+    return `${prefix}${nextNumber}`; // Contoh hasil: K012500001
+};
+
+const generateVoucherNumber = (invNomor, index) => {
+    // Asumsi tidak dalam mode 'BAZAR'
+    const rightPart = parseInt(invNomor.slice(-4));
+    const middlePart = invNomor.substring(8, 12); // Mengambil bagian yymm
+
+    if (index === 0) {
+        return `V${middlePart}${rightPart}`; // Contoh hasil: V25091
+    } else {
+        return `V${middlePart}${rightPart}${index}`; // Contoh hasil: V250911
+    }
+};
+
+const handlePromotions = async (connection, { header, totals, user }, invNomor, idrec) => {
+    // Hapus kupon lama jika ada (untuk mode edit)
+    await connection.query('DELETE FROM tinv_kupon WHERE invk_inv_nomor = ?', [invNomor]);
+
+    // 1. Ambil semua promo yang aktif untuk cabang dan tanggal ini
+    const promoQuery = `
+        SELECT p.*
+        FROM tpromo p
+        INNER JOIN tpromo_cabang c ON c.pc_nomor = p.pro_nomor AND c.pc_cab = ?
+        WHERE ? BETWEEN p.pro_tanggal1 AND p.pro_tanggal2;
+    `;
+    const [activePromos] = await connection.query(promoQuery, [user.cabang, header.tanggal]);
+
+    if (activePromos.length === 0) return; // Tidak ada promo aktif
+
+    const kuponToInsert = [];
+
+    for (const promo of activePromos) {
+        let qtyBonus = 0;
+
+        // 2. Cek apakah syarat promo terpenuhi (berdasarkan total belanja)
+        if (totals.nettoSetelahDiskon >= promo.pro_totalrp) {
+            qtyBonus = promo.pro_lipat === 'Y' 
+                ? Math.floor(totals.nettoSetelahDiskon / promo.pro_totalrp) 
+                : 1;
+        }
+        // (Bisa ditambahkan pengecekan lain seperti pro_jenis=2 untuk total qty)
+
+        if (qtyBonus > 0) {
+            // 3. Generate kupon/voucher jika syarat terpenuhi
+            for (let i = 0; i < qtyBonus; i++) {
+                let kuponNomor = '';
+                if (promo.pro_generate === 'K' && promo.pro_jenis_kupon === 'UNDIAN') { // Generate Kupon
+                    kuponNomor = await generateKuponNumber(connection, user.cabang, header.tanggal);
+                } else if (promo.pro_generate === 'V') { // Generate Voucher
+                    kuponNomor = generateVoucherNumber(invNomor, i);
+                } else if (promo.pro_generate === 'K' && promo.pro_jenis_kupon === 'BELANJA') {
+                    kuponNomor = generateVoucherNumber(invNomor, i); // Menggunakan format yang sama
+                }
+
+                if (kuponNomor) {
+                    kuponToInsert.push([
+                        idrec, invNomor, kuponNomor, promo.pro_nomor,
+                        promo.pro_ket, promo.pro_note, promo.pro_cetak_kupon,
+                        promo.pro_rpvoucher, qtyBonus
+                    ]);
+                }
+            }
+        }
+    }
+
+    // 4. Insert semua kupon/voucher yang baru dibuat ke database
+    if (kuponToInsert.length > 0) {
+        const kuponSql = `
+            INSERT INTO tinv_kupon (invk_idrec, invk_inv_nomor, invk_kupon, invk_promo, invk_ket, invk_note, invk_cetak, invk_nominal, invk_qty) 
+            VALUES ?`;
+        await connection.query(kuponSql, [kuponToInsert]);
+    }
+};
+
+const findByBarcode = async (barcode, gudang) => {
+    const query = `
+        SELECT
+            d.brgd_barcode AS barcode,
+            d.brgd_kode AS kode,
+            TRIM(CONCAT(h.brg_jeniskaos, " ", h.brg_tipe, " ", h.brg_lengan, " ", h.brg_jeniskain, " ", h.brg_warna)) AS nama,
+            d.brgd_ukuran AS ukuran,
+            d.brgd_harga AS harga,
+            
+            -- Logika perhitungan stok dari Delphi menggunakan tmasterstok --
+            IFNULL((
+                SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
+                FROM tmasterstok m 
+                WHERE m.mst_aktif = 'Y' 
+                  AND m.mst_cab = ? 
+                  AND m.mst_brg_kode = d.brgd_kode 
+                  AND m.mst_ukuran = d.brgd_ukuran
+            ), 0) AS stok
+
+        FROM tbarangdc_dtl d
+        LEFT JOIN tbarangdc h ON h.brg_kode = d.brgd_kode
+        WHERE h.brg_aktif = 0 
+          AND h.brg_logstok <> 'N'
+          AND d.brgd_barcode = ?;
+    `;
+
+    // Parameter 'gudang' sekarang digunakan untuk subquery stok
+    const [rows] = await pool.query(query, [gudang, barcode]);
+
+    if (rows.length === 0) {
+        throw new Error('Barcode tidak ditemukan atau barang tidak aktif.');
+    }
+    return rows[0];
+};
+
+const searchProducts = async (filters, user) => {
+    const { term, page, itemsPerPage } = filters;
+    const offset = (Number(page) - 1) * Number(itemsPerPage);
+    const searchTerm = `%${term || ''}%`;
+
+    let params = [];
+    let baseFrom = `
+        FROM tbarangdc_dtl b
+        INNER JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
+    `;
+    let baseWhere = `WHERE a.brg_aktif = 0`;
+
+    // Logika filter cabang dari Delphi
+    if (user.cabang === 'K04') {
+        baseWhere += ' AND a.brg_ktg <> ""';
+    } else if (user.cabang === 'K05') {
+        baseWhere += ' AND a.brg_ktg = ""';
+    }
+
+    // Filter pencarian
+    const searchWhere = `AND (b.brgd_kode LIKE ? OR b.brgd_barcode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) LIKE ?)`;
+    params.push(searchTerm, searchTerm, searchTerm);
+
+    const countQuery = `SELECT COUNT(*) AS total ${baseFrom} ${baseWhere} ${searchWhere}`;
+    const [countRows] = await pool.query(countQuery, params);
+
+    const dataQuery = `
+        SELECT
+            b.brgd_kode AS kode,
+            b.brgd_barcode AS barcode,
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+            b.brgd_ukuran AS ukuran,
+            b.brgd_harga AS harga,
+            IFNULL((
+                SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m 
+                WHERE m.mst_aktif = 'Y' AND m.mst_cab = ? AND m.mst_brg_kode = b.brgd_kode AND m.mst_ukuran = b.brgd_ukuran
+            ), 0) AS stok
+        ${baseFrom} ${baseWhere} ${searchWhere}
+        ORDER BY nama, b.brgd_ukuran
+        LIMIT ? OFFSET ?;
+    `;
+    const dataParams = [user.cabang, ...params, Number(itemsPerPage), offset];
+    const [items] = await pool.query(dataQuery, dataParams);
+
+    return { items, total: countRows[0].total };
+};
+
+const generateNewSetorNumber = async (connection, cabang, tanggal) => {
+    const date = new Date(tanggal);
+    const prefix = `${cabang}.STR.${format(date, 'yyMM')}.`;
+    const query = `
+        SELECT IFNULL(MAX(RIGHT(sh_nomor, 4)), 0) + 1 AS next_num
+        FROM tsetor_hdr 
+        WHERE sh_nomor LIKE ?;
+    `;
+    // Gunakan koneksi dari transaksi agar konsisten
+    const [rows] = await connection.query(query, [`${prefix}%`]);
+    const nextNumber = rows[0].next_num.toString().padStart(4, '0');
+    return `${prefix}${nextNumber}`;
+};
+
+const getPrintDataKasir = async (nomor) => {
+    const query = `
+        SELECT 
+            h.inv_nomor, h.inv_tanggal, h.inv_nomor_so, h.inv_top, h.inv_ket, h.inv_sc,
+            h.inv_disc, h.inv_ppn, h.inv_bkrm, h.inv_dp, h.inv_pundiamal,
+            h.inv_rptunai, h.inv_rpcard, h.inv_rpvoucher,
+            DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY) AS tempo,
+            c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
+            d.invd_kode, d.invd_ukuran, d.invd_jumlah, d.invd_harga, d.invd_diskon,
+            COALESCE(
+                TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)),
+                f.sd_nama
+            ) AS nama_barang,
+            (d.invd_jumlah * (d.invd_harga - d.invd_diskon)) AS total,
+            h.user_create, DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
+            src.gdg_inv_nama AS perush_nama,
+            src.gdg_inv_alamat AS perush_alamat,
+            src.gdg_inv_telp AS perush_telp,
+            src.gdg_inv_instagram,
+            src.gdg_inv_fb
+        FROM tinv_hdr h
+        LEFT JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+        LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
+        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
+        LEFT JOIN tgudang src ON src.gdg_kode = LEFT(h.inv_nomor, 3)
+        WHERE h.inv_nomor = ?
+        ORDER BY d.invd_nourut;
+    `;
+
+    const [rows] = await pool.query(query, [nomor]);
+    if (rows.length === 0) throw new Error('Data Invoice tidak ditemukan.');
+
+    // --- PENGOLAHAN DATA ---
+    const header = { ...rows[0] };
+
+    // Ini adalah bagian yang sebelumnya placeholder, sekarang sudah diisi lengkap
+    const details = rows.map(row => ({
+        invd_kode: row.invd_kode,
+        nama_barang: row.nama_barang,
+        invd_ukuran: row.invd_ukuran,
+        invd_jumlah: row.invd_jumlah,
+        invd_harga: row.invd_harga,
+        invd_diskon: row.invd_diskon,
+        total: row.total,
+    }));
+    // --- AKHIR PENGOLAHAN ---
+
+    // Kalkulasi summary dari header dan detail
+    const subTotal = details.reduce((sum, item) => sum + item.total, 0);
+    const diskonFaktur = header.inv_disc || 0;
+    const netto = subTotal - diskonFaktur;
+    const ppn = (header.inv_ppn / 100) * netto;
+    const grandTotal = netto + ppn + (header.inv_bkrm || 0);
+    const totalBayar = (header.inv_rptunai || 0) + (header.inv_rpcard || 0) + (header.inv_rpvoucher || 0);
+
+    header.summary = {
+        subTotal,
+        diskon: diskonFaktur,
+        netto,
+        ppn,
+        biayaKirim: header.inv_bkrm || 0,
+        dp: header.inv_dp || 0,
+        grandTotal,
+        bayar: totalBayar,
+        pundiAmal: header.inv_pundiamal,
+        kembali: totalBayar - (grandTotal - (header.inv_dp || 0))
+    };
+    header.terbilang = capitalize(terbilang(header.summary.grandTotal)) + " Rupiah";
+
+    return { header, details };
+};
+
+const searchSoDtf = async (filters, user) => {
+    const { term, customerKode } = filters;
+    const searchTerm = `%${term || ''}%`;
+    
+    const query = `
+        SELECT h.sd_nomor AS nomor, h.sd_tanggal AS tanggal, h.sd_nama AS namaDtf, h.sd_ket AS keterangan
+        FROM tsodtf_hdr h
+        WHERE h.sd_stok = "" AND h.sd_alasan = "" 
+          AND LEFT(h.sd_nomor, 3) = ?
+          AND h.sd_cus_kode = ?
+          AND h.sd_nomor NOT IN (
+              SELECT DISTINCT sod_sd_nomor FROM tso_dtl WHERE sod_sd_nomor <> ''
+              UNION ALL
+              SELECT DISTINCT invd_sd_nomor FROM tinv_dtl WHERE invd_sd_nomor <> ''
+          )
+          AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?);
+    `;
+    const [rows] = await pool.query(query, [user.cabang, customerKode, searchTerm, searchTerm]);
+    return rows;
+};
+
+const getSoDtfDetails = async (nomor) => {
+    // Query ini mengambil semua baris detail dari SO DTF terpilih
+    const query = `
+        SELECT 
+            h.sd_nomor AS kode,
+            h.sd_nama AS nama,
+            d.sdd_ukuran AS ukuran,
+            d.sdd_jumlah AS jumlah,
+            d.sdd_harga AS harga
+        FROM tsodtf_dtl d
+        LEFT JOIN tsodtf_hdr h ON h.sd_nomor = d.sdd_nomor
+        WHERE d.sdd_nomor = ?
+        ORDER BY d.sdd_nourut;
+    `;
+    const [rows] = await pool.query(query, [nomor]);
+    return rows;
+};
+
+const searchReturJual = async (filters, user) => {
+    const { customerKode, invoiceNomor } = filters;
+    
+    // Query ini diadaptasi dari sqlbantuan di edtrjKeyDown Delphi
+    const query = `
+        SELECT x.Nomor, x.Tanggal, x.Nominal, (x.Nominal - x.Link) AS Sisa
+        FROM (
+            SELECT 
+                h.rj_nomor AS Nomor,
+                h.rj_tanggal AS Tanggal,
+                h.rj_inv AS Invoice,
+                (SELECT ROUND(SUM(d.rjd_jumlah*d.rjd_harga)-h.rj_disc+(h.rj_ppn/100*(SUM(d.rjd_jumlah*d.rjd_harga)-h.rj_disc))) FROM trj_dtl d WHERE d.rjd_nomor = h.rj_nomor) AS Nominal,
+                IFNULL((SELECT SUM(p.pd_kredit) FROM tpiutang_dtl p WHERE p.pd_ket = h.rj_nomor AND p.pd_ph_nomor <> CONCAT(?,?)), 0) AS link
+            FROM trj_hdr h
+            WHERE LEFT(h.rj_nomor, 3) = ?
+              AND h.rj_cus_kode = ?
+              AND h.rj_inv <> ?
+        ) x
+        WHERE x.Link = 0 AND (x.Nominal - x.Link) > 0;
+    `;
+    const params = [customerKode, invoiceNomor, user.cabang, customerKode, invoiceNomor];
+    const [rows] = await pool.query(query, params);
+    return rows;
+};
+
+const saveSatisfaction = async ({ nomor, rating }) => {
+    // Query untuk UPDATE tinv_hdr SET inv_puas = ? WHERE inv_nomor = ?
+    await pool.query('UPDATE tinv_hdr SET inv_puas = ? WHERE inv_nomor = ?', [rating, nomor]);
+    return { message: 'Terima kasih atas masukan Anda.' };
+};
+
+const getDiscountRule = async (customerKode) => {
+    if (!customerKode) return null;
+    
+    // Ambil level terakhir yang aktif dari customer
+    const query = `
+        SELECT 
+            h.clh_level AS level_kode,
+            l.level_diskon AS diskon1,
+            l.level_diskon2 AS diskon2,
+            l.level_nominal AS nominal1,
+            l.level_nominal2 AS nominal2
+        FROM tcustomer_level_history h
+        JOIN tcustomer_level l ON l.level_kode = h.clh_level
+        WHERE h.clh_cus_kode = ?
+        ORDER BY h.clh_tanggal DESC
+        LIMIT 1;
+    `;
+    const [rows] = await pool.query(query, [customerKode]);
+    return rows[0]; // Akan undefined jika tidak ada level
+};
 
 module.exports = {
     searchSo,
@@ -489,5 +871,13 @@ module.exports = {
     saveMember,
     getDefaultCustomer,
     getPrintData,
+    findByBarcode,
+    searchProducts,
+    getPrintDataKasir,
+    searchSoDtf,
+    getSoDtfDetails,
+    searchReturJual,
+    saveSatisfaction,
+    getDiscountRule,
 };
 

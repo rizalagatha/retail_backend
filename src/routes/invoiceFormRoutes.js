@@ -18,8 +18,7 @@ router.get('/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), controller.
 
 router.get('/print/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), controller.getPrintData);
 
-// Menyimpan data (baru atau yang diubah)
-router.post('/save', verifyToken, checkSavePermission, controller.save);
+router.get('/print-kasir/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), controller.getPrintDataKasir);
 
 // --- LOOKUP ROUTES ---
 // Mencari SO yang valid untuk diinput
@@ -31,15 +30,32 @@ router.get('/lookup/member/:hp', verifyToken, checkPermission(MENU_ID, 'view'), 
 
 router.get('/lookup/default-customer', verifyToken, controller.getDefaultCustomer);
 
-router.post('/save-member', verifyToken, checkPermission(MENU_ID, 'insert'), controller.saveMember);
+router.get('/lookup/so-dtf', verifyToken, controller.searchSoDtf);
+
+router.get('/lookup/so-dtf-details/:nomor', verifyToken, controller.getSoDtfDetails);
+
+router.get('/lookup/retur-jual', verifyToken, controller.searchReturJual);
+
+router.get('/lookup/discount-rule/:customerKode', verifyToken, controller.getDiscountRule);
 
 // Mengambil detail item dari SO yang dipilih untuk mengisi grid
 router.get('/lookup/so-details/:soNomor', verifyToken, checkPermission(MENU_ID, 'view'), controller.getSoDetailsForGrid);
 
 router.get('/lookup/sales-counters', verifyToken, checkPermission(MENU_ID, 'view'), controller.getSalesCounters);
 
+router.get('/by-barcode/:barcode', verifyToken, controller.getByBarcode);
+
+router.get('/lookup/products', verifyToken, checkPermission(MENU_ID, 'view'), controller.searchProducts);
+
 // Mencari DP (Setoran) yang belum lunas milik customer
 router.get('/lookup/unpaid-dp/:customerKode', verifyToken, checkPermission(MENU_ID, 'view'), controller.searchUnpaidDp);
+
+// Menyimpan data (baru atau yang diubah)
+router.post('/save', verifyToken, checkSavePermission, controller.save);
+
+router.post('/save-member', verifyToken, checkPermission(MENU_ID, 'insert'), controller.saveMember);
+
+router.post('/save-satisfaction', verifyToken, controller.saveSatisfaction);
 
 module.exports = router;
 

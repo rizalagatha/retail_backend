@@ -113,6 +113,82 @@ const getPrintData = async (req, res) => {
     }
 };
 
+const getByBarcode = async (req, res) => {
+    try {
+        const { barcode } = req.params;
+        const { gudang } = req.query; // Gudang diambil dari query parameter
+        if (!gudang) {
+            return res.status(400).json({ message: 'Parameter gudang diperlukan.' });
+        }
+        const product = await service.findByBarcode(barcode, gudang);
+        res.json(product);
+    } catch (error) {
+        res.status(404).json({ message: error.message });
+    }
+};
+
+const searchProducts = async (req, res) => {
+    try {
+        const { page = 1, itemsPerPage = 10 } = req.query;
+        const result = await service.searchProducts(
+            { ...req.query, page: Number(page), itemsPerPage: Number(itemsPerPage) },
+            req.user
+        );
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+const getPrintDataKasir = async (req, res) => {
+    try {
+        const { nomor } = req.params;
+        const data = await service.getPrintDataKasir(nomor);
+        res.json(data);
+    } catch (error) { res.status(404).json({ message: error.message }); }
+};
+
+const searchSoDtf = async (req, res) => {
+    try {
+        const data = await service.searchSoDtf(req.query, req.user);
+        res.json(data);
+    } catch (error) { res.status(500).json({ message: error.message }); }
+};
+
+const getSoDtfDetails = async (req, res) => {
+    try {
+        const { nomor } = req.params;
+        const data = await service.getSoDtfDetails(nomor);
+        res.json(data);
+    } catch (error) {
+        res.status(404).json({ message: error.message });
+    }
+};
+
+const searchReturJual = async (req, res) => {
+    try {
+        const data = await service.searchReturJual(req.query, req.user);
+        res.json(data);
+    } catch (error) { res.status(500).json({ message: error.message }); }
+};
+
+const saveSatisfaction = async (req, res) => {
+    try {
+        const result = await service.saveSatisfaction(req.body);
+        res.json(result);
+    } catch (error) {
+        res.status(400).json({ message: error.message });
+    }
+};
+
+const getDiscountRule = async (req, res) => {
+    try {
+        const { customerKode } = req.params;
+        const data = await service.getDiscountRule(customerKode);
+        res.json(data);
+    } catch (error) { res.status(500).json({ message: error.message }); }
+};
+
 module.exports = {
     loadForEdit,
     save,
@@ -125,5 +201,13 @@ module.exports = {
     saveMember,
     getDefaultCustomer,
     getPrintData,
+    getByBarcode,
+    searchProducts,
+    getPrintDataKasir,
+    searchSoDtf,
+    getSoDtfDetails,
+    searchReturJual,
+    saveSatisfaction,
+    getDiscountRule,
 };
 

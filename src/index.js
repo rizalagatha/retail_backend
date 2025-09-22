@@ -54,12 +54,14 @@ const fskFormRoutes = require('./routes/fskFormRoutes');
 const invoiceRoutes = require('./routes/invoiceRoutes');
 const invoiceFormRoutes = require('./routes/invoiceFormRoutes');
 const laporanStokRoutes = require('./routes/laporanStokRoutes');
+const whatsappRoutes = require('./routes/whatsappRoutes');
 
 const app = express();
 const port = process.env.PORT || 8000;
 const allowedOrigins = [
   "http://localhost:5173",   // vite dev server
-  "http://103.94.238.252:8080"     // frontend di VPS
+  "http://103.94.238.252",
+  "http://192.168.1.191:5173"    
 ];
 const imageFolderPath = path.join(process.cwd(), 'public', 'images');
 const requiredDirs = [
@@ -145,6 +147,7 @@ app.use('/api/fsk-form', fskFormRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/invoice-form', invoiceFormRoutes);
 app.use('/api/laporan-stok', laporanStokRoutes);
+app.use('/api/whatsapp', whatsappRoutes);
 
 // Menjalankan Server
 app.listen(port, () => {

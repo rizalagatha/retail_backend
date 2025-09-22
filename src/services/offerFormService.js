@@ -476,7 +476,7 @@ const getDataForPrint = async (nomor) => {
     // 2. Ambil data Detail
     const detailQuery = `
         SELECT 
-            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)), "Jasa Cetak") AS nama_barang,
+            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), "Jasa Cetak") AS nama_barang,
             d.pend_ukuran AS ukuran,
             d.pend_jumlah AS qty,
             d.pend_harga AS harga,
