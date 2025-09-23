@@ -44,7 +44,7 @@ const getDetails = async (nomor) => {
         SELECT 
             d.mtd_kode AS Kode,
             IFNULL(b.brgd_barcode, '') AS Barcode,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)) AS Nama,
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS Nama,
             d.mtd_ukuran AS Ukuran,
             IFNULL(b.brgd_min, 0) AS StokMinimal,
             IFNULL(b.brgd_max, 0) AS StokMaximal,

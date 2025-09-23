@@ -226,7 +226,7 @@ const loadForEdit = async (nomor, user) => {
                 b.brgd_barcode, 
                 IFNULL(b.brgd_min, 0) AS stokmin, 
                 IFNULL(b.brgd_max, 0) AS stokmax,
-                TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)) AS nama,
+                TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
                 IFNULL((
                     SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m
                     WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_brg_kode=d.mtd_kode AND m.mst_ukuran=d.mtd_ukuran

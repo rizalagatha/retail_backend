@@ -20,6 +20,8 @@ router.get('/print/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), contr
 
 router.get('/print-kasir/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), controller.getPrintDataKasir);
 
+router.get('/print-sj/:nomor', verifyToken, controller.getDataForSjPrint);
+
 // --- LOOKUP ROUTES ---
 // Mencari SO yang valid untuk diinput
 router.get('/lookup/so', verifyToken, checkPermission(MENU_ID, 'view'), controller.searchSo);
@@ -50,12 +52,24 @@ router.get('/lookup/products', verifyToken, checkPermission(MENU_ID, 'view'), co
 // Mencari DP (Setoran) yang belum lunas milik customer
 router.get('/lookup/unpaid-dp/:customerKode', verifyToken, checkPermission(MENU_ID, 'view'), controller.searchUnpaidDp);
 
+router.get('/lookup/promo-bonus/:promoNomor', verifyToken, controller.getPromoBonusItems);
+
+router.get('/lookup/applicable-item-promo', verifyToken, controller.getApplicableItemPromo);
+
+router.get('/check-printables/:nomor', verifyToken, controller.checkPrintables);
+
+router.get('/print-kupon/:nomor', verifyToken, controller.getKuponPrintData);
+
+router.get('/print-voucher/:nomor', verifyToken, controller.getVoucherPrintData);
+
 // Menyimpan data (baru atau yang diubah)
 router.post('/save', verifyToken, checkSavePermission, controller.save);
 
 router.post('/save-member', verifyToken, checkPermission(MENU_ID, 'insert'), controller.saveMember);
 
 router.post('/save-satisfaction', verifyToken, controller.saveSatisfaction);
+
+router.post('/validate-voucher', verifyToken, controller.validateVoucher);
 
 module.exports = router;
 

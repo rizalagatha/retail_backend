@@ -63,7 +63,7 @@ const getDetails = async (nomor) => {
     const query = `
         SELECT 
             d.sjd_kode AS Kode,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)) AS Nama,
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS Nama,
             d.sjd_ukuran AS Ukuran,
             d.sjd_jumlah AS Jumlah
         FROM tdc_sj_dtl d
@@ -84,20 +84,21 @@ const remove = async (nomorSj, nomorTerima, user) => {
     try {
         await connection.beginTransaction();
 
-        // Validasi dari Delphi
-        const [sjRows] = await connection.query('SELECT tj_closing, tj_cab FROM ttrm_sj_hdr WHERE tj_nomor = ?', [nomorTerima]);
+        // Ambil data penerimaan
+        const [sjRows] = await connection.query('SELECT tj_closing FROM ttrm_sj_hdr WHERE tj_nomor = ?', [nomorTerima]);
         if (sjRows.length === 0) throw new Error('Nomor penerimaan tidak ditemukan.');
         const sj = sjRows[0];
-
+        
+        // --- PERBAIKAN VALIDASI ---
+        const cabangPenerimaan = nomorTerima.substring(0, 3);
         if (sj.tj_closing === 'Y') throw new Error('Penerimaan sudah di-closing. Tidak bisa dibatalkan.');
-        if (sj.tj_cab !== user.cabang) throw new Error('Anda tidak berhak membatalkan penerimaan milik cabang lain.');
+        if (cabangPenerimaan !== user.cabang) throw new Error('Anda tidak berhak membatalkan penerimaan milik cabang lain.');
+        // --- AKHIR PERBAIKAN ---
 
         // Proses pembatalan
         await connection.query('DELETE FROM ttrm_sj_hdr WHERE tj_nomor = ?', [nomorTerima]);
         await connection.query('UPDATE tdc_sj_hdr SET sj_noterima = NULL WHERE sj_nomor = ?', [nomorSj]);
 
-        // (Logika sinkronisasi bisa ditambahkan di sini jika perlu)
-        
         await connection.commit();
         return { message: `Penerimaan untuk SJ ${nomorSj} berhasil dibatalkan.` };
     } catch (error) {

@@ -189,6 +189,64 @@ const getDiscountRule = async (req, res) => {
     } catch (error) { res.status(500).json({ message: error.message }); }
 };
 
+const getPromoBonusItems = async (req, res) => {
+    try {
+        const { promoNomor } = req.params;
+        const data = await service.getPromoBonusItems(promoNomor, req.user);
+        res.json(data);
+    } catch (error) { res.status(500).json({ message: error.message }); }
+};
+
+const validateVoucher = async (req, res) => {
+    try {
+        const data = await service.validateVoucher(req.body, req.user);
+        res.json(data);
+    } catch (error) { res.status(400).json({ message: error.message }); }
+};
+
+const getApplicableItemPromo = async (req, res) => {
+    try {
+        const data = await service.getApplicableItemPromo(req.query, req.user);
+        res.json(data);
+    } catch (error) { res.status(500).json({ message: error.message }); }
+};
+
+const checkPrintables = async (req, res) => {
+    try {
+        const { nomor } = req.params;
+        const data = await service.checkPrintables(nomor);
+        res.json(data);
+    } catch (error) { res.status(500).json({ message: error.message }); }
+};
+
+const getKuponPrintData = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const data = await service.getKuponPrintData(nomor);
+    res.json(data);
+  } catch (error) {
+    res.status(404).json({ message: error.message });
+  }
+};
+
+const getVoucherPrintData = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const data = await service.getVoucherPrintData(nomor);
+    res.json(data);
+  } catch (error) {
+    res.status(404).json({ message: error.message });
+  }
+};
+
+const getDataForSjPrint = async (req, res) => {
+    try {
+        const { nomor } = req.params;
+        const data = await service.getDataForSjPrint(nomor);
+        res.json(data);
+    } catch (error) { res.status(404).json({ message: error.message }); }
+};
+
 module.exports = {
     loadForEdit,
     save,
@@ -209,5 +267,12 @@ module.exports = {
     searchReturJual,
     saveSatisfaction,
     getDiscountRule,
+    getPromoBonusItems,
+    validateVoucher,
+    getApplicableItemPromo,
+    checkPrintables,
+    getKuponPrintData,
+    getVoucherPrintData,
+    getDataForSjPrint,
 };
 
