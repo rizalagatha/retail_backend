@@ -1,6 +1,5 @@
 const pool = require('../config/database');
 const { format } = require('date-fns');
-const { getByBarcode } = require('../controllers/invoiceFormController');
 const { validate } = require('uuid');
 
 // --- FUNGSI GENERATE NOMOR ---

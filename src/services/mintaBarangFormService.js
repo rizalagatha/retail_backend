@@ -326,6 +326,54 @@ const findByBarcode = async (barcode, gudang) => {
     return rows[0];
 };
 
+const lookupProducts = async (filters) => {
+    // Ambil parameter pagination
+    const page = parseInt(filters.page, 10) || 1;
+    const itemsPerPage = parseInt(filters.itemsPerPage, 10) || 10;
+    const { term } = filters;
+    
+    const offset = (page - 1) * itemsPerPage;
+    const searchTerm = term ? `%${term}%` : null;
+
+    // INI BAGIAN YANG PERLU ANDA GANTI
+    let fromClause = `
+        FROM tbarangdc a
+        INNER JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
+    `;
+    
+    let whereClause = `WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'`;
+    let params = [];
+
+    if (term) {
+        whereClause += ` AND (a.brg_kode LIKE ? OR b.brgd_barcode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) LIKE ?)`;
+        params.push(searchTerm, searchTerm, searchTerm);
+    }
+    
+    // Query untuk menghitung total item yang cocok
+    const countQuery = `SELECT COUNT(*) as total ${fromClause} ${whereClause}`;
+    const [countRows] = await pool.query(countQuery, params);
+    const total = countRows[0].total;
+    
+    // Query untuk mengambil data per halaman
+    const dataQuery = `
+        SELECT
+            b.brgd_kode AS kode,
+            b.brgd_barcode AS barcode,
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+            b.brgd_ukuran AS ukuran,
+            a.brg_ktg AS kategori,
+            CONCAT(b.brgd_kode, '-', b.brgd_ukuran) AS uniqueId
+        ${fromClause}
+        ${whereClause}
+        ORDER BY nama, b.brgd_ukuran
+        LIMIT ? OFFSET ?
+    `;
+    params.push(itemsPerPage, offset); // Tambahkan parameter pagination
+    
+    const [items] = await pool.query(dataQuery, params);
+    return { items, total };
+};
+
 module.exports = {
     getSoDetailsForGrid, 
     getBufferStokItems, 
@@ -333,4 +381,5 @@ module.exports = {
     loadForEdit,
     getProductDetailsForGrid,
     findByBarcode,
+    lookupProducts,
 };

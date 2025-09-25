@@ -38,10 +38,30 @@ const remove = async (req, res) => {
     }
 };
 
+const searchProducts = async (req, res) => {
+    try {
+        const data = await service.searchProducts(req.query);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+const exportDetails = async (req, res) => {
+    try {
+        const data = await service.getExportDetails(req.query);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getCabangList,
     getList,
     getDetails,
     remove,
+    searchProducts,
+    exportDetails,
 };
 

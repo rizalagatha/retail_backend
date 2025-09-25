@@ -34,9 +34,9 @@ const loadForEdit = async (req, res) => {
 
 const searchStores = async (req, res) => {
     try {
-        const { term, page = 1, itemsPerPage = 10 } = req.query;
-        const result = await sjFormService.searchStores(term, Number(page), Number(itemsPerPage));
-        res.json(result);
+        const { term, page, itemsPerPage, excludeBranch } = req.query;
+        const data = await sjFormService.searchStores(term, page, itemsPerPage, excludeBranch);
+        res.json(data);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }

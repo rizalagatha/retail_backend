@@ -64,10 +64,19 @@ const getByBarcode = async (req, res) => {
         if (!gudang) {
             return res.status(400).json({ message: 'Parameter gudang diperlukan.' });
         }
-        const product = await productService.findByBarcode(barcode, gudang);
+        const product = await mintaBarangFormService.findByBarcode(barcode, gudang);
         res.json(product);
     } catch (error) {
         res.status(404).json({ message: error.message });
+    }
+};
+
+const lookupProducts = async (req, res) => {
+    try {
+        const data = await mintaBarangFormService.lookupProducts(req.query);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
     }
 };
 
@@ -79,4 +88,5 @@ module.exports = {
     save,
     getProductDetails,
     getByBarcode,
+    lookupProducts,
 };

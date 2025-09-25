@@ -194,30 +194,49 @@ const loadForEdit = async (nomor, user) => {
     return { header: headerRows[0], items };
 };
 
-const searchStores = async (term, page, itemsPerPage) => {
+// Di file service yang berisi fungsi searchStores
+
+const searchStores = async (term, pageStr, itemsPerPageStr, excludeBranch) => {
+    const page = parseInt(pageStr, 10) || 1;
+    const itemsPerPage = parseInt(itemsPerPageStr, 10) || 10;
+    
     const offset = (page - 1) * itemsPerPage;
     const searchTerm = `%${term || ''}%`;
-    const params = [searchTerm, searchTerm];
     
-    // Filter dari Delphi: gdg_dc = 0 (Store Biasa) atau 3 (Store Prioritas)
-    const baseWhere = 'WHERE (gdg_dc = 0 OR gdg_dc = 3)';
-    const searchWhere = `AND (gdg_kode LIKE ? OR gdg_nama LIKE ?)`;
+    // Filter dasar
+    let whereConditions = [];
+    let params = [];
+
+    if (excludeBranch) {
+        // Ini adalah kondisi KHUSUS untuk form Mutasi Antar Store
+        // Sesuai dengan logika Delphi: gdg_dc = 0 DAN BUKAN cabang sendiri
+        whereConditions.push('gdg_dc = 0');
+        whereConditions.push('gdg_kode <> ?');
+        params.push(excludeBranch);
+    } else {
+        // Ini adalah kondisi DEFAULT untuk form lain (seperti Surat Jalan)
+        whereConditions.push('(gdg_dc = 0 OR gdg_dc = 3)');
+    }
     
-    const countQuery = `SELECT COUNT(*) as total FROM tgudang ${baseWhere} ${searchWhere}`;
+    whereConditions.push(`(gdg_kode LIKE ? OR gdg_nama LIKE ?)`);
+    params.push(searchTerm, searchTerm);
+
+    const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
+    
+    const countQuery = `SELECT COUNT(*) as total FROM tgudang ${whereClause}`;
     const [countRows] = await pool.query(countQuery, params);
     const total = countRows[0].total;
 
     const dataQuery = `
         SELECT gdg_kode AS kode, gdg_nama AS nama 
         FROM tgudang 
-        ${baseWhere} ${searchWhere}
+        ${whereClause}
         ORDER BY gdg_kode
         LIMIT ? OFFSET ?;
     `;
     const dataParams = [...params, itemsPerPage, offset];
     const [items] = await pool.query(dataQuery, dataParams);
 
-    // Kembalikan dalam format objek yang benar
     return { items, total };
 };
 

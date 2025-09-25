@@ -53,7 +53,10 @@ const fskRoutes = require('./routes/fskRoutes');
 const fskFormRoutes = require('./routes/fskFormRoutes');
 const invoiceRoutes = require('./routes/invoiceRoutes');
 const invoiceFormRoutes = require('./routes/invoiceFormRoutes');
-const mutasiKirimRoutes = require ('./routes/mutasiKirimRoutes.js');
+const mutasiKirimRoutes = require ('./routes/mutasiKirimRoutes');
+const mutasiKirimFormRoutes = require('./routes/mutasiKirimFormRoutes');
+const mutasiTerimaRoutes = require('./routes/mutasiTerimaRoutes');
+const mutasiTerimaFormRoutes = require('./routes/mutasiTerimaFormRoutes');
 const laporanStokRoutes = require('./routes/laporanStokRoutes');
 const whatsappRoutes = require('./routes/whatsappRoutes');
 
@@ -148,6 +151,9 @@ app.use('/api/fsk-form', fskFormRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/invoice-form', invoiceFormRoutes);
 app.use('/api/mutasi-kirim', mutasiKirimRoutes);
+app.use('/api/mutasi-kirim-form', mutasiKirimFormRoutes);
+app.use('/api/mutasi-terima', mutasiTerimaRoutes);
+app.use('/api/mutasi-terima-form', mutasiTerimaFormRoutes);
 app.use('/api/laporan-stok', laporanStokRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 
