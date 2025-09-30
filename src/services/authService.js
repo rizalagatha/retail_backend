@@ -40,11 +40,17 @@ const generateFinalPayload = async (user, selectedCabang) => {
     const [gudangRows] = await pool.query('SELECT gdg_nama FROM tgudang WHERE gdg_kode = ?', [selectedCabang]);
     const cabangNama = gudangRows.length > 0 ? gudangRows[0].gdg_nama : '';
 
+    let canApproveCorrection = false;
+    if (user.user_kode === 'DARUL') {
+        canApproveCorrection = true;
+    }
+
     const userForToken = {
         kode: user.user_kode,
         nama: user.user_nama,
         cabang: selectedCabang,
         cabangNama: cabangNama,
+        canApproveCorrection: canApproveCorrection,
     };
     const token = jwt.sign(userForToken, process.env.JWT_SECRET, { expiresIn: '8h' });
     const permissions = await getPermissions(user.user_kode);

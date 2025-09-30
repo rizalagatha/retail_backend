@@ -147,8 +147,6 @@ const findByBarcode = async (barcode, gudang) => {
     return rows[0];
 };
 
-// Di file: src/services/mutasiKirimFormService.js
-
 const getPrintData = async (nomor) => {
     const query = `
         SELECT 
