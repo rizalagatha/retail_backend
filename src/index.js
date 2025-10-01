@@ -60,6 +60,8 @@ const mutasiTerimaFormRoutes = require("./routes/mutasiTerimaFormRoutes");
 const koreksiStokRoutes = require("./routes/koreksiStokRoutes");
 const koreksiStokFormRoutes = require("./routes/koreksiStokFormRoutes");
 const returJualRoutes = require("./routes/returJualRoutes");
+const returJualFormRoutes = require("./routes/returJualFormRoutes");
+const returDcRoutes = require("./routes/returDcRoutes");
 const laporanStokRoutes = require("./routes/laporanStokRoutes");
 const whatsappRoutes = require("./routes/whatsappRoutes");
 
@@ -162,6 +164,8 @@ app.use("/api/mutasi-terima-form", mutasiTerimaFormRoutes);
 app.use("/api/koreksi-stok", koreksiStokRoutes);
 app.use("/api/koreksi-stok-form", koreksiStokFormRoutes);
 app.use("/api/retur-jual", returJualRoutes);
+app.use("/api/retur-jual-form", returJualFormRoutes);
+app.use("/api/retur-dc", returDcRoutes);
 app.use("/api/laporan-stok", laporanStokRoutes);
 app.use("/api/whatsapp", whatsappRoutes);
 

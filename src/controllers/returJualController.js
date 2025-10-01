@@ -37,12 +37,28 @@ const remove = async (req, res) => {
 };
 
 const getCabangOptions = async (req, res) => {
-    try {
-        const data = await service.getCabangOptions(req.user);
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
+  try {
+    const data = await service.getCabangOptions(req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
-module.exports = { getList, getDetails, getPaymentLinks, remove, getCabangOptions, };
+const exportDetails = async (req, res) => {
+  try {
+    const data = await service.getExportDetails(req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+module.exports = {
+  getList,
+  getDetails,
+  getPaymentLinks,
+  remove,
+  getCabangOptions,
+  exportDetails,
+};

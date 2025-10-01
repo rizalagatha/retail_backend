@@ -156,4 +156,40 @@ const remove = async (nomor, user) => {
     }
 };
 
-module.exports = { getCabangOptions, getList, getDetails, getPaymentLinks, remove };
+const getExportDetails = async (filters, user) => {
+    const { startDate, endDate, cabang } = filters;
+    let whereClauses = ["h.rj_tanggal BETWEEN ? AND ?"];
+    let params = [startDate, endDate];
+
+    if (user.cabang === 'KDC') {
+        whereClauses.push('LEFT(h.rj_nomor, 3) IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)');
+    } else {
+        whereClauses.push('LEFT(h.rj_nomor, 3) = ?');
+        params.push(cabang);
+    }
+
+    const query = `
+        SELECT 
+            h.rj_nomor AS 'Nomor Retur',
+            h.rj_tanggal AS 'Tanggal',
+            h.rj_inv AS 'No. Invoice',
+            c.cus_nama AS 'Customer',
+            d.rjd_kode AS 'Kode Barang',
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS 'Nama Barang',
+            d.rjd_ukuran AS 'Ukuran',
+            d.rjd_jumlah AS 'Qty Retur',
+            d.rjd_harga AS 'Harga',
+            d.rjd_diskon AS 'Diskon Rp',
+            (d.rjd_jumlah * (d.rjd_harga - d.rjd_diskon)) AS 'Total'
+        FROM trj_hdr h
+        INNER JOIN trj_dtl d ON h.rj_nomor = d.rjd_nomor
+        LEFT JOIN tcustomer c ON c.cus_kode = h.rj_cus_kode
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.rjd_kode
+        WHERE ${whereClauses.join(' AND ')}
+        ORDER BY h.rj_nomor, d.rjd_nourut;
+    `;
+    const [rows] = await pool.query(query, params);
+    return rows;
+};
+
+module.exports = { getCabangOptions, getList, getDetails, getPaymentLinks, remove, getExportDetails, };
