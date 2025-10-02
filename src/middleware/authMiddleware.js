@@ -80,8 +80,19 @@ const checkInsertOrEditPermission = (menuId) => {
     };
 };
 
+const checkSavePermission = (menuId) => {
+    return async (req, res, next) => {
+        // Tentukan action berdasarkan body
+        const action = req.body.isNew ? 'insert' : 'edit';
+
+        // Reuse checkPermission yang udah ada
+        return checkPermission(menuId, action)(req, res, next);
+    };
+};
+
 module.exports = {
     verifyToken,
     checkPermission,
     checkInsertOrEditPermission,
+    checkSavePermission,
 };

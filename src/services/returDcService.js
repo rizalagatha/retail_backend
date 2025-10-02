@@ -82,4 +82,35 @@ const remove = async (nomor, user) => {
   }
 };
 
-module.exports = { getList, getDetails, remove };
+const getExportDetails = async (filters, user) => {
+    const { startDate, endDate, cabang } = filters;
+    
+    // Gunakan filter yang sama persis dengan fungsi getList
+    const query = `
+        SELECT 
+            h.rb_nomor AS 'Nomor Retur',
+            h.rb_tanggal AS 'Tanggal',
+            f.gdg_nama AS 'Dari Cabang',
+            g.gdg_nama AS 'Ke Gudang DC',
+            h.rb_ket AS 'Keterangan Header',
+            h.rb_noterima AS 'Nomor Terima',
+            d.rbd_kode AS 'Kode Barang',
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS 'Nama Barang',
+            d.rbd_ukuran AS 'Ukuran',
+            d.rbd_jumlah AS 'Jumlah'
+        FROM trbdc_hdr h
+        INNER JOIN trbdc_dtl d ON d.rbd_nomor = h.rb_nomor
+        LEFT JOIN tgudang f ON f.gdg_kode = LEFT(h.rb_nomor, 3)
+        LEFT JOIN tgudang g ON g.gdg_kode = h.rb_kecab
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.rbd_kode
+        WHERE 
+            LEFT(h.rb_nomor, 3) = ? 
+            AND h.rb_tanggal BETWEEN ? AND ?
+        ORDER BY h.rb_tanggal, h.rb_nomor;
+    `;
+    const params = [cabang, startDate, endDate];
+    const [rows] = await pool.query(query, params);
+    return rows;
+};
+
+module.exports = { getList, getDetails, remove, getExportDetails, };

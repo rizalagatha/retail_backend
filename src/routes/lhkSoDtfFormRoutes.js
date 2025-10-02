@@ -14,4 +14,6 @@ router.get('/search/so-po', verifyToken, checkPermission(MENU_ID, 'view'), lhkSo
 // POST: Menyimpan seluruh data LHK untuk satu hari (delete-then-insert)
 router.post('/', verifyToken, checkPermission(MENU_ID, ['insert', 'edit']), lhkSoDtfFormController.saveData);
 
+router.delete('/:tanggal/:cabang', verifyToken, checkPermission(MENU_ID, 'delete'), lhkSoDtfFormController.removeData);
+
 module.exports = router;
