@@ -22,6 +22,16 @@ const getRealTimeStock = async (req, res) => {
     }
 };
 
+const getGudangOptions = async (req, res) => {
+    try {
+        const data = await laporanStokService.getGudangOptions(req.user);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getRealTimeStock,
+    getGudangOptions,
 };

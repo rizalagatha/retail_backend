@@ -54,104 +54,130 @@ const loadFromKirim = async (nomorReturDc) => {
 
 // Fungsi untuk menyimpan data penerimaan
 const save = async (payload, user) => {
-  const { header, items } = payload;
-  const connection = await pool.getConnection();
-  try {
+  let retries = 3;
+  while (retries > 0) {
+    const connection = await pool.getConnection();
     await connection.beginTransaction();
 
-    // 1. Buat dokumen header penerimaan (tdcrb_hdr)
-    const yearMonth = new Date(header.tanggal)
-      .toISOString()
-      .slice(2, 7)
-      .replace("-", "");
-    const prefix = `KDC.RB.${yearMonth}.`;
-    const nomorQuery = `SELECT IFNULL(MAX(RIGHT(rb_nomor, 4)), 0) + 1 AS next_num FROM tdcrb_hdr WHERE LEFT(rb_nomor, 11) = ?;`;
-    const [nomorRows] = await connection.query(nomorQuery, [prefix]);
-    const nomorDokumen = `${prefix}${nomorRows[0].next_num
-      .toString()
-      .padStart(4, "0")}`;
+    try {
+      const { header, items } = payload;
 
-    await connection.query(
-      "INSERT INTO tdcrb_hdr (rb_nomor, rb_tanggal, user_create, date_create) VALUES (?, ?, ?, NOW())",
-      [nomorDokumen, header.tanggal, user.kode]
-    );
+      // 1. Buat dokumen header penerimaan (tdcrb_hdr)
+      const yearMonth = new Date(header.tanggal)
+        .toISOString()
+        .slice(2, 7)
+        .replace("-", "");
+      const prefix = `KDC.RB.${yearMonth}.`;
+      const prefixLength = prefix.length;
+      const nomorQuery = `
+        SELECT IFNULL(MAX(RIGHT(rb_nomor, 4)), 0) + 1 AS next_num 
+        FROM tdcrb_hdr 
+        WHERE LEFT(rb_nomor, ${prefixLength}) = ?;
+      `;
+      const [nomorRows] = await connection.query(nomorQuery, [prefix]);
+      const nomorDokumen = `${prefix}${nomorRows[0].next_num
+        .toString()
+        .padStart(4, "0")}`;
 
-    // 2. Update dokumen pengiriman asli (trbdc_hdr)
-    await connection.query(
-      "UPDATE trbdc_hdr SET rb_noterima = ? WHERE rb_nomor = ?",
-      [nomorDokumen, header.nomorRb]
-    );
-
-    // 3. Simpan detail penerimaan (tdcrb_dtl)
-    if (items.length > 0) {
-      const itemValues = items.map((item, index) => [
-        nomorDokumen + (index + 1),
-        nomorDokumen,
-        item.kode,
-        item.ukuran,
-        item.terima,
-      ]);
       await connection.query(
-        "INSERT INTO tdcrb_dtl (rbd_iddrec, rbd_nomor, rbd_kode, rbd_ukuran, rbd_jumlah) VALUES ?",
-        [itemValues]
+        "INSERT INTO tdcrb_hdr (rb_nomor, rb_tanggal, user_create, date_create) VALUES (?, ?, ?, NOW())",
+        [nomorDokumen, header.tanggal, user.kode]
       );
+
+      // 2. Update dokumen pengiriman asli (trbdc_hdr)
+      await connection.query(
+        "UPDATE trbdc_hdr SET rb_noterima = ? WHERE rb_nomor = ?",
+        [nomorDokumen, header.nomorRb]
+      );
+
+      // 3. Simpan detail penerimaan (tdcrb_dtl)
+      if (items.length > 0) {
+        const itemValues = items.map((item, index) => [
+          nomorDokumen + (index + 1),
+          nomorDokumen,
+          item.kode,
+          item.ukuran,
+          Number(item.terima) || 0,
+        ]);
+        await connection.query(
+          "INSERT INTO tdcrb_dtl (rbd_iddrec, rbd_nomor, rbd_kode, rbd_ukuran, rbd_jumlah) VALUES ?",
+          [itemValues]
+        );
+      }
+
+      // --- 4. LOGIKA KOREKSI OTOMATIS JIKA ADA SELISIH ---
+      const selisihItems = items.filter(
+        (i) => (i.terima || 0) !== (i.jumlah || 0)
+      );
+
+      if (selisihItems.length > 0) {
+        // Panggil fungsi generate nomor koreksi
+        const nomorKoreksi = await generateNomorKoreksi(
+          connection,
+          user.cabang,
+          header.tanggal
+        );
+
+        // Insert header koreksi
+        const keteranganKoreksi = `KOREKSI OTOMATIS DARI TERIMA RETUR ${nomorDokumen}`;
+        await connection.query(
+          "INSERT INTO tkor_hdr (kor_nomor, kor_tanggal, kor_ket, user_create, date_create) VALUES (?, ?, ?, ?, NOW())",
+          [nomorKoreksi, header.tanggal, keteranganKoreksi, user.kode]
+        );
+
+        // Insert detail koreksi
+        const koreksiValues = selisihItems.map((item) => {
+          const jumlah = Number(item.jumlah) || 0;
+          const terima = Number(item.terima) || 0;
+          return [
+            nomorKoreksi,
+            item.kode,
+            item.ukuran,
+            jumlah,
+            terima,
+            terima - jumlah,
+            0,
+            "Selisih Terima Retur",
+          ];
+        });
+        await connection.query(
+          "INSERT INTO tkor_dtl (kord_kor_nomor, kord_kode, kord_ukuran, kord_stok, kord_jumlah, kord_selisih, kord_hpp, kord_ket) VALUES ?",
+          [koreksiValues]
+        );
+
+        // Update referensi nomor koreksi di header penerimaan
+        await connection.query(
+          "UPDATE tdcrb_hdr SET rb_koreksi = ? WHERE rb_nomor = ?",
+          [nomorKoreksi, nomorDokumen]
+        );
+      }
+      // --- AKHIR LOGIKA KOREKSI OTOMATIS ---
+
+      await connection.commit();
+      return {
+        message: `Penerimaan Retur berhasil disimpan dengan nomor ${nomorDokumen}`,
+        nomor: nomorDokumen,
+      };
+    } catch (error) {
+      await connection.rollback();
+      connection.release();
+
+      // Cek apakah error disebabkan oleh duplikat primary key
+      if (error.code === "ER_DUP_ENTRY") {
+        retries--; // Kurangi jatah percobaan
+        if (retries === 0) {
+          // Jika sudah habis, lempar error
+          throw new Error(
+            "Gagal menyimpan data setelah beberapa kali percobaan karena nomor duplikat."
+          );
+        }
+        // Jika masih ada jatah, loop akan berlanjut dan mencoba lagi
+        console.log("Terjadi duplikasi nomor, mencoba lagi...");
+      } else {
+        // Jika error lain, langsung lempar
+        throw error;
+      }
     }
-
-    // --- 4. LOGIKA KOREKSI OTOMATIS JIKA ADA SELISIH ---
-    const selisihItems = items.filter(
-      (i) => (i.terima || 0) !== (i.jumlah || 0)
-    );
-
-    if (selisihItems.length > 0) {
-      // Panggil fungsi generate nomor koreksi
-      const nomorKoreksi = await generateNomorKoreksi(
-        connection,
-        user.cabang,
-        header.tanggal
-      );
-
-      // Insert header koreksi
-      const keteranganKoreksi = `KOREKSI OTOMATIS DARI TERIMA RETUR ${nomorDokumen}`;
-      await connection.query(
-        "INSERT INTO tkor_hdr (kor_nomor, kor_tanggal, kor_ket, user_create, date_create) VALUES (?, ?, ?, ?, NOW())",
-        [nomorKoreksi, header.tanggal, keteranganKoreksi, user.kode]
-      );
-
-      // Insert detail koreksi
-      const koreksiValues = selisihItems.map((item) => [
-        nomorKoreksi,
-        item.kode,
-        item.ukuran,
-        item.jumlah, // Stok awal sistem adalah jumlah yang seharusnya dikirim
-        item.terima, // Jumlah fisik adalah jumlah yang diterima
-        item.terima - item.jumlah, // Selisih
-        // HPP perlu diambil, untuk sementara kita set 0 jika tidak ada
-        0,
-        "Selisih Terima Retur",
-      ]);
-      await connection.query(
-        "INSERT INTO tkor_dtl (kord_kor_nomor, kord_kode, kord_ukuran, kord_stok, kord_jumlah, kord_selisih, kord_hpp, kord_ket) VALUES ?",
-        [koreksiValues]
-      );
-
-      // Update referensi nomor koreksi di header penerimaan
-      await connection.query(
-        "UPDATE tdcrb_hdr SET rb_koreksi = ? WHERE rb_nomor = ?",
-        [nomorKoreksi, nomorDokumen]
-      );
-    }
-    // --- AKHIR LOGIKA KOREKSI OTOMATIS ---
-
-    await connection.commit();
-    return {
-      message: `Penerimaan Retur berhasil disimpan dengan nomor ${nomorDokumen}`,
-      nomor: nomorDokumen,
-    };
-  } catch (error) {
-    await connection.rollback();
-    throw error;
-  } finally {
-    connection.release();
   }
 };
 

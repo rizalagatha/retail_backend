@@ -41,8 +41,11 @@ const generateFinalPayload = async (user, selectedCabang) => {
     const cabangNama = gudangRows.length > 0 ? gudangRows[0].gdg_nama : '';
 
     let canApproveCorrection = false;
+    let canApprovePrice = false;
+
     if (user.user_kode === 'DARUL') {
         canApproveCorrection = true;
+        canApprovePrice = true;
     }
 
     const userForToken = {
@@ -51,6 +54,7 @@ const generateFinalPayload = async (user, selectedCabang) => {
         cabang: selectedCabang,
         cabangNama: cabangNama,
         canApproveCorrection: canApproveCorrection,
+        canApprovePrice: canApprovePrice,
     };
     const token = jwt.sign(userForToken, process.env.JWT_SECRET, { expiresIn: '8h' });
     const permissions = await getPermissions(user.user_kode);

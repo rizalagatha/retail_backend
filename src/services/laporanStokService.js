@@ -78,6 +78,22 @@ const getRealTimeStock = async (filters) => {
     }
 };
 
+const getGudangOptions = async (user) => {
+    let query = '';
+    if (user.cabang === 'KDC') {
+        query = `
+            SELECT 'ALL' AS kode, 'SEMUA' AS nama
+            UNION ALL
+            SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang ORDER BY kode;
+        `;
+    } else {
+        query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode="KDC" OR gdg_kode = ?';
+    }
+    const [rows] = await pool.query(query, [user.cabang]);
+    return rows;
+};
+
 module.exports = {
     getRealTimeStock,
+    getGudangOptions,
 };

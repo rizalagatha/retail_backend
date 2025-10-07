@@ -66,7 +66,10 @@ const returDcFormRoutes = require("./routes/returDcFormRoutes");
 const terimaReturRoutes = require("./routes/terimaReturRoutes");
 const terimaReturFormRoutes = require('./routes/terimaReturFormRoutes');
 const kartuPiutangRoutes = require('./routes/kartuPiutangRoutes');
+const pengajuanBarcodeRoutes = require('./routes/pengajuanBarcodeRoutes');
+const pengajuanBarcodeFormRoutes = require('./routes/pengajuanBarcodeFormRoutes');
 const laporanStokRoutes = require("./routes/laporanStokRoutes");
+const laporanMutasiStokRoutes = require('./routes/laporanMutasiStokRoutes');
 const whatsappRoutes = require("./routes/whatsappRoutes");
 
 const app = express();
@@ -174,7 +177,10 @@ app.use("/api/retur-dc-form", returDcFormRoutes);
 app.use("/api/terima-retur", terimaReturRoutes);
 app.use('/api/terima-retur-form', terimaReturFormRoutes);
 app.use('/api/kartu-piutang', kartuPiutangRoutes);
+app.use('/api/pengajuan-barcode', pengajuanBarcodeRoutes);
+app.use('/api/pengajuan-barcode-form', pengajuanBarcodeFormRoutes);
 app.use("/api/laporan-stok", laporanStokRoutes);
+app.use('/api/laporan-mutasi-stok', laporanMutasiStokRoutes);
 app.use("/api/whatsapp", whatsappRoutes);
 
 // Menjalankan Server
