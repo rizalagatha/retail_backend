@@ -1,12 +1,12 @@
-const pool = require('../config/database');
-const { format } = require('date-fns');
-const fs = require('fs');
-const path = require('path');
+const pool = require("../config/database");
+const { format } = require("date-fns");
+const fs = require("fs");
+const path = require("path");
 
 const findById = async (nomor) => {
-    const connection = await pool.getConnection();
-    try {
-        const headerQuery = `
+  const connection = await pool.getConnection();
+  try {
+    const headerQuery = `
             SELECT 
                 sd_nomor as nomor, sd_tanggal as tanggal, sd_datekerja as tglPengerjaan,
                 sd_dateline as datelineCustomer, sd_sal_kode as salesKode, sal_nama as salesNama,
@@ -21,29 +21,34 @@ const findById = async (nomor) => {
             LEFT JOIN kencanaprint.tjenisorder jo ON h.sd_jo_kode = jo.jo_kode
             LEFT JOIN kencanaprint.tpabrik p ON h.sd_workshop = p.pab_kode
             WHERE sd_nomor = ?`;
-        
-        const [headerRows] = await connection.query(headerQuery, [nomor]);
-        if (headerRows.length === 0) return null;
 
-        const header = headerRows[0];
-        
-        // PERBAIKAN: Set imageUrl di header, bukan sebagai property terpisah
-        header.imageUrl = findImageFile(nomor);
+    const [headerRows] = await connection.query(headerQuery, [nomor]);
+    if (headerRows.length === 0) return null;
 
-        const detailsUkuranQuery = 'SELECT sdd_ukuran as ukuran, sdd_jumlah as jumlah, sdd_harga as harga FROM tsodtf_dtl WHERE sdd_nomor = ? ORDER BY sdd_nourut';
-        const [detailsUkuranRows] = await connection.query(detailsUkuranQuery, [nomor]);
+    const header = headerRows[0];
 
-        const detailsTitikQuery = 'SELECT sdd2_ket as keterangan, sdd2_size as sizeCetak, sdd2_panjang as panjang, sdd2_lebar as lebar FROM tsodtf_dtl2 WHERE sdd2_nomor = ? ORDER BY sdd2_nourut';
-        const [detailsTitikRows] = await connection.query(detailsTitikQuery, [nomor]);
+    header.imageUrl = findImageFile(nomor);
 
-        return {
-            header: header,  // header sudah include imageUrl
-            detailsUkuran: detailsUkuranRows,
-            detailsTitik: detailsTitikRows
-        };
-    } finally {
-        connection.release();
-    }
+    const detailsUkuranQuery =
+      "SELECT sdd_ukuran as ukuran, sdd_jumlah as jumlah, sdd_harga as harga FROM tsodtf_dtl WHERE sdd_nomor = ? ORDER BY sdd_nourut";
+    const [detailsUkuranRows] = await connection.query(detailsUkuranQuery, [
+      nomor,
+    ]);
+
+    const detailsTitikQuery =
+      "SELECT sdd2_ket as keterangan, sdd2_size as sizeCetak, sdd2_panjang as panjang, sdd2_lebar as lebar FROM tsodtf_dtl2 WHERE sdd2_nomor = ? ORDER BY sdd2_nourut";
+    const [detailsTitikRows] = await connection.query(detailsTitikQuery, [
+      nomor,
+    ]);
+
+    return {
+      header: header, 
+      detailsUkuran: detailsUkuranRows,
+      detailsTitik: detailsTitikRows,
+    };
+  } finally {
+    connection.release();
+  }
 };
 
 /**
@@ -54,119 +59,189 @@ const findById = async (nomor) => {
  * @returns {Promise<string>} Nomor SO DTF yang baru. Contoh: K01.SD.2509.0001
  */
 const generateNewSoNumber = async (connection, data, user) => {
-    const tanggal = new Date(data.header.tanggal);
-    const branchCode = user.cabang;
-    const orderType = data.header.jenisOrderKode;
+  const tanggal = new Date(data.header.tanggal);
+  const branchCode = user.cabang;
+  const orderType = data.header.jenisOrderKode;
 
-    if (!branchCode || !orderType) {
-        throw new Error('Kode cabang dan jenis order harus ada untuk membuat nomor SO.');
-    }
+  if (!branchCode || !orderType) {
+    throw new Error(
+      "Kode cabang dan jenis order harus ada untuk membuat nomor SO."
+    );
+  }
 
-    // 1. Membuat prefix. Contoh: K01.SD.2509
-    const datePrefix = format(tanggal, 'yyMM');
-    const fullPrefix = `${branchCode}.${orderType}.${datePrefix}`;
+  // 1. Membuat prefix. Contoh: K01.SD.2509
+  const datePrefix = format(tanggal, "yyMM");
+  const fullPrefix = `${branchCode}.${orderType}.${datePrefix}`;
 
-    // 2. Query untuk mencari nomor urut maksimal, mirip seperti di Delphi.
-    // CAST(... AS UNSIGNED) untuk memastikan '0009' dibandingkan sebagai angka 9.
-    const query = `
+  // 2. Query untuk mencari nomor urut maksimal, mirip seperti di Delphi.
+  // CAST(... AS UNSIGNED) untuk memastikan '0009' dibandingkan sebagai angka 9.
+  const query = `
         SELECT IFNULL(MAX(CAST(RIGHT(sd_nomor, 4) AS UNSIGNED)), 0) as maxNum 
         FROM tsodtf_hdr 
         WHERE LEFT(sd_nomor, ${fullPrefix.length}) = ?`;
 
-    const [rows] = await connection.query(query, [fullPrefix]);
+  const [rows] = await connection.query(query, [fullPrefix]);
 
-    // 3. Menentukan nomor urut berikutnya.
-    const maxNum = rows[0].maxNum;
-    const nextNum = maxNum + 1;
+  // 3. Menentukan nomor urut berikutnya.
+  const maxNum = rows[0].maxNum;
+  const nextNum = maxNum + 1;
 
-    // 4. Padding dengan nol di depan, meniru RightStr(IntToStr(10000 + ...)) Delphi.
-    const sequentialPart = String(nextNum).padStart(4, '0'); // Contoh: '0001' atau '0016'
+  // 4. Padding dengan nol di depan, meniru RightStr(IntToStr(10000 + ...)) Delphi.
+  const sequentialPart = String(nextNum).padStart(4, "0"); // Contoh: '0001' atau '0016'
 
-    // 5. Menggabungkan menjadi nomor SO lengkap.
-    return `${fullPrefix}.${sequentialPart}`;
+  // 5. Menggabungkan menjadi nomor SO lengkap.
+  return `${fullPrefix}.${sequentialPart}`;
 };
 
 const create = async (data, user) => {
-    const connection = await pool.getConnection();
-    await connection.beginTransaction();
-    try {
-        // Panggil fungsi generateNewSoNumber untuk mendapatkan nomor baru
-        const newNomor = await generateNewSoNumber(connection, data, user);
+  const connection = await pool.getConnection();
+  await connection.beginTransaction();
+  try {
+    // Panggil fungsi generateNewSoNumber untuk mendapatkan nomor baru
+    const newNomor = await generateNewSoNumber(connection, data, user);
 
-        const header = data.header;
-        // Simpan header dengan nomor baru
-        const headerQuery = `INSERT INTO tsodtf_hdr (sd_nomor, sd_tanggal, sd_datekerja, sd_dateline, sd_cus_kode, sd_customer, sd_sal_kode, sd_jo_kode, sd_nama, sd_kain, sd_finishing, sd_desain, sd_workshop, sd_ket, user_create, date_create) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
-        await connection.query(headerQuery, [newNomor, header.tanggal, header.tglPengerjaan, header.datelineCustomer, header.customerKode, header.customerNama, header.salesKode, header.jenisOrderKode, header.namaDtf, header.kain, header.finishing, header.desain, header.workshopKode, header.keterangan, user.kode]);
+    const header = data.header;
+    // Simpan header dengan nomor baru
+    const headerQuery = `INSERT INTO tsodtf_hdr (sd_nomor, sd_tanggal, sd_datekerja, sd_dateline, sd_cus_kode, sd_customer, sd_sal_kode, sd_jo_kode, sd_nama, sd_kain, sd_finishing, sd_desain, sd_workshop, sd_ket, user_create, date_create) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
+    await connection.query(headerQuery, [
+      newNomor,
+      header.tanggal,
+      header.tglPengerjaan,
+      header.datelineCustomer,
+      header.customerKode,
+      header.customerNama,
+      header.salesKode,
+      header.jenisOrderKode,
+      header.namaDtf,
+      header.kain,
+      header.finishing,
+      header.desain,
+      header.workshopKode,
+      header.keterangan,
+      user.kode,
+    ]);
 
-        // Simpan detail ukuran
-        for (const [index, detail] of data.detailsUkuran.entries()) {
-            const detailUkuranQuery = 'INSERT INTO tsodtf_dtl (sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut) VALUES (?, ?, ?, ?, ?)';
-            await connection.query(detailUkuranQuery, [newNomor, detail.ukuran, detail.jumlah, detail.harga, index + 1]);
-        }
-
-        // Simpan detail titik
-        for (const [index, detail] of data.detailsTitik.entries()) {
-            const detailTitikQuery = 'INSERT INTO tsodtf_dtl2 (sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut) VALUES (?, ?, ?, ?, ?, ?)';
-            await connection.query(detailTitikQuery, [newNomor, detail.keterangan, detail.sizeCetak, detail.panjang, detail.lebar, index + 1]);
-        }
-
-        await connection.commit();
-        const [createdHeader] = await connection.query('SELECT *, sales.sal_nama, j.jo_nama, p.pab_nama FROM tsodtf_hdr h LEFT JOIN kencanaprint.tsales sales ON h.sd_sal_kode = sales.sal_kode LEFT JOIN kencanaprint.tjenisorder j ON h.sd_jo_kode = j.jo_kode LEFT JOIN kencanaprint.tpabrik p ON h.sd_workshop = p.pab_kode WHERE sd_nomor = ?', [newNomor]);
-        return { 
-            message: `Data berhasil disimpan dengan nomor: ${newNomor}`,
-            header: createdHeader[0] 
-        };
-    } catch (error) {
-        await connection.rollback();
-        console.error("Error in create SO DTF service:", error);
-        throw new Error('Gagal menyimpan data SO DTF baru.');
-    } finally {
-        connection.release();
+    // Simpan detail ukuran
+    for (const [index, detail] of data.detailsUkuran.entries()) {
+      const detailUkuranQuery =
+        "INSERT INTO tsodtf_dtl (sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut) VALUES (?, ?, ?, ?, ?)";
+      await connection.query(detailUkuranQuery, [
+        newNomor,
+        detail.ukuran,
+        detail.jumlah,
+        detail.harga,
+        index + 1,
+      ]);
     }
+
+    // Simpan detail titik
+    for (const [index, detail] of data.detailsTitik.entries()) {
+      const detailTitikQuery =
+        "INSERT INTO tsodtf_dtl2 (sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut) VALUES (?, ?, ?, ?, ?, ?)";
+      await connection.query(detailTitikQuery, [
+        newNomor,
+        detail.keterangan,
+        detail.sizeCetak,
+        detail.panjang,
+        detail.lebar,
+        index + 1,
+      ]);
+    }
+
+    await connection.commit();
+    const [createdHeader] = await connection.query(
+      "SELECT *, sales.sal_nama, j.jo_nama, p.pab_nama FROM tsodtf_hdr h LEFT JOIN kencanaprint.tsales sales ON h.sd_sal_kode = sales.sal_kode LEFT JOIN kencanaprint.tjenisorder j ON h.sd_jo_kode = j.jo_kode LEFT JOIN kencanaprint.tpabrik p ON h.sd_workshop = p.pab_kode WHERE sd_nomor = ?",
+      [newNomor]
+    );
+    return {
+      message: `Data berhasil disimpan dengan nomor: ${newNomor}`,
+      header: createdHeader[0],
+    };
+  } catch (error) {
+    await connection.rollback();
+    console.error("Error in create SO DTF service:", error);
+    throw new Error("Gagal menyimpan data SO DTF baru.");
+  } finally {
+    connection.release();
+  }
 };
 
 const update = async (nomor, data, user) => {
-    const connection = await pool.getConnection();
-    await connection.beginTransaction();
-    try {
-        const header = data.header;
-        const headerQuery = `UPDATE tsodtf_hdr SET sd_tanggal = ?, sd_datekerja = ?, sd_dateline = ?, sd_cus_kode = ?, sd_customer = ?, sd_sal_kode = ?, sd_jo_kode = ?, sd_nama = ?, sd_kain = ?, sd_finishing = ?, sd_desain = ?, sd_workshop = ?, sd_ket = ?, user_modified = ?, date_modified = NOW() WHERE sd_nomor = ?`;
-        await connection.query(headerQuery, [header.tanggal, header.tglPengerjaan, header.datelineCustomer, header.customerKode, header.customerNama, header.salesKode, header.jenisOrderKode, header.namaDtf, header.kain, header.finishing, header.desain, header.workshopKode, header.keterangan, user.kode, nomor]);
+  const connection = await pool.getConnection();
+  await connection.beginTransaction();
+  try {
+    const header = data.header;
+    const headerQuery = `UPDATE tsodtf_hdr SET sd_tanggal = ?, sd_datekerja = ?, sd_dateline = ?, sd_cus_kode = ?, sd_customer = ?, sd_sal_kode = ?, sd_jo_kode = ?, sd_nama = ?, sd_kain = ?, sd_finishing = ?, sd_desain = ?, sd_workshop = ?, sd_ket = ?, user_modified = ?, date_modified = NOW() WHERE sd_nomor = ?`;
+    await connection.query(headerQuery, [
+      header.tanggal,
+      header.tglPengerjaan,
+      header.datelineCustomer,
+      header.customerKode,
+      header.customerNama,
+      header.salesKode,
+      header.jenisOrderKode,
+      header.namaDtf,
+      header.kain,
+      header.finishing,
+      header.desain,
+      header.workshopKode,
+      header.keterangan,
+      user.kode,
+      nomor,
+    ]);
 
-        await connection.query('DELETE FROM tsodtf_dtl WHERE sdd_nomor = ?', [nomor]);
-        await connection.query('DELETE FROM tsodtf_dtl2 WHERE sdd2_nomor = ?', [nomor]);
+    await connection.query("DELETE FROM tsodtf_dtl WHERE sdd_nomor = ?", [
+      nomor,
+    ]);
+    await connection.query("DELETE FROM tsodtf_dtl2 WHERE sdd2_nomor = ?", [
+      nomor,
+    ]);
 
-        for (const [index, detail] of data.detailsUkuran.entries()) {
-            const detailUkuranQuery = 'INSERT INTO tsodtf_dtl (sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut) VALUES (?, ?, ?, ?, ?)';
-            await connection.query(detailUkuranQuery, [nomor, detail.ukuran, detail.jumlah, detail.harga, index + 1]);
-        }
-
-        for (const [index, detail] of data.detailsTitik.entries()) {
-            const detailTitikQuery = 'INSERT INTO tsodtf_dtl2 (sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut) VALUES (?, ?, ?, ?, ?, ?)';
-            await connection.query(detailTitikQuery, [nomor, detail.keterangan, detail.sizeCetak, detail.panjang, detail.lebar, index + 1]);
-        }
-
-        await connection.commit();
-        
-        // PERBAIKAN: Panggil findById untuk mendapatkan data lengkap dengan imageUrl
-        const updatedData = await findById(nomor);
-        return updatedData;
-        
-    } catch (error) {
-        await connection.rollback();
-        console.error(`Error in update SO DTF service for nomor ${nomor}:`, error);
-        throw new Error('Gagal memperbarui data SO DTF.');
-    } finally {
-        connection.release();
+    for (const [index, detail] of data.detailsUkuran.entries()) {
+      const detailUkuranQuery =
+        "INSERT INTO tsodtf_dtl (sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut) VALUES (?, ?, ?, ?, ?)";
+      await connection.query(detailUkuranQuery, [
+        nomor,
+        detail.ukuran,
+        detail.jumlah,
+        detail.harga,
+        index + 1,
+      ]);
     }
+
+    for (const [index, detail] of data.detailsTitik.entries()) {
+      const detailTitikQuery =
+        "INSERT INTO tsodtf_dtl2 (sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut) VALUES (?, ?, ?, ?, ?, ?)";
+      await connection.query(detailTitikQuery, [
+        nomor,
+        detail.keterangan,
+        detail.sizeCetak,
+        detail.panjang,
+        detail.lebar,
+        index + 1,
+      ]);
+    }
+
+    await connection.commit();
+
+    // PERBAIKAN: Panggil findById untuk mendapatkan data lengkap dengan imageUrl
+    const updatedData = await findById(nomor);
+    return updatedData;
+  } catch (error) {
+    await connection.rollback();
+    console.error(`Error in update SO DTF service for nomor ${nomor}:`, error);
+    throw new Error("Gagal memperbarui data SO DTF.");
+  } finally {
+    connection.release();
+  }
 };
 
 const searchSales = async (term, page, itemsPerPage) => {
-    const searchTerm = `%${term || ''}%`;
-    const offset = (page - 1) * itemsPerPage;
+  const searchTerm = `%${term || ""}%`;
+  const offset = (page - 1) * itemsPerPage;
 
-    // Query untuk mengambil data dengan limit dan offset
-    const dataQuery = `
+  // Query untuk mengambil data dengan limit dan offset
+  const dataQuery = `
         SELECT 
             sal_kode AS kode, 
             sal_nama AS nama, 
@@ -178,27 +253,32 @@ const searchSales = async (term, page, itemsPerPage) => {
         LIMIT ? OFFSET ?
     `;
 
-    // Query untuk menghitung total hasil pencarian
-    const countQuery = `
+  // Query untuk menghitung total hasil pencarian
+  const countQuery = `
         SELECT COUNT(*) as total
         FROM kencanaprint.tsales
         WHERE sal_aktif = 'Y'
           AND (sal_kode LIKE ? OR sal_nama LIKE ?)
     `;
 
-    const [items] = await pool.query(dataQuery, [searchTerm, searchTerm, itemsPerPage, offset]);
-    const [totalRows] = await pool.query(countQuery, [searchTerm, searchTerm]);
+  const [items] = await pool.query(dataQuery, [
+    searchTerm,
+    searchTerm,
+    itemsPerPage,
+    offset,
+  ]);
+  const [totalRows] = await pool.query(countQuery, [searchTerm, searchTerm]);
 
-    // Kembalikan data dalam format yang diharapkan frontend
-    return {
-        items: items,
-        total: totalRows[0].total
-    };
+  // Kembalikan data dalam format yang diharapkan frontend
+  return {
+    items: items,
+    total: totalRows[0].total,
+  };
 };
 
 const searchJenisOrder = async (term) => {
-    // Query ini meniru logika dari Delphi Anda
-    const query = `
+  // Query ini meniru logika dari Delphi Anda
+  const query = `
         SELECT 
             jo_kode AS kode, 
             jo_nama AS nama
@@ -207,42 +287,40 @@ const searchJenisOrder = async (term) => {
           AND (jo_kode LIKE ? OR jo_nama LIKE ?)
         ORDER BY jo_nama
     `;
-    const searchTerm = `%${term || ''}%`;
-    const [rows] = await pool.query(query, [searchTerm, searchTerm]);
-    return rows;
+  const searchTerm = `%${term || ""}%`;
+  const [rows] = await pool.query(query, [searchTerm, searchTerm]);
+  return rows;
 };
 
-const searchJenisKain = async (term, page, itemsPerPage) => {
-    const searchTerm = `%${term || ''}%`;
-    const offset = (page - 1) * itemsPerPage;
+const searchJenisKain = async (filters) => {
+  const { term, page, itemsPerPage } = filters;
+  const pageNum = parseInt(page, 10) || 1;
+  const limit = parseInt(itemsPerPage, 10) || 10;
+  const offset = (pageNum - 1) * limit;
+  const searchTerm = `%${term || ""}%`;
 
-    const dataQuery = `
+  const whereClause = `WHERE JenisKain LIKE ?`;
+
+  const countQuery = `SELECT COUNT(*) as total FROM tjeniskain ${whereClause}`;
+  const [countRows] = await pool.query(countQuery, [searchTerm]);
+
+  const dataQuery = `
         SELECT 
-            JenisKain AS nama 
-        FROM retail.tjeniskain
-        WHERE JenisKain LIKE ?
+            JenisKain AS nama, 
+            Kode  -- Pastikan kolom 'Kode' di-SELECT
+        FROM tjeniskain 
+        ${whereClause} 
         ORDER BY JenisKain
         LIMIT ? OFFSET ?
     `;
+  const [items] = await pool.query(dataQuery, [searchTerm, limit, offset]);
 
-    const countQuery = `
-        SELECT COUNT(*) as total
-        FROM retail.tjeniskain
-        WHERE JenisKain LIKE ?
-    `;
-
-    const [items] = await pool.query(dataQuery, [searchTerm, parseInt(itemsPerPage), offset]);
-    const [totalRows] = await pool.query(countQuery, [searchTerm]);
-
-    return {
-        items: items.map(row => ({ nama: row.nama })),
-        total: totalRows[0].total
-    };
+  return { items, total: countRows[0].total };
 };
 
 const searchWorkshop = async (term) => {
-    // Query ini meniru logika dari Delphi Anda
-    const query = `
+  // Query ini meniru logika dari Delphi Anda
+  const query = `
         SELECT 
             pab_kode AS kode, 
             pab_nama AS nama 
@@ -251,14 +329,14 @@ const searchWorkshop = async (term) => {
           AND (pab_kode LIKE ? OR pab_nama LIKE ?)
         ORDER BY pab_nama
     `;
-    const searchTerm = `%${term || ''}%`;
-    const [rows] = await pool.query(query, [searchTerm, searchTerm]);
-    return rows;
+  const searchTerm = `%${term || ""}%`;
+  const [rows] = await pool.query(query, [searchTerm, searchTerm]);
+  return rows;
 };
 
 const getSisaKuota = async (cabang, tanggalKerja) => {
-    // Query ini dipecah menjadi 3 sub-query yang lebih sederhana dan standar
-    const query = `
+  // Query ini dipecah menjadi 3 sub-query yang lebih sederhana dan standar
+  const query = `
         SELECT 
             (SELECT IFNULL(dq_kuota, 0) FROM tdtf_kuota WHERE dq_cab = ?) AS dq_kuota,
 
@@ -273,18 +351,18 @@ const getSisaKuota = async (cabang, tanggalKerja) => {
              WHERE j.sd_jo_kode = 'SD' AND LEFT(j.sd_nomor, 3) = ? AND j.sd_datekerja = ?) AS titik
     `;
 
-    // Parameter tetap sama, berjumlah 5
-    const params = [cabang, cabang, tanggalKerja, cabang, tanggalKerja];
-    const [rows] = await pool.query(query, params);
+  // Parameter tetap sama, berjumlah 5
+  const params = [cabang, cabang, tanggalKerja, cabang, tanggalKerja];
+  const [rows] = await pool.query(query, params);
 
-    if (rows.length > 0) {
-        const { dq_kuota, jumlah, titik } = rows[0];
-        // Kalkulasi akhir dilakukan di sini, lebih aman dan mudah dibaca
-        const sisa = dq_kuota - (jumlah * titik);
-        return sisa;
-    }
+  if (rows.length > 0) {
+    const { dq_kuota, jumlah, titik } = rows[0];
+    // Kalkulasi akhir dilakukan di sini, lebih aman dan mudah dibaca
+    const sisa = dq_kuota - jumlah * titik;
+    return sisa;
+  }
 
-    return 0;
+  return 0;
 };
 
 /**
@@ -294,42 +372,53 @@ const getSisaKuota = async (cabang, tanggalKerja) => {
  * @returns {Promise<string>} Path final dari file yang sudah diproses.
  */
 const processSoDtfImage = async (tempFilePath, nomorSo) => {
-    return new Promise((resolve, reject) => {
-        // 1. Pastikan file sumber ada
-        if (!fs.existsSync(tempFilePath)) {
-            return reject(new Error('File sumber sementara tidak ditemukan.'));
-        }
+  return new Promise((resolve, reject) => {
+    // 1. Pastikan file sumber ada
+    if (!fs.existsSync(tempFilePath)) {
+      return reject(new Error("File sumber sementara tidak ditemukan."));
+    }
 
-        // 2. Siapkan nama file & path tujuan sesuai standar baru
-        const cabang = nomorSo.substring(0, 3);
-        const finalFileName = `${nomorSo}${path.extname(tempFilePath)}`;
+    // 2. Siapkan nama file & path tujuan sesuai standar baru
+    const cabang = nomorSo.substring(0, 3);
+    const finalFileName = `${nomorSo}${path.extname(tempFilePath)}`;
 
-        // Path baru sesuai permintaan Anda
-        const branchFolderPath = path.join(process.cwd(), 'public', 'images', cabang);
+    // Path baru sesuai permintaan Anda
+    const branchFolderPath = path.join(
+      process.cwd(),
+      "public",
+      "images",
+      cabang
+    );
 
-        // 3. Buat folder cabang jika belum ada
-        fs.mkdirSync(branchFolderPath, { recursive: true });
-        const finalPath = path.join(branchFolderPath, finalFileName);
+    // 3. Buat folder cabang jika belum ada
+    fs.mkdirSync(branchFolderPath, { recursive: true });
+    const finalPath = path.join(branchFolderPath, finalFileName);
 
-        // 4. Coba rename file (lebih cepat)
-        fs.rename(tempFilePath, finalPath, (err) => {
-            if (err) {
-                // 5. Jika gagal, coba copy & hapus (lebih aman)
-                console.warn(`Rename gagal (kode: ${err.code}), mencoba copy & unlink...`);
-                fs.copyFile(tempFilePath, finalPath, (copyErr) => {
-                    if (copyErr) {
-                        return reject(new Error('Gagal menyalin file gambar.'));
-                    }
-                    fs.unlink(tempFilePath, (unlinkErr) => {
-                        if (unlinkErr) console.error('Peringatan: Gagal menghapus file sementara:', tempFilePath);
-                    });
-                    resolve(finalPath);
-                });
-            } else {
-                resolve(finalPath);
-            }
+    // 4. Coba rename file (lebih cepat)
+    fs.rename(tempFilePath, finalPath, (err) => {
+      if (err) {
+        // 5. Jika gagal, coba copy & hapus (lebih aman)
+        console.warn(
+          `Rename gagal (kode: ${err.code}), mencoba copy & unlink...`
+        );
+        fs.copyFile(tempFilePath, finalPath, (copyErr) => {
+          if (copyErr) {
+            return reject(new Error("Gagal menyalin file gambar."));
+          }
+          fs.unlink(tempFilePath, (unlinkErr) => {
+            if (unlinkErr)
+              console.error(
+                "Peringatan: Gagal menghapus file sementara:",
+                tempFilePath
+              );
+          });
+          resolve(finalPath);
         });
+      } else {
+        resolve(finalPath);
+      }
     });
+  });
 };
 
 /**
@@ -337,26 +426,26 @@ const processSoDtfImage = async (tempFilePath, nomorSo) => {
  * @returns {Promise<string[]>} Array berisi nama-nama ukuran.
  */
 const getUkuranKaosList = async () => {
-    // Query ini meniru logika dari Delphi
-    const query = `
+  // Query ini meniru logika dari Delphi
+  const query = `
         SELECT Ukuran 
         FROM tUkuran 
         WHERE kategori = "" 
         ORDER BY kode
     `;
-    const [rows] = await pool.query(query);
-    // Ubah array of objects [{Ukuran: 'S'}] menjadi array of strings ['S']
-    return rows.map(row => row.Ukuran);
+  const [rows] = await pool.query(query);
+  // Ubah array of objects [{Ukuran: 'S'}] menjadi array of strings ['S']
+  return rows.map((row) => row.Ukuran);
 };
 
 const getUkuranSodtfDetail = async (jenisOrder, ukuran) => {
-    const query = `
+  const query = `
         SELECT us_panjang AS panjang, us_lebar AS lebar 
         FROM tukuran_sodtf 
         WHERE us_jenis = ? AND us_ukuran = ?
     `;
-    const [rows] = await pool.query(query, [jenisOrder, ukuran]);
-    return rows.length > 0 ? rows[0] : null;
+  const [rows] = await pool.query(query, [jenisOrder, ukuran]);
+  return rows.length > 0 ? rows[0] : null;
 };
 
 /**
@@ -366,44 +455,44 @@ const getUkuranSodtfDetail = async (jenisOrder, ukuran) => {
  * @returns {Promise<number>} Total harga DTG.
  */
 const calculateDtgPrice = async (detailsTitik, totalJumlahKaos) => {
-    let totalHarga = 0;
-    const query = `
+  let totalHarga = 0;
+  const query = `
         SELECT us_qty, us_promo, us_harga 
         FROM tukuran_sodtf 
         WHERE us_jenis = 'TG' AND us_ukuran = ?
     `;
 
-    for (const titik of detailsTitik) {
-        if (titik.sizeCetak) {
-            const [rows] = await pool.query(query, [titik.sizeCetak]);
-            if (rows.length > 0) {
-                const hargaRule = rows[0];
-                if (totalJumlahKaos >= hargaRule.us_qty) {
-                    totalHarga += hargaRule.us_promo; // Harga promo
-                } else {
-                    totalHarga += hargaRule.us_harga; // Harga reguler
-                }
-            }
+  for (const titik of detailsTitik) {
+    if (titik.sizeCetak) {
+      const [rows] = await pool.query(query, [titik.sizeCetak]);
+      if (rows.length > 0) {
+        const hargaRule = rows[0];
+        if (totalJumlahKaos >= hargaRule.us_qty) {
+          totalHarga += hargaRule.us_promo; // Harga promo
+        } else {
+          totalHarga += hargaRule.us_harga; // Harga reguler
         }
+      }
     }
-    return totalHarga;
+  }
+  return totalHarga;
 };
 
 const getSizeCetakList = async (jenisOrder) => {
-    const query = `
+  const query = `
         SELECT us_ukuran AS nama 
         FROM tukuran_sodtf 
         WHERE us_jenis = ? 
         ORDER BY us_ukuran
     `;
-    const [rows] = await pool.query(query, [jenisOrder]);
-    let results = rows.map(row => row.nama);
+  const [rows] = await pool.query(query, [jenisOrder]);
+  let results = rows.map((row) => row.nama);
 
-    // Meniru logika Delphi: tambahkan opsi kosong untuk SD dan DP
-    if (jenisOrder === 'SD' || jenisOrder === 'DP') {
-        results.unshift(''); // Tambahkan string kosong di awal array
-    }
-    return results;
+  // Meniru logika Delphi: tambahkan opsi kosong untuk SD dan DP
+  if (jenisOrder === "SD" || jenisOrder === "DP") {
+    results.unshift(""); // Tambahkan string kosong di awal array
+  }
+  return results;
 };
 
 /**
@@ -412,8 +501,8 @@ const getSizeCetakList = async (jenisOrder) => {
  * @returns {Promise<object|null>} Objek berisi semua data untuk dicetak.
  */
 const getDataForPrint = async (nomor) => {
-    // Query ini adalah migrasi langsung dari query di fungsi cetak Delphi Anda
-    const query = `
+  // Query ini adalah migrasi langsung dari query di fungsi cetak Delphi Anda
+  const query = `
         SELECT 
             h.*, 
             LEFT(h.sd_nomor, 3) AS store,
@@ -430,55 +519,62 @@ const getDataForPrint = async (nomor) => {
         LEFT JOIN kencanaprint.tjenisorder o ON h.sd_jo_kode = o.jo_kode
         WHERE h.sd_nomor = ?
     `;
-    const [rows] = await pool.query(query, [nomor]);
-    if (rows.length === 0) return null;
+  const [rows] = await pool.query(query, [nomor]);
+  if (rows.length === 0) return null;
 
-    const data = rows[0];
+  const data = rows[0];
 
-    // Logika untuk mengecek gambar
-    const cabang = nomor.substring(0, 3);
-    const imageFileName = `${nomor}.jpg`;
-    const imagePath = path.join(process.cwd(), 'public', 'images', cabang, imageFileName);
-    data.imageUrl = fs.existsSync(imagePath) ? `/images/${cabang}/${imageFileName}` : null;
+  // Logika untuk mengecek gambar
+  const cabang = nomor.substring(0, 3);
+  const imageFileName = `${nomor}.jpg`;
+  const imagePath = path.join(
+    process.cwd(),
+    "public",
+    "images",
+    cabang,
+    imageFileName
+  );
+  data.imageUrl = fs.existsSync(imagePath)
+    ? `/images/${cabang}/${imageFileName}`
+    : null;
 
-    return data;
+  return data;
 };
 
 const findImageFile = (nomor) => {
-    const cabang = nomor.substring(0, 3);
-    const directoryPath = path.join(process.cwd(), 'public', 'images', cabang);
+  const cabang = nomor.substring(0, 3);
+  const directoryPath = path.join(process.cwd(), "public", "images", cabang);
 
-    if (!fs.existsSync(directoryPath)) {
-        return null;
-    }
-
-    const files = fs.readdirSync(directoryPath);
-    
-    // Cari file yang namanya dimulai dengan nomor SO + titik
-    const fileName = files.find(file => file.startsWith(nomor + '.'));
-
-    if (fileName) {
-        const imageUrl = `/images/${cabang}/${fileName}`;
-        return imageUrl;
-    }
-    
+  if (!fs.existsSync(directoryPath)) {
     return null;
+  }
+
+  const files = fs.readdirSync(directoryPath);
+
+  // Cari file yang namanya dimulai dengan nomor SO + titik
+  const fileName = files.find((file) => file.startsWith(nomor + "."));
+
+  if (fileName) {
+    const imageUrl = `/images/${cabang}/${fileName}`;
+    return imageUrl;
+  }
+
+  return null;
 };
 
 module.exports = {
-    findById,
-    create,
-    update,
-    searchSales,
-    searchJenisOrder,
-    searchJenisKain,
-    searchWorkshop,
-    getSisaKuota,
-    processSoDtfImage,
-    getUkuranKaosList,
-    getUkuranSodtfDetail,
-    calculateDtgPrice,
-    getSizeCetakList,
-    getDataForPrint,
+  findById,
+  create,
+  update,
+  searchSales,
+  searchJenisOrder,
+  searchJenisKain,
+  searchWorkshop,
+  getSisaKuota,
+  processSoDtfImage,
+  getUkuranKaosList,
+  getUkuranSodtfDetail,
+  calculateDtgPrice,
+  getSizeCetakList,
+  getDataForPrint,
 };
-

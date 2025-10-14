@@ -47,8 +47,22 @@ const getSoDtfBranchList = async (req, res) => {
   }
 };
 
+const getById = async (req, res) => {
+    try {
+        const data = await warehouseService.getById(req.params.kode);
+        if (data) {
+            res.json(data);
+        } else {
+            res.status(404).json({ message: 'Gudang tidak ditemukan' });
+        }
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
   searchWarehouses, // Ganti nama dari 'search'
   getBranchList,
   getSoDtfBranchList,
+  getById,  
 };
