@@ -131,6 +131,14 @@ const saveData = async (payload, user) => {
       }
     }
 
+    if (isEdit && approvalInfo && approvalInfo.status === "ACC") {
+      await connection.query(
+        `UPDATE kencanaprint.tspk_pin5 SET pin_dipakai = 'Y' 
+                 WHERE pin_trs = 'PENGAMBILAN BARANG' AND pin_nomor = ? AND pin_urut = ?`,
+        [header.nomor, approvalInfo.urut]
+      );
+    }
+
     await connection.commit();
     return {
       message: `Data berhasil disimpan dengan nomor ${nomorSJ}`,
@@ -165,8 +173,58 @@ const lookupProductByBarcode = async (barcode, gudang) => {
   return rows[0];
 };
 
+const validateSavePin = async (code, pin) => {
+  const numericCode = parseFloat(code);
+  const numericPin = parseFloat(pin);
+
+  if (isNaN(numericCode) || isNaN(numericPin)) {
+    throw new Error("Kode atau PIN harus berupa angka.");
+  }
+
+  // Formula spesifik dari Delphi Tfrmsjk01.btnOkClick
+  const expectedPin = numericCode * 11 + 33 * 3;
+
+  if (numericPin !== expectedPin) {
+    throw new Error("Otorisasi salah.");
+  }
+
+  return { success: true };
+};
+
+const getApprovalStatus = async (nomor) => {
+  const query = `
+        SELECT pin_acc, pin_dipakai, pin_urut 
+        FROM kencanaprint.tspk_pin5 
+        WHERE pin_trs = "PENGAMBILAN BARANG" AND pin_nomor = ? 
+        ORDER BY pin_urut DESC LIMIT 1
+    `;
+  const [rows] = await pool.query(query, [nomor]);
+
+  if (rows.length === 0) {
+    return { status: "MINTA" }; // Belum ada pengajuan
+  }
+
+  const lastRequest = rows[0];
+  let status = "MINTA"; // Default jika kondisi lain tidak terpenuhi
+
+  if (lastRequest.pin_acc === "" && lastRequest.pin_dipakai === "") {
+    status = "WAIT";
+  } else if (lastRequest.pin_acc === "Y" && lastRequest.pin_dipakai === "") {
+    status = "ACC";
+  } else if (lastRequest.pin_acc === "N") {
+    status = "TOLAK";
+  }
+
+  return {
+    status: status,
+    urut: lastRequest.pin_urut,
+  };
+};
+
 module.exports = {
   getDataForEdit,
   saveData,
   lookupProductByBarcode,
+  validateSavePin,
+  getApprovalStatus,
 };

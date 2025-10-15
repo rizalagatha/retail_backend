@@ -9,5 +9,6 @@ router.get('/', verifyToken, checkPermission(MENU_ID, 'view'), controller.getLis
 router.get('/details', verifyToken, checkPermission(MENU_ID, 'view'), controller.getDetails);
 router.get('/lookup/products', verifyToken, checkPermission(MENU_ID, 'view'), controller.lookupProducts);
 router.delete('/:nomor', verifyToken, checkPermission(MENU_ID, 'delete'), controller.deleteAmbilBarang);
+router.get('/export-detail', verifyToken, checkPermission(MENU_ID, 'view'), controller.exportDetail);
 
 module.exports = router;

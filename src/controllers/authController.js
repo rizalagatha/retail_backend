@@ -3,6 +3,7 @@ const authService = require("../services/authService");
 const login = async (req, res) => {
   try {
     const { kodeUser, password } = req.body;
+    // Panggilan service kembali sederhana, tanpa 'req'
     const result = await authService.loginUser(kodeUser, password);
     res.json(result);
   } catch (error) {

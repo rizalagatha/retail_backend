@@ -1,4 +1,5 @@
 const pool = require("../config/database");
+const { addMonths, setDate } = require('date-fns');
 
 // Mengambil daftar utama (Master)
 const getList = async (filters) => {
@@ -148,9 +149,44 @@ const lookupProducts = async (filters) => {
     return { items, total };
 };
 
+const getExportDetails = async (filters) => {
+    const { startDate, endDate, kodeBarang } = filters;
+    let query = `
+        SELECT 
+            h.sj_nomor AS 'Nomor',
+            h.sj_tanggal AS 'Tanggal',
+            h.sj_noterima AS 'Nomor Terima',
+            t.tj_tanggal AS 'Tgl Terima',
+            g.gdg_nama AS 'Nama Store',
+            h.sj_peminta AS 'Peminta',
+            d.sjd_kode AS 'Kode Barang',
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS 'Nama Barang',
+            d.sjd_ukuran AS 'Ukuran',
+            d.sjd_jumlah AS 'Jumlah'
+        FROM tdc_sj_hdr h
+        INNER JOIN tdc_sj_dtl d ON d.sjd_nomor = h.sj_nomor
+        LEFT JOIN retail.tgudang g ON g.gdg_kode = h.sj_kecab
+        LEFT JOIN retail.ttrm_sj_hdr t ON t.tj_nomor = h.sj_noterima
+        LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.sjd_kode
+        WHERE h.sj_peminta <> "" AND h.sj_kecab = "K01"
+            AND h.sj_tanggal BETWEEN ? AND ?
+    `;
+    const params = [startDate, endDate];
+
+    if (kodeBarang) {
+        query += ` AND d.sjd_kode = ?`;
+        params.push(kodeBarang);
+    }
+
+    query += ` ORDER BY h.sj_nomor, d.sjd_kode`;
+    const [rows] = await pool.query(query, params);
+    return rows;
+};
+
 module.exports = {
   getList,
   getDetails,
   deleteAmbilBarang,
-  lookupProducts
+  lookupProducts,
+  getExportDetails
 };

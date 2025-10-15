@@ -17,5 +17,10 @@ router.post('/', verifyToken, checkPermission(MENU_ID, 'insert'), controller.sav
 // Rute untuk memperbarui data yang ada (Update)
 router.put('/:id', verifyToken, checkPermission(MENU_ID, 'edit'), controller.updateExisting);
 
+// Route untuk cek status approval data yang sudah di-close
+router.get('/:id/approval-status', verifyToken, controller.getApprovalStatus);
+
+// Route untuk memvalidasi PIN khusus form ini
+router.post('/validate-pin', verifyToken, controller.validatePin);
 
 module.exports = router;
