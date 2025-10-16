@@ -70,7 +70,15 @@ const pengajuanBarcodeRoutes = require('./routes/pengajuanBarcodeRoutes');
 const pengajuanBarcodeFormRoutes = require('./routes/pengajuanBarcodeFormRoutes');
 const laporanStokRoutes = require("./routes/laporanStokRoutes");
 const laporanMutasiStokRoutes = require('./routes/laporanMutasiStokRoutes');
+const laporanKartuStokRoutes = require('./routes/laporanKartuStokRoutes');
+const laporanListOtorisasiRoutes = require('./routes/laporanListOtorisasiRoutes');
+const laporanInvoiceRoutes = require('./routes/laporanInvoiceRoutes');
+const potonganRoutes = require('./routes/potonganRoutes');
+const refundRoutes = require('./routes/refundRoutes');
+//const refundFormRoutes = require('./routes/refundFormRoutes');
+//const qckeGarmenRoutes = require('./routes/qckeGarmenRoutes');
 const whatsappRoutes = require("./routes/whatsappRoutes");
+
 
 const app = express();
 const port = process.env.PORT || 8000;
@@ -181,6 +189,13 @@ app.use('/api/pengajuan-barcode', pengajuanBarcodeRoutes);
 app.use('/api/pengajuan-barcode-form', pengajuanBarcodeFormRoutes);
 app.use("/api/laporan-stok", laporanStokRoutes);
 app.use('/api/laporan-mutasi-stok', laporanMutasiStokRoutes);
+app.use('/api/laporan-kartu-stok', laporanKartuStokRoutes);
+app.use('/api/laporan-list-otorisasi', laporanListOtorisasiRoutes);
+app.use('/api/laporan-invoice', laporanInvoiceRoutes);
+app.use('/api/potongan', potonganRoutes);
+app.use('/api/refund', refundRoutes);
+//app.use('/api/qc-ke-garmen', qckeGarmenRoutes);
+//app.use('/api/refund-form', refundFormRoutes);
 app.use("/api/whatsapp", whatsappRoutes);
 
 // Menjalankan Server
