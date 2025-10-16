@@ -1,16 +1,20 @@
 // middleware/clientCertAuth.js
 
 const clientCertAuth = (req, res, next) => {
+  // Jika bukan di mode produksi, pura-pura ada user dan langsung lolos.
+  if (process.env.NODE_ENV !== "production") {
+    req.user = { kode: "DEV_USER" }; // User dummy untuk development
+    return next();
+  }
+  
   // Ambil header 'X-SSL-Client-DN' yang di-set oleh Nginx
   const userDN = req.headers["x-ssl-client-dn"];
 
   if (!userDN) {
-    return res
-      .status(403)
-      .send({
-        message:
-          "Akses Ditolak: Sertifikat klien tidak valid atau tidak ditemukan.",
-      });
+    return res.status(403).send({
+      message:
+        "Akses Ditolak: Sertifikat klien tidak valid atau tidak ditemukan.",
+    });
   }
 
   // Ekstrak Common Name (CN) dari string DN untuk mendapatkan username
@@ -19,11 +23,9 @@ const clientCertAuth = (req, res, next) => {
   const username = cnMatch ? cnMatch[1] : null;
 
   if (!username) {
-    return res
-      .status(403)
-      .send({
-        message: "Akses Ditolak: Username tidak ditemukan di dalam sertifikat.",
-      });
+    return res.status(403).send({
+      message: "Akses Ditolak: Username tidak ditemukan di dalam sertifikat.",
+    });
   }
 
   // Di sini Anda berhasil mengidentifikasi user.

@@ -69,9 +69,9 @@ const getDetails = async (kode, user) => {
 };
 
 const getExportDetails = async (filters) => {
-    const { startDate, endDate, hargaNol, hppNol } = filters;
-    
-    let baseQuery = `
+  const { startDate, endDate, hargaNol, hppNol } = filters;
+
+  let baseQuery = `
         SELECT 
             a.brg_kode AS 'Kode Barang',
             TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS 'Nama Barang',
@@ -85,22 +85,37 @@ const getExportDetails = async (filters) => {
         WHERE a.brg_ktg = "" AND a.date_create BETWEEN ? AND DATE_ADD(?, INTERVAL 1 DAY)
     `;
 
-    const whereConditions = [];
-    if (hargaNol === 'true' || hargaNol === true) {
-        whereConditions.push('b.brgd_harga = 0');
-    }
-    if (hppNol === 'true' || hppNol === true) {
-        whereConditions.push('b.brgd_hpp <= 50');
-    }
+  const whereConditions = [];
+  if (hargaNol === "true" || hargaNol === true) {
+    whereConditions.push("b.brgd_harga = 0");
+  }
+  if (hppNol === "true" || hppNol === true) {
+    whereConditions.push("b.brgd_hpp <= 50");
+  }
 
-    if (whereConditions.length > 0) {
-        baseQuery += ` AND ${whereConditions.join(' AND ')}`;
-    }
-    
-    baseQuery += ' ORDER BY a.brg_kode, b.brgd_ukuran';
+  if (whereConditions.length > 0) {
+    baseQuery += ` AND ${whereConditions.join(" AND ")}`;
+  }
 
-    const [rows] = await pool.query(baseQuery, [startDate, endDate]);
-    return rows;
+  baseQuery += " ORDER BY a.brg_kode, b.brgd_ukuran";
+
+  const [rows] = await pool.query(baseQuery, [startDate, endDate]);
+  return rows;
 };
 
-module.exports = { getList, getDetails, getExportDetails };
+const getTotalProducts = async () => {
+  // Query ini sekarang menghitung total, total aktif, dan total pasif
+  const query = `
+        SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN brg_aktif = 0 THEN 1 ELSE 0 END) as totalAktif,
+            SUM(CASE WHEN brg_aktif <> 0 THEN 1 ELSE 0 END) as totalPasif
+        FROM tbarangdc 
+        WHERE brg_ktg = ''
+    `;
+  const [rows] = await pool.query(query);
+  // Kembalikan seluruh objek hasil, bukan hanya total
+  return rows[0];
+};
+
+module.exports = { getList, getDetails, getExportDetails, getTotalProducts };
