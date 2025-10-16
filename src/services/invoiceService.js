@@ -4,7 +4,7 @@ const getCabangList = async (user) => {
     let query = '';
     const params = [];
     if (user.cabang === 'KDC') {
-        query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_dc = 1 ORDER BY gdg_kode';
+        query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang ORDER BY gdg_kode';
     } else {
         query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ? ORDER BY gdg_kode';
         params.push(user.cabang);

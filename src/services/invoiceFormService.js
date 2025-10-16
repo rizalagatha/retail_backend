@@ -160,6 +160,7 @@ const getSoDetailsForGrid = async (soNomor, user) => {
     const dpQuery = `
         SELECT 
             h.sh_nomor AS nomor, 
+            h.sh_tanggal AS tanggal,
             IF(h.sh_jenis=0, "TUNAI", IF(h.sh_jenis=1, "TRANSFER", "GIRO")) AS jenis,
             (h.sh_nominal - IFNULL((SELECT SUM(d.sd_bayar) FROM tsetor_dtl d WHERE d.sd_sh_nomor = h.sh_nomor), 0)) AS nominal
         FROM tsetor_hdr h
@@ -222,6 +223,7 @@ const loadForEdit = async (nomor, user) => {
     const dpQuery = `
         SELECT 
             h.sh_nomor AS nomor,
+            h.sh_tanggal AS tanggal,
             IF(h.sh_jenis=0, "TUNAI", IF(h.sh_jenis=1, "TRANSFER", "GIRO")) AS jenis,
             d.sd_bayar AS nominal
         FROM tsetor_dtl d
