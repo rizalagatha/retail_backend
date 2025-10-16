@@ -89,7 +89,15 @@ const proformaRoutes = require("./routes/proformaRoutes");
 const proformaFormRoutes = require("./routes/proformaFormRoutes");
 const laporanStokRoutes = require("./routes/laporanStokRoutes");
 const laporanMutasiStokRoutes = require('./routes/laporanMutasiStokRoutes');
+const laporanKartuStokRoutes = require('./routes/laporanKartuStokRoutes');
+const laporanListOtorisasiRoutes = require('./routes/laporanListOtorisasiRoutes');
+const laporanInvoiceRoutes = require('./routes/laporanInvoiceRoutes');
+const potonganRoutes = require('./routes/potonganRoutes');
+const refundRoutes = require('./routes/refundRoutes');
+//const refundFormRoutes = require('./routes/refundFormRoutes');
+//const qckeGarmenRoutes = require('./routes/qckeGarmenRoutes');
 const whatsappRoutes = require("./routes/whatsappRoutes");
+
 
 const app = express();
 const port = process.env.PORT || 8000;
