@@ -72,7 +72,6 @@ const getOffers = async (startDate, endDate, cabang) => {
     }
 };
 
-
 const getOfferDetails = async (nomor) => {
     // Query ini adalah adaptasi dari query detail di Delphi Anda
     const query = `

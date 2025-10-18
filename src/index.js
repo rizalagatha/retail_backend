@@ -7,6 +7,8 @@ const path = require("path");
 require("dotenv/config"); // Memuat variabel dari .env
 
 // Impor file rute
+const dashboardRoutes = require("./routes/dashboardRoutes");
+const healthRoutes = require("./routes/healthRoutes");
 const salesCounterRoutes = require("./routes/salesCounterRoute");
 const historyUpdateRoutes = require("./routes/historyUpdateRoutes");
 const versionRoutes = require("./routes/versionRoutes");
@@ -94,8 +96,17 @@ const laporanListOtorisasiRoutes = require('./routes/laporanListOtorisasiRoutes'
 const laporanInvoiceRoutes = require('./routes/laporanInvoiceRoutes');
 const potonganRoutes = require('./routes/potonganRoutes');
 const refundRoutes = require('./routes/refundRoutes');
-//const refundFormRoutes = require('./routes/refundFormRoutes');
-//const qckeGarmenRoutes = require('./routes/qckeGarmenRoutes');
+// const refundFormRoutes = require('./routes/refundFormRoutes');
+// const qckeGarmenRoutes = require('./routes/qckeGarmenRoutes');
+const stokOpnameSettingRoutes = require("./routes/stokOpnameSettingRoutes");  
+const hitungStokRoutes = require("./routes/hitungStokRoutes");
+const hitungStokFormRoutes = require("./routes/hitungStokFormRoutes");
+const hitungStokLokasiRoutes = require("./routes/hitungStokLokasiRoutes");
+const cekSelisihRoutes = require("./routes/cekSelisihRoutes");
+const prosesStokOpnameRoutes = require("./routes/prosesStokOpnameRoutes");
+const prosesStokOpnameFormRoutes = require("./routes/prosesStokOpnameFormRoutes");
+const paretoRoutes = require("./routes/paretoRoutes");
+const laporanPenjualanPivotRoutes = require('./routes/laporanPenjualanPivotRoutes');
 const whatsappRoutes = require("./routes/whatsappRoutes");
 
 
@@ -146,6 +157,8 @@ requiredDirs.forEach((dir) => {
 
 // Menggunakan Rute
 app.use("/api/auth", clientCertAuth, authRoutes);
+app.use("/api/dashboard", clientCertAuth, dashboardRoutes);
+app.use("/api/health", clientCertAuth, healthRoutes);
 app.use("/api/sales-counters", clientCertAuth, salesCounterRoutes);
 app.use("/api/history-updates", clientCertAuth, historyUpdateRoutes);
 app.use("/api/version", clientCertAuth,versionRoutes);
@@ -228,6 +241,22 @@ app.use("/api/proforma", clientCertAuth, proformaRoutes);
 app.use("/api/proforma-form", clientCertAuth, proformaFormRoutes);
 app.use("/api/laporan-stok", clientCertAuth,laporanStokRoutes);
 app.use('/api/laporan-mutasi-stok', clientCertAuth,laporanMutasiStokRoutes);
+app.use('/api/laporan-invoice', clientCertAuth,laporanInvoiceRoutes);
+app.use('/api/laporan-kartu-stok', clientCertAuth,laporanKartuStokRoutes);
+app.use('/api/laporan-list-otorisasi', clientCertAuth,laporanListOtorisasiRoutes);
+app.use("/api/potongan", clientCertAuth, potonganRoutes);
+app.use("/api/refund", clientCertAuth, refundRoutes);
+// app.use("/api/refund-form", clientCertAuth, refundFormRoutes);
+// app.use("/api/qcke-garmen", clientCertAuth, qckeGarmenRoutes);  
+app.use("/api/stok-opname/setting-tanggal", clientCertAuth, stokOpnameSettingRoutes);
+app.use("/api/hitung-stok", clientCertAuth, hitungStokRoutes);
+app.use("/api/hitung-stok-form", clientCertAuth, hitungStokFormRoutes);
+app.use("/api/hitung-stok-lokasi", clientCertAuth, hitungStokLokasiRoutes);
+app.use("/api/cek-selisih", clientCertAuth, cekSelisihRoutes);
+app.use("/api/proses-stok-opname", clientCertAuth, prosesStokOpnameRoutes);
+app.use("/api/proses-stok-opname-form", clientCertAuth, prosesStokOpnameFormRoutes);
+app.use("/api/pareto", clientCertAuth, paretoRoutes);
+app.use('/api/laporan-penjualan-pivot', laporanPenjualanPivotRoutes);
 app.use("/api/whatsapp", clientCertAuth, whatsappRoutes);
 
 // Menjalankan Server
