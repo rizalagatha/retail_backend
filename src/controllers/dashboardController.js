@@ -58,6 +58,36 @@ const getTopSellingProducts = async (req, res) => {
   }
 };
 
+const getSalesTargetSummary = async (req, res) => {
+  try {
+    const data = await dashboardService.getSalesTargetSummary(req.user);
+    res.json(data);
+  } catch (error) {
+    console.error("Error in getSalesTargetSummary controller:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getBranchPerformance = async (req, res) => {
+  try {
+    const data = await dashboardService.getBranchPerformance(req.user);
+    res.json(data);
+  } catch (error) {
+    console.error("Error in getBranchPerformance controller:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getStagnantStockSummary = async (req, res) => {
+  try {
+    const data = await dashboardService.getStagnantStockSummary(req.user);
+    res.json(data);
+  } catch (error) {
+    console.error("Error in getStagnantStockSummary controller:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -65,4 +95,7 @@ module.exports = {
   getRecentTransactions,
   getPendingActions,
   getTopSellingProducts,
+  getSalesTargetSummary,
+  getBranchPerformance,
+  getStagnantStockSummary,
 };

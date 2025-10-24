@@ -107,8 +107,21 @@ const prosesStokOpnameRoutes = require("./routes/prosesStokOpnameRoutes");
 const prosesStokOpnameFormRoutes = require("./routes/prosesStokOpnameFormRoutes");
 const paretoRoutes = require("./routes/paretoRoutes");
 const laporanPenjualanPivotRoutes = require('./routes/laporanPenjualanPivotRoutes');
+const salesTargetRoutes = require("./routes/salesTargetRoutes");
+const monitoringAchievementRoutes = require("./routes/monitoringAchievementRoutes");
+const laporanStokPivotRoutes = require("./routes/laporanStokPivotRoutes");
+const laporanStokStagnanRoutes = require("./routes/laporanStokStagnanRoutes");
+const laporanDeadStokRoutes = require("./routes/laporanDeadStokRoutes");
+const laporanSaldoKasirRoutes = require("./routes/laporanSaldoKasirRoutes");
+const mutasiAntarGudangRoutes = require("./routes/mutasiAntarGudangRoutes");
+const mutasiAntarGudangFormRoutes = require("./routes/mutasiAntarGudangFormRoutes");
+const pengajuanProduksiRoutes = require("./routes/pengajuanProduksiRoutes");
+const pengajuanProduksiFormRoutes = require("./routes/pengajuanProduksiFormRoutes");
+const approvePengajuanProduksiRoutes = require("./routes/approvePengajuanProduksiRoutes");
+const approvePengajuanProduksiFormRoutes = require("./routes/approvePengajuanProduksiFormRoutes");
+const barangExternalRoutes = require("./routes/barangExternalRoutes");
+const barangExternalFormRoutes = require("./routes/barangExternalFormRoutes");
 const whatsappRoutes = require("./routes/whatsappRoutes");
-
 
 const app = express();
 const port = process.env.PORT || 8000;
@@ -257,6 +270,20 @@ app.use("/api/proses-stok-opname", clientCertAuth, prosesStokOpnameRoutes);
 app.use("/api/proses-stok-opname-form", clientCertAuth, prosesStokOpnameFormRoutes);
 app.use("/api/pareto", clientCertAuth, paretoRoutes);
 app.use('/api/laporan-penjualan-pivot', laporanPenjualanPivotRoutes);
+app.use("/api/sales-vs-target", clientCertAuth, salesTargetRoutes);
+app.use("/api/monitoring-achievement", clientCertAuth, monitoringAchievementRoutes);
+app.use("/api/laporan-stok-pivot", clientCertAuth, laporanStokPivotRoutes);
+app.use("/api/laporan-stok-stagnan", clientCertAuth, laporanStokStagnanRoutes);
+app.use("/api/laporan-dead-stok", clientCertAuth, laporanDeadStokRoutes);
+app.use("/api/laporan-saldo-kasir", clientCertAuth, laporanSaldoKasirRoutes);
+app.use("/api/mutasi-antar-gudang", clientCertAuth, mutasiAntarGudangRoutes);
+app.use("/api/mutasi-antar-gudang-form", clientCertAuth, mutasiAntarGudangFormRoutes);
+app.use("/api/pengajuan-produksi", clientCertAuth, pengajuanProduksiRoutes);
+app.use("/api/pengajuan-produksi-form", clientCertAuth, pengajuanProduksiFormRoutes);
+app.use("/api/approve-pengajuan-produksi", clientCertAuth, approvePengajuanProduksiRoutes);
+app.use("/api/approve-pengajuan-form", clientCertAuth, approvePengajuanProduksiFormRoutes);
+app.use("/api/barang-external", clientCertAuth, barangExternalRoutes);
+app.use("/api/barang-external-form", clientCertAuth, barangExternalFormRoutes);
 app.use("/api/whatsapp", clientCertAuth, whatsappRoutes);
 
 // Menjalankan Server

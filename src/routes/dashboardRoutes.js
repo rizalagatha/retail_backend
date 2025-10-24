@@ -17,4 +17,11 @@ router.get('/pending-actions', verifyToken, dashboardController.getPendingAction
 
 router.get('/top-products', verifyToken, dashboardController.getTopSellingProducts);
 
+router.get('/sales-target-summary', verifyToken, dashboardController.getSalesTargetSummary);
+
+router.get('/branch-performance', verifyToken, dashboardController.getBranchPerformance);
+
+// Rute baru untuk ringkasan stok stagnan
+router.get('/stagnant-stock-summary', verifyToken, dashboardController.getStagnantStockSummary);
+
 module.exports = router;

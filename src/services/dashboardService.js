@@ -271,6 +271,159 @@ const getTopSellingProducts = async (user) => {
   return rows;
 };
 
+const getSalesTargetSummary = async (user) => {
+  const tahun = new Date().getFullYear();
+  const bulan = new Date().getMonth() + 1;
+
+  let branchFilter = "AND LEFT(h.inv_nomor, 3) = ?";
+  let params = [tahun, bulan, user.cabang];
+
+  if (user.cabang === "KDC") {
+    branchFilter = ""; // KDC melihat total semua cabang
+    params = [tahun, bulan];
+  }
+
+  const query = `
+        SELECT 
+            IFNULL(SUM(
+                (SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc
+            ), 0) AS nominal,
+            IFNULL((
+                SELECT SUM(t.target_omset) 
+                FROM kpi.ttarget_kaosan t 
+                WHERE t.tahun = ? AND t.bulan = ? ${
+                  user.cabang !== "KDC" ? "AND t.kode_gudang = ?" : ""
+                }
+            ), 0) AS target
+        FROM tinv_hdr h
+        WHERE h.inv_sts_pro = 0 AND YEAR(h.inv_tanggal) = ? AND MONTH(h.inv_tanggal) = ?
+        ${branchFilter};
+    `;
+
+  // Sesuaikan parameter untuk query target
+  if (user.cabang !== "KDC") {
+    params.unshift(user.cabang);
+  }
+  params.unshift(bulan);
+  params.unshift(tahun);
+
+  const [rows] = await pool.query(query, params);
+  return rows[0];
+};
+
+/**
+ * Mengambil 3 cabang performa terbaik dan terburuk
+ * berdasarkan pencapaian target bulan ini.
+ */
+const getBranchPerformance = async (user) => {
+  // Fitur ini hanya relevan untuk KDC
+  if (user.cabang !== "KDC") {
+    return { top: [], bottom: [] };
+  }
+
+  const tahun = new Date().getFullYear();
+  const bulan = new Date().getMonth() + 1;
+
+  // Query ini menggabungkan penjualan dan target, menghitung Ach%,
+  // lalu mengambil 3 teratas dan 3 terbawah dalam satu panggilan.
+  const query = `
+        WITH MonthlySales AS (
+            SELECT 
+                LEFT(inv_nomor, 3) AS cabang,
+                SUM((SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc) AS nominal
+            FROM tinv_hdr h
+            WHERE h.inv_sts_pro = 0 AND YEAR(h.inv_tanggal) = ? AND MONTH(h.inv_tanggal) = ?
+            GROUP BY cabang
+        ),
+        MonthlyTargets AS (
+            SELECT 
+                kode_gudang AS cabang, 
+                SUM(target_omset) AS target
+            FROM kpi.ttarget_kaosan
+            WHERE tahun = ? AND bulan = ?
+            GROUP BY cabang
+        ),
+        Performance AS (
+            SELECT 
+                g.gdg_kode AS kode_cabang,
+                g.gdg_nama AS nama_cabang,
+                IFNULL(s.nominal, 0) AS nominal,
+                IFNULL(t.target, 0) AS target,
+                IF(IFNULL(t.target, 0) > 0, (IFNULL(s.nominal, 0) / t.target) * 100, 0) AS ach
+            FROM tgudang g
+            LEFT JOIN MonthlySales s ON g.gdg_kode = s.cabang
+            LEFT JOIN MonthlyTargets t ON g.gdg_kode = t.cabang
+            WHERE g.gdg_dc = 0 AND g.gdg_kode <> 'KDC' -- Hanya toko/non-DC
+            AND IFNULL(t.target, 0) > 0 -- Hanya yang punya target
+        )
+        (SELECT *, 'top' as type FROM Performance ORDER BY ach DESC LIMIT 3)
+        UNION ALL
+        (SELECT *, 'bottom' as type FROM Performance ORDER BY ach ASC LIMIT 3);
+    `;
+
+  const params = [tahun, bulan, tahun, bulan];
+  const [rows] = await pool.query(query, params);
+
+  // Pisahkan hasilnya
+  const top = rows.filter((r) => r.type === "top");
+  const bottom = rows.filter((r) => r.type === "bottom" && r.ach < 100); // Hanya tampilkan yang di bawah target
+
+  return { top, bottom };
+};
+
+const getStagnantStockSummary = async (user) => {
+  const thirtyDaysAgo = format(subDays(new Date(), 30), "yyyy-MM-dd");
+
+  let branchFilter = "AND m.mst_cab = ?";
+  let salesBranchFilter = "AND LEFT(h.inv_nomor, 3) = ?";
+  let params = [thirtyDaysAgo];
+
+  if (user.cabang === "KDC") {
+    branchFilter = "";
+    salesBranchFilter = "";
+  } else {
+    params.push(user.cabang, user.cabang);
+  }
+
+  const query = `
+        WITH 
+        -- 1. Dapatkan semua barang yang TERJUAL dalam 30 hari terakhir
+        SoldRecently AS (
+            SELECT DISTINCT
+                d.invd_kode,
+                d.invd_ukuran
+            FROM tinv_hdr h
+            JOIN tinv_dtl d ON h.inv_nomor = d.invd_inv_nomor
+            WHERE h.inv_sts_pro = 0 AND h.inv_tanggal >= ?
+            ${salesBranchFilter}
+        ),
+        -- 2. Dapatkan stok saat ini
+        CurrentStock AS (
+            SELECT 
+                m.mst_brg_kode,
+                m.mst_ukuran,
+                SUM(m.mst_stok_in - m.mst_stok_out) AS Stok
+            FROM tmasterstok m
+            WHERE m.mst_aktif = 'Y' ${branchFilter}
+            GROUP BY m.mst_brg_kode, m.mst_ukuran
+            HAVING Stok > 0
+        )
+        -- 3. Hitung total nilai stok yang TIDAK ADA di daftar 'SoldRecently'
+        SELECT 
+            SUM(cs.Stok * IFNULL(b.brgd_hpp, 0)) AS totalStagnantValue
+        FROM CurrentStock cs
+        JOIN tbarangdc a ON cs.mst_brg_kode = a.brg_kode
+        LEFT JOIN tbarangdc_dtl b ON cs.mst_brg_kode = b.brgd_kode AND cs.mst_ukuran = b.brgd_ukuran
+        LEFT JOIN SoldRecently sr ON cs.mst_brg_kode = sr.invd_kode AND cs.mst_ukuran = sr.invd_ukuran
+        WHERE 
+            a.brg_logstok = 'Y'
+            AND sr.invd_kode IS NULL; -- Ini adalah kuncinya: barang yang tidak terjual
+    `;
+
+  const [rows] = await pool.query(query, params);
+  return rows[0]; // Akan mengembalikan { totalStagnantValue: ... }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -278,4 +431,7 @@ module.exports = {
   getRecentTransactions,
   getPendingActions,
   getTopSellingProducts,
+  getSalesTargetSummary,
+  getBranchPerformance,
+  getStagnantStockSummary,
 };
