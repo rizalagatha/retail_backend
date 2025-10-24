@@ -97,7 +97,8 @@ const laporanInvoiceRoutes = require('./routes/laporanInvoiceRoutes');
 const potonganRoutes = require('./routes/potonganRoutes');
 const refundRoutes = require('./routes/refundRoutes');
 // const refundFormRoutes = require('./routes/refundFormRoutes');
-// const qckeGarmenRoutes = require('./routes/qckeGarmenRoutes');
+const qckeGarmenRoutes = require('./routes/qckeGarmenRoutes');
+const qckeGarmenFormRoutes = require('./routes/qckeGarmenFormRoutes');
 const stokOpnameSettingRoutes = require("./routes/stokOpnameSettingRoutes");  
 const hitungStokRoutes = require("./routes/hitungStokRoutes");
 const hitungStokFormRoutes = require("./routes/hitungStokFormRoutes");
@@ -121,6 +122,12 @@ const approvePengajuanProduksiRoutes = require("./routes/approvePengajuanProduks
 const approvePengajuanProduksiFormRoutes = require("./routes/approvePengajuanProduksiFormRoutes");
 const barangExternalRoutes = require("./routes/barangExternalRoutes");
 const barangExternalFormRoutes = require("./routes/barangExternalFormRoutes");
+const poKaosanRoutes = require("./routes/poKaosanRoutes");
+const poKaosanFormRoutes = require("./routes/poKaosanFormRoutes");
+const bpbKaosanRoutes = require("./routes/bpbKaosanRoutes");
+const bpbKaosanFormRoutes = require("./routes/bpbKaosanFormRoutes");
+const laporanHppKosongRoutes = require("./routes/laporanHppKosongRoutes");
+const klerekRoutes = require ("./routes/klerekRoutes");
 const whatsappRoutes = require("./routes/whatsappRoutes");
 
 const app = express();
@@ -260,7 +267,8 @@ app.use('/api/laporan-list-otorisasi', clientCertAuth,laporanListOtorisasiRoutes
 app.use("/api/potongan", clientCertAuth, potonganRoutes);
 app.use("/api/refund", clientCertAuth, refundRoutes);
 // app.use("/api/refund-form", clientCertAuth, refundFormRoutes);
-// app.use("/api/qcke-garmen", clientCertAuth, qckeGarmenRoutes);  
+app.use("/api/qc-ke-garmen", clientCertAuth, qckeGarmenRoutes);  
+app.use("/api/qc-ke-garmen-form", clientCertAuth, qckeGarmenFormRoutes);
 app.use("/api/stok-opname/setting-tanggal", clientCertAuth, stokOpnameSettingRoutes);
 app.use("/api/hitung-stok", clientCertAuth, hitungStokRoutes);
 app.use("/api/hitung-stok-form", clientCertAuth, hitungStokFormRoutes);
@@ -284,6 +292,12 @@ app.use("/api/approve-pengajuan-produksi", clientCertAuth, approvePengajuanProdu
 app.use("/api/approve-pengajuan-form", clientCertAuth, approvePengajuanProduksiFormRoutes);
 app.use("/api/barang-external", clientCertAuth, barangExternalRoutes);
 app.use("/api/barang-external-form", clientCertAuth, barangExternalFormRoutes);
+app.use("/api/po-kaosan", clientCertAuth, poKaosanRoutes);
+app.use("/api/po-kaosan-form", clientCertAuth, poKaosanFormRoutes);
+app.use("/api/bpb-kaosan", clientCertAuth, bpbKaosanRoutes);
+app.use("/api/bpb-kaosan-form", clientCertAuth, bpbKaosanFormRoutes);
+app.use("/api/laporan-hpp-kosong", clientCertAuth, laporanHppKosongRoutes);
+app.use("/api/klerek", clientCertAuth, klerekRoutes);
 app.use("/api/whatsapp", clientCertAuth, whatsappRoutes);
 
 // Menjalankan Server

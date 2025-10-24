@@ -1,4 +1,4 @@
-const service = require("../services/qckeGarmenService");
+const service = require("../services/poKaosanService");
 
 const getList = async (req, res) => {
   try {
@@ -16,11 +16,17 @@ const getDetails = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-const deleteQC = async (req, res) => {
+const deletePO = async (req, res) => {
   try {
-    const { nomor } = req.params;
-    const { tanggal } = req.body;
-    const result = await service.deleteQC(nomor, tanggal);
+    const result = await service.deletePO(req.params.nomor, req.user);
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+const toggleClosePO = async (req, res) => {
+  try {
+    const result = await service.toggleClosePO(req.params.nomor, req.user);
     res.json(result);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -38,6 +44,7 @@ const exportDetails = async (req, res) => {
 module.exports = {
   getList,
   getDetails,
-  deleteQC,
+  deletePO,
+  toggleClosePO,
   exportDetails,
 };

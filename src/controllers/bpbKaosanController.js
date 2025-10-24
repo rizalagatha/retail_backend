@@ -1,4 +1,4 @@
-const service = require("../services/qckeGarmenService");
+const service = require("../services/bpbKaosanService");
 
 const getList = async (req, res) => {
   try {
@@ -16,11 +16,16 @@ const getDetails = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-const deleteQC = async (req, res) => {
+const deleteBPB = async (req, res) => {
   try {
     const { nomor } = req.params;
-    const { tanggal } = req.body;
-    const result = await service.deleteQC(nomor, tanggal);
+    const { nomorPO, cabang } = req.body; // Ambil nomorPO dari body
+    if (!nomorPO || !cabang) {
+      return res
+        .status(400)
+        .json({ message: "Informasi PO dan Cabang diperlukan." });
+    }
+    const result = await service.deleteBPB(nomor, nomorPO, cabang, req.user);
     res.json(result);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -38,6 +43,6 @@ const exportDetails = async (req, res) => {
 module.exports = {
   getList,
   getDetails,
-  deleteQC,
+  deleteBPB,
   exportDetails,
 };
