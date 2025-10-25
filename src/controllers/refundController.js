@@ -1,50 +1,52 @@
-// File: src/controllers/refundController.js
-const refundService = require('../services/refundService');
+const service = require("../services/refundService");
 
-// Controller untuk mendapatkan data master refund
-exports.getMaster = async (req, res) => {
+const getList = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
-    const data = await refundService.getMaster(startDate, endDate);
+    const data = await service.getList(req.query, req.user);
     res.json(data);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Gagal mengambil data master refund.' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
 };
-
-// Controller untuk mendapatkan data detail refund
-exports.getDetails = async (req, res) => {
+const getDetails = async (req, res) => {
+  try {
+    const data = await service.getDetails(req.params.nomor, req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+const deleteRefund = async (req, res) => {
   try {
     const { nomor } = req.params;
-    const data = await refundService.getDetails(nomor);
-    res.json(data);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Gagal mengambil data detail refund.' });
+    const { nomorPO, cabang } = req.body;
+    const result = await service.deleteRefund(nomor, req.user);
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
   }
 };
-
-// Controller untuk menyimpan data refund
-exports.saveRefund = async (req, res) => {
+const exportDetails = async (req, res) => {
   try {
-    const { data, user, isEdit, userRole } = req.body;
-    const result = await refundService.saveRefund(data, user, isEdit, userRole);
-    res.status(200).json({ message: 'Data refund berhasil disimpan.', nomor: result.nomor });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Gagal menyimpan data refund.' });
+    const data = await service.getExportDetails(req.query, req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+const getCabangOptions = async (req, res) => {
+  try {
+    const data = await service.getCabangOptions(req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
 };
 
-// Controller untuk mendapatkan data form baru
-exports.getNewData = async (req, res) => {
-    try {
-        const cabang = 'K01'; // Asumsi hardcode, sesuaikan dengan logic auth
-        const data = await refundService.getNewRefundForm(cabang);
-        res.json(data);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ message: 'Gagal mendapatkan data form baru.' });
-    }
+module.exports = {
+  getList,
+  getDetails,
+  deleteRefund,
+  exportDetails,
+  getCabangOptions,
 };

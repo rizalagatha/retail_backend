@@ -1,235 +1,279 @@
-const pool = require('../config/database');
-
-
-
-const { format, addDays, parseISO } = require('date-fns');
-const { get } = require('../routes/potonganFormRoute');
+const pool = require("../config/database");
+const { format, addDays } = require("date-fns");
 
 /**
- * Menerjemahkan TfrmPotongan.getmaxnomor
- * @param {string} cabang Kode cabang
- * @param {Date} tanggal Tanggal transaksi
- * @returns {Promise<string>} Nomor potongan baru
+ * Helper: Mengambil nomor baru (getmaxnomor)
+ *
  */
-async function getNextPotonganNumber(cabang, tanggal) {
-    const datePart = moment(tanggal).format('YYMM');
-    const prefix = `${cabang}.POT.${datePart}`;
-    const sql = `SELECT IFNULL(MAX(RIGHT(pt_nomor, 4)), 0) AS max_num FROM tpotongan_hdr WHERE LEFT(pt_nomor, 12)=${quot(prefix)}`;
-
-    const [rows] = await db.query(sql);
-    const maxNum = parseInt(rows[0]?.max_num || 0);
-    const newSuffix = String(maxNum + 1).padStart(4, '0');
-
-    return `${prefix}.${newSuffix}`;
-}
+const generateNewNomor = async (connection, gudangKode, tanggal) => {
+  const ayymm = format(new Date(tanggal), "yyMM");
+  const prefix = `${gudangKode}.POT.${ayymm}.`;
+  const query = `SELECT IFNULL(MAX(RIGHT(pt_nomor, 4)), 0) as max_nomor FROM tpotongan_hdr WHERE LEFT(pt_nomor, 12) = ?`;
+  const [rows] = await connection.query(query, [prefix]);
+  const nextNum = parseInt(rows[0].max_nomor, 10) + 1;
+  return `${prefix}${String(nextNum).padStart(4, "0")}`;
+};
 
 /**
- * Menerjemahkan TfrmPotongan.simpandata
+ * Mengambil data awal untuk form (dari FormShow)
+ *
  */
+const getInitialData = async (user) => {
+  const [gudangRows] = await pool.query(
+    "SELECT gdg_kode, gdg_nama FROM tgudang WHERE gdg_kode = ?",
+    [user.cabang]
+  );
+  return {
+    gudang: {
+      kode: gudangRows[0]?.gdg_kode || user.cabang,
+      nama: gudangRows[0]?.gdg_nama || "GUDANG TIDAK DIKENALI",
+    },
+    akun: {
+      kode: "D-111198",
+      nama: "POTONGAN PENJUALAN KENCANA PRINT",
+      rekening: "003",
+    },
+  };
+};
 
-// ...
-const getCustomerDetails = async (kode, gudang) => {
-    const query = `
+/**
+ * Mengambil data Customer (F1 di edtCus)
+ *
+ */
+const getCustomerLookup = async (user) => {
+  const query = `
         SELECT 
-            c.cus_kode, c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp, c.cus_top, c.cus_franchise,
-            IFNULL(CONCAT(x.clh_level, " - " ,x.level_nama), "") AS xlevel,
-            lvl.level_diskon, lvl.level_diskon2, lvl.level_nominal
-        FROM tcustomer c
-        // ... JOIN ke tcustomer_level_history dan tcustomer_level
-        WHERE c.cus_aktif = 0 AND c.cus_nama NOT LIKE "RETAIL%" AND c.cus_kode = ?;
-    `;
-    const [rows] = await pool.query(query, [kode, kode]);
-    
-    // ... Logika validasi bisnis (Level, Franchise KPR vs Non-KPR)
-
-    return { // Mengembalikan objek data customer terstruktur
-        kode: customer.cus_kode,
-        nama: customer.cus_nama,
-        alamat: customer.cus_alamat,
-        kota: customer.cus_kota,
-        telp: customer.cus_telp,
-        top: customer.cus_top,
-        level: customer.xlevel,
-        discountRule: { /* ... */ }
-    };
-};
-
-// ...
-const searchCustomers = async (term, gudang, page, itemsPerPage) => {
-    // ... logika filter, pagination, dan query SQL
-    const baseQuery = `
+            c.cus_kode AS kode,
+            IFNULL((
+                SELECT l.level_nama
+                FROM tcustomer_level_history v
+                LEFT JOIN tcustomer_level l ON l.level_kode = v.clh_level
+                WHERE v.clh_cus_kode = c.cus_kode
+                ORDER BY v.clh_tanggal DESC LIMIT 1
+            ), "") AS \`level\`,
+            c.cus_telp AS telp,
+            c.cus_nama AS nama,
+            c.cus_alamat AS alamat,
+            c.cus_kota AS kota
         FROM tcustomer c 
-        WHERE c.cus_aktif = 0 AND c.cus_nama NOT LIKE "RETAIL%"
-        ${franchiseFilter}
-        ${searchFilter}
+        WHERE c.cus_aktif = 0
+        ORDER BY c.cus_nama
     `;
-
-    // ... Query COUNT dan Query SELECT data (termasuk join ke tcustomer_level_history)
-    // ...
-    return { items, total };
+  const [rows] = await pool.query(query);
+  return rows;
 };
-// ...
-
-async function savePotongan(data, isEdit) {
-    let ptNomor = data.pt_nomor;
-    const {
-        pt_tanggal, pt_cus_kode, pt_akun, pt_nominal,
-        details, user_id = GLOBAL.KDUSER, cabang = GLOBAL.CABKAOS
-    } = data;
-    
-    // Konversi nominal (menghilangkan koma)
-    const nominalValue = parseFloat(String(pt_nominal).replace(/,/g, '')) || 0;
-
-    await db.beginTransaction();
-    try {
-        if (!isEdit) {
-            // INSERT (Baru)
-            ptNomor = await getNextPotonganNumber(cabang, pt_tanggal);
-            const insertHeaderSql = `
-                INSERT INTO tpotongan_hdr
-                (pt_nomor, pt_cus_kode, pt_tanggal, pt_akun, pt_nominal, user_cab, user_create, date_create)
-                VALUES (
-                ${quot(ptNomor)}, ${quot(pt_cus_kode)}, ${quotd(pt_tanggal)}, ${quot(pt_akun)},
-                ${nominalValue}, ${quot(cabang)}, ${quot(user_id)}, NOW());
-            `;
-            await db.query(insertHeaderSql);
-        } else {
-            // UPDATE (Ubah)
-            const updateHeaderSql = `
-                UPDATE tpotongan_hdr SET
-                pt_tanggal = ${quotd(pt_tanggal)},
-                pt_nominal = ${nominalValue},
-                pt_akun = ${quot(pt_akun)},
-                user_modified = ${quot(user_id)},
-                date_modified = NOW()
-                WHERE pt_nomor = ${quot(ptNomor)};
-            `;
-            await db.query(updateHeaderSql);
-
-            // Hapus detail lama sebelum insert baru
-            const deleteDtlSql = `DELETE FROM tpotongan_dtl WHERE ptd_nomor = ${quot(ptNomor)};`;
-            await db.query(deleteDtlSql);
-        }
-        
-        // 2. Insert Detail dan Update Piutang
-        for (const detail of details) {
-            if (detail.invoice && parseFloat(detail.bayar) > 0) {
-                // Generate angsuran jika belum ada (meniru logika Delphi)
-                const cAngsur = detail.angsur || `${cabang}POT${moment().format('YYYYMMDDHHmmss')}${uuidv4().substring(0, 3)}`;
-
-                // Insert into tpotongan_dtl
-                const detailSql = `
-                    INSERT INTO tpotongan_dtl 
-                    (ptd_nomor, ptd_tanggal, ptd_inv, ptd_bayar, ptd_angsur)
-                    VALUES (
-                    ${quot(ptNomor)}, ${quotd(detail.tglbayar || pt_tanggal)}, ${quot(detail.invoice)},
-                    ${parseFloat(detail.bayar)}, ${quot(cAngsur)});
-                `;
-                await db.query(detailSql);
-
-                // Insert into tpiutang_dtl (Kredit/Pembayaran Piutang)
-                const piutangDtlSql = `
-                    INSERT INTO tpiutang_dtl 
-                    (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur)
-                    VALUES (
-                    ${quot(pt_cus_kode + detail.invoice)}, ${quotd(detail.tglbayar || pt_tanggal)}, 'Potongan',
-                    ${parseFloat(detail.bayar)}, ${quot(ptNomor)}, ${quot(cAngsur)});
-                `;
-                await db.query(piutangDtlSql);
-            }
-        }
-
-        // 3. Logika Sinkronisasi (Menggantikan ShellExecute)
-        const syncBranches = ['K02', 'K03', 'K04', 'K05', 'K06', 'K07', 'K08'];
-        if (syncBranches.includes(cabang)) {
-            // Di sini, harus memanggil layanan sinkronisasi Asinkron (misalnya, melalui RabbitMQ atau proses latar belakang)
-            console.log(`[SYNC] Transaksi ${ptNomor} memerlukan sinkronisasi ke cabang.`);
-        }
-
-        await db.commit();
-        return { success: true, pt_nomor: ptNomor };
-
-    } catch (error) {
-        await db.rollback();
-        console.error('Potongan Save Error:', error);
-        throw new Error('Gagal Simpan Transaksi Potongan. Cek log server.');
-    }
-}
 
 /**
- * Menerjemahkan TfrmPotongan.loaddataall
- * @param {string} ptNomor Nomor Potongan yang dicari
- * @returns {Promise<Object|null>} Data Potongan lengkap
+ * Mengambil data Piutang/Invoice (F1 di grid)
+ * Menerjemahkan BantuanInvoive
  */
-async function loadPotongan(ptNomor) {
-    const sql = `
-        SELECT h.*, g.gdg_nama, c.cus_kode, c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp, r.rek_nama, r.rek_rekening,
-        IFNULL(d.ptd_inv,"") ptd_inv, d.ptd_tanggal, IFNULL(d.ptd_bayar,0) ptd_bayar, IFNULL(d.ptd_angsur,"") ptd_angsur,
-        p.ph_tanggal, IFNULL(p.ph_top,0) ph_top, IFNULL(p.ph_nominal,0) ph_nominal,
-        IFNULL(q.mBayar,0) mBayar, IFNULL((p.ph_nominal - IFNULL(q.mBayar,0)),0) sisa
+const getInvoiceLookup = async (customerKode, gudangKode) => {
+  const query = `
+        SELECT x.Invoice, x.TglInvoice, x.Top, x.JatuhTempo, x.Nominal, x.Bayar, (x.Nominal - x.Bayar) AS Sisa
+        FROM (
+            SELECT 
+                h.ph_inv_nomor AS Invoice,
+                h.ph_tanggal AS TglInvoice,
+                h.ph_top AS Top, 
+                DATE_ADD(h.ph_tanggal, INTERVAL h.ph_top DAY) AS JatuhTempo,
+                h.ph_nominal AS Nominal,
+                IFNULL((SELECT SUM(d.pd_kredit) FROM tpiutang_dtl d WHERE d.pd_ph_nomor = h.ph_nomor), 0) AS Bayar
+            FROM tpiutang_hdr h
+            WHERE h.ph_cus_kode = ? AND LEFT(h.ph_inv_nomor, 3) = ?
+        ) X
+        WHERE (X.Nominal - X.Bayar) <> 0
+        ORDER BY X.TglInvoice
+    `;
+  const [rows] = await pool.query(query, [customerKode, gudangKode]);
+  return rows.map((row) => ({
+    invoice: row.Invoice,
+    tanggalInvoice: row.TglInvoice,
+    top: row.Top,
+    jatuhTempo: row.JatuhTempo,
+    nominalInvoice: row.Nominal,
+    terbayarPiutang: row.Bayar,
+    sisaPiutang: row.Sisa,
+  }));
+};
+
+/**
+ * Mengambil data Potongan untuk mode Ubah (loaddataall)
+ *
+ */
+const getDataForEdit = async (nomor) => {
+  const query = `
+        SELECT 
+            h.pt_nomor, h.pt_tanggal, h.pt_nominal, h.pt_akun,
+            g.gdg_kode, g.gdg_nama,
+            c.cus_kode, c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
+            r.rek_nama, r.rek_rekening,
+            d.ptd_inv, d.ptd_tanggal AS tglBayar, d.ptd_bayar AS bayar, d.ptd_angsur,
+            p.ph_tanggal, IFNULL(p.ph_top, 0) AS ph_top, IFNULL(p.ph_nominal, 0) AS ph_nominal,
+            IFNULL(q.mBayar, 0) AS mBayar,
+            IFNULL((p.ph_nominal - q.mBayar), 0) AS sisa
         FROM tpotongan_hdr h
         LEFT JOIN tpotongan_dtl d ON d.ptd_nomor = h.pt_nomor
         LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.pt_nomor, 3)
         LEFT JOIN tpiutang_hdr p ON p.ph_inv_nomor = d.ptd_inv
-        LEFT JOIN (SELECT pd_ph_nomor, SUM(pd_kredit) mBayar FROM tpiutang_dtl GROUP BY pd_ph_nomor) q
-            ON q.pd_ph_nomor = p.ph_nomor
+        LEFT JOIN (
+            SELECT pd_ph_nomor, SUM(pd_kredit) mBayar FROM tpiutang_dtl GROUP BY pd_ph_nomor
+        ) q ON q.pd_ph_nomor = p.ph_nomor
         LEFT JOIN tcustomer c ON c.cus_kode = h.pt_cus_kode
         LEFT JOIN finance.trekening r ON r.rek_kode = h.pt_akun
-        WHERE h.pt_nomor = ${quot(ptNomor)}
-        ORDER BY d.ptd_angsur;
+        WHERE h.pt_nomor = ?
+        ORDER BY d.ptd_angsur
     `;
+  const [rows] = await pool.query(query, [nomor]);
+  if (rows.length === 0) throw new Error("Nomor tersebut tidak ditemukan.");
 
-    const [rows] = await db.query(sql);
+  const header = {
+    nomor: rows[0].pt_nomor,
+    tanggal: format(new Date(rows[0].pt_tanggal), "yyyy-MM-dd"),
+    gudang: { kode: rows[0].gdg_kode, nama: rows[0].gdg_nama },
+    customer: {
+      kode: rows[0].cus_kode,
+      nama: rows[0].cus_nama,
+      alamat: rows[0].cus_alamat,
+      kota: rows[0].cus_kota,
+      telp: rows[0].cus_telp,
+      level: "", // Anda bisa tambahkan query level jika perlu
+    },
+    nominalPotongan: rows[0].pt_nominal,
+    akun: {
+      kode: rows[0].pt_akun,
+      nama: rows[0].rek_nama,
+      rekening: rows[0].rek_rekening,
+    },
+    sisaPotongan: 0, // Akan dihitung di frontend
+    totalTerbayar: 0, // Akan dihitung di frontend
+  };
 
-    if (rows.length === 0) {
-        return null;
+  const details = rows
+    .filter((row) => row.ptd_inv)
+    .map((row) => ({
+      invoice: row.ptd_inv,
+      tanggalInvoice: row.ph_tanggal,
+      top: row.ph_top,
+      jatuhTempo: addDays(new Date(row.ph_tanggal), row.ph_top),
+      nominalInvoice: row.ph_nominal,
+      terbayarPiutang: row.mBayar,
+      sisaPiutang: row.sisa,
+      bayar: row.bayar,
+      tglBayar: row.tglBayar,
+      angsuranId: row.ptd_angsur,
+    }));
+
+  return { header, details };
+};
+
+/**
+ * Menyimpan data Potongan (simpandata)
+ *
+ */
+const saveData = async (data, user) => {
+  const { header, details, isEditMode } = data;
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    let ptNomor = header.nomor;
+    if (!isEditMode) {
+      ptNomor = await generateNewNomor(
+        connection,
+        header.gudang.kode,
+        header.tanggal
+      );
     }
 
-    // Memproses hasil query menjadi Header dan Details
-    const headerRow = rows[0];
-    const header = {
-        pt_nomor: headerRow.pt_nomor,
-        pt_tanggal: headerRow.pt_tanggal,
-        pt_nominal: headerRow.pt_nominal,
-        pt_akun: headerRow.pt_akun,
-        gdg_kode: headerRow.pt_nomor.substring(0, 3),
-        gdg_nama: headerRow.gdg_nama,
-        cus_kode: headerRow.pt_cus_kode,
-        cus_nama: headerRow.cus_nama,
-        cus_alamat: headerRow.cus_alamat,
-        cus_kota: headerRow.cus_kota,
-        cus_telp: headerRow.cus_telp,
-        rek_nama: headerRow.rek_nama,
-        rek_rekening: headerRow.rek_rekening,
-        details: []
+    if (isEditMode) {
+      await connection.query(
+        `UPDATE tpotongan_hdr SET 
+                    pt_tanggal = ?, pt_nominal = ?, pt_akun = ?, 
+                    user_modified = ?, date_modified = NOW() 
+                 WHERE pt_nomor = ?`,
+        [
+          header.tanggal,
+          header.nominalPotongan,
+          header.akun.kode,
+          user.kode,
+          ptNomor,
+        ]
+      );
+    } else {
+      await connection.query(
+        `INSERT INTO tpotongan_hdr 
+                    (pt_nomor, pt_cus_kode, pt_tanggal, pt_akun, pt_nominal, user_cab, user_create, date_create) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [
+          ptNomor,
+          header.customer.kode,
+          header.tanggal,
+          header.akun.kode,
+          header.nominalPotongan,
+          user.cabang,
+          user.kode,
+        ]
+      );
+    }
+
+    // Hapus detail lama
+    await connection.query("DELETE FROM tpotongan_dtl WHERE ptd_nomor = ?", [
+      ptNomor,
+    ]);
+
+    // Hapus dari tpiutang_dtl (ROLLBACK)
+    await connection.query("DELETE FROM tpiutang_dtl WHERE pd_ket = ?", [
+      ptNomor,
+    ]);
+
+    // Insert detail baru
+    for (const item of details) {
+      if (item.invoice && item.bayar > 0) {
+        // Insert ke tpotongan_dtl
+        await connection.query(
+          "INSERT INTO tpotongan_dtl (ptd_nomor, ptd_tanggal, ptd_inv, ptd_bayar, ptd_angsur) VALUES (?, ?, ?, ?, ?)",
+          [ptNomor, item.tglBayar, item.invoice, item.bayar, item.angsuranId]
+        );
+
+        // Insert ke tpiutang_dtl
+        await connection.query(
+          'INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur) VALUES (?, ?, "Potongan", ?, ?, ?)',
+          [
+            `${header.customer.kode}${item.invoice}`,
+            item.tglBayar,
+            item.bayar,
+            ptNomor,
+            item.angsuranId,
+          ]
+        );
+      }
+    }
+
+    await connection.commit();
+
+    // TODO: Jalankan Syncho.exe jika diperlukan
+    // const ccab = header.gudang.kode;
+    // if (['K02','K03','K04','K05','K06','K07','K08'].includes(ccab)) {
+    //     // Panggil logika sinkronisasi di sini
+    // }
+
+    return {
+      message: `Transaksi Potongan ${ptNomor} berhasil disimpan.`,
+      nomor: ptNomor,
     };
-
-    // Agregasi baris detail (menggantikan perulangan CDS)
-    for (const row of rows) {
-        if (row.ptd_inv) {
-            header.details.push({
-                invoice: row.ptd_inv,
-                tglbayar: row.ptd_tanggal,
-                tanggal: row.ph_tanggal,
-                top: row.ph_top,
-                jatuhtempo: moment(row.ph_tanggal).add(row.ph_top, 'days').toDate(),
-                nominal: row.ph_nominal,
-                terbayar: row.mBayar,
-                sisa: row.sisa,
-                bayar: row.ptd_bayar,
-                angsur: row.ptd_angsur,
-                lunasi: (row.sisa === row.ptd_bayar) // Logika UI/Client, ditambahkan untuk kelengkapan
-            });
-        }
-    }
-
-    return header;
-}
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
 
 module.exports = {
-    savePotongan,
-    loadPotongan,
-    getNextPotonganNumber,
-    searchCustomers,
-    getCustomerDetails
+  getInitialData,
+  getCustomerLookup,
+  getInvoiceLookup,
+  getDataForEdit,
+  saveData,
 };
