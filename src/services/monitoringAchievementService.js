@@ -126,7 +126,6 @@ const getDailyData = async (filters) => {
         FROM DateRange dr
         LEFT JOIN DailySales ds ON dr.tanggal = ds.tanggal
         LEFT JOIN DailyTargets dt ON dr.tanggal = dt.tanggal
-        HAVING omset > 0 OR target > 0
         ORDER BY dr.tanggal;
     `;
 
@@ -183,6 +182,7 @@ const getDailyData = async (filters) => {
         ...row,
         nama_cabang: cabang === "ALL" ? "ALL TOKO" : row.nama_cabang,
         total_omset: cumulativeSales,
+        total_target: cumulativeTarget,
         ach:
           cumulativeTarget > 0 ? (cumulativeSales / cumulativeTarget) * 100 : 0,
       });
@@ -203,8 +203,8 @@ const getWeeklyData = async (filters) => {
                 t.tahun, 
                 t.bulan, 
                 t.minggu, 
-                t.kode_gudang AS kode_cabang,  -- <-- PERBAIKAN: Alias menjadi kode_cabang
-                g.gdg_nama AS nama_cabang,      -- <-- PERBAIKAN: Alias menjadi nama_cabang
+                t.kode_gudang AS kode_cabang,
+                g.gdg_nama AS nama_cabang,
                 IFNULL(s.nominal, 0) AS nominal,
                 IFNULL(t.target, 0) AS target
             FROM (
@@ -219,6 +219,9 @@ const getWeeklyData = async (filters) => {
                 SELECT tanggal, cabang, SUM(nominal) AS nominal
                 FROM v_sales_harian
                 WHERE YEAR(tanggal) = ? AND MONTH(tanggal) = ?
+                ${
+                  cabang !== "ALL" ? "AND cabang = ?" : ""
+                } -- <-- PERBAIKAN: Tambah filter cabang
                 GROUP BY 1,2
             ) s ON s.cabang = t.kode_gudang AND s.tanggal BETWEEN t.start_date AND t.end_date
         )
@@ -241,14 +244,16 @@ const getWeeklyData = async (filters) => {
         GROUP BY kode_cabang, nama_cabang
         HAVING total_nominal > 0 OR total_target > 0
         ORDER BY kode_cabang;
-    `;
+    `; // --- PERBAIKAN: Urutan params harus benar ---
 
   const params = [tahun, bulan];
   if (cabang !== "ALL") {
-    params.push(cabang);
+    params.push(cabang); // Untuk kpi.ttarget_kaosan
   }
   params.push(tahun, bulan);
-
+  if (cabang !== "ALL") {
+    params.push(cabang); // Untuk v_sales_harian
+  } // --------------------------------------------
   const [rows] = await pool.query(query, params);
   return rows;
 };
@@ -256,15 +261,16 @@ const getWeeklyData = async (filters) => {
 const getMonthlyData = async (filters) => {
   const { tahun, bulan, cabang } = filters;
 
-  // Query ini dirombak total untuk memastikan hanya data bulanan yang diambil dan digabung
   const query = `
-        -- Gunakan CTEs untuk merapikan query
         WITH MonthlySales AS (
             SELECT 
                 cabang, 
                 SUM(nominal) AS nominal 
             FROM v_sales_harian
             WHERE YEAR(tanggal) = ? AND MONTH(tanggal) = ?
+            ${
+              cabang !== "ALL" ? "AND cabang = ?" : ""
+            } -- <-- PERBAIKAN: Tambah filter cabang
             GROUP BY cabang
         ),
         MonthlyTargets AS (
@@ -273,15 +279,16 @@ const getMonthlyData = async (filters) => {
                 SUM(target_omset) AS target
             FROM kpi.ttarget_kaosan
             WHERE tahun = ? AND bulan = ?
+            ${
+              cabang !== "ALL" ? "AND kode_gudang = ?" : ""
+            } -- <-- PERBAIKAN: Tambah filter cabang
             GROUP BY cabang
         ),
-        -- Ambil semua cabang yang memiliki data penjualan ATAU target di bulan ini
         RelevantBranches AS (
             SELECT cabang FROM MonthlySales
             UNION
             SELECT cabang FROM MonthlyTargets
         )
-        -- Query utama untuk menggabungkan semuanya
         SELECT
             ? AS tahun,
             ? AS bulan,
@@ -295,24 +302,25 @@ const getMonthlyData = async (filters) => {
         LEFT JOIN MonthlyTargets mt ON rb.cabang = mt.cabang
         ${cabang !== "ALL" ? "WHERE rb.cabang = ?" : ""}
         ORDER BY rb.cabang;
-    `;
+    `; // --- PERBAIKAN: Urutan params harus benar ---
 
-  // Siapkan parameter dengan benar
   const params = [
     tahun,
     bulan, // Untuk MonthlySales
-    tahun,
-    bulan, // Untuk MonthlyTargets
-    tahun,
-    bulan, // Untuk SELECT utama
   ];
   if (cabang !== "ALL") {
-    params.push(cabang);
+    params.push(cabang); // Untuk MonthlySales
   }
-
+  params.push(tahun, bulan); // Untuk MonthlyTargets
+  if (cabang !== "ALL") {
+    params.push(cabang); // Untuk MonthlyTargets
+  }
+  params.push(tahun, bulan); // Untuk SELECT utama
+  if (cabang !== "ALL") {
+    params.push(cabang); // Untuk WHERE rb.cabang
+  } // --------------------------------------------
   const [rows] = await pool.query(query, params);
 
-  // Hitung persentase di sini agar konsisten
   return rows.map((row) => ({
     ...row,
     ach: row.target > 0 ? (row.nominal / row.target) * 100 : 0,

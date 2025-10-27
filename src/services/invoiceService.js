@@ -1,26 +1,37 @@
-const pool = require('../config/database');
+const pool = require("../config/database");
 
 const getCabangList = async (user) => {
-    let query = '';
-    const params = [];
-    if (user.cabang === 'KDC') {
-        query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang ORDER BY gdg_kode';
-    } else {
-        query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ? ORDER BY gdg_kode';
-        params.push(user.cabang);
-    }
-    const [rows] = await pool.query(query, params);
-    return rows;
+  let query = "";
+  const params = [];
+  if (user.cabang === "KDC") {
+    query =
+      "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang ORDER BY gdg_kode";
+  } else {
+    query =
+      "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ? ORDER BY gdg_kode";
+    params.push(user.cabang);
+  }
+  const [rows] = await pool.query(query, params);
+  return rows;
 };
 
 const getList = async (filters) => {
-    const { startDate, endDate, cabang } = filters;
+  const { startDate, endDate, cabang, status } = filters;
+  const params = [startDate, endDate, cabang];
 
-    // Ini adalah terjemahan langsung dari query kompleks di Delphi
-    const query = `
+  let statusFilter = "";
+
+  if (status === "belum_lunas") {
+    // 'x' adalah alias query luar Anda.
+    // Logika ini (SisaPiutang > 0) harus cocok dengan query Anda.
+    statusFilter = " AND x.SisaPiutang > 0";
+  }
+
+  // Ini adalah terjemahan langsung dari query kompleks di Delphi
+  const query = `
         SELECT 
             x.Nomor, x.Tanggal, x.Posting,
-            ${cabang === 'KPR' ? 'x.NomorSJ, x.TglSJ,' : 'x.NomorSO, x.TglSO,'}
+            ${cabang === "KPR" ? "x.NomorSJ, x.TglSJ," : "x.NomorSO, x.TglSO,"}
             x.Top, x.Tempo,
             (SELECT ii.pd_tanggal FROM tpiutang_hdr jj
              LEFT JOIN tpiutang_dtl ii ON ii.pd_ph_nomor=jj.ph_nomor
@@ -72,14 +83,15 @@ const getList = async (filters) => {
               AND h.inv_tanggal BETWEEN ? AND ?
               AND LEFT(h.inv_nomor, 3) = ?
         ) x 
+        WHERE 1=1 ${statusFilter}
         ORDER BY x.Nomor ASC;
     `;
-    const [rows] = await pool.query(query, [startDate, endDate, cabang]);
-    return rows;
+  const [rows] = await pool.query(query, params);
+  return rows;
 };
 
 const getDetails = async (nomor) => {
-    const query = `
+  const query = `
         SELECT 
             d.invd_kode AS Kode,
             IFNULL(b.brgd_barcode, "") AS Barcode,
@@ -99,45 +111,51 @@ const getDetails = async (nomor) => {
         WHERE d.invd_inv_nomor = ?
         ORDER BY d.invd_nourut;
     `;
-    const [rows] = await pool.query(query, [nomor]);
-    return rows;
+  const [rows] = await pool.query(query, [nomor]);
+  return rows;
 };
 
 const remove = async (nomor, user) => {
-    const connection = await pool.getConnection();
-    try {
-        await connection.beginTransaction();
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
 
-        const [rows] = await connection.query(`
+    const [rows] = await connection.query(
+      `
             SELECT h.inv_nomor_so, h.inv_closing,
                    (SELECT COUNT(*) FROM tsetor_dtl WHERE sd_inv = h.inv_nomor AND TRIM(sd_ket) NOT IN ("DP LINK DARI INV","PEMBAYARAN DARI KASIR")) AS payment_count,
                    (SELECT COUNT(*) FROM finance.tjurnal WHERE jur_nomor = h.inv_nomor) AS posting_count
             FROM tinv_hdr h WHERE h.inv_nomor = ?
-        `, [nomor]);
+        `,
+      [nomor]
+    );
 
-        if (rows.length === 0) throw new Error('Data tidak ditemukan.');
-        const invoice = rows[0];
+    if (rows.length === 0) throw new Error("Data tidak ditemukan.");
+    const invoice = rows[0];
 
-        if (invoice.payment_count > 0) throw new Error('Invoice ini sudah ada setoran pembayaran.');
-        if (invoice.posting_count > 0) throw new Error('Invoice ini sudah di Posting oleh Finance.');
-        if (nomor.substring(0, 3) !== user.cabang && user.cabang !== 'KDC') throw new Error('Anda tidak berhak menghapus data milik cabang lain.');
-        if (invoice.inv_closing === 'Y') throw new Error('Sudah Closing.');
+    if (invoice.payment_count > 0)
+      throw new Error("Invoice ini sudah ada setoran pembayaran.");
+    if (invoice.posting_count > 0)
+      throw new Error("Invoice ini sudah di Posting oleh Finance.");
+    if (nomor.substring(0, 3) !== user.cabang && user.cabang !== "KDC")
+      throw new Error("Anda tidak berhak menghapus data milik cabang lain.");
+    if (invoice.inv_closing === "Y") throw new Error("Sudah Closing.");
 
-        await connection.query('DELETE FROM tinv_hdr WHERE inv_nomor = ?', [nomor]);
-        
-        await connection.commit();
-        return { message: `Invoice ${nomor} berhasil dihapus.` };
-    } catch (error) {
-        await connection.rollback();
-        throw error;
-    } finally {
-        connection.release();
-    }
+    await connection.query("DELETE FROM tinv_hdr WHERE inv_nomor = ?", [nomor]);
+
+    await connection.commit();
+    return { message: `Invoice ${nomor} berhasil dihapus.` };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 };
 
 const getExportDetails = async (filters) => {
-    const { startDate, endDate, cabang } = filters;
-    const query = `
+  const { startDate, endDate, cabang } = filters;
+  const query = `
         SELECT 
             h.inv_nomor AS 'Nomor Invoice',
             h.inv_tanggal AS 'Tanggal',
@@ -159,14 +177,14 @@ const getExportDetails = async (filters) => {
           AND LEFT(h.inv_nomor, 3) = ?
         ORDER BY h.inv_nomor, d.invd_nourut;
     `;
-    const [rows] = await pool.query(query, [startDate, endDate, cabang]);
-    return rows;
+  const [rows] = await pool.query(query, [startDate, endDate, cabang]);
+  return rows;
 };
 
 module.exports = {
-    getCabangList,
-    getList,
-    getDetails,
-    remove,
-    getExportDetails,
+  getCabangList,
+  getList,
+  getDetails,
+  remove,
+  getExportDetails,
 };

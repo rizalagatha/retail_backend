@@ -4,11 +4,6 @@ const getData = async (req, res) => {
   try {
     const { reportType, ...filters } = req.query;
 
-    // PERBAIKAN: Override cabang untuk weekly dan monthly
-    if (reportType === "weekly" || reportType === "monthly") {
-      filters.cabang = "ALL";
-    }
-
     let data;
     switch (reportType) {
       case "daily":

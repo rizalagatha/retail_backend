@@ -1,20 +1,27 @@
-const pool = require('../config/database');
+const pool = require("../config/database");
 
 // Mengambil daftar data (SQLMaster)
 const getList = async (filters) => {
-    const { startDate, endDate, cabang } = filters;
-    let params = [startDate, endDate];
+  const { startDate, endDate, cabang, status } = filters;
+  let params = [startDate, endDate];
 
-    let branchFilter = '';
-    if (cabang === 'KDC') {
-        branchFilter = 'AND LEFT(h.so_nomor, 3) IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)';
-    } else {
-        branchFilter = 'AND LEFT(h.so_nomor, 3) = ?';
-        params.push(cabang);
-    }
+  let branchFilter = "";
+  if (cabang === "KDC") {
+    branchFilter =
+      "AND LEFT(h.so_nomor, 3) IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)";
+  } else {
+    branchFilter = "AND LEFT(h.so_nomor, 3) = ?";
+    params.push(cabang);
+  }
 
-    // Query ini mereplikasi semua sub-query dan kalkulasi status dari Delphi
-    const query = `
+  let statusFilter = "";
+  if (status === "open") {
+    // 'Status' adalah alias yang dihitung di SELECT, jadi kita filter dengan HAVING
+    statusFilter = " HAVING Status = 'OPEN'";
+  }
+
+  // Query ini mereplikasi semua sub-query dan kalkulasi status dari Delphi
+  const query = `
         SELECT 
             y.Nomor, y.Tanggal, y.Dateline, y.Penawaran, y.Top, y.Nominal, y.Diskon, y.Dp, 
             y.QtySO, y.QtyInv, y.Belum, y.AlasanClose, y.StatusKirim, y.kdcus, y.Nama, 
@@ -50,31 +57,32 @@ const getList = async (filters) => {
                 WHERE h.so_tanggal BETWEEN ? AND ? ${branchFilter}
             ) x
         ) y
-        ORDER BY y.Tanggal, y.Nomor
+        ${statusFilter}
+        ORDER BY y.Tanggal, y.Nomor;
     `;
-    const [rows] = await pool.query(query, params);
-    return rows;
+  const [rows] = await pool.query(query, params);
+  return rows;
 };
 
 const getCabangList = async (user) => {
-    let query;
-    // Logika dari FormCreate Delphi
-    if (user.cabang === 'KDC') {
-        // Untuk KDC, ambil semua cabang kecuali KBS dan KPS
-        query = `SELECT gdg_kode as kode, gdg_nama as nama FROM tgudang WHERE gdg_kode NOT IN ("KBS", "KPS") ORDER BY gdg_kode`;
-    } else {
-        // Untuk cabang biasa, hanya ambil cabangnya sendiri
-        query = `SELECT gdg_kode as kode, gdg_nama as nama FROM tgudang WHERE gdg_kode = ?`;
-    }
-    const [rows] = await pool.query(query, [user.cabang]);
-    
-    return rows;
+  let query;
+  // Logika dari FormCreate Delphi
+  if (user.cabang === "KDC") {
+    // Untuk KDC, ambil semua cabang kecuali KBS dan KPS
+    query = `SELECT gdg_kode as kode, gdg_nama as nama FROM tgudang WHERE gdg_kode NOT IN ("KBS", "KPS") ORDER BY gdg_kode`;
+  } else {
+    // Untuk cabang biasa, hanya ambil cabangnya sendiri
+    query = `SELECT gdg_kode as kode, gdg_nama as nama FROM tgudang WHERE gdg_kode = ?`;
+  }
+  const [rows] = await pool.query(query, [user.cabang]);
+
+  return rows;
 };
 
 // Mengambil data detail (SQLDetail)
 const getDetails = async (nomor) => {
-    // Query ini adalah migrasi dari SQLDetail di Delphi Anda
-    const query = `
+  // Query ini adalah migrasi dari SQLDetail di Delphi Anda
+  const query = `
         SELECT 
             x.Kode, x.Barcode, x.Nama, x.Ukuran, x.QtySO, x.Harga, x.TotalSO, x.QtyInvoice,
             (IF(x.QtyInvoice >= x.QtySO, 0, x.QtySO - x.QtyInvoice)) AS BlmJadiInvoice 
@@ -105,32 +113,64 @@ const getDetails = async (nomor) => {
         ) x
         ORDER BY x.Kode, x.Ukuran
     `;
-    const [rows] = await pool.query(query, [nomor]);
-    return rows;
+  const [rows] = await pool.query(query, [nomor]);
+  return rows;
 };
 
 function terbilang(n) {
-    if (n === null || n === undefined || n === 0) return "Nol";
-    if (n < 0) return "minus " + terbilang(-n);
-    const ang = ["", "satu", "dua", "tiga", "empat", "lima", "enam", "tujuh", "delapan", "sembilan", "sepuluh", "sebelas"];
-    const terbilangRecursive = (num) => {
-        if (num < 12) return ang[num];
-        if (num < 20) return terbilangRecursive(num - 10) + " belas";
-        if (num < 100) return ang[Math.floor(num / 10)] + " puluh " + terbilangRecursive(num % 10);
-        if (num < 200) return "seratus " + terbilangRecursive(num - 100);
-        if (num < 1000) return terbilangRecursive(Math.floor(num / 100)) + " ratus " + terbilangRecursive(num % 100);
-        if (num < 2000) return "seribu " + terbilangRecursive(num - 1000);
-        if (num < 1000000) return terbilangRecursive(Math.floor(num / 1000)) + " ribu " + terbilangRecursive(num % 1000);
-        if (num < 1000000000) return terbilangRecursive(Math.floor(num / 1000000)) + " juta " + terbilangRecursive(n % 1000000);
-        return "angka terlalu besar";
-    };
-    return terbilangRecursive(Math.floor(n)).replace(/\s+/g, ' ').trim();
+  if (n === null || n === undefined || n === 0) return "Nol";
+  if (n < 0) return "minus " + terbilang(-n);
+  const ang = [
+    "",
+    "satu",
+    "dua",
+    "tiga",
+    "empat",
+    "lima",
+    "enam",
+    "tujuh",
+    "delapan",
+    "sembilan",
+    "sepuluh",
+    "sebelas",
+  ];
+  const terbilangRecursive = (num) => {
+    if (num < 12) return ang[num];
+    if (num < 20) return terbilangRecursive(num - 10) + " belas";
+    if (num < 100)
+      return (
+        ang[Math.floor(num / 10)] + " puluh " + terbilangRecursive(num % 10)
+      );
+    if (num < 200) return "seratus " + terbilangRecursive(num - 100);
+    if (num < 1000)
+      return (
+        terbilangRecursive(Math.floor(num / 100)) +
+        " ratus " +
+        terbilangRecursive(num % 100)
+      );
+    if (num < 2000) return "seribu " + terbilangRecursive(num - 1000);
+    if (num < 1000000)
+      return (
+        terbilangRecursive(Math.floor(num / 1000)) +
+        " ribu " +
+        terbilangRecursive(num % 1000)
+      );
+    if (num < 1000000000)
+      return (
+        terbilangRecursive(Math.floor(num / 1000000)) +
+        " juta " +
+        terbilangRecursive(n % 1000000)
+      );
+    return "angka terlalu besar";
+  };
+  return terbilangRecursive(Math.floor(n)).replace(/\s+/g, " ").trim();
 }
-const capitalize = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : '');
+const capitalize = (s) =>
+  s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : "";
 
 const getDataForPrint = async (nomor) => {
-    // 1. Ambil data Header, Customer, dan Gudang
-    const headerQuery = `
+  // 1. Ambil data Header, Customer, dan Gudang
+  const headerQuery = `
         SELECT 
             h.so_nomor, h.so_tanggal, h.so_top, h.so_ket, h.so_sc, h.user_create,
             DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
@@ -143,12 +183,12 @@ const getDataForPrint = async (nomor) => {
         LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.so_nomor, 3)
         WHERE h.so_nomor = ?
     `;
-    const [headerRows] = await pool.query(headerQuery, [nomor]);
-    if (headerRows.length === 0) return null;
-    const header = headerRows[0];
+  const [headerRows] = await pool.query(headerQuery, [nomor]);
+  if (headerRows.length === 0) return null;
+  const header = headerRows[0];
 
-    // 2. Ambil data Detail
-    const detailQuery = `
+  // 2. Ambil data Detail
+  const detailQuery = `
         SELECT 
             IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)), f.sd_nama) AS nama_barang,
             d.sod_ukuran AS ukuran,
@@ -162,36 +202,36 @@ const getDataForPrint = async (nomor) => {
         WHERE d.sod_so_nomor = ? 
         ORDER BY d.sod_nourut
     `;
-    const [details] = await pool.query(detailQuery, [nomor]);
+  const [details] = await pool.query(detailQuery, [nomor]);
 
-    // 3. Kalkulasi Total & Terbilang di backend
-    const total = details.reduce((sum, item) => sum + item.total, 0);
-    const diskon_faktur = header.so_disc || 0;
-    const netto = total - diskon_faktur;
-    const ppn = header.so_ppn ? netto * (header.so_ppn / 100) : 0;
-    const grand_total = netto + ppn + (header.so_bkrm || 0);
-    const belumbayar = grand_total - (header.so_dp || 0);
+  // 3. Kalkulasi Total & Terbilang di backend
+  const total = details.reduce((sum, item) => sum + item.total, 0);
+  const diskon_faktur = header.so_disc || 0;
+  const netto = total - diskon_faktur;
+  const ppn = header.so_ppn ? netto * (header.so_ppn / 100) : 0;
+  const grand_total = netto + ppn + (header.so_bkrm || 0);
+  const belumbayar = grand_total - (header.so_dp || 0);
 
-    const summary = {
-        total,
-        diskon: diskon_faktur,
-        ppn: ppn,
-        biaya_kirim: header.so_bkrm || 0,
-        grand_total,
-        dp: header.so_dp || 0,
-        belumbayar,
-        terbilang: capitalize(terbilang(grand_total)) + " Rupiah",
-    };
+  const summary = {
+    total,
+    diskon: diskon_faktur,
+    ppn: ppn,
+    biaya_kirim: header.so_bkrm || 0,
+    grand_total,
+    dp: header.so_dp || 0,
+    belumbayar,
+    terbilang: capitalize(terbilang(grand_total)) + " Rupiah",
+  };
 
-    return { header, details, summary };
+  return { header, details, summary };
 };
 
 const close = async (data) => {
-    const { nomor, alasan, user } = data;
+  const { nomor, alasan, user } = data;
 
-    // 1. Ambil status SO saat ini dengan query yang benar untuk validasi
-    // Query ini adalah versi ringkas dari query getList, khusus untuk satu nomor SO
-    const statusQuery = `
+  // 1. Ambil status SO saat ini dengan query yang benar untuk validasi
+  // Query ini adalah versi ringkas dari query getList, khusus untuk satu nomor SO
+  const statusQuery = `
         SELECT 
             (CASE
                 WHEN y.sts = 2 THEN "DICLOSE"
@@ -217,19 +257,19 @@ const close = async (data) => {
             ) x
         ) y
     `;
-    const [rows] = await pool.query(statusQuery, [nomor]);
-    if (rows.length === 0) {
-        throw new Error('Surat Pesanan tidak ditemukan.');
-    }
-    const currentStatus = rows[0].Status;
+  const [rows] = await pool.query(statusQuery, [nomor]);
+  if (rows.length === 0) {
+    throw new Error("Surat Pesanan tidak ditemukan.");
+  }
+  const currentStatus = rows[0].Status;
 
-    // 2. Validasi dari Delphi
-    if (currentStatus === 'CLOSE' || currentStatus === 'DICLOSE') {
-        throw new Error('Surat Pesanan ini sudah berstatus CLOSE.');
-    }
+  // 2. Validasi dari Delphi
+  if (currentStatus === "CLOSE" || currentStatus === "DICLOSE") {
+    throw new Error("Surat Pesanan ini sudah berstatus CLOSE.");
+  }
 
-    // 3. Update data di database
-    const updateQuery = `
+  // 3. Update data di database
+  const updateQuery = `
         UPDATE tso_hdr 
         SET so_close = 2, -- '2' untuk status DICLOSE
             so_alasan = ?, 
@@ -237,60 +277,72 @@ const close = async (data) => {
             date_modified = NOW() 
         WHERE so_nomor = ?
     `;
-    await pool.query(updateQuery, [alasan, user, nomor]);
-    
-    return { success: true, message: `Surat Pesanan ${nomor} berhasil di-close.` };
+  await pool.query(updateQuery, [alasan, user, nomor]);
+
+  return {
+    success: true,
+    message: `Surat Pesanan ${nomor} berhasil di-close.`,
+  };
 };
 
 const remove = async (nomor, user) => {
-    // 1. Ambil data SO untuk validasi
-    const [rows] = await pool.query('SELECT so_nomor, so_close FROM tso_hdr WHERE so_nomor = ?', [nomor]);
-    if (rows.length === 0) {
-        throw new Error('Surat Pesanan tidak ditemukan.');
-    }
-    const so = rows[0];
+  // 1. Ambil data SO untuk validasi
+  const [rows] = await pool.query(
+    "SELECT so_nomor, so_close FROM tso_hdr WHERE so_nomor = ?",
+    [nomor]
+  );
+  if (rows.length === 0) {
+    throw new Error("Surat Pesanan tidak ditemukan.");
+  }
+  const so = rows[0];
 
-    // 2. Migrasi Validasi dari Delphi
-    // Validasi Status: hanya boleh 'OPEN' (so_close = 0)
-    if (so.so_close !== 0) {
-        throw new Error('SO yang sudah diproses atau di-close tidak bisa dihapus.');
-    }
+  // 2. Migrasi Validasi dari Delphi
+  // Validasi Status: hanya boleh 'OPEN' (so_close = 0)
+  if (so.so_close !== 0) {
+    throw new Error("SO yang sudah diproses atau di-close tidak bisa dihapus.");
+  }
 
-    // Validasi Kepemilikan Cabang
-    const cabangSo = nomor.substring(0, 3);
-    if (user.cabang !== 'KDC' && user.cabang !== cabangSo) {
-        throw new Error(`Anda tidak berhak menghapus data milik cabang ${cabangSo}.`);
-    }
+  // Validasi Kepemilikan Cabang
+  const cabangSo = nomor.substring(0, 3);
+  if (user.cabang !== "KDC" && user.cabang !== cabangSo) {
+    throw new Error(
+      `Anda tidak berhak menghapus data milik cabang ${cabangSo}.`
+    );
+  }
 
-    // 3. Jika semua validasi lolos, hapus data
-    const connection = await pool.getConnection();
-    await connection.beginTransaction();
-    try {
-        // Asumsi foreign key dari tso_dtl ke tso_hdr diset ON DELETE CASCADE
-        await connection.query('DELETE FROM tso_hdr WHERE so_nomor = ?', [nomor]);
-        await connection.commit();
-        return { success: true, message: `Surat Pesanan ${nomor} berhasil dihapus.` };
-    } catch (error) {
-        await connection.rollback();
-        throw error;
-    } finally {
-        connection.release();
-    }
+  // 3. Jika semua validasi lolos, hapus data
+  const connection = await pool.getConnection();
+  await connection.beginTransaction();
+  try {
+    // Asumsi foreign key dari tso_dtl ke tso_hdr diset ON DELETE CASCADE
+    await connection.query("DELETE FROM tso_hdr WHERE so_nomor = ?", [nomor]);
+    await connection.commit();
+    return {
+      success: true,
+      message: `Surat Pesanan ${nomor} berhasil dihapus.`,
+    };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 };
 
 const getExportDetails = async (filters) => {
-    const { startDate, endDate, cabang } = filters;
-    let params = [startDate, endDate];
-    let branchFilter = '';
-    if (cabang === 'KDC') {
-        branchFilter = 'AND LEFT(h.so_nomor, 3) IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)';
-    } else {
-        branchFilter = 'AND LEFT(h.so_nomor, 3) = ?';
-        params.push(cabang);
-    }
+  const { startDate, endDate, cabang } = filters;
+  let params = [startDate, endDate];
+  let branchFilter = "";
+  if (cabang === "KDC") {
+    branchFilter =
+      "AND LEFT(h.so_nomor, 3) IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)";
+  } else {
+    branchFilter = "AND LEFT(h.so_nomor, 3) = ?";
+    params.push(cabang);
+  }
 
-    // Query ini menggabungkan header dan detail
-    const query = `
+  // Query ini menggabungkan header dan detail
+  const query = `
         SELECT 
             h.so_nomor AS 'Nomor SO',
             h.so_tanggal AS 'Tanggal',
@@ -310,16 +362,16 @@ const getExportDetails = async (filters) => {
         WHERE h.so_tanggal BETWEEN ? AND ? ${branchFilter}
         ORDER BY h.so_nomor, d.sod_nourut;
     `;
-    const [rows] = await pool.query(query, params);
-    return rows;
+  const [rows] = await pool.query(query, params);
+  return rows;
 };
 
 module.exports = {
-    getList,
-    getCabangList,
-    getDetails,
-    getDataForPrint,
-    close,
-    remove,
-    getExportDetails,
+  getList,
+  getCabangList,
+  getDetails,
+  getDataForPrint,
+  close,
+  remove,
+  getExportDetails,
 };

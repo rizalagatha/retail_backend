@@ -1,18 +1,25 @@
-const pool = require('../config/database');
-const { format } = require('date-fns');
-const fs = require('fs');
-const path = require('path');
-const ExcelJS = require('exceljs');
+const pool = require("../config/database");
+const { format } = require("date-fns");
+const fs = require("fs");
+const path = require("path");
+const ExcelJS = require("exceljs");
 
 const getSoDtfList = async (filters) => {
-    const { startDate, endDate, cabang, filterDateType } = filters;
-    let params = [startDate, endDate];
+  const { startDate, endDate, cabang, filterDateType, status } = filters;
+  let params = [startDate, endDate];
 
-    // Menentukan kolom tanggal yang akan difilter berdasarkan pilihan user
-    const dateColumn = filterDateType === 'pengerjaan' ? 'h.sd_datekerja' : 'h.sd_tanggal';
+  // Menentukan kolom tanggal yang akan difilter berdasarkan pilihan user
+  const dateColumn =
+    filterDateType === "pengerjaan" ? "h.sd_datekerja" : "h.sd_tanggal";
 
-    // Query ini meniru query kompleks dari Delphi Anda
-    const query = `
+  let statusFilter = "";
+  if (status === "belum_invoice") {
+    // 'NoINV' adalah alias yang dihitung di subquery 'x', jadi filter di luar
+    statusFilter = " WHERE x.NoINV = ''"; // <-- Filter WHERE di query terluar
+  }
+
+  // Query ini meniru query kompleks dari Delphi Anda
+  const query = `
         SELECT 
             x.Nomor, DATE_FORMAT(x.Tanggal, '%d-%m-%Y') AS Tanggal, DATE_FORMAT(x.TglPengerjaan, '%d-%m-%Y') AS TglPengerjaan, x.DatelineCus, x.NamaDTF, x.Jumlah, x.Titik, 
             (x.jumlah * x.titik) AS TotalTitik, IFNULL(x.LHK, 0) AS LHK,
@@ -35,34 +42,35 @@ const getSoDtfList = async (filters) => {
             LEFT JOIN tcustomer c ON c.cus_kode = h.sd_cus_kode
             LEFT JOIN kencanaprint.tsales s ON s.sal_kode = h.sd_sal_kode
             WHERE h.sd_stok = "" AND ${dateColumn} BETWEEN ? AND ?
-            ${cabang !== 'ALL' ? 'AND LEFT(h.sd_nomor, 3) = ?' : ''}
+            ${cabang !== "ALL" ? "AND LEFT(h.sd_nomor, 3) = ?" : ""}
         ) x
+        ${statusFilter}
         ORDER BY x.Tanggal, x.Nomor;
     `;
-    if (cabang !== 'ALL') {
-        params.push(cabang);
-    }
+  if (cabang !== "ALL") {
+    params.push(cabang);
+  }
 
-    const [rows] = await pool.query(query, params);
-    return rows;
+  const [rows] = await pool.query(query, params);
+  return rows;
 };
 
 const getSoDtfDetails = async (nomor) => {
-    const query = `
+  const query = `
         SELECT sdd_ukuran AS Ukuran, sdd_jumlah AS Jumlah 
         FROM tsodtf_dtl WHERE sdd_nomor = ? ORDER BY sdd_nourut
     `;
-    const [rows] = await pool.query(query, [nomor]);
-    return rows;
+  const [rows] = await pool.query(query, [nomor]);
+  return rows;
 };
 
 const closeSoDtf = async (nomor, alasan, user) => {
-    const query = `UPDATE tsodtf_hdr SET sd_alasan = ?, sd_closing = 'Y', user_modified = ?, date_modified = NOW() WHERE sd_nomor = ?`;
-    const [result] = await pool.query(query, [alasan, user, nomor]);
-    if(result.affectedRows === 0) {
-        throw new Error('Gagal menutup SO DTF, nomor tidak ditemukan.');
-    }
-    return { message: 'SO DTF berhasil ditutup.' };
+  const query = `UPDATE tsodtf_hdr SET sd_alasan = ?, sd_closing = 'Y', user_modified = ?, date_modified = NOW() WHERE sd_nomor = ?`;
+  const [result] = await pool.query(query, [alasan, user, nomor]);
+  if (result.affectedRows === 0) {
+    throw new Error("Gagal menutup SO DTF, nomor tidak ditemukan.");
+  }
+  return { message: "SO DTF berhasil ditutup." };
 };
 
 /**
@@ -71,12 +79,12 @@ const closeSoDtf = async (nomor, alasan, user) => {
  * @param {object} user - Objek user yang sedang login.
  */
 const remove = async (nomor, user) => {
-    const connection = await pool.getConnection();
-    await connection.beginTransaction();
+  const connection = await pool.getConnection();
+  await connection.beginTransaction();
 
-    try {
-        // 1. Ambil data yang akan divalidasi menggunakan query langsung (tanpa view)
-        const validationQuery = `
+  try {
+    // 1. Ambil data yang akan divalidasi menggunakan query langsung (tanpa view)
+    const validationQuery = `
             SELECT 
                 h.sd_nomor,
                 h.sd_closing AS Close,
@@ -85,61 +93,79 @@ const remove = async (nomor, user) => {
             FROM tsodtf_hdr h
             WHERE h.sd_nomor = ?
         `;
-        const [rows] = await connection.query(validationQuery, [nomor]);
+    const [rows] = await connection.query(validationQuery, [nomor]);
 
-        if (rows.length === 0) {
-            throw new Error('Data tidak ditemukan.');
-        }
-        const record = rows[0];
-
-        // 2. Lakukan semua validasi seperti di Delphi
-        if (user.cabang !== 'KDC' && user.cabang !== record.sd_nomor.substring(0, 3)) {
-            throw new Error(`Anda tidak berhak menghapus data milik cabang ${record.sd_nomor.substring(0, 3)}.`);
-        }
-        if (record.NoSO) {
-            throw new Error('Sudah dibuat SO, tidak bisa dihapus.');
-        }
-        if (record.NoINV) {
-            throw new Error('Sudah dibuat Invoice, tidak bisa dihapus.');
-        }
-        if (record.Close === 'Y') {
-            throw new Error('Transaksi sudah ditutup, tidak bisa dihapus.');
-        }
-
-        // 3. Hapus data dari tabel header
-        // PENTING: Diasumsikan foreign key di tsodtf_dtl & tsodtf_dtl2 sudah di-set ON DELETE CASCADE
-        await connection.query('DELETE FROM tsodtf_hdr WHERE sd_nomor = ?', [nomor]);
-
-        await connection.commit();
-
-        // 4. Hapus file gambar setelah transaksi DB berhasil
-        const cabang = nomor.substring(0, 3);
-        const imagePath = path.join(process.cwd(), 'public', 'images', 'sodtf', cabang, `${nomor}.jpg`);
-        if (fs.existsSync(imagePath)) {
-            fs.unlinkSync(imagePath);
-        }
-
-        return { message: `SO DTF ${nomor} berhasil dihapus.` };
-    } catch (error) {
-        await connection.rollback();
-        throw new Error(error.message || 'Gagal menghapus data.');
-    } finally {
-        connection.release();
+    if (rows.length === 0) {
+      throw new Error("Data tidak ditemukan.");
     }
+    const record = rows[0];
+
+    // 2. Lakukan semua validasi seperti di Delphi
+    if (
+      user.cabang !== "KDC" &&
+      user.cabang !== record.sd_nomor.substring(0, 3)
+    ) {
+      throw new Error(
+        `Anda tidak berhak menghapus data milik cabang ${record.sd_nomor.substring(
+          0,
+          3
+        )}.`
+      );
+    }
+    if (record.NoSO) {
+      throw new Error("Sudah dibuat SO, tidak bisa dihapus.");
+    }
+    if (record.NoINV) {
+      throw new Error("Sudah dibuat Invoice, tidak bisa dihapus.");
+    }
+    if (record.Close === "Y") {
+      throw new Error("Transaksi sudah ditutup, tidak bisa dihapus.");
+    }
+
+    // 3. Hapus data dari tabel header
+    // PENTING: Diasumsikan foreign key di tsodtf_dtl & tsodtf_dtl2 sudah di-set ON DELETE CASCADE
+    await connection.query("DELETE FROM tsodtf_hdr WHERE sd_nomor = ?", [
+      nomor,
+    ]);
+
+    await connection.commit();
+
+    // 4. Hapus file gambar setelah transaksi DB berhasil
+    const cabang = nomor.substring(0, 3);
+    const imagePath = path.join(
+      process.cwd(),
+      "public",
+      "images",
+      "sodtf",
+      cabang,
+      `${nomor}.jpg`
+    );
+    if (fs.existsSync(imagePath)) {
+      fs.unlinkSync(imagePath);
+    }
+
+    return { message: `SO DTF ${nomor} berhasil dihapus.` };
+  } catch (error) {
+    await connection.rollback();
+    throw new Error(error.message || "Gagal menghapus data.");
+  } finally {
+    connection.release();
+  }
 };
 
 const exportHeader = async (filters) => {
-    // Fungsi ini sekarang hanya mengembalikan data JSON dari browse
-    return await getSoDtfList(filters);
+  // Fungsi ini sekarang hanya mengembalikan data JSON dari browse
+  return await getSoDtfList(filters);
 };
 
 const exportDetail = async (filters) => {
-    const { startDate, endDate, cabang, filterDateType } = filters;
-    const dateColumn = filterDateType === 'pengerjaan' ? 'h.sd_datekerja' : 'h.sd_tanggal';
-    let params = [startDate, endDate];
+  const { startDate, endDate, cabang, filterDateType } = filters;
+  const dateColumn =
+    filterDateType === "pengerjaan" ? "h.sd_datekerja" : "h.sd_tanggal";
+  let params = [startDate, endDate];
 
-    // Query ini kembali menggunakan filter tanggal dan cabang
-    let query = `
+  // Query ini kembali menggunakan filter tanggal dan cabang
+  let query = `
         SELECT 
             h.sd_nomor AS Nomor, 
             DATE_FORMAT(h.sd_tanggal, '%d-%m-%Y') AS Tanggal, 
@@ -159,21 +185,21 @@ const exportDetail = async (filters) => {
         WHERE ${dateColumn} BETWEEN ? AND ?
     `;
 
-    if (cabang !== 'ALL') {
-        query += ' AND LEFT(h.sd_nomor, 3) = ?';
-        params.push(cabang);
-    }
-    query += ' ORDER BY h.sd_nomor, d.sdd_nourut';
+  if (cabang !== "ALL") {
+    query += " AND LEFT(h.sd_nomor, 3) = ?";
+    params.push(cabang);
+  }
+  query += " ORDER BY h.sd_nomor, d.sdd_nourut";
 
-    const [data] = await pool.query(query, params);
-    return data;
+  const [data] = await pool.query(query, params);
+  return data;
 };
 
 module.exports = {
-    getSoDtfList,
-    getSoDtfDetails,
-    closeSoDtf,
-    remove,
-    exportHeader,
-    exportDetail,
+  getSoDtfList,
+  getSoDtfDetails,
+  closeSoDtf,
+  remove,
+  exportHeader,
+  exportDetail,
 };
