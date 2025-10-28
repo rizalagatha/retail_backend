@@ -5,6 +5,7 @@ const { verifyToken } = require('../middleware/authMiddleware');
 
 // Endpoint untuk mengirim struk invoice
 router.post('/send-receipt', verifyToken, controller.sendReceipt);
-router.get('/qr', verifyToken, controller.getQr);
+router.get('/status', verifyToken, controller.getStatus);
+router.delete('/logout', verifyToken, controller.logout);
 
 module.exports = router;

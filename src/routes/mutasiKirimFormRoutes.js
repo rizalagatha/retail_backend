@@ -17,6 +17,8 @@ router.get('/lookup/tujuan-store', verifyToken, checkPermission(MENU_ID, 'view')
 // GET: Lookup untuk detail produk tunggal
 router.get('/lookup/product-details', verifyToken, checkPermission(MENU_ID, 'view'), controller.getProductDetails);
 
+router.get('/lookup/products', verifyToken, checkPermission(MENU_ID, 'view'), controller.lookupProducts);
+
 router.get('/lookup/by-barcode/:barcode', verifyToken, checkPermission(MENU_ID, 'view'), controller.findByBarcode);
 
 router.get('/print/:nomor', verifyToken, controller.getPrintData);
