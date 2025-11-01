@@ -42,7 +42,7 @@ const findById = async (nomor) => {
     ]);
 
     return {
-      header: header, 
+      header: header,
       detailsUkuran: detailsUkuranRows,
       detailsTitik: detailsTitikRows,
     };
@@ -292,8 +292,7 @@ const searchJenisOrder = async (term) => {
   return rows;
 };
 
-const searchJenisKain = async (filters) => {
-  const { term, page, itemsPerPage } = filters;
+const searchJenisKain = async (term, page = 1, itemsPerPage = 10) => {
   const pageNum = parseInt(page, 10) || 1;
   const limit = parseInt(itemsPerPage, 10) || 10;
   const offset = (pageNum - 1) * limit;
@@ -305,14 +304,14 @@ const searchJenisKain = async (filters) => {
   const [countRows] = await pool.query(countQuery, [searchTerm]);
 
   const dataQuery = `
-        SELECT 
-            JenisKain AS nama, 
-            Kode  -- Pastikan kolom 'Kode' di-SELECT
-        FROM tjeniskain 
-        ${whereClause} 
-        ORDER BY JenisKain
-        LIMIT ? OFFSET ?
-    `;
+    SELECT 
+      JenisKain AS nama, 
+      Kode
+    FROM tjeniskain 
+    ${whereClause}
+    ORDER BY JenisKain
+    LIMIT ? OFFSET ?
+  `;
   const [items] = await pool.query(dataQuery, [searchTerm, limit, offset]);
 
   return { items, total: countRows[0].total };

@@ -281,10 +281,6 @@ ORDER BY d.id, d.tanggal
   return rows;
 };
 
-
-
-
-
 const getMutationDetails = async (filters) => {
   const {
     startDate,
