@@ -292,27 +292,52 @@ const searchJenisOrder = async (term) => {
   return rows;
 };
 
+// service/soDtfFormService.js (revisi)
 const searchJenisKain = async (term, page = 1, itemsPerPage = 10) => {
-  const pageNum = parseInt(page, 10) || 1;
-  const limit = parseInt(itemsPerPage, 10) || 10;
-  const offset = (pageNum - 1) * limit;
+  // pastikan angka valid
+  const pageNum = Number.isFinite(Number(page)) ? parseInt(page, 10) : 1;
+  let limit = Number.isFinite(Number(itemsPerPage))
+    ? parseInt(itemsPerPage, 10)
+    : 10;
+
+  // jika limit <= 0 atau = -1 => artinya "no limit"
+  const noLimit = limit <= 0;
+
+  // pastikan page minimal 1
+  const safePage = Math.max(1, pageNum);
+
+  // jika noLimit offset 0 (bukan digunakan)
+  const offset = noLimit ? 0 : (safePage - 1) * limit;
+
   const searchTerm = `%${term || ""}%`;
 
+  // WHERE clause
   const whereClause = `WHERE JenisKain LIKE ?`;
 
+  // hitung total (tetap hitung semua matching rows)
   const countQuery = `SELECT COUNT(*) as total FROM tjeniskain ${whereClause}`;
   const [countRows] = await pool.query(countQuery, [searchTerm]);
 
-  const dataQuery = `
+  // bangun query data: kalau noLimit, jangan tambahkan LIMIT/OFFSET
+  let dataQuery = `
     SELECT 
-      JenisKain AS nama, 
+      JenisKain AS nama,
       Kode
-    FROM tjeniskain 
+    FROM tjeniskain
     ${whereClause}
     ORDER BY JenisKain
-    LIMIT ? OFFSET ?
   `;
-  const [items] = await pool.query(dataQuery, [searchTerm, limit, offset]);
+
+  let items;
+  if (noLimit) {
+    // ambil semua
+    const [rows] = await pool.query(dataQuery, [searchTerm]);
+    items = rows;
+  } else {
+    dataQuery += ` LIMIT ? OFFSET ?`;
+    const [rows] = await pool.query(dataQuery, [searchTerm, limit, offset]);
+    items = rows;
+  }
 
   return { items, total: countRows[0].total };
 };
