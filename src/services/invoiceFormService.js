@@ -221,23 +221,28 @@ const searchUnpaidDp = async (customerKode, user) => {
 const loadForEdit = async (nomor, user) => {
   // 1. Ambil data header utama
   const headerQuery = `
-    SELECT 
-        h.*,
-        c.cus_nama,
-        c.cus_alamat,
-        c.cus_kota,
-        c.cus_telp,
-        COALESCE(l.level_nama, '') AS level_nama,
-        COALESCE(CONCAT(h.inv_cus_level, ' - ', l.level_nama), h.inv_cus_level, '') AS xLevel,
-        o.so_tanggal,
-        g.gdg_nama
-    FROM tinv_hdr h
-    LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
-    LEFT JOIN tcustomer_level l ON l.level_kode = h.inv_cus_level
-    LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
-    LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.inv_nomor, 3)
-    WHERE h.inv_nomor = ?;
-  `;
+  SELECT 
+      h.*,
+      c.cus_nama,
+      c.cus_alamat,
+      c.cus_kota,
+      c.cus_telp,
+      COALESCE(l.level_nama, l2.level_nama, '') AS level_nama,
+      COALESCE(CONCAT(
+          IFNULL(h.inv_cus_level, c.cus_level),
+          ' - ',
+          IFNULL(l.level_nama, l2.level_nama)
+      ), '') AS xLevel,
+      o.so_tanggal,
+      g.gdg_nama
+  FROM tinv_hdr h
+  LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+  LEFT JOIN tcustomer_level l ON l.level_kode = h.inv_cus_level
+  LEFT JOIN tcustomer_level l2 ON l2.level_kode = c.cus_level
+  LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
+  LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.inv_nomor, 3)
+  WHERE h.inv_nomor = ?;
+`;
   const [headerRows] = await pool.query(headerQuery, [nomor]);
   if (headerRows.length === 0) throw new Error("Data Invoice tidak ditemukan.");
 
@@ -327,15 +332,20 @@ const saveData = async (payload, user) => {
     if (isNew) {
       const invTanggal = toSqlDate(header.tanggal);
       const headerSql = `
-                INSERT INTO tinv_hdr (inv_idrec, inv_nomor, inv_nomor_so, inv_tanggal, inv_cus_kode, inv_ket, inv_sc, inv_rptunai, inv_novoucher, inv_rpvoucher, inv_rpcard, inv_nosetor, user_create, date_create)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
-            `;
+  INSERT INTO tinv_hdr (
+    inv_idrec, inv_nomor, inv_nomor_so, inv_tanggal, inv_cus_kode, inv_cus_level,
+    inv_ket, inv_sc, inv_rptunai, inv_novoucher, inv_rpvoucher, inv_rpcard,
+    inv_nosetor, user_create, date_create
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
+`;
       await connection.query(headerSql, [
         idrec,
         invNomor,
         header.nomorSo,
         headerTanggal,
         header.customer.kode,
+        header.customer.level,
         header.keterangan,
         header.salesCounter,
         payment.tunai,
