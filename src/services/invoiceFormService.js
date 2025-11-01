@@ -221,48 +221,55 @@ const searchUnpaidDp = async (customerKode, user) => {
 const loadForEdit = async (nomor, user) => {
   // 1. Ambil data header utama
   const headerQuery = `
-        SELECT 
-            h.*, c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
-            CONCAT(h.inv_cus_level, " - ", l.level_nama) AS xLevel,
-            o.so_tanggal, g.gdg_nama
-        FROM tinv_hdr h
-        LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
-        LEFT JOIN tcustomer_level l ON l.level_kode = h.inv_cus_level
-        LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
-        LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.inv_nomor, 3)
-        WHERE h.inv_nomor = ?;
-    `;
+    SELECT 
+        h.*,
+        c.cus_nama,
+        c.cus_alamat,
+        c.cus_kota,
+        c.cus_telp,
+        COALESCE(l.level_nama, '') AS level_nama,
+        COALESCE(CONCAT(h.inv_cus_level, ' - ', l.level_nama), h.inv_cus_level, '') AS xLevel,
+        o.so_tanggal,
+        g.gdg_nama
+    FROM tinv_hdr h
+    LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+    LEFT JOIN tcustomer_level l ON l.level_kode = h.inv_cus_level
+    LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
+    LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.inv_nomor, 3)
+    WHERE h.inv_nomor = ?;
+  `;
   const [headerRows] = await pool.query(headerQuery, [nomor]);
   if (headerRows.length === 0) throw new Error("Data Invoice tidak ditemukan.");
 
   // 2. Ambil data detail item
   const itemsQuery = `
-        SELECT 
-            d.*,
-            COALESCE(
-                TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)),
-                f.sd_nama
-            ) AS nama_barang,
-            b.brgd_barcode AS barcode
-        FROM tinv_dtl d
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
-        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.invd_kode AND b.brgd_ukuran = d.invd_ukuran
-        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
-        WHERE d.invd_inv_nomor = ? ORDER BY d.invd_nourut;
-    `;
+    SELECT 
+        d.*,
+        COALESCE(
+            TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)),
+            f.sd_nama
+        ) AS nama_barang,
+        b.brgd_barcode AS barcode
+    FROM tinv_dtl d
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.invd_kode AND b.brgd_ukuran = d.invd_ukuran
+    LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
+    WHERE d.invd_inv_nomor = ?
+    ORDER BY d.invd_nourut;
+  `;
   const [items] = await pool.query(itemsQuery, [nomor]);
 
   // 3. Ambil data DP yang tertaut
   const dpQuery = `
-        SELECT 
-            h.sh_nomor AS nomor,
-            h.sh_tanggal AS tanggal,
-            IF(h.sh_jenis=0, "TUNAI", IF(h.sh_jenis=1, "TRANSFER", "GIRO")) AS jenis,
-            d.sd_bayar AS nominal
-        FROM tsetor_dtl d
-        JOIN tsetor_hdr h ON h.sh_nomor = d.sd_sh_nomor
-        WHERE d.sd_inv = ? AND d.sd_ket = 'DP LINK DARI INV';
-    `;
+    SELECT 
+        h.sh_nomor AS nomor,
+        h.sh_tanggal AS tanggal,
+        IF(h.sh_jenis=0, 'TUNAI', IF(h.sh_jenis=1, 'TRANSFER', 'GIRO')) AS jenis,
+        d.sd_bayar AS nominal
+    FROM tsetor_dtl d
+    JOIN tsetor_hdr h ON h.sh_nomor = d.sd_sh_nomor
+    WHERE d.sd_inv = ? AND d.sd_ket = 'DP LINK DARI INV';
+  `;
   const [dps] = await pool.query(dpQuery, [nomor]);
 
   return { header: headerRows[0], items, dps };
@@ -472,7 +479,7 @@ const saveData = async (payload, user) => {
           // Insert ke tpiutang_dtl sebagai pembayaran
           piutangDtlDpValues.push([
             piutangNomor,
-            headerTanggalTime, 
+            headerTanggalTime,
             "DP",
             dpYangDipakai,
             dp.nomor,
