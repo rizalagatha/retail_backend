@@ -123,7 +123,7 @@ const getSoForEdit = async (nomor) => {
                 g.gdg_kode,
                 g.gdg_nama,
                 CONCAT(h.so_cus_level, " - ", l.level_nama) AS xLevel,
-                IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,, f.sd_nama) AS NamaBarang,
+                IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama, f.sd_nama) AS NamaBarang,
                 (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS total,
                 IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif="Y" AND m.mst_cab=LEFT(h.so_nomor,3) AND m.mst_brg_kode=d.sod_kode AND m.mst_ukuran=d.sod_ukuran), 0) AS Stok
             FROM tso_hdr h
