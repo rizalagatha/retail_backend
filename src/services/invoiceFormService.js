@@ -2,6 +2,22 @@ const pool = require("../config/database");
 const { format } = require("date-fns");
 const { validate } = require("uuid");
 
+// helper: format ke MySQL DATETIME (yyyy-MM-dd HH:mm:ss)
+const toSqlDateTime = (value) => {
+  if (!value) return null;
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return null;
+  return format(d, "yyyy-MM-dd HH:mm:ss");
+};
+
+// helper: format ke MySQL DATE (yyyy-MM-dd)
+const toSqlDate = (value) => {
+  if (!value) return null;
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return null;
+  return format(d, "yyyy-MM-dd");
+};
+
 // --- FUNGSI GENERATE NOMOR ---
 const generateNewInvNumber = async (gudang, tanggal) => {
   const date = new Date(tanggal);
@@ -280,7 +296,7 @@ const saveData = async (payload, user) => {
         throw new Error(`Stok untuk ${item.nama} (${item.ukuran}) akan minus.`);
       }
     }
-    
+
     let nomorSetoran = payment.transfer.nomorSetoran || "";
     if ((payment.transfer.nominal || 0) > 0 && !nomorSetoran) {
       nomorSetoran = await generateNewSetorNumber(
@@ -300,6 +316,7 @@ const saveData = async (payload, user) => {
 
     // 1. INSERT/UPDATE tinv_hdr
     if (isNew) {
+      const invTanggal = toSqlDate(header.tanggal);
       const headerSql = `
                 INSERT INTO tinv_hdr (inv_idrec, inv_nomor, inv_nomor_so, inv_tanggal, inv_cus_kode, inv_ket, inv_sc, inv_rptunai, inv_novoucher, inv_rpvoucher, inv_rpcard, inv_nosetor, user_create, date_create)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
@@ -308,7 +325,7 @@ const saveData = async (payload, user) => {
         idrec,
         invNomor,
         header.nomorSo,
-        header.tanggal,
+        invTanggal,
         header.customer.kode,
         header.keterangan,
         header.salesCounter,
@@ -361,6 +378,8 @@ const saveData = async (payload, user) => {
         nomorSetoran,
       ]);
 
+      const headerTanggalTime = toSqlDateTime(header.tanggal);
+
       // Insert header setoran baru
       const setorHdrSql = `
                 INSERT INTO tsetor_hdr (sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_akun, sh_norek, sh_tgltransfer, sh_otomatis, user_create, date_create)
@@ -370,7 +389,7 @@ const saveData = async (payload, user) => {
         idrecSetoran,
         nomorSetoran,
         header.customer.kode,
-        header.tanggal,
+        headerTanggalTime,
         payment.transfer.nominal,
         payment.transfer.akun.kode,
         payment.transfer.akun.rekening,
@@ -383,6 +402,9 @@ const saveData = async (payload, user) => {
         new Date(),
         "yyyyMMddHHmmssSSS"
       )}`;
+
+      const transferTanggal = toSqlDateTime(payment.transfer.tanggal);
+
       const setorDtlSql = `
                 INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut)
                 VALUES (?, ?, ?, ?, ?, 'PEMBAYARAN DARI KASIR', ?, 1);
@@ -390,7 +412,7 @@ const saveData = async (payload, user) => {
       await connection.query(setorDtlSql, [
         idrecSetoran,
         nomorSetoran,
-        header.tanggal,
+        headerTanggalTime,
         invNomor,
         payment.transfer.nominal,
         angsurId,
@@ -403,7 +425,7 @@ const saveData = async (payload, user) => {
             `;
       await connection.query(piutangCardSql, [
         piutangNomor,
-        payment.transfer.tanggal,
+        transferTanggal,
         payment.transfer.nominal,
         nomorSetoran || "-",
         angsurId,
@@ -443,7 +465,7 @@ const saveData = async (payload, user) => {
           await connection.query(setorDtlSql, [
             idrecSetoran,
             dp.nomor,
-            header.tanggal,
+            headerTanggalTime,
             invNomor,
             dpYangDipakai,
             angsurId,
@@ -452,7 +474,7 @@ const saveData = async (payload, user) => {
           // Insert ke tpiutang_dtl sebagai pembayaran
           piutangDtlDpValues.push([
             piutangNomor,
-            header.tanggal,
+            headerTanggalTime, 
             "DP",
             dpYangDipakai,
             dp.nomor,
@@ -471,10 +493,11 @@ const saveData = async (payload, user) => {
     await connection.query("DELETE FROM tpiutang_hdr WHERE ph_inv_nomor = ?", [
       invNomor,
     ]);
+    const invTanggal = toSqlDate(header.tanggal);
     const piutangHdrSql = `INSERT INTO tpiutang_hdr (ph_nomor, ph_tanggal, ph_cus_kode, ph_inv_nomor, ph_top, ph_nominal) VALUES (?, ?, ?, ?, ?, ?);`;
     await connection.query(piutangHdrSql, [
       piutangNomor,
-      header.tanggal,
+      invTanggal,
       header.customer.kode,
       invNomor,
       header.top,
@@ -483,11 +506,12 @@ const saveData = async (payload, user) => {
 
     // Insert piutang detail untuk penjualan dan pembayaran
     const piutangDtlValues = [];
+    const headerTanggalTime = toSqlDateTime(header.tanggal);
     // Debet: Penjualan & Biaya Kirim
     piutangDtlValues.push([
       `${user.cabang}INV${format(new Date(), "yyyyMMddHHmmssSSS")}`,
       piutangNomor,
-      header.tanggal,
+      headerTanggalTime,
       "Penjualan",
       totals.nettoSetelahDiskon,
       0,
