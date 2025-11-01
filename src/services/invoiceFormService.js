@@ -269,11 +269,18 @@ const saveData = async (payload, user) => {
     );
     if (totalQty <= 0) throw new Error("Qty Invoice kosong semua.");
     for (const item of validItems) {
-      if ((item.jumlah || 0) > item.stok && item.logstok === "Y") {
+      // Jika logstok=Y (barang logistik) dan stok kurang dari jumlah,
+      // tapi item bukan berasal dari SO DTF, maka error
+      const isFromSoDtf = !!item.noSoDtf; // true kalau ada nomor SO DTF
+      if (
+        (item.jumlah || 0) > item.stok &&
+        item.logstok === "Y" &&
+        !isFromSoDtf
+      ) {
         throw new Error(`Stok untuk ${item.nama} (${item.ukuran}) akan minus.`);
       }
     }
-
+    
     let nomorSetoran = payment.transfer.nomorSetoran || "";
     if ((payment.transfer.nominal || 0) > 0 && !nomorSetoran) {
       nomorSetoran = await generateNewSetorNumber(
