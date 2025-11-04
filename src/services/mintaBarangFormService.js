@@ -1,21 +1,26 @@
-const pool = require('../config/database');
-const { format } = require('date-fns');
+const pool = require("../config/database");
+const { format } = require("date-fns");
 
 const getSudah = async (connection, soNomor, kode, ukuran, excludeMtNomor) => {
-    const query = `
+  const query = `
         SELECT IFNULL(SUM(mtd_jumlah), 0) AS total 
         FROM tmintabarang_dtl
         JOIN tmintabarang_hdr ON mt_nomor = mtd_nomor
         WHERE mt_nomor <> ? AND mt_so = ? AND mtd_kode = ? AND mtd_ukuran = ?
     `;
-    const [rows] = await connection.query(query, [excludeMtNomor || '', soNomor, kode, ukuran]);
-    return rows[0].total;
+  const [rows] = await connection.query(query, [
+    excludeMtNomor || "",
+    soNomor,
+    kode,
+    ukuran,
+  ]);
+  return rows[0].total;
 };
 
 const getSoDetailsForGrid = async (soNomor, user) => {
-    const connection = await pool.getConnection();
-    try {
-        const query = `
+  const connection = await pool.getConnection();
+  try {
+    const query = `
             SELECT 
                 d.sod_kode AS kode, 
                 IFNULL(b.brgd_barcode, '') AS barcode,
@@ -38,42 +43,51 @@ const getSoDetailsForGrid = async (soNomor, user) => {
             WHERE h.so_aktif = "Y" AND h.so_nomor = ?
             ORDER BY d.sod_nourut
         `;
-        const [rows] = await connection.query(query, [user.cabang, soNomor]);
+    const [rows] = await connection.query(query, [user.cabang, soNomor]);
 
-        const customerData = rows.length > 0 ? {
+    const customerData =
+      rows.length > 0
+        ? {
             kode: rows[0].cus_kode,
             nama: rows[0].cus_nama,
-            alamat: rows[0].cus_alamat
-        } : null;
-        
-        const items = [];
-        for (const row of rows) {
-            const sudah = await getSudah(connection, soNomor, row.kode, row.ukuran, '');
-            items.push({
-                kode: row.kode,
-                barcode: row.barcode,
-                nama: row.nama,
-                ukuran: row.ukuran,
-                stok: row.stok,
-                qtyso: row.qtyso,
-                stokmin: row.stokmin,
-                stokmax: row.stokmax,
-                sudah: sudah,
-                belum: row.qtyso - sudah,
-                jumlah: 0,
-            });
-        }
-        return { items, customer: customerData };
-    } finally {
-        connection.release();
+            alamat: rows[0].cus_alamat,
+          }
+        : null;
+
+    const items = [];
+    for (const row of rows) {
+      const sudah = await getSudah(
+        connection,
+        soNomor,
+        row.kode,
+        row.ukuran,
+        ""
+      );
+      items.push({
+        kode: row.kode,
+        barcode: row.barcode,
+        nama: row.nama,
+        ukuran: row.ukuran,
+        stok: row.stok,
+        qtyso: row.qtyso,
+        stokmin: row.stokmin,
+        stokmax: row.stokmax,
+        sudah: sudah,
+        belum: row.qtyso - sudah,
+        jumlah: 0,
+      });
     }
+    return { items, customer: customerData };
+  } finally {
+    connection.release();
+  }
 };
 
 const getProductDetailsForGrid = async (filters, user) => {
-    const { kode, ukuran, barcode } = filters;
-    const connection = await pool.getConnection();
-    try {
-        let query = `
+  const { kode, ukuran, barcode } = filters;
+  const connection = await pool.getConnection();
+  try {
+    let query = `
             SELECT 
                 b.brgd_kode AS kode,
                 b.brgd_barcode AS barcode,
@@ -115,110 +129,147 @@ const getProductDetailsForGrid = async (filters, user) => {
             WHERE a.brg_aktif = 0
         `;
 
-        // Parameter untuk subquery di SELECT, perlu dipertahankan
-        const params = [user.cabang, user.cabang, user.cabang];
+    // Parameter untuk subquery di SELECT, perlu dipertahankan
+    const params = [user.cabang, user.cabang, user.cabang];
 
-        // --- PENAMBAHAN FILTER KONDISIONAL DARI DELPHI ---
-        if (user.cabang === 'K04') {
-            query += ' AND a.brg_ktg <> ""';
-        } else if (user.cabang === 'K05') {
-            query += ' AND a.brg_ktg = ""';
-        }
-        // --- AKHIR PENAMBAHAN ---
-
-        if (barcode) {
-            query += ` AND b.brgd_barcode = ?`;
-            params.push(barcode);
-        } else {
-            query += ` AND b.brgd_kode = ? AND b.brgd_ukuran = ?`;
-            params.push(kode, ukuran);
-        }
-
-        const [rows] = await connection.query(query, params);
-        if (rows.length === 0) {
-            throw new Error('Detail produk tidak ditemukan atau tidak valid untuk cabang ini.');
-        }
-
-        // Kalkulasi mino dan jumlah tetap sama
-        const product = rows[0];
-        const mino = product.stokmax - (product.stok + product.sudahminta + product.sj);
-        product.mino = mino > 0 ? mino : 0;
-        product.jumlah = product.mino;
-
-        return product;
-    } finally {
-        connection.release();
+    // --- PENAMBAHAN FILTER KONDISIONAL DARI DELPHI ---
+    if (user.cabang === "K04") {
+      query += ' AND a.brg_ktg <> ""';
+    } else if (user.cabang === "K05") {
+      query += ' AND a.brg_ktg = ""';
     }
+    // --- AKHIR PENAMBAHAN ---
+
+    if (barcode) {
+      query += ` AND b.brgd_barcode = ?`;
+      params.push(barcode);
+    } else {
+      query += ` AND b.brgd_kode = ? AND b.brgd_ukuran = ?`;
+      params.push(kode, ukuran);
+    }
+
+    const [rows] = await connection.query(query, params);
+    if (rows.length === 0) {
+      throw new Error(
+        "Detail produk tidak ditemukan atau tidak valid untuk cabang ini."
+      );
+    }
+
+    // Kalkulasi mino dan jumlah tetap sama
+    const product = rows[0];
+    const mino =
+      product.stokmax - (product.stok + product.sudahminta + product.sj);
+    product.mino = mino > 0 ? mino : 0;
+    product.jumlah = product.mino;
+
+    return product;
+  } finally {
+    connection.release();
+  }
 };
 
-const getBufferStokItems = async (user) => { /* ... (Implementasi query dari btnRefreshClick PanelPSM) ... */ };
+const getBufferStokItems = async (user) => {
+  /* ... (Implementasi query dari btnRefreshClick PanelPSM) ... */
+};
 
 /**
  * @description Menyimpan data Minta Barang (baru atau ubah).
  */
 const save = async (data, user) => {
-    const { header, items, isNew } = data;
-    const connection = await pool.getConnection();
-    await connection.beginTransaction();
+  const { header, items, isNew } = data;
+  const connection = await pool.getConnection();
+  await connection.beginTransaction();
 
-    try {
-        let mtNomor = header.nomor;
-        let idrec;
+  try {
+    let mtNomor = header.nomor;
+    let idrec;
 
-        if (isNew) {
-            // Logika getmaxnomor dari Delphi
-            const prefix = `${user.cabang}MT${format(new Date(header.tanggal), 'yyMM')}`;
-            const [maxRows] = await connection.query(`SELECT IFNULL(MAX(RIGHT(mt_nomor, 4)), 0) as maxNum FROM tmintabarang_hdr WHERE LEFT(mt_nomor, 9) = ?`, [prefix]);
-            const nextNum = parseInt(maxRows[0].maxNum, 10) + 1;
-            mtNomor = `${prefix}${String(10000 + nextNum).slice(1)}`;
-            idrec = `${user.cabang}MT${format(new Date(), 'yyyyMMddHHmmssSSS')}`;
+    if (isNew) {
+      // Logika getmaxnomor dari Delphi
+      const prefix = `${user.cabang}MT${format(
+        new Date(header.tanggal),
+        "yyMM"
+      )}`;
+      const [maxRows] = await connection.query(
+        `SELECT IFNULL(MAX(RIGHT(mt_nomor, 4)), 0) as maxNum FROM tmintabarang_hdr WHERE LEFT(mt_nomor, 9) = ?`,
+        [prefix]
+      );
+      const nextNum = parseInt(maxRows[0].maxNum, 10) + 1;
+      mtNomor = `${prefix}${String(10000 + nextNum).slice(1)}`;
+      idrec = `${user.cabang}MT${format(new Date(), "yyyyMMddHHmmssSSS")}`;
 
-            const insertHeaderQuery = `
+      const insertHeaderQuery = `
                 INSERT INTO tmintabarang_hdr (mt_idrec, mt_nomor, mt_tanggal, mt_so, mt_cus, mt_ket, user_create, date_create) 
                 VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
             `;
-            await connection.query(insertHeaderQuery, [idrec, mtNomor, header.tanggal, header.soNomor, header.customer?.kode, header.keterangan, user.kode]);
-        } else {
-            const [idrecRows] = await connection.query('SELECT mt_idrec FROM tmintabarang_hdr WHERE mt_nomor = ?', [mtNomor]);
-            if (idrecRows.length === 0) throw new Error('Nomor Minta Barang tidak ditemukan.');
-            idrec = idrecRows[0].mt_idrec;
+      await connection.query(insertHeaderQuery, [
+        idrec,
+        mtNomor,
+        header.tanggal,
+        header.soNomor,
+        header.customer?.kode,
+        header.keterangan,
+        user.kode,
+      ]);
+    } else {
+      const [idrecRows] = await connection.query(
+        "SELECT mt_idrec FROM tmintabarang_hdr WHERE mt_nomor = ?",
+        [mtNomor]
+      );
+      if (idrecRows.length === 0)
+        throw new Error("Nomor Minta Barang tidak ditemukan.");
+      idrec = idrecRows[0].mt_idrec;
 
-            const updateHeaderQuery = `
+      const updateHeaderQuery = `
                 UPDATE tmintabarang_hdr SET
                     mt_tanggal = ?, mt_so = ?, mt_cus = ?, mt_ket = ?,
                     user_modified = ?, date_modified = NOW()
                 WHERE mt_nomor = ?
             `;
-            await connection.query(updateHeaderQuery, [header.tanggal, header.soNomor, header.customer?.kode, header.keterangan, user.kode, mtNomor]);
-        }
-
-        // Pola "hapus-lalu-sisipkan" untuk detail
-        await connection.query('DELETE FROM tmintabarang_dtl WHERE mtd_nomor = ?', [mtNomor]);
-
-        const validItems = items.filter(item => item.kode && (item.jumlah || 0) > 0);
-        for (const item of validItems) {
-            await connection.query(
-                'INSERT INTO tmintabarang_dtl (mtd_idrec, mtd_nomor, mtd_kode, mtd_ukuran, mtd_jumlah) VALUES (?, ?, ?, ?, ?)',
-                [idrec, mtNomor, item.kode, item.ukuran, item.jumlah]
-            );
-        }
-
-        await connection.commit();
-        return { message: `Permintaan Barang ${mtNomor} berhasil disimpan.`, nomor: mtNomor };
-    } catch (error) {
-        await connection.rollback();
-        console.error("Save Minta Barang Error:", error);
-        throw new Error('Gagal menyimpan Permintaan Barang.');
-    } finally {
-        connection.release();
+      await connection.query(updateHeaderQuery, [
+        header.tanggal,
+        header.soNomor,
+        header.customer?.kode,
+        header.keterangan,
+        user.kode,
+        mtNomor,
+      ]);
     }
+
+    // Pola "hapus-lalu-sisipkan" untuk detail
+    await connection.query("DELETE FROM tmintabarang_dtl WHERE mtd_nomor = ?", [
+      mtNomor,
+    ]);
+
+    const validItems = items.filter(
+      (item) => item.kode && (item.jumlah || 0) > 0
+    );
+    for (const item of validItems) {
+      await connection.query(
+        "INSERT INTO tmintabarang_dtl (mtd_idrec, mtd_nomor, mtd_kode, mtd_ukuran, mtd_jumlah) VALUES (?, ?, ?, ?, ?)",
+        [idrec, mtNomor, item.kode, item.ukuran, item.jumlah]
+      );
+    }
+
+    await connection.commit();
+    return {
+      message: `Permintaan Barang ${mtNomor} berhasil disimpan.`,
+      nomor: mtNomor,
+    };
+  } catch (error) {
+    await connection.rollback();
+    console.error("Save Minta Barang Error:", error);
+    throw new Error("Gagal menyimpan Permintaan Barang.");
+  } finally {
+    connection.release();
+  }
 };
 
 const loadForEdit = async (nomor, user) => {
-    const connection = await pool.getConnection();
-    try {
-        // Query ini adalah migrasi dari 'loaddataall' di Delphi
-        const query = `
+  const connection = await pool.getConnection();
+  try {
+    // Query ini adalah migrasi dari 'loaddataall' di Delphi
+    const query = `
             SELECT 
                 h.mt_nomor, h.mt_tanggal, h.mt_so, h.mt_cus, h.mt_ket,
                 c.cus_nama, c.cus_alamat,
@@ -250,49 +301,54 @@ const loadForEdit = async (nomor, user) => {
             LEFT JOIN tcustomer c ON c.cus_kode = h.mt_cus
             WHERE h.mt_nomor = ?
         `;
-        const [rows] = await connection.query(query, [user.cabang, nomor, user.cabang, nomor]);
-        if (rows.length === 0) {
-            throw new Error('Data Permintaan Barang tidak ditemukan.');
-        }
-
-        // Proses dan format data untuk dikirim ke frontend
-        const header = {
-            nomor: rows[0].mt_nomor,
-            tanggal: rows[0].mt_tanggal,
-            soNomor: rows[0].mt_so,
-            customer: {
-                kode: rows[0].mt_cus,
-                nama: rows[0].cus_nama,
-                alamat: rows[0].cus_alamat,
-            },
-            keterangan: rows[0].mt_ket,
-        };
-
-        const items = rows.map(row => {
-            const mino = row.stokmax - (row.stok + row.sudahminta + row.sj);
-            return {
-                kode: row.mtd_kode,
-                nama: row.nama,
-                ukuran: row.mtd_ukuran,
-                stokmin: row.stokmin,
-                stokmax: row.stokmax,
-                sudahminta: row.sudahminta,
-                sj: row.sj,
-                stok: row.stok,
-                mino: mino > 0 ? mino : 0,
-                jumlah: row.mtd_jumlah,
-                barcode: row.brgd_barcode,
-            };
-        });
-
-        return { header, items };
-    } finally {
-        connection.release();
+    const [rows] = await connection.query(query, [
+      user.cabang,
+      nomor,
+      user.cabang,
+      nomor,
+    ]);
+    if (rows.length === 0) {
+      throw new Error("Data Permintaan Barang tidak ditemukan.");
     }
+
+    // Proses dan format data untuk dikirim ke frontend
+    const header = {
+      nomor: rows[0].mt_nomor,
+      tanggal: rows[0].mt_tanggal,
+      soNomor: rows[0].mt_so,
+      customer: {
+        kode: rows[0].mt_cus,
+        nama: rows[0].cus_nama,
+        alamat: rows[0].cus_alamat,
+      },
+      keterangan: rows[0].mt_ket,
+    };
+
+    const items = rows.map((row) => {
+      const mino = row.stokmax - (row.stok + row.sudahminta + row.sj);
+      return {
+        kode: row.mtd_kode,
+        nama: row.nama,
+        ukuran: row.mtd_ukuran,
+        stokmin: row.stokmin,
+        stokmax: row.stokmax,
+        sudahminta: row.sudahminta,
+        sj: row.sj,
+        stok: row.stok,
+        mino: mino > 0 ? mino : 0,
+        jumlah: row.mtd_jumlah,
+        barcode: row.brgd_barcode,
+      };
+    });
+
+    return { header, items };
+  } finally {
+    connection.release();
+  }
 };
 
 const findByBarcode = async (barcode, gudang) => {
-    const query = `
+  const query = `
         SELECT
             d.brgd_barcode AS barcode,
             d.brgd_kode AS kode,
@@ -316,51 +372,52 @@ const findByBarcode = async (barcode, gudang) => {
           AND h.brg_logstok <> 'N'
           AND d.brgd_barcode = ?;
     `;
-    
-    // Parameter 'gudang' sekarang digunakan untuk subquery stok
-    const [rows] = await pool.query(query, [gudang, barcode]);
-    
-    if (rows.length === 0) {
-        throw new Error('Barcode tidak ditemukan atau barang tidak aktif.');
-    }
-    return rows[0];
+
+  // Parameter 'gudang' sekarang digunakan untuk subquery stok
+  const [rows] = await pool.query(query, [gudang, barcode]);
+
+  if (rows.length === 0) {
+    throw new Error("Barcode tidak ditemukan atau barang tidak aktif.");
+  }
+  return rows[0];
 };
 
 const lookupProducts = async (filters) => {
-    // Ambil parameter pagination
-    const page = parseInt(filters.page, 10) || 1;
-    const itemsPerPage = parseInt(filters.itemsPerPage, 10) || 10;
-    const { term } = filters;
-    
-    const offset = (page - 1) * itemsPerPage;
-    const searchTerm = term ? `%${term}%` : null;
+  // Ambil parameter pagination
+  const page = parseInt(filters.page, 10) || 1;
+  const itemsPerPage = parseInt(filters.itemsPerPage, 10) || 10;
+  const { term } = filters;
 
-    // INI BAGIAN YANG PERLU ANDA GANTI
-    let fromClause = `
+  const offset = (page - 1) * itemsPerPage;
+  const searchTerm = term ? `%${term}%` : null;
+
+  // INI BAGIAN YANG PERLU ANDA GANTI
+  let fromClause = `
         FROM tbarangdc a
         INNER JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
     `;
-    
-    let whereClause = `WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'`;
-    let params = [];
 
-    if (term) {
-        whereClause += ` AND (a.brg_kode LIKE ? OR b.brgd_barcode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) LIKE ?)`;
-        params.push(searchTerm, searchTerm, searchTerm);
-    }
-    
-    // Query untuk menghitung total item yang cocok
-    const countQuery = `SELECT COUNT(*) as total ${fromClause} ${whereClause}`;
-    const [countRows] = await pool.query(countQuery, params);
-    const total = countRows[0].total;
-    
-    // Query untuk mengambil data per halaman
-    const dataQuery = `
+  let whereClause = `WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'`;
+  let params = [];
+
+  if (term) {
+    whereClause += ` AND (a.brg_kode LIKE ? OR b.brgd_barcode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) LIKE ?)`;
+    params.push(searchTerm, searchTerm, searchTerm);
+  }
+
+  // Query untuk menghitung total item yang cocok
+  const countQuery = `SELECT COUNT(*) as total ${fromClause} ${whereClause}`;
+  const [countRows] = await pool.query(countQuery, params);
+  const total = countRows[0].total;
+
+  // Query untuk mengambil data per halaman
+  const dataQuery = `
         SELECT
             b.brgd_kode AS kode,
             b.brgd_barcode AS barcode,
             TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
             b.brgd_ukuran AS ukuran,
+            b.brgd_harga AS harga,
             a.brg_ktg AS kategori,
             CONCAT(b.brgd_kode, '-', b.brgd_ukuran) AS uniqueId
         ${fromClause}
@@ -368,18 +425,18 @@ const lookupProducts = async (filters) => {
         ORDER BY nama, b.brgd_ukuran
         LIMIT ? OFFSET ?
     `;
-    params.push(itemsPerPage, offset); // Tambahkan parameter pagination
-    
-    const [items] = await pool.query(dataQuery, params);
-    return { items, total };
+  params.push(itemsPerPage, offset); // Tambahkan parameter pagination
+
+  const [items] = await pool.query(dataQuery, params);
+  return { items, total };
 };
 
 module.exports = {
-    getSoDetailsForGrid, 
-    getBufferStokItems, 
-    save, 
-    loadForEdit,
-    getProductDetailsForGrid,
-    findByBarcode,
-    lookupProducts,
+  getSoDetailsForGrid,
+  getBufferStokItems,
+  save,
+  loadForEdit,
+  getProductDetailsForGrid,
+  findByBarcode,
+  lookupProducts,
 };

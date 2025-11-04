@@ -90,7 +90,7 @@ const getDetails = async (nomor) => {
             SELECT 
                 d.sod_kode AS Kode,
                 IFNULL(b.brgd_barcode, "") AS Barcode,
-                IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)), f.sd_nama) AS Nama,
+                IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) AS Nama,
                 d.sod_ukuran AS Ukuran,
                 d.sod_jumlah AS QtySO,
                 d.sod_harga AS Harga,
@@ -190,7 +190,7 @@ const getDataForPrint = async (nomor) => {
   // 2. Ambil data Detail
   const detailQuery = `
         SELECT 
-            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)), f.sd_nama) AS nama_barang,
+            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) AS nama_barang,
             d.sod_ukuran AS ukuran,
             d.sod_jumlah AS qty,
             d.sod_harga AS harga,

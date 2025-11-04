@@ -37,21 +37,21 @@ const lookupInvoices = async (req, res) => {
 };
 
 const findByBarcode = async (req, res) => {
-    try {
-        const data = await service.findByBarcode(req.params.barcode);
-        res.json(data);
-    } catch (error) {
-        res.status(404).json({ message: error.message });
-    }
+  try {
+    const data = await service.findByBarcode(req.params.barcode);
+    res.json(data);
+  } catch (error) {
+    res.status(404).json({ message: error.message });
+  }
 };
 
 const getPrintData = async (req, res) => {
-    try {
-        const data = await service.getPrintData(req.params.nomor);
-        res.json(data);
-    } catch (error) {
-        res.status(404).json({ message: error.message });
-    }
+  try {
+    const data = await service.getPrintData(req.params.nomor);
+    res.json(data);
+  } catch (error) {
+    res.status(404).json({ message: error.message });
+  }
 };
 
 module.exports = {

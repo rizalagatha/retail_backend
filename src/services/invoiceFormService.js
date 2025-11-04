@@ -117,7 +117,7 @@ const getSoDetailsForGrid = async (soNomor, user) => {
                 IFNULL(i.sod_diskon, 0) AS diskonRp,
                 IFNULL(i.sod_disc, 0) AS diskonPersen,
                 b.brgd_hpp AS hpp, a.brg_logstok AS logstok,
-                IFNULL((SELECT SUM(st.mst_stok_in - st.mst_stok_out) FROM tmasterstok st WHERE st.mst_aktif="Y" AND st.mst_cab=? AND st.mst_brg_kode=d.sjd_kode AND st.mst_ukuran=d.sjd_ukuran), 0) AS stok
+                IFNULL((SELECT SUM(st.mst_stok_in - st.mst_stok_out) FROM tmasterstokso st WHERE st.mst_aktif="Y" AND st.mst_cab=? AND st.mst_brg_kode=d.sjd_kode AND st.mst_ukuran=d.sjd_ukuran), 0) AS stok
             FROM tdc_sj_dtl d
             LEFT JOIN tdc_sj_hdr h ON d.sjd_nomor = h.sj_nomor
             LEFT JOIN tmintabarang_hdr m ON m.mt_nomor = h.sj_mt_nomor
@@ -157,7 +157,7 @@ const getSoDetailsForGrid = async (soNomor, user) => {
                 b.brgd_hpp AS hpp, a.brg_logstok AS logstok,
                 IFNULL(
   (SELECT SUM(m.mst_stok_in - m.mst_stok_out)
-   FROM tmasterstok m
+   FROM tmasterstokso m
    WHERE m.mst_aktif = 'Y'
      AND m.mst_cab = ?
      AND m.mst_brg_kode = d.sod_kode
