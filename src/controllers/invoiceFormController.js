@@ -277,6 +277,15 @@ const getDataForSjPrint = async (req, res) => {
   }
 };
 
+const getActivePromos = async (req, res) => {
+  try {
+    const data = await service.getActivePromos(req.query, req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   loadForEdit,
   save,
@@ -304,4 +313,5 @@ module.exports = {
   getKuponPrintData,
   getVoucherPrintData,
   getDataForSjPrint,
+  getActivePromos,
 };

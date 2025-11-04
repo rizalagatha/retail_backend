@@ -424,6 +424,72 @@ const getStagnantStockSummary = async (user) => {
   return rows[0]; // Akan mengembalikan { totalStagnantValue: ... }
 };
 
+/**
+ * @description Menghitung total sisa piutang.
+ */
+const getTotalSisaPiutang = async (user) => {
+  let branchFilter = "AND LEFT(u.ph_inv_nomor, 3) = ?";
+  let params = [user.cabang];
+
+  // Jika KDC, lihat semua cabang
+  if (user.cabang === "KDC") {
+    branchFilter = ""; // Hapus filter cabang
+    params = [];
+  }
+
+  // Query ini menjumlahkan (debet - kredit) dari tpiutang_dtl
+  // Ini lebih akurat dan cepat daripada subquery di query getList Anda
+  const query = `
+    SELECT 
+      SUM(v.debet - v.kredit) AS totalSisaPiutang
+    FROM tpiutang_hdr u
+    LEFT JOIN (
+        SELECT pd_ph_nomor, 
+               SUM(pd_debet) AS debet, 
+               SUM(pd_kredit) AS kredit 
+        FROM tpiutang_dtl 
+        GROUP BY pd_ph_nomor
+    ) v ON v.pd_ph_nomor = u.ph_nomor
+    WHERE 1=1 ${branchFilter};
+  `;
+
+  const [rows] = await pool.query(query, params);
+  return rows[0]; // Akan mengembalikan { totalSisaPiutang: ... }
+};
+
+/**
+ * @description Menghitung sisa piutang per cabang (HANYA UNTUK KDC).
+ */
+const getPiutangPerCabang = async (user) => {
+  // Fitur ini hanya untuk KDC
+  if (user.cabang !== "KDC") {
+    return []; // Kembalikan array kosong jika bukan KDC
+  }
+
+  // Query ini mengambil total sisa piutang > 0, dikelompokkan per cabang
+  const query = `
+    SELECT 
+      LEFT(u.ph_inv_nomor, 3) AS cabang_kode,
+      g.gdg_nama AS cabang_nama,
+      SUM(v.debet - v.kredit) AS sisa_piutang
+    FROM tpiutang_hdr u
+    LEFT JOIN (
+        SELECT pd_ph_nomor, 
+               SUM(pd_debet) AS debet, 
+               SUM(pd_kredit) AS kredit 
+        FROM tpiutang_dtl 
+        GROUP BY pd_ph_nomor
+    ) v ON v.pd_ph_nomor = u.ph_nomor
+    LEFT JOIN tgudang g ON g.gdg_kode = LEFT(u.ph_inv_nomor, 3)
+    WHERE (v.debet - v.kredit) > 0  -- Hanya ambil yang masih ada sisa
+    GROUP BY LEFT(u.ph_inv_nomor, 3), g.gdg_nama
+    ORDER BY sisa_piutang DESC;
+  `;
+
+  const [rows] = await pool.query(query);
+  return rows;
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -434,4 +500,6 @@ module.exports = {
   getSalesTargetSummary,
   getBranchPerformance,
   getStagnantStockSummary,
+  getTotalSisaPiutang,
+  getPiutangPerCabang,
 };

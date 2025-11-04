@@ -88,6 +88,24 @@ const getStagnantStockSummary = async (req, res) => {
   }
 };
 
+const getTotalSisaPiutang = async (req, res) => {
+  try {
+    const data = await dashboardService.getTotalSisaPiutang(req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getPiutangPerCabang = async (req, res) => {
+  try {
+    const data = await dashboardService.getPiutangPerCabang(req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -98,4 +116,6 @@ module.exports = {
   getSalesTargetSummary,
   getBranchPerformance,
   getStagnantStockSummary,
+  getTotalSisaPiutang,
+  getPiutangPerCabang,
 };

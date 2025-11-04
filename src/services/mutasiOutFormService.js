@@ -79,9 +79,10 @@ const getSoDetailsForGrid = async (soNomor, user) => {
                 d.sod_jumlah AS qtyso
             FROM tso_dtl d
             JOIN tso_hdr h ON d.sod_so_nomor = h.so_nomor
-            LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode AND a.brg_logstok="Y"
-            LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
+            INNER JOIN tbarangdc a ON a.brg_kode = d.sod_kode AND a.brg_logstok="Y"
+            INNER JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
             WHERE h.so_aktif = "Y" AND h.so_nomor = ?
+            AND d.sod_sd_nomor = ''
             ORDER BY d.sod_nourut
         `;
         const [rows] = await connection.query(query, [user.cabang, soNomor]);

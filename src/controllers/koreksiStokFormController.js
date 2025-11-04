@@ -32,36 +32,38 @@ const getProductDetails = async (req, res) => {
 };
 
 const findByBarcode = async (req, res) => {
-    try {
-        const { barcode } = req.params;
-        const { gudang, tanggal } = req.query;
-        if (!gudang || !tanggal) {
-            return res.status(400).json({ message: 'Parameter gudang dan tanggal diperlukan.' });
-        }
-        const data = await service.findByBarcode(barcode, gudang, tanggal);
-        res.json(data);
-    } catch (error) {
-        res.status(404).json({ message: error.message });
+  try {
+    const { barcode } = req.params;
+    const { gudang, tanggal } = req.query;
+    if (!gudang || !tanggal) {
+      return res
+        .status(400)
+        .json({ message: "Parameter gudang dan tanggal diperlukan." });
     }
+    const data = await service.findByBarcode(barcode, gudang, tanggal);
+    res.json(data);
+  } catch (error) {
+    res.status(404).json({ message: error.message });
+  }
 };
 
 const lookupProducts = async (req, res) => {
-    try {
-        // Langsung teruskan semua filter dari query ke service
-        const data = await service.lookupProducts(req.query);
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
+  try {
+    // Langsung teruskan semua filter dari query ke service
+    const data = await service.lookupProducts(req.query);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
 const getPrintData = async (req, res) => {
-    try {
-        const data = await service.getPrintData(req.params.nomor);
-        res.json(data);
-    } catch (error) {
-        res.status(404).json({ message: error.message });
-    }
+  try {
+    const data = await service.getPrintData(req.params.nomor);
+    res.json(data);
+  } catch (error) {
+    res.status(404).json({ message: error.message });
+  }
 };
 
 module.exports = {

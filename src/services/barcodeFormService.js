@@ -176,23 +176,21 @@ const searchMaster = async (term, page, itemsPerPage) => {
 };
 
 const findByBarcode = async (barcode) => {
+  console.log("Mulai query barcode:", barcode);
   const query = `
-        SELECT
-            d.brgd_barcode AS barcode,
-            d.brgd_kode AS kode,
-            TRIM(CONCAT(h.brg_jeniskaos, " ", h.brg_tipe, " ", h.brg_lengan, " ", h.brg_jeniskain, " ", h.brg_warna)) AS nama,
-            d.brgd_ukuran AS ukuran,
-            d.brgd_harga AS harga
-        FROM tbarangdc_dtl d
-
-        /* --- PERUBAHAN DI SINI: LEFT JOIN diubah jadi INNER JOIN --- */
-        INNER JOIN tbarangdc h ON h.brg_kode = d.brgd_kode 
-
-        WHERE h.brg_aktif = 0 
-            AND d.brgd_barcode = ?;
-        `;
+    SELECT
+      d.brgd_barcode AS barcode,
+      d.brgd_kode AS kode,
+      TRIM(CONCAT(h.brg_jeniskaos, " ", h.brg_tipe, " ", h.brg_lengan, " ", h.brg_jeniskain, " ", h.brg_warna)) AS nama,
+      d.brgd_ukuran AS ukuran,
+      d.brgd_harga AS harga
+    FROM tbarangdc_dtl d
+    INNER JOIN tbarangdc h ON h.brg_kode = d.brgd_kode
+    WHERE h.brg_aktif = 0 
+      AND d.brgd_barcode = ?;
+  `;
   const [rows] = await pool.query(query, [barcode]);
-
+  console.log("Selesai query, hasil:", rows.length);
   if (rows.length === 0) {
     throw new Error("Barcode tidak ditemukan atau barang tidak aktif.");
   }

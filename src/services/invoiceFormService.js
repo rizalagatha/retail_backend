@@ -293,18 +293,6 @@ const saveData = async (payload, user) => {
       0
     );
     if (totalQty <= 0) throw new Error("Qty Invoice kosong semua.");
-    for (const item of validItems) {
-      // Jika logstok=Y (barang logistik) dan stok kurang dari jumlah,
-      // tapi item bukan berasal dari SO DTF, maka error
-      const isFromSoDtf = !!item.noSoDtf; // true kalau ada nomor SO DTF
-      if (
-        (item.jumlah || 0) > item.stok &&
-        item.logstok === "Y" &&
-        !isFromSoDtf
-      ) {
-        throw new Error(`Stok untuk ${item.nama} (${item.ukuran}) akan minus.`);
-      }
-    }
 
     let nomorSetoran = payment.transfer.nomorSetoran || "";
     if ((payment.transfer.nominal || 0) > 0 && !nomorSetoran) {
@@ -1509,6 +1497,22 @@ const getDataForSjPrint = async (nomorInvoice) => {
   return { header, details };
 };
 
+const getActivePromos = async (filters, user) => {
+  const { tanggal } = filters;
+  const promoQuery = `
+    SELECT p.*
+    FROM tpromo p
+    INNER JOIN tpromo_cabang c ON c.pc_nomor = p.pro_nomor AND c.pc_cab = ?
+    WHERE p.pro_f1 = "N" 
+      AND ? BETWEEN p.pro_tanggal1 AND p.pro_tanggal2;
+  `;
+  const [activePromos] = await pool.query(promoQuery, [
+    user.cabang,
+    tanggal,
+  ]);
+  return activePromos;
+};
+
 module.exports = {
   searchSo,
   getSoDetailsForGrid,
@@ -1536,4 +1540,5 @@ module.exports = {
   getKuponPrintData,
   getVoucherPrintData,
   getDataForSjPrint,
+  getActivePromos,
 };

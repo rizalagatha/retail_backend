@@ -17,17 +17,29 @@ const getCabangList = async (user) => {
 
 const getList = async (filters) => {
   const { startDate, endDate, cabang, status } = filters;
-  const params = [startDate, endDate, cabang];
 
+  // 1. Parameter disiapkan
+  const params = [startDate, endDate];
+
+  // 2. Logika filter cabang (sesuai Delphi)
+  let cabangFilter = "";
+  if (cabang === "KDC") {
+    // Jika KDC, ambil semua gudang yang merupakan DC
+    cabangFilter =
+      " AND LEFT(h.inv_nomor, 3) IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)";
+  } else {
+    // Jika bukan KDC, filter berdasarkan cabang spesifik
+    cabangFilter = " AND LEFT(h.inv_nomor, 3) = ?";
+    params.push(cabang); // Tambahkan cabang ke parameter
+  }
+
+  // 3. Logika filter status
   let statusFilter = "";
-
   if (status === "belum_lunas") {
-    // 'x' adalah alias query luar Anda.
-    // Logika ini (SisaPiutang > 0) harus cocok dengan query Anda.
     statusFilter = " AND x.SisaPiutang > 0";
   }
 
-  // Ini adalah terjemahan langsung dari query kompleks di Delphi
+  // 4. Query utama yang telah diperbarui
   const query = `
         SELECT 
             x.Nomor, x.Tanggal, x.Posting,
@@ -38,14 +50,41 @@ const getList = async (filters) => {
              WHERE ii.pd_kredit<>0 AND jj.ph_inv_nomor=x.Nomor
              ORDER BY ii.pd_tanggal DESC LIMIT 1) AS LastPayment,
             x.inv_disc1 AS \`Dis%\`, x.Diskon, x.Dp, x.Biayakirim, x.Nominal, 
-            x.Piutang, x.Bayar, x.SisaPiutang,
+            x.Piutang, 
+            
+            -- [PERUBAHAN] Kalkulasi BAYAR (tanpa Retur)
+            (SELECT IFNULL(SUM(b.pd_kredit), 0) FROM tpiutang_dtl b
+             INNER JOIN tpiutang_hdr a ON a.ph_nomor = b.pd_ph_nomor
+             WHERE b.pd_uraian <> "Pembayaran Retur" AND a.ph_inv_nomor = x.Nomor
+            ) AS Bayar,
+            
+            -- [PERUBAHAN] Kalkulasi RPRETUP (hanya Retur)
+            (SELECT IFNULL(SUM(b.pd_kredit), 0) FROM tpiutang_dtl b
+             INNER JOIN tpiutang_hdr a ON a.ph_nomor = b.pd_ph_nomor
+             WHERE b.pd_uraian = "Pembayaran Retur" AND a.ph_inv_nomor = x.Nomor
+            ) AS RpRetur,
+
+            x.SisaPiutang, -- Sisa piutang tetap (Total - (Bayar + Retur))
             x.Kdcus, x.Nama, x.Alamat, x.Kota, x.Telp, x.xLevel AS \`Level\`, 
             x.Hp, x.Member, x.Keterangan,
             x.inv_rptunai AS RpTunai, x.inv_novoucher AS NoVoucher, 
             x.inv_rpvoucher AS RpVoucher, x.inv_rpcard AS RpTransfer, x.NoSetoran, 
             x.sh_tgltransfer AS TglTransfer, x.sh_akun AS Akun, x.rek_rekening AS NoRekening,
-            x.RpRetur, x.NoRetur,
-            x.SC, x.Created, x.Prn, x.Puas, x.Closing
+            x.NoRetur, x.SC, x.Created, x.Prn, x.Puas, x.Closing,
+
+            -- [TAMBAHAN] Kolom Minus
+            IFNULL((
+                SELECT 'Y'
+                FROM tinv_dtl d
+                JOIN tbarangdc b ON b.brg_kode = d.invd_kode
+                LEFT JOIN tmasterstok m ON m.mst_brg_kode = d.invd_kode AND m.mst_ukuran = d.invd_ukuran AND m.mst_aktif = 'Y'
+                WHERE d.invd_inv_nomor = x.Nomor  -- Referensi 'x' di WHERE (OK)
+                  AND m.mst_cab = LEFT(x.Nomor, 3) -- Referensi 'x' di WHERE (OK)
+                  AND b.brg_logstok = 'Y'
+                GROUP BY d.invd_inv_nomor
+                HAVING SUM(m.mst_stok_in - m.mst_stok_out) < 0
+            ), 'N') AS Minus
+
         FROM (
             SELECT 
                 h.inv_nomor AS Nomor, h.inv_tanggal AS Tanggal,
@@ -62,17 +101,27 @@ const getList = async (filters) => {
                 DATE_FORMAT(DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY), "%d/%m/%Y") AS Tempo,
                 h.inv_ppn AS ppn, h.inv_disc1, h.inv_disc AS Diskon, h.inv_dp AS Dp,
                 h.inv_bkrm AS Biayakirim,
-                (SELECT ROUND(SUM(dd.invd_jumlah*(dd.invd_harga-dd.invd_diskon))-hh.inv_disc+(inv_ppn/100*(SUM(dd.invd_jumlah*(dd.invd_harga-dd.invd_diskon))-hh.inv_disc))) FROM tinv_dtl dd LEFT JOIN tinv_hdr hh ON hh.inv_nomor=dd.invd_inv_nomor WHERE hh.inv_nomor = h.inv_nomor GROUP BY hh.inv_nomor) AS Nominal,
+                (SELECT ROUND(SUM(dd.invd_jumlah*(dd.invd_harga-dd.invd_diskon))-hh.inv_disc+(hh.inv_ppn/100*(SUM(dd.invd_jumlah*(dd.invd_harga-dd.invd_diskon))-hh.inv_disc))) FROM tinv_dtl dd LEFT JOIN tinv_hdr hh ON hh.inv_nomor=dd.invd_inv_nomor WHERE hh.inv_nomor = h.inv_nomor GROUP BY hh.inv_nomor) AS Nominal,
                 u.ph_nominal AS Piutang,
-                v.kredit AS Bayar,
                 (v.debet - v.kredit) AS SisaPiutang,
                 h.inv_cus_kode AS kdcus, s.cus_nama AS Nama, s.cus_alamat AS Alamat, s.cus_kota AS Kota, s.cus_telp AS Telp,
                 CONCAT(h.inv_cus_level, " - ", l.level_nama) AS xLevel,
                 h.inv_mem_hp AS HP, h.inv_mem_nama AS Member,
-                h.inv_ket AS Keterangan, h.inv_rptunai, h.inv_novoucher, h.inv_rpvoucher, h.inv_rj_rp AS RpRetur, h.inv_rj_nomor AS NoRetur,
+                h.inv_ket AS Keterangan, h.inv_rptunai, h.inv_novoucher, h.inv_rpvoucher, 
+                h.inv_rj_nomor AS NoRetur, -- Kolom 'RpRetur' diambil di query luar
                 h.inv_rpcard, h.inv_nosetor AS NoSetoran, t.sh_tgltransfer, t.sh_akun, r.rek_rekening, h.inv_print AS Prn, h.inv_puas AS Puas, h.inv_sc AS SC, h.date_create AS Created, h.inv_closing AS Closing
+                ${
+                  cabang === "KPR"
+                    ? ", j.sj_nomor AS NomorSJ, j.sj_tanggal AS TglSJ"
+                    : ""
+                }
             FROM tinv_hdr h
             LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
+            ${
+              cabang === "KPR"
+                ? "LEFT JOIN tdc_sj_hdr j ON j.sj_nomor = h.inv_nomor_so"
+                : ""
+            }
             LEFT JOIN tcustomer s ON s.cus_kode = h.inv_cus_kode
             LEFT JOIN tcustomer_level l ON l.level_kode = h.inv_cus_level
             LEFT JOIN tsetor_hdr t ON t.sh_nomor = h.inv_nosetor
@@ -81,7 +130,7 @@ const getList = async (filters) => {
             LEFT JOIN finance.trekening r ON r.rek_kode = t.sh_akun
             WHERE h.inv_sts_pro = 0 
               AND h.inv_tanggal BETWEEN ? AND ?
-              AND LEFT(h.inv_nomor, 3) = ?
+              ${cabangFilter}
         ) x 
         WHERE 1=1 ${statusFilter}
         ORDER BY x.Nomor ASC;
