@@ -57,7 +57,8 @@ const searchUnpaidDp = async (req, res) => {
 
 const getSalesCounters = async (req, res) => {
   try {
-    const data = await service.getSalesCounters();
+    // Teruskan req.user ke service
+    const data = await service.getSalesCounters(req.user);
     res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });

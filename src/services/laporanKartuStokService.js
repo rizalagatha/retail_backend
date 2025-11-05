@@ -1,7 +1,6 @@
 const pool = require("../config/database");
 const { parseISO, format, addDays, subDays } = require("date-fns");
 
-
 const getProductList = async (filters) => {
   const { gudang, kodeBarang, startDate, endDate } = filters;
 
@@ -134,18 +133,42 @@ const getProductList = async (filters) => {
   `;
 
   const params = [
-    gudang, startDate, endDate, // awal
-    gudang, startDate, endDate, // sop
-    gudang, startDate, endDate, // koreksi
-    gudang, startDate, endDate, // retur jual
-    gudang, startDate, endDate, // terima sj
-    gudang, startDate, endDate, // mut store terima
-    gudang, startDate, endDate, // mut in pesan
-    gudang, startDate, endDate, // invoice
-    gudang, startDate, endDate, // invoice so
-    gudang, startDate, endDate, // retur ke dc
-    gudang, startDate, endDate, // mut store kirim
-    gudang, startDate, endDate, // mut out pesan
+    gudang,
+    startDate,
+    endDate, // awal
+    gudang,
+    startDate,
+    endDate, // sop
+    gudang,
+    startDate,
+    endDate, // koreksi
+    gudang,
+    startDate,
+    endDate, // retur jual
+    gudang,
+    startDate,
+    endDate, // terima sj
+    gudang,
+    startDate,
+    endDate, // mut store terima
+    gudang,
+    startDate,
+    endDate, // mut in pesan
+    gudang,
+    startDate,
+    endDate, // invoice
+    gudang,
+    startDate,
+    endDate, // invoice so
+    gudang,
+    startDate,
+    endDate, // retur ke dc
+    gudang,
+    startDate,
+    endDate, // mut store kirim
+    gudang,
+    startDate,
+    endDate, // mut out pesan
   ];
 
   if (kodeBarang) {
@@ -162,123 +185,115 @@ const getProductList = async (filters) => {
   return rows;
 };
 
-
 const getKartuDetails = async (filters) => {
-  const { gudang, startDate, endDate, id, jenis = 1 } = filters;
+  const { gudang, startDate, endDate, id } = filters;
 
+  // 1. Validasi Input (sudah ada di kode Anda, ini bagus)
   if (!gudang || !startDate || !endDate || !id) {
     throw new Error("gudang, startDate, endDate, dan id harus diisi");
   }
 
-  // parsing tanggal
   const start = parseISO(startDate);
   const end = parseISO(endDate);
 
-  const startDateStr = format(start, 'yyyy-MM-dd');
-  const endDateStr = format(end, 'yyyy-MM-dd');
-  const DawalStr = format(subDays(start, 1), 'yyyy-MM-dd'); // stok awal sebelum startDate
-  const startOpnameStr = format(addDays(start, 1), 'yyyy-MM-dd'); // opname mulai startDate+1
+  const startDateStr = format(start, "yyyy-MM-dd");
+  const endDateStr = format(end, "yyyy-MM-dd");
+  const tglStokAwal = format(subDays(start, 1), "yyyy-MM-dd"); // Stok s/d H-1
 
-  let query = `
-SELECT * FROM (
-    -- Bagian 1: Mutasi/Stok Masuk/Keluar
+  // === PERBAIKAN LOGIKA STOK AWAL ===
+  // Kita akan selalu hitung stok awal s/d H-1 sebagai satu baris 'In'
+
+  const stokAwalQuery = `
     SELECT 
-        CONCAT(m.mst_brg_kode, m.mst_ukuran) AS id,
-        m.mst_tanggal AS tanggal,
-        m.mst_noreferensi AS nomor,
-        COALESCE(SUM(m.mst_stok_in),0) AS \`In\`,
-        COALESCE(SUM(m.mst_stok_out),0) AS \`Out\`,
-        CASE
-            WHEN m.mst_noreferensi LIKE '%KOR%' THEN 'Koreksi'
-            WHEN m.mst_noreferensi LIKE '%MTS%' THEN 'Mutasi'
-            WHEN m.mst_noreferensi LIKE '%MUT%' THEN 'Terima QC'
-            WHEN m.mst_noreferensi LIKE '%TS%' THEN 'Terima STBJ'
-            WHEN m.mst_noreferensi LIKE '%GT%' THEN 'Terima Gudang Repair'
-            WHEN m.mst_noreferensi LIKE '%RB%' THEN 'Retur Store'
-            WHEN m.mst_noreferensi LIKE '%RJ%' THEN 'Retur Jual'
-            WHEN m.mst_noreferensi LIKE '%BPB%' THEN 'Terima BPB'
-            WHEN m.mst_noreferensi LIKE '%MCT%' THEN 'Terima Antar Cabang'
-            WHEN m.mst_noreferensi LIKE '%MCK%' THEN 'Kirim Antar Cabang'
-            WHEN m.mst_noreferensi LIKE '%SJ%' THEN 'Surat Jalan'
-            WHEN m.mst_noreferensi LIKE '%QC%' THEN 'QC'
-            WHEN m.mst_noreferensi LIKE '%INV%' AND COALESCE(m.mst_inv,'') = '' THEN 'Invoice DC'
-            WHEN m.mst_noreferensi LIKE '%INV%' AND COALESCE(m.mst_inv,'') <> '' THEN CONCAT('Invoice Store: ', m.mst_inv)
-        END AS transaksi
+      ? AS id,
+      ? AS tanggal,
+      'STOK AWAL' AS nomor,
+      IFNULL(SUM(m.mst_stok_in - m.mst_stok_out), 0) AS \`In\`,
+      0 AS \`Out\`,
+      'Stok Awal' AS transaksi
     FROM tmasterstok m
-    WHERE MID(m.mst_noreferensi,5,3) <> 'SOP'
+    WHERE m.mst_aktif = 'Y'
       AND m.mst_cab = ?
-      AND m.mst_tanggal BETWEEN ? AND ?
+      AND m.mst_tanggal <= ?
+      AND CONCAT(m.mst_brg_kode, m.mst_ukuran) = ?
+  `;
+  const stokAwalParams = [id, startDateStr, gudang, tglStokAwal, id];
+
+  // === QUERY UNTUK MUTASI (HANYA SELAMA PERIODE) ===
+  const mutasiQuery = `
+    SELECT 
+      CONCAT(m.mst_brg_kode, m.mst_ukuran) AS id,
+      m.mst_tanggal AS tanggal,
+      m.mst_noreferensi AS nomor,
+      COALESCE(SUM(m.mst_stok_in), 0) AS \`In\`,
+      COALESCE(SUM(m.mst_stok_out), 0) AS \`Out\`,
+      CASE
+          WHEN m.mst_noreferensi LIKE '%KOR%' THEN 'Koreksi'
+          WHEN m.mst_noreferensi LIKE '%MTS%' THEN 'Mutasi'
+          WHEN m.mst_noreferensi LIKE '%MUT%' THEN 'Terima QC'
+          WHEN m.mst_noreferensi LIKE '%TS%' THEN 'Terima STBJ'
+          WHEN m.mst_noreferensi LIKE '%GT%' THEN 'Terima Gudang Repair'
+          WHEN m.mst_noreferensi LIKE '%RB%' THEN 'Retur Store'
+          WHEN m.mst_noreferensi LIKE '%RJ%' THEN 'Retur Jual'
+          WHEN m.mst_noreferensi LIKE '%BPB%' THEN 'Terima BPB'
+          WHEN m.mst_noreferensi LIKE '%MCT%' THEN 'Terima Antar Cabang'
+          WHEN m.mst_noreferensi LIKE '%MCK%' THEN 'Kirim Antar Cabang'
+          WHEN m.mst_noreferensi LIKE '%SJ%' THEN 'Surat Jalan'
+          WHEN m.mst_noreferensi LIKE '%QC%' THEN 'QC'
+          WHEN m.mst_noreferensi LIKE '%INV%' AND COALESCE(m.mst_inv, '') = '' THEN 'Invoice DC'
+          WHEN m.mst_noreferensi LIKE '%INV%' AND COALESCE(m.mst_inv, '') <> '' THEN CONCAT('Invoice Store: ', m.mst_inv)
+          ELSE 'Lain-lain'
+      END AS transaksi
+    FROM tmasterstok m
+    WHERE m.mst_aktif = 'Y'
+      AND MID(m.mst_noreferensi, 5, 3) <> 'SOP' -- Abaikan 'Stok Opname' lama
+      AND m.mst_cab = ?
+      AND m.mst_tanggal BETWEEN ? AND ? -- Hanya ambil transaksi selama periode
       AND CONCAT(m.mst_brg_kode, m.mst_ukuran) = ?
     GROUP BY m.mst_brg_kode, m.mst_ukuran, m.mst_noreferensi, m.mst_tanggal
-`;
+  `;
+  const mutasiParams = [gudang, startDateStr, endDateStr, id];
 
-  const params = [gudang, startDateStr, endDateStr, id];
-
-  // Bagian Stok Awal
-  if (jenis === 0) {
-    query += `
-    UNION ALL
-    SELECT 
-        CONCAT(m.mst_brg_kode, m.mst_ukuran) AS id,
-        m.mst_tanggal AS tanggal,
-        m.mst_noreferensi AS nomor,
-        COALESCE(SUM(m.mst_stok_in - m.mst_stok_out),0) AS \`In\`,
-        0 AS \`Out\`,
-        'Stok Awal' AS transaksi
-    FROM tmasterstok m
-    WHERE MID(m.mst_noreferensi,5,3) = 'SOP'
-      AND m.mst_tanggal = ?
-      AND LEFT(m.mst_noreferensi,3) = ?
-      AND CONCAT(m.mst_brg_kode, m.mst_ukuran) = ?
-    GROUP BY m.mst_brg_kode, m.mst_ukuran, m.mst_noreferensi
-    `;
-    params.push(startDateStr, gudang, id);
-  } else {
-    query += `
-    UNION ALL
-    SELECT 
-        CONCAT(m.mst_brg_kode, m.mst_ukuran) AS id,
-        '-' AS tanggal,
-        m.mst_noreferensi AS nomor,
-        COALESCE(SUM(m.mst_stok_in - m.mst_stok_out),0) AS \`In\`,
-        0 AS \`Out\`,
-        'Stok Awal' AS transaksi
-    FROM tmasterstok m
-    WHERE m.mst_tanggal BETWEEN ? AND ?
-      AND LEFT(m.mst_noreferensi,3) = ?
-      AND CONCAT(m.mst_brg_kode, m.mst_ukuran) = ?
-    GROUP BY m.mst_brg_kode, m.mst_ukuran, m.mst_noreferensi
-    `;
-    params.push(DawalStr, startDateStr, gudang, id);
-  }
-
-  // Bagian Selisih Stok Opname
-  query += `
-  UNION ALL
-  SELECT
+  // === QUERY SELISIH SOP (HANYA SELAMA PERIODE) ===
+  const sopQuery = `
+    SELECT
       CONCAT(d.sopd_kode, d.sopd_ukuran) AS id,
       h.sop_tanggal AS tanggal,
       d.sopd_nomor AS nomor,
-      COALESCE(d.sopd_selisih,0) AS \`In\`,
+      COALESCE(d.sopd_selisih, 0) AS \`In\`, -- Selisih diperlakukan sbg 'In'
       0 AS \`Out\`,
       'Selisih Stok Opname' AS transaksi
-  FROM tsop_hdr h
-  LEFT JOIN tsop_dtl d ON d.sopd_nomor = h.sop_nomor
-  WHERE h.sop_tanggal BETWEEN ? AND ?
-    AND LEFT(d.sopd_nomor,3) = ?
-    AND CONCAT(d.sopd_kode, d.sopd_ukuran) = ?
-  GROUP BY d.sopd_kode, d.sopd_ukuran, d.sopd_nomor, h.sop_tanggal
+    FROM tsop_hdr h
+    LEFT JOIN tsop_dtl d ON d.sopd_nomor = h.sop_nomor
+    WHERE h.sop_tanggal BETWEEN ? AND ? -- Hanya ambil SOP selama periode
+      AND LEFT(d.sopd_nomor, 3) = ?
+      AND CONCAT(d.sopd_kode, d.sopd_ukuran) = ?
+    GROUP BY d.sopd_kode, d.sopd_ukuran, d.sopd_nomor, h.sop_tanggal
+  `;
+  const sopParams = [startDateStr, endDateStr, gudang, id];
+
+  // --- Gabungkan semua query ---
+  const fullQuery = `
+    (${stokAwalQuery})
+    UNION ALL
+    (${mutasiQuery})
+    UNION ALL
+    (${sopQuery})
+    ORDER BY tanggal, nomor
   `;
 
-  params.push(startOpnameStr, endDateStr, gudang, id);
+  const params = [...stokAwalParams, ...mutasiParams, ...sopParams];
 
-  query += `
-) d
-ORDER BY d.id, d.tanggal
-`;
+  const [rows] = await pool.query(fullQuery, params);
 
-  const [rows] = await pool.query(query, params);
-  return rows;
+  // Hitung Saldo Berjalan
+  let saldo = 0;
+  const resultWithSaldo = rows.map((row) => {
+    saldo += (row.In || 0) - (row.Out || 0);
+    return { ...row, saldo: saldo };
+  });
+
+  return resultWithSaldo;
 };
 
 const getMutationDetails = async (filters) => {

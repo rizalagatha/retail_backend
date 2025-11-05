@@ -129,6 +129,7 @@ const bpbKaosanRoutes = require("./routes/bpbKaosanRoutes");
 const bpbKaosanFormRoutes = require("./routes/bpbKaosanFormRoutes");
 const laporanHppKosongRoutes = require("./routes/laporanHppKosongRoutes");
 const klerekRoutes = require ("./routes/klerekRoutes");
+const laporanStokMinusRoutes = require("./routes/laporanStokMinusRoutes");
 const whatsappRoutes = require("./routes/whatsappRoutes");
 
 const app = express();
@@ -300,6 +301,7 @@ app.use("/api/bpb-kaosan", clientCertAuth, bpbKaosanRoutes);
 app.use("/api/bpb-kaosan-form", clientCertAuth, bpbKaosanFormRoutes);
 app.use("/api/laporan-hpp-kosong", clientCertAuth, laporanHppKosongRoutes);
 app.use("/api/klerek", clientCertAuth, klerekRoutes);
+app.use("/api/laporan-stok-minus", clientCertAuth, laporanStokMinusRoutes);
 app.use("/api/whatsapp", clientCertAuth, whatsappRoutes);
 
 // Menjalankan Server

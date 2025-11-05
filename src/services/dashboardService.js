@@ -431,17 +431,16 @@ const getTotalSisaPiutang = async (user) => {
   let branchFilter = "AND LEFT(u.ph_inv_nomor, 3) = ?";
   let params = [user.cabang];
 
-  // Jika KDC, lihat semua cabang
   if (user.cabang === "KDC") {
-    branchFilter = ""; // Hapus filter cabang
+    branchFilter = ""; 
     params = [];
   }
 
-  // Query ini menjumlahkan (debet - kredit) dari tpiutang_dtl
-  // Ini lebih akurat dan cepat daripada subquery di query getList Anda
+  // Ini akan mengubah semua nilai negatif (kelebihan bayar) menjadi 0
+  // SEBELUM menjumlahkannya.
   const query = `
     SELECT 
-      SUM(v.debet - v.kredit) AS totalSisaPiutang
+      SUM(GREATEST(0, IFNULL(v.debet, 0) - IFNULL(v.kredit, 0))) AS totalSisaPiutang
     FROM tpiutang_hdr u
     LEFT JOIN (
         SELECT pd_ph_nomor, 
@@ -452,9 +451,9 @@ const getTotalSisaPiutang = async (user) => {
     ) v ON v.pd_ph_nomor = u.ph_nomor
     WHERE 1=1 ${branchFilter};
   `;
-
+  
   const [rows] = await pool.query(query, params);
-  return rows[0]; // Akan mengembalikan { totalSisaPiutang: ... }
+  return rows[0]; 
 };
 
 /**

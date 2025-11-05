@@ -663,11 +663,21 @@ const saveData = async (payload, user) => {
   }
 };
 
-const getSalesCounters = async () => {
-  const query =
-    'SELECT sc_kode FROM tsalescounter WHERE sc_aktif="Y" ORDER BY sc_kode';
-  const [rows] = await pool.query(query);
-  // Kembalikan sebagai array of strings agar mudah digunakan di v-select
+const getSalesCounters = async (user) => {
+  const userCabang = user.cabang;
+  
+  // Query ini sekarang menggabungkan tsalescounter (t1) dengan tuser (t2)
+  // dan memfilter berdasarkan user_cabang.
+  const query = `
+    SELECT t1.sc_kode 
+    FROM tsalescounter t1
+    JOIN tuser t2 ON t1.sc_kode = t2.user_kode 
+    WHERE t1.sc_aktif = "Y" 
+      AND t2.user_cab = ? 
+    ORDER BY t1.sc_kode
+  `;
+  
+  const [rows] = await pool.query(query, [userCabang]);
   return rows.map((row) => row.sc_kode);
 };
 
@@ -1095,7 +1105,7 @@ const findByBarcode = async (barcode, gudang) => {
 };
 
 const searchProducts = async (filters, user) => {
-  const { term, page, itemsPerPage } = filters;
+  const { term, page, itemsPerPage, promoNomor } = filters;
   const offset = (Number(page) - 1) * Number(itemsPerPage);
   const searchTerm = `%${term || ""}%`;
 
@@ -1105,6 +1115,19 @@ const searchProducts = async (filters, user) => {
         INNER JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
     `;
   let baseWhere = `WHERE a.brg_aktif = 0`;
+
+  let promoFilterJoin = "";
+  let hargaSelect = "b.brgd_harga AS harga"; // 1. Harga default
+
+  if (promoNomor === "PRO-2025-005") {
+    promoFilterJoin = `
+      INNER JOIN tpromo_barang pb ON pb.pb_brg_kode = a.brg_kode 
+                                 AND pb.pb_ukuran = b.brgd_ukuran
+                                 AND pb.pb_nomor = ?
+    `;
+    params.push(promoNomor);
+    hargaSelect = "33333 AS harga"; // 2. Timpa harga jika promo aktif
+  }
 
   // Logika filter cabang dari Delphi
   if (user.cabang === "K04") {
@@ -1126,12 +1149,12 @@ const searchProducts = async (filters, user) => {
             b.brgd_barcode AS barcode,
             TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
             b.brgd_ukuran AS ukuran,
-            b.brgd_harga AS harga,
+            ${hargaSelect},
             IFNULL((
                 SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m 
                 WHERE m.mst_aktif = 'Y' AND m.mst_cab = ? AND m.mst_brg_kode = b.brgd_kode AND m.mst_ukuran = b.brgd_ukuran
             ), 0) AS stok
-        ${baseFrom} ${baseWhere} ${searchWhere}
+        ${baseFrom} ${promoFilterJoin} ${baseWhere} ${searchWhere}
         ORDER BY nama, b.brgd_ukuran
         LIMIT ? OFFSET ?;
     `;
