@@ -524,7 +524,7 @@ const saveData = async (payload, user) => {
       piutangDtlValues.push([
         `${user.cabang}CASH${format(new Date(), "yyyyMMddHHmmssSSS")}`,
         piutangNomor,
-        header.tanggal,
+        headerTanggalTime,
         "Bayar Tunai Langsung",
         0,
         payment.tunai,
