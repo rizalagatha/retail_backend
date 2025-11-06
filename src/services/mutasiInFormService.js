@@ -1,23 +1,23 @@
-const pool = require('../config/database');
-const { format } = require('date-fns');
+const pool = require("../config/database");
+const { format } = require("date-fns");
 
 /**
  * Menghasilkan nomor Mutasi In (MI) baru.
  * Format: K01MI250900001
  */
 const generateNewMiNumber = async (cabang, tanggal) => {
-    const date = new Date(tanggal);
-    const prefix = `${cabang}MI${format(date, 'yyMM')}`;
-    
-    const query = `
+  const date = new Date(tanggal);
+  const prefix = `${cabang}MI${format(date, "yyMM")}`;
+
+  const query = `
         SELECT IFNULL(MAX(RIGHT(mi_nomor, 5)), 0) + 1 AS next_num
         FROM tmutasiin_hdr 
         WHERE mi_nomor LIKE ?;
     `;
-    const [rows] = await pool.query(query, [`${prefix}%`]);
-    const nextNumber = rows[0].next_num.toString().padStart(5, '0');
-    
-    return `${prefix}${nextNumber}`;
+  const [rows] = await pool.query(query, [`${prefix}%`]);
+  const nextNumber = rows[0].next_num.toString().padStart(5, "0");
+
+  return `${prefix}${nextNumber}`;
 };
 
 /**
@@ -25,7 +25,7 @@ const generateNewMiNumber = async (cabang, tanggal) => {
  * Termasuk kalkulasi 'sudah' dan 'belum'.
  */
 const loadFromMo = async (nomorMo, user) => {
-    const headerQuery = `
+  const headerQuery = `
         SELECT 
             h.mo_nomor AS nomor,
             h.mo_so_nomor AS nomorSo,
@@ -35,17 +35,18 @@ const loadFromMo = async (nomorMo, user) => {
         LEFT JOIN kencanaprint.tpabrik p ON p.pab_kode = h.mo_kecab
         WHERE h.mo_nomor = ?;
     `;
-    const [headerRows] = await pool.query(headerQuery, [nomorMo]);
-    if (headerRows.length === 0) throw new Error('Data Mutasi Out tidak ditemukan.');
+  const [headerRows] = await pool.query(headerQuery, [nomorMo]);
+  if (headerRows.length === 0)
+    throw new Error("Data Mutasi Out tidak ditemukan.");
 
-    // --- PERBAIKAN DI SINI: Tambahkan subquery 'sudah' ---
-    const itemsQuery = `
+  // --- PERBAIKAN DI SINI: Tambahkan subquery 'sudah' ---
+  const itemsQuery = `
         SELECT
             d.mod_kode AS kode,
             b.brgd_barcode AS barcode,
             TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
             d.mod_ukuran AS ukuran,
-            d.mod_jumlah AS qtyOut,
+            d.mod_jumlah AS qtyMo,
             IFNULL((
                 SELECT SUM(dd.mid_jumlah) FROM tmutasiin_dtl dd 
                 JOIN tmutasiin_hdr hh ON hh.mi_nomor = dd.mid_nomor 
@@ -56,75 +57,94 @@ const loadFromMo = async (nomorMo, user) => {
         LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mod_kode AND b.brgd_ukuran = d.mod_ukuran
         WHERE d.mod_nomor = ?;
     `;
-    const [items] = await pool.query(itemsQuery, [nomorMo, nomorMo]);
-    // --- AKHIR PERBAIKAN ---
+  const [items] = await pool.query(itemsQuery, [nomorMo, nomorMo]);
+  // --- AKHIR PERBAIKAN ---
 
-    return { header: headerRows[0], items };
+  return { header: headerRows[0], items };
 };
 
 /**
  * Menyimpan data Mutasi In (baru atau ubah).
  */
 const saveData = async (payload, user) => {
-    const { header, items, isNew } = payload;
-    const connection = await pool.getConnection();
-    try {
-        await connection.beginTransaction();
+  const { header, items, isNew } = payload;
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
 
-        // Validasi
-        if (!header.nomorMutasiOut) throw new Error('Nomor Mutasi Out harus diisi.');
-        if (items.length === 0) throw new Error('Detail barang harus diisi.');
+    // Validasi
+    if (!header.nomorMutasiOut)
+      throw new Error("Nomor Mutasi Out harus diisi.");
+    if (items.length === 0) throw new Error("Detail barang harus diisi.");
 
-        let miNomor = header.nomor;
-        const timestamp = format(new Date(), 'yyyyMMddHHmmssSSS');
-        const idrec = `${user.cabang}MI${timestamp}`;
+    let miNomor = header.nomor;
+    const timestamp = format(new Date(), "yyyyMMddHHmmssSSS");
+    const idrec = `${user.cabang}MI${timestamp}`;
 
-        if (isNew) {
-            miNomor = await generateNewMiNumber(user.cabang, header.tanggal);
-            const headerSql = `
+    if (isNew) {
+      miNomor = await generateNewMiNumber(user.cabang, header.tanggal);
+      const headerSql = `
                 INSERT INTO tmutasiin_hdr (mi_idrec, mi_nomor, mi_tanggal, mi_mo_nomor, mi_so_nomor, mi_ket, user_create, date_create)
                 VALUES (?, ?, ?, ?, ?, ?, ?, NOW());
             `;
-            await connection.query(headerSql, [idrec, miNomor, header.tanggal, header.nomorMutasiOut, header.nomorSo, header.keterangan, user.kode]);
-        } else {
-            const headerSql = `
+      await connection.query(headerSql, [
+        idrec,
+        miNomor,
+        header.tanggal,
+        header.nomorMutasiOut,
+        header.nomorSo,
+        header.keterangan,
+        user.kode,
+      ]);
+    } else {
+      const headerSql = `
                 UPDATE tmutasiin_hdr SET mi_tanggal = ?, mi_ket = ?, user_modified = ?, date_modified = NOW()
                 WHERE mi_nomor = ?;
             `;
-            await connection.query(headerSql, [header.tanggal, header.keterangan, user.kode, miNomor]);
-        }
-        
-        await connection.query('DELETE FROM tmutasiin_dtl WHERE mid_nomor = ?', [miNomor]);
+      await connection.query(headerSql, [
+        header.tanggal,
+        header.keterangan,
+        user.kode,
+        miNomor,
+      ]);
+    }
 
-        const detailSql = `
+    await connection.query("DELETE FROM tmutasiin_dtl WHERE mid_nomor = ?", [
+      miNomor,
+    ]);
+
+    const detailSql = `
             INSERT INTO tmutasiin_dtl (mid_idrec, mid_iddrec, mid_nomor, mid_kode, mid_ukuran, mid_jumlah) 
             VALUES ?;
         `;
-        const detailValues = items.map((item, index) => {
-            const nourut = index + 1;
-            const iddrec = `${idrec}${nourut}`;
-            return [idrec, iddrec, miNomor, item.kode, item.ukuran, item.qtyIn];
-        });
+    const detailValues = items.map((item, index) => {
+      const nourut = index + 1;
+      const iddrec = `${idrec}${nourut}`;
+      return [idrec, iddrec, miNomor, item.kode, item.ukuran, item.qtyIn];
+    });
 
-        if (detailValues.length > 0) {
-            await connection.query(detailSql, [detailValues]);
-        }
-
-        await connection.commit();
-        return { message: `Mutasi In ${miNomor} berhasil disimpan.`, nomor: miNomor };
-    } catch (error) {
-        await connection.rollback();
-        throw error;
-    } finally {
-        connection.release();
+    if (detailValues.length > 0) {
+      await connection.query(detailSql, [detailValues]);
     }
+
+    await connection.commit();
+    return {
+      message: `Mutasi In ${miNomor} berhasil disimpan.`,
+      nomor: miNomor,
+    };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 };
 
 /**
  * Memuat data Mutasi In untuk mode Ubah.
  */
 const loadForEdit = async (nomorMi, user) => {
-    const headerQuery = `
+  const headerQuery = `
         SELECT 
             h.mi_nomor AS nomor, h.mi_tanggal AS tanggal, h.mi_mo_nomor AS nomorMutasiOut,
             h.mi_so_nomor AS nomorSo, h.mi_ket AS keterangan,
@@ -134,11 +154,12 @@ const loadForEdit = async (nomorMi, user) => {
         LEFT JOIN kencanaprint.tpabrik p ON p.pab_kode = o.mo_kecab
         WHERE h.mi_nomor = ?;
     `;
-    const [headerRows] = await pool.query(headerQuery, [nomorMi]);
-    if (headerRows.length === 0) throw new Error('Data Mutasi In tidak ditemukan.');
-    const header = headerRows[0];
+  const [headerRows] = await pool.query(headerQuery, [nomorMi]);
+  if (headerRows.length === 0)
+    throw new Error("Data Mutasi In tidak ditemukan.");
+  const header = headerRows[0];
 
-    const itemsQuery = `
+  const itemsQuery = `
         SELECT
             d.mid_kode AS kode,
             b.brgd_barcode AS barcode,
@@ -159,14 +180,19 @@ const loadForEdit = async (nomorMi, user) => {
         LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mid_kode AND b.brgd_ukuran = d.mid_ukuran
         WHERE d.mid_nomor = ?;
     `;
-    const [items] = await pool.query(itemsQuery, [header.nomorMutasiOut, nomorMi, header.nomorMutasiOut, nomorMi]);
-    
-    return { header, items };
+  const [items] = await pool.query(itemsQuery, [
+    header.nomorMutasiOut,
+    nomorMi,
+    header.nomorMutasiOut,
+    nomorMi,
+  ]);
+
+  return { header, items };
 };
 
 const getPrintData = async (nomor) => {
-    // Query ini diadaptasi dari query 'cetak' di Delphi Anda
-    const query = `
+  // Query ini diadaptasi dari query 'cetak' di Delphi Anda
+  const query = `
         SELECT 
             h.mi_nomor, h.mi_tanggal, h.mi_so_nomor, h.mi_ket,
             i.mo_kecab AS dari_cabang_kode,
@@ -187,21 +213,21 @@ const getPrintData = async (nomor) => {
         WHERE h.mi_nomor = ?
         ORDER BY d.mid_kode, d.mid_ukuran;
     `;
-    
-    const [rows] = await pool.query(query, [nomor]);
-    if (rows.length === 0) {
-        throw new Error('Data Mutasi In tidak ditemukan.');
-    }
 
-    const header = { ...rows[0] };
-    const details = rows.map(row => ({
-        mid_kode: row.mid_kode,
-        nama: row.nama,
-        mid_ukuran: row.mid_ukuran,
-        mid_jumlah: row.mid_jumlah,
-    }));
+  const [rows] = await pool.query(query, [nomor]);
+  if (rows.length === 0) {
+    throw new Error("Data Mutasi In tidak ditemukan.");
+  }
 
-    return { header, details };
+  const header = { ...rows[0] };
+  const details = rows.map((row) => ({
+    mid_kode: row.mid_kode,
+    nama: row.nama,
+    mid_ukuran: row.mid_ukuran,
+    mid_jumlah: row.mid_jumlah,
+  }));
+
+  return { header, details };
 };
 
 /**
@@ -209,11 +235,11 @@ const getPrintData = async (nomor) => {
  * Diadaptasi dari query F1 di edtmo pada Delphi.
  */
 const searchMutasiOut = async (term, page, itemsPerPage, user) => {
-    const offset = (page - 1) * itemsPerPage;
-    const searchTerm = `%${term || ''}%`;
-    
-    // Query inner/subquery yang menghitung qty_out dan qty_in
-    const subQuery = `
+  const offset = (page - 1) * itemsPerPage;
+  const searchTerm = `%${term || ""}%`;
+
+  // Query inner/subquery yang menghitung qty_out dan qty_in
+  const subQuery = `
         SELECT 
             h.mo_nomor AS Nomor,
             h.mo_tanggal AS Tanggal,
@@ -229,39 +255,41 @@ const searchMutasiOut = async (term, page, itemsPerPage, user) => {
         WHERE LEFT(h.mo_nomor, 3) = ?
     `;
 
-    // Query dibungkus sebagai derived table 'x', persis seperti di Delphi
-    const baseFrom = `FROM (${subQuery}) AS x`;
-    
-    const whereClause = `WHERE x.qty_in < x.qty_out`;
-    const searchClause = `AND (x.Nomor LIKE ? OR x.NoSO LIKE ? OR x.Customer LIKE ?)`;
+  // Query dibungkus sebagai derived table 'x', persis seperti di Delphi
+  const baseFrom = `FROM (${subQuery}) AS x`;
 
-    const countParams = [user.cabang];
-    const dataParams = [user.cabang];
+  const whereClause = `WHERE x.qty_in < x.qty_out`;
+  const searchClause = `AND (x.Nomor LIKE ? OR x.NoSO LIKE ? OR x.Customer LIKE ?)`;
 
-    if (term) {
-        countParams.push(searchTerm, searchTerm, searchTerm);
-        dataParams.push(searchTerm, searchTerm, searchTerm);
-    }
-    
-    const countQuery = `SELECT COUNT(*) AS total ${baseFrom} ${whereClause} ${term ? searchClause : ''}`;
-    const [countRows] = await pool.query(countQuery, countParams);
-    const total = countRows[0].total;
+  const countParams = [user.cabang];
+  const dataParams = [user.cabang];
 
-    const dataQuery = `
+  if (term) {
+    countParams.push(searchTerm, searchTerm, searchTerm);
+    dataParams.push(searchTerm, searchTerm, searchTerm);
+  }
+
+  const countQuery = `SELECT COUNT(*) AS total ${baseFrom} ${whereClause} ${
+    term ? searchClause : ""
+  }`;
+  const [countRows] = await pool.query(countQuery, countParams);
+  const total = countRows[0].total;
+
+  const dataQuery = `
         SELECT x.Nomor, x.Tanggal, x.DariCabangNama, x.NoSO, x.Customer
-        ${baseFrom} ${whereClause} ${term ? searchClause : ''}
+        ${baseFrom} ${whereClause} ${term ? searchClause : ""}
         ORDER BY x.Tanggal DESC, x.Nomor DESC
         LIMIT ? OFFSET ?;
     `;
-    dataParams.push(itemsPerPage, offset);
-    const [items] = await pool.query(dataQuery, dataParams);
+  dataParams.push(itemsPerPage, offset);
+  const [items] = await pool.query(dataQuery, dataParams);
 
-    return { items, total };
+  return { items, total };
 };
 
 const getExportDetails = async (filters) => {
-    const { startDate, endDate, cabang } = filters;
-    const query = `
+  const { startDate, endDate, cabang } = filters;
+  const query = `
         SELECT 
             h.mi_nomor AS 'Nomor Mutasi In',
             h.mi_tanggal AS 'Tanggal',
@@ -281,15 +309,15 @@ const getExportDetails = async (filters) => {
           AND h.mi_tanggal BETWEEN ? AND ?
         ORDER BY h.mi_nomor;
     `;
-    const [rows] = await pool.query(query, [cabang, startDate, endDate]);
-    return rows;
+  const [rows] = await pool.query(query, [cabang, startDate, endDate]);
+  return rows;
 };
 
 module.exports = {
-    saveData,
-    loadFromMo,
-    loadForEdit,
-    getPrintData,
-    searchMutasiOut,
-    getExportDetails,
+  saveData,
+  loadFromMo,
+  loadForEdit,
+  getPrintData,
+  searchMutasiOut,
+  getExportDetails,
 };
