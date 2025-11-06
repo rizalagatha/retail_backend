@@ -7,7 +7,7 @@ const pool = require("../config/database");
 const getList = async (filters) => {
   const { startDate, endDate, cabang, kategori, limit } = filters;
 
-  let params = [cabang, endDate, startDate, endDate];
+  let params = [endDate, startDate, endDate];
 
   let branchFilter = "";
   let categoryFilter = "";
@@ -24,7 +24,7 @@ const getList = async (filters) => {
 
   const query = `
         SELECT
-            ? AS Cab,
+            LEFT(h.inv_nomor, 3) AS Cab,
             a.brg_kode AS KODE,
             a.brg_ktgp AS KTGPRODUK,
             a.brg_ktg AS KTGBRG,
@@ -52,19 +52,18 @@ const getList = async (filters) => {
             IFNULL((
                 SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
                 FROM tmasterstok m 
-                WHERE m.mst_aktif="Y" AND m.mst_brg_kode = a.brg_kode AND m.mst_tanggal <= ? ${
-                  cabang !== "ALL" ? "AND m.mst_cab = ?" : ""
-                }
+                WHERE m.mst_aktif="Y" AND m.mst_brg_kode = a.brg_kode 
+                  AND m.mst_tanggal <= ? 
+                  AND m.mst_cab = LEFT(h.inv_nomor, 3) -- Filter cabang di dalam subquery
             ), 0) AS StokPareto,
 
             -- Subquery Stok Real (mengambil stok saat ini)
             IFNULL((
                 SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
                 FROM tmasterstok m 
-                WHERE m.mst_aktif="Y" AND m.mst_brg_kode = a.brg_kode ${
-                  cabang !== "ALL" ? "AND m.mst_cab = ?" : ""
-                }
-            ), 0) AS StokReal
+                WHERE m.mst_aktif="Y" AND m.mst_brg_kode = a.brg_kode 
+                  AND m.mst_cab = LEFT(h.inv_nomor, 3) -- Filter cabang di dalam subquery
+          ), 0) AS StokReal
         FROM tinv_hdr h
         INNER JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
         INNER JOIN tbarangdc a ON a.brg_kode = d.invd_kode
@@ -73,19 +72,10 @@ const getList = async (filters) => {
           AND a.brg_logstok = "Y"
           ${branchFilter}
           ${categoryFilter}
-        GROUP BY a.brg_kode, NAMA, KTGPRODUK, KTGBRG
+        GROUP BY a.brg_kode, NAMA, KTGPRODUK, KTGBRG, LEFT(h.inv_nomor, 3)
         ORDER BY TOTAL DESC
         LIMIT ?
     `;
-
-  // Tambahkan parameter cabang ke subquery StokReal jika diperlukan
-  if (cabang !== "ALL") {
-    params.splice(2, 0, cabang); // Tambahkan 'cabang' untuk StokPareto
-    const stokRealIndex = params.findIndex(
-      (p) => p === parseInt(limit, 10) || p === 20
-    ); // Cari posisi LIMIT
-    params.splice(stokRealIndex, 0, cabang); // Tambahkan 'cabang' sebelum LIMIT untuk StokReal
-  }
 
   const [rows] = await pool.query(query, params);
   return rows;
