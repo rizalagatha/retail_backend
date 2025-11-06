@@ -166,7 +166,7 @@ const loadForEdit = async (nomorMi, user) => {
             TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
             d.mid_ukuran AS ukuran,
             d.mid_jumlah AS qtyIn,
-            IFNULL(mo_dtl.mod_jumlah, 0) AS qtyOut,
+            IFNULL(mo_dtl.mod_jumlah, 0) AS qtyMo,
             IFNULL((
                 SELECT SUM(dd.mid_jumlah) FROM tmutasiin_dtl dd 
                 JOIN tmutasiin_hdr hh ON hh.mi_nomor = dd.mid_nomor 
