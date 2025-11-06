@@ -184,6 +184,8 @@ const save = async (data, user) => {
     let mtNomor = header.nomor;
     let idrec;
 
+    const customerKode = header.customer ? header.customer.kode : null;
+
     if (isNew) {
       // Logika getmaxnomor dari Delphi
       const prefix = `${user.cabang}MT${format(
@@ -207,7 +209,7 @@ const save = async (data, user) => {
         mtNomor,
         header.tanggal,
         header.soNomor,
-        header.customer?.kode,
+        customerKode,
         header.keterangan,
         user.kode,
       ]);
@@ -229,7 +231,7 @@ const save = async (data, user) => {
       await connection.query(updateHeaderQuery, [
         header.tanggal,
         header.soNomor,
-        header.customer?.kode,
+        customerKode,
         header.keterangan,
         user.kode,
         mtNomor,
