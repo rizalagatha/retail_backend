@@ -57,24 +57,26 @@ const searchCustomers = async (term, gudang, page, itemsPerPage) => {
   // Query untuk mengambil data per halaman, ditambahkan kolom "Level"
   const dataQuery = `
         SELECT 
-            c.cus_kode AS kode,
-            c.cus_nama AS nama,
-            c.cus_alamat AS alamat,
-            c.cus_kota AS kota,
-            c.cus_telp AS telp,
-            IFNULL((
-                SELECT l.level_nama
-                FROM tcustomer_level_history v
-                LEFT JOIN tcustomer_level l ON l.level_kode = v.clh_level
-                WHERE v.clh_cus_kode = c.cus_kode
-                ORDER BY v.clh_tanggal DESC LIMIT 1
-            ), "") AS level_nama,
-            IFNULL((
-                SELECT v.clh_level
-                FROM tcustomer_level_history v
-                WHERE v.clh_cus_kode = c.cus_kode
-                ORDER BY v.clh_tanggal DESC LIMIT 1
-            ), "") AS level_kode
+          c.cus_kode AS kode,
+          c.cus_nama AS nama,
+          c.cus_alamat AS alamat,
+          c.cus_kota AS kota,
+          c.cus_telp AS telp,
+          IFNULL((
+            SELECT l.level_nama
+            FROM tcustomer_level_history v
+            LEFT JOIN tcustomer_level l ON l.level_kode = v.clh_level
+            WHERE v.clh_cus_kode = c.cus_kode
+            ORDER BY v.clh_tanggal DESC, v.clh_level DESC 
+          LIMIT 1
+          ), "") AS level_nama,
+          IFNULL((
+            SELECT v.clh_level
+            FROM tcustomer_level_history v
+            WHERE v.clh_cus_kode = c.cus_kode
+            ORDER BY v.clh_tanggal DESC, v.clh_level DESC 
+          LIMIT 1
+          ), "") AS level_kode
         ${baseQuery}
         ORDER BY c.cus_nama
         LIMIT ? OFFSET ?
