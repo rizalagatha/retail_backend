@@ -19,7 +19,7 @@ const generateNewOfferNumber = async (connection, cabang, tanggal) => {
     `;
   const [rows] = await connection.query(query, [prefix]);
   const nextNum = rows[0].maxNum + 1;
-  return `${prefix}.${String(nextNum).padStart(4, "0")}`;
+  return `${prefix}${String(nextNum).padStart(4, "0")}`;
 };
 
 // Meniru F1 untuk pencarian customer
