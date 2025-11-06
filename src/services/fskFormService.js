@@ -192,7 +192,7 @@ const saveData = async (payload, user) => {
         d.jenis,
         toSqlDate(d.tgltrf),
         d.kdcus,
-        d.inv,
+        d.inv || '',
         d.nomor,
         d.nominal,
       ]);
