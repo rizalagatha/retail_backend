@@ -1,6 +1,13 @@
 const pool = require("../config/database");
 const { format } = require("date-fns");
 
+const toSqlDate = (value) => {
+  if (!value) return null; // Izinkan NULL
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return null; // Tangani tanggal tidak valid
+  return format(d, "yyyy-MM-dd"); // Format ke YYYY-MM-DD
+};
+
 /**
  * Menghasilkan nomor Form Setoran Kasir (FSK) baru.
  */
@@ -183,7 +190,7 @@ const saveData = async (payload, user) => {
         idrec,
         fskNomor,
         d.jenis,
-        d.tgltrf,
+        toSqlDate(d.tgltrf),
         d.kdcus,
         d.inv,
         d.nomor,
