@@ -99,7 +99,8 @@ const getCustomerDetails = async (kode, gudang) => {
         LEFT JOIN (
             SELECT i.clh_cus_kode, i.clh_level, l.level_nama FROM tcustomer_level_history i 
             LEFT JOIN tcustomer_level l ON l.level_kode = i.clh_level
-            WHERE i.clh_cus_kode = ? ORDER BY i.clh_tanggal DESC LIMIT 1
+            WHERE i.clh_cus_kode = ? ORDER BY i.clh_tanggal DESC, i.clh_level DESC 
+            LIMIT 1
         ) x ON x.clh_cus_kode = c.cus_kode
         LEFT JOIN tcustomer_level lvl ON lvl.level_kode = x.clh_level
         WHERE c.cus_aktif = 0 AND c.cus_nama NOT LIKE "RETAIL%" AND c.cus_kode = ?;
