@@ -11,12 +11,12 @@ const findById = async (nomor) => {
                 sd_nomor as nomor, sd_tanggal as tanggal, sd_datekerja as tglPengerjaan,
                 sd_dateline as datelineCustomer, sd_sal_kode as salesKode, sal_nama as salesNama,
                 sd_cus_kode as customerKode, sd_customer as customerNama, cus_alamat as customerAlamat,
-                (SELECT CONCAT(y.clh_level, ' - ', v.level_nama) 
-                FROM tcustomer_level_history y 
-                LEFT JOIN tcustomer_level v ON v.level_kode=y.clh_level 
-                WHERE y.clh_cus_kode=h.sd_cus_kode 
-                ORDER BY y.clh_tanggal DESC, y.clh_level DESC 
-                LIMIT 1) as customerLevel,
+                (SELECT IFNULL(CONCAT(y.clh_level, ' - ', v.level_nama), '') 
+                 FROM tcustomer_level_history y 
+                 LEFT JOIN tcustomer_level v ON v.level_kode=y.clh_level 
+                 WHERE y.clh_cus_kode=h.sd_cus_kode 
+                 ORDER BY y.clh_tanggal DESC, y.clh_level DESC 
+                 LIMIT 1) as customerLevel,
                 sd_jo_kode as jenisOrderKode, jo_nama as jenisOrderNama, sd_nama as namaDtf, sd_kain as kain,
                 sd_finishing as finishing, sd_desain as desain, sd_workshop as workshopKode,
                 pab_nama as workshopNama, sd_ket as keterangan, h.user_create as user
@@ -539,33 +539,23 @@ const getDataForPrint = async (nomor) => {
             o.jo_nama,
             DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
             (SELECT CAST(GROUP_CONCAT(CONCAT(sdd2_nourut, ". ", sdd2_ket, ": P=", sdd2_panjang, "cm L=", sdd2_lebar, "cm") SEPARATOR '\\n') AS CHAR) 
-             FROM tsodtf_dtl2 WHERE sdd2_nomor = h.sd_nomor) AS titik,
+            FROM tsodtf_dtl2 WHERE sdd2_nomor = h.sd_nomor) AS titik,
             (SELECT SUM(sdd_jumlah) FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor) AS jumlah,
             (SELECT CAST(GROUP_CONCAT(CONCAT(sdd_ukuran, "=", sdd_jumlah) SEPARATOR ", ") AS CHAR) 
-             FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor) AS ukuran
+            FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor) AS ukuran
         FROM tsodtf_hdr h
         LEFT JOIN kencanaprint.tpabrik g ON g.pab_kode = h.sd_workshop
         LEFT JOIN kencanaprint.tjenisorder o ON h.sd_jo_kode = o.jo_kode
         WHERE h.sd_nomor = ?
-    `;
+  `;
   const [rows] = await pool.query(query, [nomor]);
   if (rows.length === 0) return null;
 
-  const data = rows[0];
+  const data = rows[0]; // --- PERBAIKAN DI SINI --- // Panggil fungsi 'findImageFile' yang sudah benar
 
-  // Logika untuk mengecek gambar
-  const cabang = nomor.substring(0, 3);
-  const imageFileName = `${nomor}.jpg`;
-  const imagePath = path.join(
-    process.cwd(),
-    "public",
-    "images",
-    cabang,
-    imageFileName
-  );
-  data.imageUrl = fs.existsSync(imagePath)
-    ? `/images/${cabang}/${imageFileName}`
-    : null;
+  // Hapus logika 'fs.existsSync' yang lama
+  data.imageUrl = findImageFile(nomor);
+  // --- AKHIR PERBAIKAN ---
 
   return data;
 };
