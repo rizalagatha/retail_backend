@@ -144,50 +144,77 @@ const saveData = async (payload, user) => {
  * Memuat data Mutasi In untuk mode Ubah.
  */
 const loadForEdit = async (nomorMi, user) => {
-  const headerQuery = `
-        SELECT 
-            h.mi_nomor AS nomor, h.mi_tanggal AS tanggal, h.mi_mo_nomor AS nomorMutasiOut,
-            h.mi_so_nomor AS nomorSo, h.mi_ket AS keterangan,
-            o.mo_kecab AS dariCabangKode, p.pab_nama AS dariCabangNama
-        FROM tmutasiin_hdr h
-        LEFT JOIN tmutasiout_hdr o ON o.mo_nomor = h.mi_mo_nomor
-        LEFT JOIN kencanaprint.tpabrik p ON p.pab_kode = o.mo_kecab
-        WHERE h.mi_nomor = ?;
-    `;
-  const [headerRows] = await pool.query(headerQuery, [nomorMi]);
-  if (headerRows.length === 0)
-    throw new Error("Data Mutasi In tidak ditemukan.");
-  const header = headerRows[0];
+  const connection = await pool.getConnection();
+  try {
+    // 1. Ambil header Mutasi In
+    const [headerRows] = await connection.query(
+      `SELECT 
+         h.mi_nomor AS nomor, h.mi_tanggal AS tanggal, h.mi_mo_nomor AS nomorMutasiOut,
+         h.mi_so_nomor AS nomorSo, h.mi_ket AS keterangan,
+         o.mo_kecab AS dariCabangKode, p.pab_nama AS dariCabangNama
+       FROM tmutasiin_hdr h
+       LEFT JOIN tmutasiout_hdr o ON o.mo_nomor = h.mi_mo_nomor
+       LEFT JOIN kencanaprint.tpabrik p ON p.pab_kode = o.mo_kecab
+       WHERE h.mi_nomor = ?`,
+      [nomorMi]
+    );
+    if (headerRows.length === 0)
+      throw new Error("Data Mutasi In tidak ditemukan.");
+    const header = headerRows[0];
+    const nomorMo = header.nomorMutasiOut;
 
-  const itemsQuery = `
-        SELECT
-            d.mid_kode AS kode,
-            b.brgd_barcode AS barcode,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
-            d.mid_ukuran AS ukuran,
-            d.mid_jumlah AS qtyIn,
-            IFNULL(mo_dtl.mod_jumlah, 0) AS qtyMo,
-            IFNULL((
-                SELECT SUM(dd.mid_jumlah) FROM tmutasiin_dtl dd 
-                JOIN tmutasiin_hdr hh ON hh.mi_nomor = dd.mid_nomor 
-                WHERE hh.mi_mo_nomor = ? AND dd.mid_kode = d.mid_kode AND dd.mid_ukuran = d.mid_ukuran
-                AND hh.mi_nomor <> ? 
-            ), 0) AS sudah
-        FROM tmutasiin_dtl d
-        LEFT JOIN tmutasiout_hdr mo_hdr ON mo_hdr.mo_nomor = ?
-        LEFT JOIN tmutasiout_dtl mo_dtl ON mo_dtl.mod_nomor = mo_hdr.mo_nomor AND mo_dtl.mod_kode = d.mid_kode AND mo_dtl.mod_ukuran = d.mid_ukuran
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.mid_kode
-        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mid_kode AND b.brgd_ukuran = d.mid_ukuran
-        WHERE d.mid_nomor = ?;
+    // 2. Ambil SEMUA item dari Mutasi Out (sebagai template)
+    const moItemsQuery = `
+      SELECT
+        d.mod_kode AS kode,
+        b.brgd_barcode AS barcode,
+        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+        d.mod_ukuran AS ukuran,
+        d.mod_jumlah AS qtyMo, -- [PENTING] Alias ini harus 'qtyMo'
+        IFNULL((
+            SELECT SUM(dd.mid_jumlah) FROM tmutasiin_dtl dd 
+            JOIN tmutasiin_hdr hh ON hh.mi_nomor = dd.mid_nomor 
+            WHERE hh.mi_mo_nomor = ? 
+              AND dd.mid_kode = d.mod_kode 
+              AND dd.mid_ukuran = d.mod_ukuran
+              AND hh.mi_nomor <> ? -- [PENTING] Hitung 'sudah' di MI LAIN
+        ), 0) AS sudah
+      FROM tmutasiout_dtl d
+      LEFT JOIN tbarangdc a ON a.brg_kode = d.mod_kode
+      LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mod_kode AND b.brgd_ukuran = d.mod_ukuran
+      WHERE d.mod_nomor = ?;
     `;
-  const [items] = await pool.query(itemsQuery, [
-    header.nomorMutasiOut,
-    nomorMi,
-    header.nomorMutasiOut,
-    nomorMi,
-  ]);
+    const [moItems] = await connection.query(moItemsQuery, [
+      nomorMo,
+      nomorMi,
+      nomorMo,
+    ]);
 
-  return { header, items };
+    // 3. Ambil item yang SUDAH TERSIMPAN di Mutasi In ini
+    const [miItems] = await connection.query(
+      "SELECT mid_kode, mid_ukuran, mid_jumlah FROM tmutasiin_dtl WHERE mid_nomor = ?",
+      [nomorMi]
+    );
+
+    // 4. Gabungkan data (seperti di Delphi)
+    const items = moItems.map((item) => {
+      // Cari item yang tersimpan di Mutasi In ini
+      const savedItem = miItems.find(
+        (d) => d.mid_kode === item.kode && d.mid_ukuran === item.ukuran
+      );
+
+      return {
+        ...item,
+        qtyIn: savedItem ? savedItem.mid_jumlah : 0, // Ini adalah 'jumlah' (Qty In)
+        // 'sudah' sudah dihitung oleh SQL
+        // 'belum' akan dihitung di frontend
+      };
+    });
+
+    return { header, items };
+  } finally {
+    connection.release();
+  }
 };
 
 const getPrintData = async (nomor) => {

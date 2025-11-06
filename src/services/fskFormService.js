@@ -1,22 +1,22 @@
-const pool = require('../config/database');
-const { format } = require('date-fns');
+const pool = require("../config/database");
+const { format } = require("date-fns");
 
 /**
  * Menghasilkan nomor Form Setoran Kasir (FSK) baru.
  */
 const generateNewFskNumber = async (cabang, tanggal) => {
-    const date = new Date(tanggal);
-    const prefix = `${cabang}.FSK.${format(date, 'yyMM')}.`;
-    
-    const query = `
+  const date = new Date(tanggal);
+  const prefix = `${cabang}.FSK.${format(date, "yyMM")}.`;
+
+  const query = `
         SELECT IFNULL(MAX(RIGHT(fsk_nomor, 5)), 0) + 1 AS next_num
         FROM tform_setorkasir_hdr 
         WHERE fsk_nomor LIKE ?;
     `;
-    const [rows] = await pool.query(query, [`${prefix}%`]);
-    const nextNumber = rows[0].next_num.toString().padStart(5, '0');
-    
-    return `${prefix}${nextNumber}`;
+  const [rows] = await pool.query(query, [`${prefix}%`]);
+  const nextNumber = rows[0].next_num.toString().padStart(5, "0");
+
+  return `${prefix}${nextNumber}`;
 };
 
 /**
@@ -24,11 +24,11 @@ const generateNewFskNumber = async (cabang, tanggal) => {
  * Diadaptasi dari prosedur `loadnew` di Delphi.
  */
 const loadInitialData = async (tanggal, user) => {
-    const { cabang } = user;
-    const params = [cabang, tanggal];
+  const { cabang } = user;
+  const params = [cabang, tanggal];
 
-    // Query untuk grid pertama (detail setoran)
-    const detail1Query = `
+  // Query untuk grid pertama (detail setoran)
+  const detail1Query = `
         SELECT 
             'SETORAN KASIR TUNAI' AS jenis, h.inv_tanggal AS tgltrf, h.inv_cus_kode AS kdcus, 
             c.cus_nama AS nmcus, c.cus_alamat AS alamat, h.inv_nomor AS inv, 
@@ -70,10 +70,15 @@ const loadInitialData = async (tanggal, user) => {
         LEFT JOIN tcustomer c ON c.cus_kode=h.sh_cus_kode
         WHERE LEFT(h.sh_nomor,3)=? AND h.sh_jenis=2 AND h.sh_tanggal=?;
     `;
-    const [details1] = await pool.query(detail1Query, [...params, ...params, ...params, ...params]);
-    
-    // Query untuk grid kedua (summary)
-    const detail2Query = `
+  const [details1] = await pool.query(detail1Query, [
+    ...params,
+    ...params,
+    ...params,
+    ...params,
+  ]);
+
+  // Query untuk grid kedua (summary)
+  const detail2Query = `
         SELECT 'SETORAN KASIR TUNAI' AS jenis, IFNULL(SUM(h.inv_rptunai), 0) AS nominal FROM tinv_hdr h WHERE LEFT(h.inv_nomor,3)=? AND h.inv_sts_pro=0 AND h.inv_rptunai<>0 AND h.inv_tanggal=?
         UNION ALL
         SELECT "PEMBAYARAN TUNAI" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=0 AND s.sh_tanggal=?
@@ -82,14 +87,19 @@ const loadInitialData = async (tanggal, user) => {
         UNION ALL
         SELECT "PEMBAYARAN GIRO" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=2 AND s.sh_tanggal=?;
     `;
-    const [details2] = await pool.query(detail2Query, [...params, ...params, ...params, ...params]);
+  const [details2] = await pool.query(detail2Query, [
+    ...params,
+    ...params,
+    ...params,
+    ...params,
+  ]);
 
-    return { details1, details2 };
+  return { details1, details2 };
 };
 
 const loadForEdit = async (nomor, user) => {
-    // 1. Ambil data header
-    const headerQuery = `
+  // 1. Ambil data header
+  const headerQuery = `
         SELECT 
             h.fsk_nomor AS nomor, 
             h.fsk_tanggal AS tanggal,
@@ -99,11 +109,12 @@ const loadForEdit = async (nomor, user) => {
         FROM tform_setorkasir_hdr h
         WHERE h.fsk_nomor = ? AND LEFT(h.fsk_nomor, 3) = ?;
     `;
-    const [headerRows] = await pool.query(headerQuery, [nomor, user.cabang]);
-    if (headerRows.length === 0) throw new Error('Data FSK tidak ditemukan atau bukan milik cabang Anda.');
-    
-    // 2. Ambil detail 1
-    const detail1Query = `
+  const [headerRows] = await pool.query(headerQuery, [nomor, user.cabang]);
+  if (headerRows.length === 0)
+    throw new Error("Data FSK tidak ditemukan atau bukan milik cabang Anda.");
+
+  // 2. Ambil detail 1
+  const detail1Query = `
         SELECT
             d.fskd_jenis AS jenis, d.fskd_tgltrf AS tgltrf, d.fskd_kdcus AS kdcus,
             c.cus_nama AS nmcus, c.cus_alamat AS alamat, d.fskd_inv AS inv,
@@ -112,10 +123,10 @@ const loadForEdit = async (nomor, user) => {
         LEFT JOIN tcustomer c ON c.cus_kode = d.fskd_kdcus
         WHERE d.fskd_nomor = ?;
     `;
-    const [details1] = await pool.query(detail1Query, [nomor]);
+  const [details1] = await pool.query(detail1Query, [nomor]);
 
-    // 3. Ambil detail 2
-    const detail2Query = `
+  // 3. Ambil detail 2
+  const detail2Query = `
         SELECT 
             fskd2_jenis AS jenis,
             fskd2_nominal AS nominal,
@@ -123,71 +134,99 @@ const loadForEdit = async (nomor, user) => {
         FROM tform_setorkasir_dtl2
         WHERE fskd2_nomor = ?;
     `;
-    const [details2] = await pool.query(detail2Query, [nomor]);
+  const [details2] = await pool.query(detail2Query, [nomor]);
 
-    return { header: headerRows[0], details1, details2 };
+  return { header: headerRows[0], details1, details2 };
 };
 
 const saveData = async (payload, user) => {
-    const { header, details1, details2, isNew } = payload;
-    const connection = await pool.getConnection();
-    try {
-        await connection.beginTransaction();
+  const { header, details1, details2, isNew } = payload;
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
 
-        let fskNomor = header.nomor;
-        const timestamp = format(new Date(), 'yyyyMMddHHmmssSSS');
-        const idrec = `${user.cabang}FSK${timestamp}`;
+    let fskNomor = header.nomor;
+    const timestamp = format(new Date(), "yyyyMMddHHmmssSSS");
+    const idrec = `${user.cabang}FSK${timestamp}`;
 
-        if (isNew) {
-            fskNomor = await generateNewFskNumber(user.cabang, header.tanggal);
-            const headerSql = `
+    if (isNew) {
+      fskNomor = await generateNewFskNumber(user.cabang, header.tanggal);
+      const headerSql = `
                 INSERT INTO tform_setorkasir_hdr (fsk_idrec, fsk_nomor, fsk_tanggal, user_create, date_create)
                 VALUES (?, ?, ?, ?, NOW());
             `;
-            await connection.query(headerSql, [idrec, fskNomor, header.tanggal, user.kode]);
-        } else {
-            const headerSql = `
+      await connection.query(headerSql, [
+        idrec,
+        fskNomor,
+        header.tanggal,
+        user.kode,
+      ]);
+    } else {
+      const headerSql = `
                 UPDATE tform_setorkasir_hdr SET fsk_tanggal = ?, user_modified = ?, date_modified = NOW()
                 WHERE fsk_nomor = ?;
             `;
-            await connection.query(headerSql, [header.tanggal, user.kode, fskNomor]);
-        }
-        
-        // Simpan Detail 1
-        await connection.query('DELETE FROM tform_setorkasir_dtl WHERE fskd_nomor = ?', [fskNomor]);
-        if (details1.length > 0) {
-            const dtl1Sql = `
+      await connection.query(headerSql, [header.tanggal, user.kode, fskNomor]);
+    }
+
+    // Simpan Detail 1
+    await connection.query(
+      "DELETE FROM tform_setorkasir_dtl WHERE fskd_nomor = ?",
+      [fskNomor]
+    );
+    if (details1.length > 0) {
+      const dtl1Sql = `
                 INSERT INTO tform_setorkasir_dtl (fskd_idrec, fskd_nomor, fskd_jenis, fskd_tgltrf, fskd_kdcus, fskd_inv, fskd_sh_nomor, fskd_nominal)
                 VALUES ?;
             `;
-            const dtl1Values = details1.map(d => [idrec, fskNomor, d.jenis, d.tgltrf, d.kdcus, d.inv, d.nomor, d.nominal]);
-            await connection.query(dtl1Sql, [dtl1Values]);
-        }
+      const dtl1Values = details1.map((d) => [
+        idrec,
+        fskNomor,
+        d.jenis,
+        d.tgltrf,
+        d.kdcus,
+        d.inv,
+        d.nomor,
+        d.nominal,
+      ]);
+      await connection.query(dtl1Sql, [dtl1Values]);
+    }
 
-        // Simpan Detail 2
-        await connection.query('DELETE FROM tform_setorkasir_dtl2 WHERE fskd2_nomor = ?', [fskNomor]);
-        if (details2.length > 0) {
-            const dtl2Sql = `
+    // Simpan Detail 2
+    await connection.query(
+      "DELETE FROM tform_setorkasir_dtl2 WHERE fskd2_nomor = ?",
+      [fskNomor]
+    );
+    if (details2.length > 0) {
+      const dtl2Sql = `
                 INSERT INTO tform_setorkasir_dtl2 (fskd2_idrec, fskd2_nomor, fskd2_jenis, fskd2_nominal)
                 VALUES ?;
             `;
-             const dtl2Values = details2.map(d => [idrec, fskNomor, d.jenis, d.nominal]);
-            await connection.query(dtl2Sql, [dtl2Values]);
-        }
-
-        await connection.commit();
-        return { message: `Form Setoran Kasir ${fskNomor} berhasil disimpan.`, nomor: fskNomor };
-    } catch (error) {
-        await connection.rollback();
-        throw error;
-    } finally {
-        connection.release();
+      const dtl2Values = details2.map((d) => [
+        idrec,
+        fskNomor,
+        d.jenis,
+        d.nominal,
+      ]);
+      await connection.query(dtl2Sql, [dtl2Values]);
     }
+
+    await connection.commit();
+    return {
+      message: `Form Setoran Kasir ${fskNomor} berhasil disimpan.`,
+      nomor: fskNomor,
+    };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 };
 
 const getPrintData = async (nomor) => {
-    // 1. Ambil data header utama
-    const headerQuery = `
+  // 1. Ambil data header utama
+  const headerQuery = `
         SELECT 
             h.fsk_nomor, h.fsk_tanggal, h.user_create,
             DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
@@ -198,13 +237,13 @@ const getPrintData = async (nomor) => {
         LEFT JOIN tgudang src ON src.gdg_kode = LEFT(h.fsk_nomor, 3)
         WHERE h.fsk_nomor = ?;
     `;
-    const [headerRows] = await pool.query(headerQuery, [nomor]);
-    if (headerRows.length === 0) {
-        throw new Error('Data FSK tidak ditemukan.');
-    }
+  const [headerRows] = await pool.query(headerQuery, [nomor]);
+  if (headerRows.length === 0) {
+    throw new Error("Data FSK tidak ditemukan.");
+  }
 
-    // 2. Ambil rincian setoran (detail 1)
-    const detail1Query = `
+  // 2. Ambil rincian setoran (detail 1)
+  const detail1Query = `
         SELECT 
             d.fskd_jenis AS jenis,
             d.fskd_tgltrf AS tgltrf,
@@ -218,63 +257,72 @@ const getPrintData = async (nomor) => {
         WHERE d.fskd_nomor = ?
         ORDER BY d.fskd_jenis;
     `;
-    const [details1] = await pool.query(detail1Query, [nomor]);
+  const [details1] = await pool.query(detail1Query, [nomor]);
 
-    // 3. Ambil rekapitulasi setoran (detail 2)
-    const detail2Query = `
+  // 3. Ambil rekapitulasi setoran (detail 2)
+  const detail2Query = `
         SELECT 
             fskd2_jenis AS jenis,
             fskd2_nominal AS summary_nominal
         FROM tform_setorkasir_dtl2
         WHERE fskd2_nomor = ?;
     `;
-    const [details2] = await pool.query(detail2Query, [nomor]);
+  const [details2] = await pool.query(detail2Query, [nomor]);
 
-    // Gabungkan semua data menjadi satu objek
-    return { header: headerRows[0], details1, details2 };
+  // Gabungkan semua data menjadi satu objek
+  return { header: headerRows[0], details1, details2 };
 };
 
 const remove = async (nomor, user) => {
-    const connection = await pool.getConnection();
-    try {
-        await connection.beginTransaction();
-        
-        const [rows] = await connection.query(`
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [rows] = await connection.query(
+      `
             SELECT fsk_userv, fsk_closing FROM tform_setorkasir_hdr WHERE fsk_nomor = ?
-        `, [nomor]);
+        `,
+      [nomor]
+    );
 
-        if (rows.length === 0) throw new Error('Data tidak ditemukan.');
-        const setoran = rows[0];
+    if (rows.length === 0) throw new Error("Data tidak ditemukan.");
+    const setoran = rows[0];
 
-        // --- VALIDASI PENTING ---
-        if (setoran.fsk_userv) {
-            throw new Error('Sudah di Verifikasi oleh Finance. Tidak bisa dihapus.');
-        }
-        if (nomor.substring(0, 3) !== user.cabang) {
-            throw new Error(`Anda tidak berhak menghapus data milik cabang ${nomor.substring(0, 3)}.`);
-        }
-        if (setoran.fsk_closing === 'Y') {
-            throw new Error('Sudah Closing. Tidak bisa dihapus.');
-        }
-        // --- AKHIR VALIDASI ---
-        
-        await connection.query('DELETE FROM tform_setorkasir_hdr WHERE fsk_nomor = ?', [nomor]);
-        
-        await connection.commit();
-        return { message: `Form Setoran Kasir ${nomor} berhasil dihapus.` };
-    } catch (error) {
-        await connection.rollback();
-        throw error;
-    } finally {
-        connection.release();
+    // --- VALIDASI PENTING ---
+    if (setoran.fsk_userv) {
+      throw new Error("Sudah di Verifikasi oleh Finance. Tidak bisa dihapus.");
     }
+    if (nomor.substring(0, 3) !== user.cabang) {
+      throw new Error(
+        `Anda tidak berhak menghapus data milik cabang ${nomor.substring(
+          0,
+          3
+        )}.`
+      );
+    }
+    if (setoran.fsk_closing === "Y") {
+      throw new Error("Sudah Closing. Tidak bisa dihapus.");
+    }
+    // --- AKHIR VALIDASI ---
+
+    await connection.query(
+      "DELETE FROM tform_setorkasir_hdr WHERE fsk_nomor = ?",
+      [nomor]
+    );
+
+    await connection.commit();
+    return { message: `Form Setoran Kasir ${nomor} berhasil dihapus.` };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 };
 
-
-
 module.exports = {
-    loadInitialData,
-    loadForEdit,
-    saveData,
-    getPrintData,
+  loadInitialData,
+  loadForEdit,
+  saveData,
+  getPrintData,
 };
