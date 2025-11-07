@@ -11,7 +11,6 @@ const getInvoiceMasterData = async (filters) => {
 
   let query = "";
 
-
   if (reportType === "tanggal") {
     query = `
       SELECT 
@@ -63,13 +62,15 @@ const getInvoiceMasterData = async (filters) => {
           AND h.inv_tanggal BETWEEN ? AND ?
           ${!isKdc ? "AND LEFT(h.inv_nomor, 3) = ?" : ""}
       ) AS x
-      ${!isKdc ? "GROUP BY x.inv_tanggal, LEFT(x.inv_nomor, 3)" : "GROUP BY x.inv_tanggal"}
+      ${
+        !isKdc
+          ? "GROUP BY x.inv_tanggal, LEFT(x.inv_nomor, 3)"
+          : "GROUP BY x.inv_tanggal"
+      }
       ORDER BY x.inv_tanggal
     `;
     if (!isKdc) params.push(gudangKode);
-  }
-
-  else if (reportType === "customer") {
+  } else if (reportType === "customer") {
     query = `
       SELECT 
         RIGHT(x.Inv_cus_kode, 5) AS Kode,
@@ -86,8 +87,8 @@ const getInvoiceMasterData = async (filters) => {
       FROM (
         SELECT 
           h.inv_nomor,
-          h.Inv_cus_kode,
-          h.Inv_cus_level AS xLevel,
+          h.inv_cus_kode,
+          h.inv_cus_level AS xLevel,
           c.Cus_nama,
           c.Cus_alamat,
           c.Cus_kota,
@@ -131,14 +132,12 @@ const getInvoiceMasterData = async (filters) => {
           AND h.inv_tanggal BETWEEN ? AND ?
           ${!isKdc ? "AND LEFT(h.inv_nomor, 3) = ?" : ""}
       ) AS x
-      GROUP BY x.Inv_cus_kode
+      GROUP BY x.Inv_cus_kode, x.Cus_nama, x.Cus_alamat, x.Cus_kota, x.xLevel, x.Level_nama
+      
       ORDER BY x.Cus_nama
     `;
     if (!isKdc) params.push(gudangKode);
-  }
-
-
-  else if (reportType === "level") {
+  } else if (reportType === "level") {
     query = `
       SELECT 
         l.level_kode AS Kode,
@@ -207,28 +206,58 @@ const getInvoiceMasterData = async (filters) => {
 // ==========================================================
 const getDetailCustomerByLevel = async (filters) => {
   const { startDate, endDate, gudangKode, levelKode } = filters;
-  const params = [startDate, endDate, levelKode];
+  const params = [startDate, endDate];
   const isKdc = gudangKode === "ALL";
 
+  if (!isKdc) {
+    params.push(gudangKode);
+  }
+  params.push(levelKode); // levelKode adalah parameter terakhir
+
   const query = `
-    SELECT
-      c.cus_kode AS kdcus,
-      c.cus_nama AS nama,
-      c.cus_alamat AS alamat,
-      c.cus_kota AS kota,
-      SUM(d.invd_jumlah) AS Qty,
-      SUM(h.inv_nominal) AS Nominal
-    FROM tinv_hdr h
-    JOIN tcustomer c ON c.cus_kode = h.inv_kdcus
-    LEFT JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
-    WHERE h.inv_tanggal BETWEEN ? AND ?
-      AND c.cus_level = ?
-      ${!isKdc ? "AND LEFT(h.inv_nomor, 3) = ?" : ""}
-    GROUP BY c.cus_kode, c.cus_nama, c.cus_alamat, c.cus_kota
-    ORDER BY c.cus_nama
+    SELECT 
+      x.kdcus,
+      x.nama,
+      x.alamat,
+      x.kota,
+      SUM(x.qty) AS Qty,
+      SUM(ROUND(x.nominal)) AS Nominal,
+      SUM(ROUND(x.hpp)) AS Hpp,
+      SUM(ROUND(x.nominal - x.hpp)) AS Laba
+    FROM (
+      SELECT 
+        h.inv_cus_kode AS kdcus,
+        c.cus_nama AS nama,
+        c.cus_alamat AS alamat,
+        c.cus_kota AS kota,
+        h.inv_cus_level, 
+
+        IFNULL((SELECT SUM(dd.invd_jumlah) 
+                FROM tinv_dtl dd 
+                WHERE dd.invd_inv_nomor = h.inv_nomor), 0) AS qty,
+
+        IFNULL((SELECT (SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon))
+                        - hh.inv_disc
+                        + (hh.inv_ppn / 100 * (SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) - hh.inv_disc)))
+                FROM tinv_dtl dd
+                LEFT JOIN tinv_hdr hh ON hh.inv_nomor = dd.invd_inv_nomor
+                WHERE hh.inv_nomor = h.inv_nomor), 0) AS nominal,
+
+        IFNULL((SELECT SUM(dd.invd_jumlah * dd.invd_hpp)
+                FROM tinv_dtl dd
+                LEFT JOIN tinv_hdr hh ON hh.inv_nomor = dd.invd_inv_nomor
+                WHERE hh.inv_nomor = h.inv_nomor), 0) AS hpp
+                
+      FROM tinv_hdr h
+      LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+      WHERE h.inv_tanggal BETWEEN ? AND ?
+        ${!isKdc ? "AND LEFT(h.inv_nomor, 3) = ?" : ""}
+    ) AS x
+    WHERE x.inv_cus_level = ? 
+    GROUP BY x.kdcus, x.nama, x.alamat, x.kota
+    ORDER BY x.nama
   `;
 
-  if (!isKdc) params.push(gudangKode);
   const [rows] = await pool.query(query, params);
   return rows;
 };
@@ -236,20 +265,20 @@ const getDetailCustomerByLevel = async (filters) => {
 // ==========================================================
 // Dropdown Gudang
 const getCabangOptions = async (user) => {
-    // Pengecekan untuk memastikan objek user dan propertinya ada
-    if (!user || !user.cabang) {
-        throw new Error("Informasi user atau cabang tidak ditemukan.");
-    }
+  // Pengecekan untuk memastikan objek user dan propertinya ada
+  if (!user || !user.cabang) {
+    throw new Error("Informasi user atau cabang tidak ditemukan.");
+  }
 
-    let query = "";
-    let params = [];
+  let query = "";
+  let params = [];
 
-    // Menggunakan user.cabangUtama jika ada, jika tidak pakai user.cabang
-    const cabangUtama = user.cabangUtama || user.cabang;
+  // Menggunakan user.cabangUtama jika ada, jika tidak pakai user.cabang
+  const cabangUtama = user.cabangUtama || user.cabang;
 
-    if (cabangUtama === "KDC") {
-        // --- DISESUAIKAN DENGAN QUERY DELPHI ---
-        query = `
+  if (cabangUtama === "KDC") {
+    // --- DISESUAIKAN DENGAN QUERY DELPHI ---
+    query = `
             SELECT 'ALL' AS kode, 'All Cabang' AS nama
             UNION ALL
             SELECT * FROM (
@@ -258,24 +287,24 @@ const getCabangOptions = async (user) => {
                 ORDER BY gdg_kode
             ) AS x
         `;
-    } else {
-        // --- DISESUAIKAN DENGAN QUERY DELPHI ---
-        query = `
+  } else {
+    // --- DISESUAIKAN DENGAN QUERY DELPHI ---
+    query = `
             SELECT gdg_kode AS kode, gdg_nama AS nama
             FROM retail.tgudang 
             WHERE gdg_kode = ?
         `;
-        params.push(cabangUtama);
-    }
+    params.push(cabangUtama);
+  }
 
-    try {
-        const [rows] = await pool.query(query, params);
-        return rows;
-    } catch (dbError) {
-        console.error("Database error in getCabangOptions:", dbError);
-        // Melempar kembali error agar controller bisa mengirim respons 500
-        throw dbError;
-    }
+  try {
+    const [rows] = await pool.query(query, params);
+    return rows;
+  } catch (dbError) {
+    console.error("Database error in getCabangOptions:", dbError);
+    // Melempar kembali error agar controller bisa mengirim respons 500
+    throw dbError;
+  }
 };
 
 module.exports = {

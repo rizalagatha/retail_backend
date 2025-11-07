@@ -12,7 +12,7 @@ const getInvoiceMasterData = async (req, res) => {
 
 const getDetailByLevel = async (req, res) => {
   try {
-    const data = await service.getDetailByLevel(req.query);
+    const data = await service.getDetailCustomerByLevel(req.query);
     res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });
