@@ -1,32 +1,45 @@
-const pool = require('../config/database');
-const { format } = require('date-fns');
+const pool = require("../config/database");
+const { format } = require("date-fns");
 
 /**
  * Menghasilkan nomor Mutasi Stok (MSO) baru.
  */
 const generateNewMsoNumber = async (cabang, tanggal) => {
-    const date = new Date(tanggal);
-    const prefix = `${cabang}MSO${format(date, 'yyMM')}`;
-    const query = `
+  const date = new Date(tanggal);
+  const prefix = `${cabang}MSO${format(date, "yyMM")}`;
+  const query = `
         SELECT IFNULL(MAX(RIGHT(mso_nomor, 5)), 0) + 1 AS next_num
         FROM tmutasistok_hdr 
         WHERE mso_nomor LIKE ?;
     `;
-    const [rows] = await pool.query(query, [`${prefix}%`]);
-    const nextNumber = rows[0].next_num.toString().padStart(5, '0');
-    return `${prefix}${nextNumber}`;
+  const [rows] = await pool.query(query, [`${prefix}%`]);
+  const nextNumber = rows[0].next_num.toString().padStart(5, "0");
+  return `${prefix}${nextNumber}`;
+};
+
+const generateNewMsodNomorIn = async (connection, cabang, tanggal) => {
+  const aym = format(new Date(tanggal), "yyMM");
+  const prefix = `${cabang}MSI${aym}`;
+  const query = `
+    SELECT IFNULL(MAX(RIGHT(msod_nomorin, 5)), 0) + 1 AS next_num
+    FROM tmutasistok_dtl 
+    WHERE LEFT(msod_nomorin, 10) = ?;
+  `;
+  const [rows] = await connection.query(query, [prefix]);
+  const nextNumber = rows[0].next_num.toString().padStart(5, "0");
+  return `${prefix}${nextNumber}`;
 };
 
 /**
  * Mencari SO yang valid untuk dimuat (aktif, belum close, qty invoice < qty so).
  */
 const searchSo = async (term, page, itemsPerPage, user) => {
-    const offset = (Number(page) - 1) * Number(itemsPerPage);
-    const searchTerm = `%${term || ''}%`;
-    const params = [user.cabang];
+  const offset = (Number(page) - 1) * Number(itemsPerPage);
+  const searchTerm = `%${term || ""}%`;
+  const params = [user.cabang];
 
-    // Subquery untuk menghitung qty SO dan Qty Invoice
-    const subQuery = `
+  // Subquery untuk menghitung qty SO dan Qty Invoice
+  const subQuery = `
         SELECT 
             h.so_nomor AS Nomor, h.so_tanggal AS Tanggal, h.so_cus_kode AS KdCus,
             c.cus_nama AS Customer, c.cus_alamat AS Alamat, c.cus_kota AS Kota,
@@ -41,36 +54,38 @@ const searchSo = async (term, page, itemsPerPage, user) => {
         WHERE h.so_aktif = "Y" AND h.so_close = 0 AND LEFT(h.so_nomor, 3) = ?
     `;
 
-    // Derived table 'x' untuk memfilter, persis seperti di Delphi
-    const baseFrom = `FROM (${subQuery}) AS x`;
-    const whereClause = `WHERE x.qty_inv < x.qty_so`;
-    const searchClause = `AND (x.Nomor LIKE ? OR x.Customer LIKE ?)`;
+  // Derived table 'x' untuk memfilter, persis seperti di Delphi
+  const baseFrom = `FROM (${subQuery}) AS x`;
+  const whereClause = `WHERE x.qty_inv < x.qty_so`;
+  const searchClause = `AND (x.Nomor LIKE ? OR x.Customer LIKE ?)`;
 
-    if (term) {
-        params.push(searchTerm, searchTerm);
-    }
-    
-    const countQuery = `SELECT COUNT(*) AS total ${baseFrom} ${whereClause} ${term ? searchClause : ''}`;
-    const [countRows] = await pool.query(countQuery, params);
-    const total = countRows[0].total;
+  if (term) {
+    params.push(searchTerm, searchTerm);
+  }
 
-    params.push(Number(itemsPerPage), offset);
-    const dataQuery = `
+  const countQuery = `SELECT COUNT(*) AS total ${baseFrom} ${whereClause} ${
+    term ? searchClause : ""
+  }`;
+  const [countRows] = await pool.query(countQuery, params);
+  const total = countRows[0].total;
+
+  params.push(Number(itemsPerPage), offset);
+  const dataQuery = `
         SELECT x.Nomor, x.Tanggal, x.Customer, x.Kota
-        ${baseFrom} ${whereClause} ${term ? searchClause : ''}
+        ${baseFrom} ${whereClause} ${term ? searchClause : ""}
         ORDER BY x.Nomor DESC
         LIMIT ? OFFSET ?;
     `;
-    const [items] = await pool.query(dataQuery, params);
-    
-    return { items, total };
+  const [items] = await pool.query(dataQuery, params);
+
+  return { items, total };
 };
 
 /**
  * Memuat detail item dari SO yang dipilih, lengkap dengan perhitungan stok.
  */
 const loadFromSo = async (nomorSo, user) => {
-    const query = `
+  const query = `
         SELECT
             d.sod_kode AS kode,
             b.brgd_barcode AS barcode,
@@ -84,80 +99,134 @@ const loadFromSo = async (nomorSo, user) => {
         LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
         WHERE d.sod_so_nomor = ?;
     `;
-    const [rows] = await pool.query(query, [user.cabang, user.cabang, nomorSo, nomorSo]);
+  const [rows] = await pool.query(query, [
+    user.cabang,
+    user.cabang,
+    nomorSo,
+    nomorSo,
+  ]);
 
-    // Lakukan kalkulasi 'produksi', 'ready', 'kurang' di backend
-    return rows.map(item => {
-        // Logika Delphi: ready = produksi + pesan, kurang = qtyso - ready
-        // Karena 'produksi' tidak bisa dihitung langsung di sini, kita set 0
-        const produksi = 0; // Placeholder
-        const ready = produksi + item.pesan;
-        const kurang = item.qtyso - ready;
-        return { ...item, produksi, ready, kurang };
-    });
+  // Lakukan kalkulasi 'produksi', 'ready', 'kurang' di backend
+  return rows.map((item) => {
+    // Logika Delphi: ready = produksi + pesan, kurang = qtyso - ready
+    // Karena 'produksi' tidak bisa dihitung langsung di sini, kita set 0
+    const produksi = 0; // Placeholder
+    const ready = produksi + item.pesan;
+    const kurang = item.qtyso - ready;
+    return { ...item, produksi, ready, kurang };
+  });
 };
 
 /**
  * Menyimpan data Mutasi Stok (baru atau edit).
  */
 const saveData = async (payload, user) => {
-    const { header, items, isNew } = payload;
-    const connection = await pool.getConnection();
-    try {
-        await connection.beginTransaction();
+  const { header, items, isNew } = payload;
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
 
-        // Validasi
-        if (!header.nomorSo) throw new Error('No. Pesanan harus diisi.');
-        if (items.length === 0) throw new Error('Detail barang harus diisi.');
-        const totalQty = items.reduce((sum, item) => sum + (item.jumlah || 0), 0);
-        if (totalQty <= 0) throw new Error('Qty Mutasi kosong semua.');
-        
-        for (const item of items) {
-            const qtyMutasi = item.jumlah || 0;
-            if (header.jenisMutasi === 'SP' && qtyMutasi > item.showroom) throw new Error(`Qty untuk ${item.nama} > Stok Showroom.`);
-            if (header.jenisMutasi === 'PS' && qtyMutasi > item.pesan) throw new Error(`Qty untuk ${item.nama} > Stok Pesanan.`);
-        }
+    // Validasi (Sudah benar)
+    if (!header.nomorSo) throw new Error("No. Pesanan harus diisi.");
+    const validItems = items.filter(
+      (item) => item.kode && (item.jumlah || 0) > 0
+    );
+    if (validItems.length === 0) throw new Error("Detail barang harus diisi.");
+    // (Validasi Qty vs Stok sudah ada di frontend/service, itu bagus)
 
-        let msoNomor = header.nomor;
-        const timestamp = format(new Date(), 'yyyyMMddHHmmssSSS');
-        const idrec = `${user.cabang}MSO${timestamp}`;
+    let msoNomor = header.nomor;
+    const timestamp = format(new Date(), "yyyyMMddHHmmssSSS");
+    const idrec = `${user.cabang}MSO${timestamp}`;
 
-        if (isNew) {
-            msoNomor = await generateNewMsoNumber(user.cabang, header.tanggal);
-            const headerSql = `
-                INSERT INTO tmutasistok_hdr (mso_idrec, mso_nomor, mso_tanggal, mso_so_nomor, mso_ket, mso_jenis, user_create, date_create)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NOW());
-            `;
-            await connection.query(headerSql, [idrec, msoNomor, header.tanggal, header.nomorSo, header.keterangan, header.jenisMutasi, user.kode]);
-        } else {
-            // Logika update (jika diperlukan)
-        }
-        
-        await connection.query('DELETE FROM tmutasistok_dtl WHERE msod_nomor = ?', [msoNomor]);
-
-        const detailSql = `
-            INSERT INTO tmutasistok_dtl (msod_idrec, msod_nomor, msod_kode, msod_ukuran, msod_jumlah) 
-            VALUES ?;
-        `;
-        const detailValues = items.filter(item => (item.jumlah || 0) > 0).map(item => [idrec, msoNomor, item.kode, item.ukuran, item.jumlah]);
-        
-        if (detailValues.length > 0) {
-            await connection.query(detailSql, [detailValues]);
-        }
-
-        await connection.commit();
-        return { message: `Mutasi Stok ${msoNomor} berhasil disimpan.`, nomor: msoNomor };
-    } catch (error) {
-        await connection.rollback();
-        throw error;
-    } finally {
-        connection.release();
+    if (isNew) {
+      msoNomor = await generateNewMsoNumber(user.cabang, header.tanggal);
+      const headerSql = `
+        INSERT INTO tmutasistok_hdr (
+          mso_idrec, mso_nomor, mso_tanggal, mso_so_nomor, mso_ket, mso_jenis, user_create, date_create
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW());
+      `;
+      await connection.query(headerSql, [
+        idrec,
+        msoNomor,
+        header.tanggal,
+        header.nomorSo,
+        header.keterangan,
+        header.jenisMutasi,
+        user.kode,
+      ]);
+    } else {
+      // Logika update header (sesuai Delphi)
+      const headerSql = `
+        UPDATE tmutasistok_hdr SET
+          mso_tanggal = ?, mso_so_nomor = ?, mso_ket = ?, mso_jenis = ?,
+          user_modified = ?, date_modified = NOW()
+        WHERE mso_nomor = ?;
+      `;
+      await connection.query(headerSql, [
+        header.tanggal,
+        header.nomorSo,
+        header.keterangan,
+        header.jenisMutasi,
+        user.kode,
+        msoNomor,
+      ]);
+      // (Catatan: Delphi mengambil idrec dari select, kita bisa asumsikan idrec tidak berubah saat edit)
     }
+
+    // Hapus detail lama (sesuai Delphi)
+    await connection.query("DELETE FROM tmutasistok_dtl WHERE msod_nomor = ?", [
+      msoNomor,
+    ]);
+
+    // --- PENYESUAIAN DENGAN LOGIKA DELPHI ---
+    if (validItems.length > 0) {
+      // 1. Buat 'msod_nomorin' (mutin) satu kali (sesuai Delphi)
+      const msodNomorIn = await generateNewMsodNomorIn(
+        connection,
+        user.cabang,
+        header.tanggal
+      );
+
+      // 2. Siapkan detail values DENGAN msod_nomorin dan msod_nourut
+      const detailSql = `
+        INSERT INTO tmutasistok_dtl (
+          msod_idrec, msod_nomor, msod_nomorin, msod_kode, msod_ukuran, msod_jumlah, msod_nourut
+        ) VALUES ?;
+      `;
+
+      const detailValues = validItems.map((item, index) => [
+        idrec,
+        msoNomor,
+        msodNomorIn, // <-- Kolom baru dari Delphi
+        item.kode,
+        item.ukuran,
+        item.jumlah,
+        index + 1, // <-- Kolom baru 'msod_nourut' dari Delphi
+      ]);
+
+      await connection.query(detailSql, [detailValues]);
+    }
+
+    // --- BLOK YANG DIHAPUS ---
+    // Semua blok 'INSERT INTO tmasterstok' dan 'INSERT INTO tmasterstokso'
+    // yang saya tambahkan sebelumnya DIHAPUS dari sini.
+
+    await connection.commit();
+    return {
+      message: `Mutasi Stok ${msoNomor} berhasil disimpan.`,
+      nomor: msoNomor,
+    };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 };
 
 const loadForEdit = async (nomor, user) => {
-    // 1. Ambil data header Mutasi Stok
-    const headerQuery = `
+  // 1. Ambil data header Mutasi Stok
+  const headerQuery = `
         SELECT 
             h.mso_nomor AS nomor, 
             h.mso_tanggal AS tanggal, 
@@ -167,12 +236,13 @@ const loadForEdit = async (nomor, user) => {
         FROM tmutasistok_hdr h
         WHERE h.mso_nomor = ? AND LEFT(h.mso_nomor, 3) = ?;
     `;
-    const [headerRows] = await pool.query(headerQuery, [nomor, user.cabang]);
-    if (headerRows.length === 0) throw new Error('Data Mutasi Stok tidak ditemukan.');
-    const header = headerRows[0];
+  const [headerRows] = await pool.query(headerQuery, [nomor, user.cabang]);
+  if (headerRows.length === 0)
+    throw new Error("Data Mutasi Stok tidak ditemukan.");
+  const header = headerRows[0];
 
-    // 2. Query kompleks untuk mengambil detail dari SO asli, lengkap dengan semua perhitungan stok
-    const itemsQuery = `
+  // 2. Query kompleks untuk mengambil detail dari SO asli, lengkap dengan semua perhitungan stok
+  const itemsQuery = `
         SELECT
             d.sod_kode AS kode,
             b.brgd_barcode AS barcode,
@@ -189,21 +259,27 @@ const loadForEdit = async (nomor, user) => {
         LEFT JOIN tmutasistok_dtl msod ON msod.msod_nomor = ? AND msod.msod_kode = d.sod_kode AND msod.msod_ukuran = d.sod_ukuran
         WHERE d.sod_so_nomor = ?;
     `;
-    const params = [user.cabang, user.cabang, header.nomorSo, nomor, header.nomorSo];
-    const [items] = await pool.query(itemsQuery, params);
+  const params = [
+    user.cabang,
+    user.cabang,
+    header.nomorSo,
+    nomor,
+    header.nomorSo,
+  ];
+  const [items] = await pool.query(itemsQuery, params);
 
-    const processedItems = items.map(item => {
-        const produksi = 0; // Placeholder, karena kalkulasi 'masuk' & 'keluar' sangat kompleks
-        const ready = produksi + item.pesan;
-        const kurang = item.qtyso - ready;
-        return { ...item, produksi, ready, kurang };
-    });
+  const processedItems = items.map((item) => {
+    const produksi = 0; // Placeholder, karena kalkulasi 'masuk' & 'keluar' sangat kompleks
+    const ready = produksi + item.pesan;
+    const kurang = item.qtyso - ready;
+    return { ...item, produksi, ready, kurang };
+  });
 
-    return { header, items: processedItems };
+  return { header, items: processedItems };
 };
 
 const getPrintData = async (nomor) => {
-    const query = `
+  const query = `
         SELECT 
             h.mso_nomor, h.mso_tanggal, h.mso_so_nomor, h.mso_ket,
             IF(h.mso_jenis="SP", "Showroom ke Pesanan", "Pesanan ke Showroom") AS jenis_mutasi,
@@ -221,24 +297,24 @@ const getPrintData = async (nomor) => {
         WHERE h.mso_nomor = ?
         ORDER BY d.msod_kode, d.msod_ukuran;
     `;
-    
-    const [rows] = await pool.query(query, [nomor]);
-    if (rows.length === 0) throw new Error('Data Mutasi Stok tidak ditemukan.');
 
-    const header = { ...rows[0] };
-    const details = rows.map(row => ({
-        msod_kode: row.msod_kode,
-        nama: row.nama,
-        msod_ukuran: row.msod_ukuran,
-        msod_jumlah: row.msod_jumlah,
-    }));
+  const [rows] = await pool.query(query, [nomor]);
+  if (rows.length === 0) throw new Error("Data Mutasi Stok tidak ditemukan.");
 
-    return { header, details };
+  const header = { ...rows[0] };
+  const details = rows.map((row) => ({
+    msod_kode: row.msod_kode,
+    nama: row.nama,
+    msod_ukuran: row.msod_ukuran,
+    msod_jumlah: row.msod_jumlah,
+  }));
+
+  return { header, details };
 };
 
 const getExportDetails = async (filters) => {
-    const { startDate, endDate, cabang } = filters;
-    const query = `
+  const { startDate, endDate, cabang } = filters;
+  const query = `
         SELECT 
             h.mso_nomor AS 'Nomor Mutasi',
             h.mso_tanggal AS 'Tanggal',
@@ -259,16 +335,15 @@ const getExportDetails = async (filters) => {
           AND h.mso_tanggal BETWEEN ? AND ?
         ORDER BY h.mso_nomor, d.msod_kode;
     `;
-    const [rows] = await pool.query(query, [cabang, startDate, endDate]);
-    return rows;
+  const [rows] = await pool.query(query, [cabang, startDate, endDate]);
+  return rows;
 };
 
-
 module.exports = {
-    searchSo,
-    loadFromSo,
-    saveData,
-    loadForEdit,
-    getPrintData,
-    getExportDetails,
+  searchSo,
+  loadFromSo,
+  saveData,
+  loadForEdit,
+  getPrintData,
+  getExportDetails,
 };

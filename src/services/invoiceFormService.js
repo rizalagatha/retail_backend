@@ -117,7 +117,16 @@ const getSoDetailsForGrid = async (soNomor, user) => {
                 IFNULL(i.sod_diskon, 0) AS diskonRp,
                 IFNULL(i.sod_disc, 0) AS diskonPersen,
                 b.brgd_hpp AS hpp, a.brg_logstok AS logstok,
-                IFNULL((SELECT SUM(st.mst_stok_in - st.mst_stok_out) FROM tmasterstokso st WHERE st.mst_aktif="Y" AND st.mst_cab=? AND st.mst_brg_kode=d.sjd_kode AND st.mst_ukuran=d.sjd_ukuran), 0) AS stok
+                IFNULL(
+                  (SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+                  FROM tmasterstokso m
+                  WHERE m.mst_aktif = 'Y'
+                    AND m.mst_cab = ?
+                    AND m.mst_brg_kode = d.sod_kode
+                    AND m.mst_ukuran = d.sod_ukuran
+                    AND m.mst_nomor_so = d.sod_so_nomor),  -- <-- TAMBAHKAN BARIS INI
+                  0
+                ) AS stok
             FROM tdc_sj_dtl d
             LEFT JOIN tdc_sj_hdr h ON d.sjd_nomor = h.sj_nomor
             LEFT JOIN tmintabarang_hdr m ON m.mt_nomor = h.sj_mt_nomor
@@ -665,7 +674,7 @@ const saveData = async (payload, user) => {
 
 const getSalesCounters = async (user) => {
   const userCabang = user.cabang;
-  
+
   // Query ini sekarang menggabungkan tsalescounter (t1) dengan tuser (t2)
   // dan memfilter berdasarkan user_cabang.
   const query = `
@@ -676,7 +685,7 @@ const getSalesCounters = async (user) => {
       AND t2.user_cab = ? 
     ORDER BY t1.sc_kode
   `;
-  
+
   const [rows] = await pool.query(query, [userCabang]);
   return rows.map((row) => row.sc_kode);
 };
@@ -1529,10 +1538,7 @@ const getActivePromos = async (filters, user) => {
     WHERE p.pro_f1 = "N" 
       AND ? BETWEEN p.pro_tanggal1 AND p.pro_tanggal2;
   `;
-  const [activePromos] = await pool.query(promoQuery, [
-    user.cabang,
-    tanggal,
-  ]);
+  const [activePromos] = await pool.query(promoQuery, [user.cabang, tanggal]);
   return activePromos;
 };
 
