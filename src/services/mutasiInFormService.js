@@ -51,15 +51,21 @@ const loadFromMo = async (nomorMo, user) => {
                 SELECT SUM(dd.mid_jumlah) FROM tmutasiin_dtl dd 
                 JOIN tmutasiin_hdr hh ON hh.mi_nomor = dd.mid_nomor 
                 WHERE hh.mi_mo_nomor = ? AND dd.mid_kode = d.mod_kode AND dd.mid_ukuran = d.mod_ukuran
-            ), 0) AS sudah
+            ), 0) AS sudah,
+            (d.mod_jumlah - IFNULL((
+            SELECT SUM(dd.mid_jumlah)
+            FROM tmutasiin_dtl dd
+            JOIN tmutasiin_hdr hh ON hh.mi_nomor = dd.mid_nomor
+            WHERE hh.mi_mo_nomor = ? 
+              AND dd.mid_kode = d.mod_kode 
+              AND dd.mid_ukuran = d.mod_ukuran
+            ), 0)) AS belum
         FROM tmutasiout_dtl d
         LEFT JOIN tbarangdc a ON a.brg_kode = d.mod_kode
         LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mod_kode AND b.brgd_ukuran = d.mod_ukuran
         WHERE d.mod_nomor = ?;
     `;
-  const [items] = await pool.query(itemsQuery, [nomorMo, nomorMo]);
-  // --- AKHIR PERBAIKAN ---
-
+  const [items] = await pool.query(itemsQuery, [nomorMo, nomorMo, nomorMo]);
   return { header: headerRows[0], items };
 };
 
