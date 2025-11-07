@@ -81,10 +81,11 @@ const generateNewSoNumber = async (connection, data, user) => {
   // 2. Query untuk mencari nomor urut maksimal, mirip seperti di Delphi.
   // CAST(... AS UNSIGNED) untuk memastikan '0009' dibandingkan sebagai angka 9.
   const query = `
-        SELECT IFNULL(MAX(CAST(RIGHT(sd_nomor, 4) AS UNSIGNED)), 0) as maxNum 
-        FROM tsodtf_hdr 
-        WHERE LEFT(sd_nomor, ${fullPrefix.length}) = ?`;
-
+    SELECT IFNULL(MAX(CAST(RIGHT(sd_nomor, 4) AS UNSIGNED)), 0) as maxNum 
+    FROM tsodtf_hdr 
+    WHERE LEFT(sd_nomor, ${fullPrefix.length}) = ?
+        FOR UPDATE;
+  `;
   const [rows] = await connection.query(query, [fullPrefix]);
 
   // 3. Menentukan nomor urut berikutnya.

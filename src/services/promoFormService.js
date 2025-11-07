@@ -32,20 +32,26 @@ const getForEdit = async (nomor) => {
   );
 
   const [applicableItems] = await pool.query(
-    `
-        SELECT 
-            p.pb_brg_kode AS kode,
-            TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS nama,
-            p.pb_ukuran AS ukuran, p.pb_qty AS qty, p.pb_harga AS harga, p.pb_disc AS disc, p.pb_diskon AS diskon 
-        FROM tpromo_barang p
-        LEFT JOIN tbarangdc a ON a.brg_kode = p.pb_brg_kode
-        WHERE p.pb_nomor = ?`,
+    `SELECT 
+      p.pb_brg_kode AS kode,
+      TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS nama,
+      p.pb_ukuran AS ukuran, p.pb_qty AS qty, p.pb_harga AS harga, p.pb_disc AS disc, p.pb_diskon AS diskon 
+    FROM tpromo_barang p
+    LEFT JOIN tbarangdc a ON a.brg_kode = p.pb_brg_kode
+    WHERE p.pb_nomor = ?
+    LIMIT 10`, // [TAMBAH] Limit awal untuk load pertama
+    [nomor]
+  );
+
+  const [countResult] = await pool.query(
+    `SELECT COUNT(*) as total FROM tpromo_barang WHERE pb_nomor = ?`,
     [nomor]
   );
 
   return {
     header: headerRows[0],
     applicableItems,
+    applicableItemsCount: countResult[0].total, // [TAMBAH]
     bonusItems,
     cabangBerlaku: cabangBerlaku.map((c) => c.pc_cab),
     levelBerlaku: levelBerlaku.map((l) => l.pl_level),
@@ -210,4 +216,48 @@ const lookupProducts = async (filters) => {
   return { items, total: countRows[0].total };
 };
 
-module.exports = { getInitialData, getForEdit, save, lookupProducts };
+const getApplicableItemsPaginated = async (
+  nomor,
+  page = 1,
+  itemsPerPage = 10
+) => {
+  const offset = (page - 1) * itemsPerPage;
+
+  // Query untuk count total
+  const [countResult] = await pool.query(
+    `SELECT COUNT(*) as total FROM tpromo_barang WHERE pb_nomor = ?`,
+    [nomor]
+  );
+
+  // Query untuk data dengan pagination
+  const [items] = await pool.query(
+    `SELECT 
+      p.pb_brg_kode AS kode,
+      TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS nama,
+      p.pb_ukuran AS ukuran, 
+      p.pb_qty AS qty, 
+      p.pb_harga AS harga, 
+      p.pb_disc AS disc, 
+      p.pb_diskon AS diskon 
+    FROM tpromo_barang p
+    LEFT JOIN tbarangdc a ON a.brg_kode = p.pb_brg_kode
+    WHERE p.pb_nomor = ?
+    LIMIT ? OFFSET ?`,
+    [nomor, itemsPerPage, offset]
+  );
+
+  return {
+    items,
+    total: countResult[0].total,
+    page,
+    itemsPerPage,
+  };
+};
+
+module.exports = {
+  getInitialData,
+  getForEdit,
+  save,
+  lookupProducts,
+  getApplicableItemsPaginated, // [TAMBAH] Export fungsi baru
+};

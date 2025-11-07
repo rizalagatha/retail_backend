@@ -17,4 +17,11 @@ router.post('/save', verifyToken, checkPermission(MENU_ID, 'view'), controller.s
 // Endpoint untuk lookup produk khusus form Promo
 router.get('/lookup/products', verifyToken, checkPermission(MENU_ID, 'view'), controller.lookupProducts);
 
+router.get(
+  '/:nomor/applicable-items',
+  verifyToken, // Menggunakan pola middleware yang ada
+  checkPermission(MENU_ID, 'view'), // Asumsi 'view' sudah cukup
+  controller.getApplicableItems
+);
+
 module.exports = router;
