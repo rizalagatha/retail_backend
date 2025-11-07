@@ -28,69 +28,74 @@ const searchProducts = async (
   const offset = (page - 1) * itemsPerPage;
   const searchTerm = term ? `%${term}%` : null;
 
-  // 1. Mulai dari tabel master (tbarangdc) untuk memastikan semua produk terdaftar
   let fromClause = `
-        FROM tbarangdc a
-        LEFT JOIN tbarangdc_dtl b ON TRIM(a.brg_kode) = TRIM(b.brgd_kode)
-    `;
+    FROM tbarangdc a
+    LEFT JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
+  `;
   let whereClause = "WHERE a.brg_aktif=0 AND b.brgd_kode IS NOT NULL";
-  let params = [];
+  const params = [];
 
-  // Logika filter berdasarkan source sudah benar
+  // Filter berdasarkan source
   if (source === "minta-barang") {
-    if (gudang === "K04") {
-      whereClause += ' AND a.brg_ktg <> ""';
-    } else if (gudang === "K05") {
-      whereClause += ' AND a.brg_ktg = ""';
-    }
-  } else if (source === "mutasi-kirim") {
-    if (gudang === "KBD") {
-      whereClause += ' AND a.brg_ktg <> ""';
-    }
+    if (gudang === "K04") whereClause += ' AND a.brg_ktg <> ""';
+    else if (gudang === "K05") whereClause += ' AND a.brg_ktg = ""';
+  } else if (source === "mutasi-kirim" && gudang === "KBD") {
+    whereClause += ' AND a.brg_ktg <> ""';
   } else {
-    // Filter default
     whereClause += ' AND a.brg_logstok="Y"';
-    if (category === "Kaosan") {
+    if (category === "Kaosan")
       whereClause += ' AND (a.brg_ktg IS NULL OR a.brg_ktg = "")';
-    } else {
-      whereClause += ' AND a.brg_ktg IS NOT NULL AND a.brg_ktg <> ""';
-    }
+    else whereClause += ' AND a.brg_ktg IS NOT NULL AND a.brg_ktg <> ""';
   }
 
   if (term) {
-    whereClause += ` AND (
-            a.brg_kode LIKE ? OR
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) LIKE ? OR
-            b.brgd_barcode LIKE ?
-        )`;
-    params.push(searchTerm, searchTerm, searchTerm);
+    whereClause += `
+      AND (
+        a.brg_kode LIKE ? OR
+        a.brg_tipe LIKE ? OR
+        a.brg_warna LIKE ? OR
+        a.brg_jeniskain LIKE ? OR
+        a.brg_lengan LIKE ? OR
+        b.brgd_barcode LIKE ? OR
+        CONCAT_WS(' ', a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna) LIKE ?
+      )
+    `;
+    params.push(
+      searchTerm,
+      searchTerm,
+      searchTerm,
+      searchTerm,
+      searchTerm,
+      searchTerm,
+      searchTerm
+    );
   }
 
-  // 2. Hitung jumlah total varian (baris) yang cocok dengan filter
-  const countQuery = `SELECT COUNT(*) as total ${fromClause} ${whereClause}`;
-  const [countRows] = await pool.query(countQuery, params);
-  const total = countRows[0].total;
-
   const dataQuery = `
-        SELECT
-            a.brg_kode AS kode,
-            b.brgd_barcode AS barcode,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
-            b.brgd_ukuran AS ukuran,
-            b.brgd_harga AS harga,
-            IFNULL((
-                SELECT SUM(m.mst_stok_in - m.mst_stok_out)
-                FROM tmasterstok m
-                WHERE m.mst_aktif = "Y" AND m.mst_cab = ?
-                AND m.mst_brg_kode = b.brgd_kode AND m.mst_ukuran = b.brgd_ukuran
-            ), 0) AS stok
-        ${fromClause}
-        ${whereClause}
-        ORDER BY nama, b.brgd_ukuran
-        LIMIT ? OFFSET ?
-    `;
+    SELECT SQL_CALC_FOUND_ROWS
+      a.brg_kode AS kode,
+      b.brgd_barcode AS barcode,
+      CONCAT_WS(' ', a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna) AS nama,
+      b.brgd_ukuran AS ukuran,
+      b.brgd_harga AS harga,
+      IFNULL((
+        SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+        FROM tmasterstok m
+        WHERE m.mst_aktif = "Y"
+          AND m.mst_cab = ?
+          AND m.mst_brg_kode = b.brgd_kode
+          AND m.mst_ukuran = b.brgd_ukuran
+      ), 0) AS stok
+    ${fromClause}
+    ${whereClause}
+    ORDER BY nama, b.brgd_ukuran
+    LIMIT ? OFFSET ?
+  `;
+
   const dataParams = [gudang, ...params, itemsPerPage, offset];
   const [items] = await pool.query(dataQuery, dataParams);
+
+  const [[{ total }]] = await pool.query(`SELECT FOUND_ROWS() AS total`);
 
   return { items, total };
 };
@@ -151,26 +156,50 @@ const saveBarcode = async (data) => {
 const searchMaster = async (term, page, itemsPerPage) => {
   const offset = (page - 1) * itemsPerPage;
   const searchTerm = `%${term || ""}%`;
-  const params = [searchTerm, searchTerm];
 
-  // Query dari Delphi (hanya dari tbarangdc)
-  const baseFrom = `FROM tbarangdc a WHERE a.brg_aktif = 0`;
-  const searchWhere = `AND (a.brg_kode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)) LIKE ?)`;
+  let whereClause = "WHERE a.brg_aktif = 0";
+  const params = [];
 
-  const countQuery = `SELECT COUNT(*) as total ${baseFrom} ${searchWhere}`;
-  const [countRows] = await pool.query(countQuery, params);
-  const total = countRows[0].total;
-
-  const dataQuery = `
-        SELECT 
-            a.brg_kode AS kode, 
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama
-        ${baseFrom} ${searchWhere}
-        ORDER BY nama
-        LIMIT ? OFFSET ?;
+  // Kalau ada term, tambahkan pencarian LIKE di banyak kolom
+  if (term && term.trim() !== "") {
+    whereClause += `
+      AND (
+        a.brg_kode LIKE ? OR
+        a.brg_jeniskaos LIKE ? OR
+        a.brg_tipe LIKE ? OR
+        a.brg_lengan LIKE ? OR
+        a.brg_jeniskain LIKE ? OR
+        a.brg_warna LIKE ? OR
+        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) LIKE ?
+      )
     `;
-  const dataParams = [...params, itemsPerPage, offset];
-  const [items] = await pool.query(dataQuery, dataParams);
+    params.push(
+      searchTerm,
+      searchTerm,
+      searchTerm,
+      searchTerm,
+      searchTerm,
+      searchTerm,
+      searchTerm
+    );
+  }
+
+  // Hitung total
+  const countQuery = `SELECT COUNT(*) AS total FROM tbarangdc a ${whereClause}`;
+  const [countRows] = await pool.query(countQuery, params);
+  const total = countRows[0]?.total || 0;
+
+  // Query data (gunakan template literal untuk LIMIT/OFFSET)
+  const dataQuery = `
+    SELECT 
+      a.brg_kode AS kode, 
+      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama
+    FROM tbarangdc a
+    ${whereClause}
+    ORDER BY nama
+    LIMIT ${itemsPerPage} OFFSET ${offset};
+  `;
+  const [items] = await pool.query(dataQuery, params);
 
   return { items, total };
 };
