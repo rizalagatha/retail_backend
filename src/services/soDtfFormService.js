@@ -74,28 +74,25 @@ const generateNewSoNumber = async (connection, data, user) => {
     );
   }
 
-  // 1. Membuat prefix. Contoh: K01.SD.2509
   const datePrefix = format(tanggal, "yyMM");
   const fullPrefix = `${branchCode}.${orderType}.${datePrefix}`;
 
-  // 2. Query untuk mencari nomor urut maksimal, mirip seperti di Delphi.
-  // CAST(... AS UNSIGNED) untuk memastikan '0009' dibandingkan sebagai angka 9.
+  // [PERBAIKAN] Ubah '4' menjadi '5' dan tambahkan 'FOR UPDATE'
   const query = `
-    SELECT IFNULL(MAX(CAST(RIGHT(sd_nomor, 4) AS UNSIGNED)), 0) as maxNum 
-    FROM tsodtf_hdr 
-    WHERE LEFT(sd_nomor, ${fullPrefix.length}) = ?
+ SELECT IFNULL(MAX(CAST(RIGHT(sd_nomor, 5) AS UNSIGNED)), 0) as maxNum 
+ FROM tsodtf_hdr 
+WHERE LEFT(sd_nomor, ${fullPrefix.length}) = ?
         FOR UPDATE;
-  `;
+`;
+
   const [rows] = await connection.query(query, [fullPrefix]);
 
-  // 3. Menentukan nomor urut berikutnya.
   const maxNum = rows[0].maxNum;
   const nextNum = maxNum + 1;
 
-  // 4. Padding dengan nol di depan, meniru RightStr(IntToStr(10000 + ...)) Delphi.
-  const sequentialPart = String(nextNum).padStart(4, "0"); // Contoh: '0001' atau '0016'
+  // [PERBAIKAN] Ubah '4' menjadi '5'
+  const sequentialPart = String(nextNum).padStart(5, "0");
 
-  // 5. Menggabungkan menjadi nomor SO lengkap.
   return `${fullPrefix}.${sequentialPart}`;
 };
 
