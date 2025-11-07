@@ -74,26 +74,28 @@ const generateNewSoNumber = async (connection, data, user) => {
     );
   }
 
-  const datePrefix = format(tanggal, "yyMM");
-  const fullPrefix = `${branchCode}.${orderType}.${datePrefix}`;
+  const datePrefix = format(tanggal, "yyMM"); // ex: "2511"
+  const fullPrefix = `${branchCode}.${orderType}.${datePrefix}.`; // ex: "K01.SD.2511."
+  const prefixLike = `${fullPrefix}%`;
+  const totalLength = fullPrefix.length + 4; // ex: prefix length + 4 digits
 
-  // [PERBAIKAN] Ubah '4' menjadi '5' dan tambahkan 'FOR UPDATE'
+  // Ambil max dari 4 digit paling kanan, hanya pada rows yang cocok prefix dan panjang total
   const query = `
- SELECT IFNULL(MAX(CAST(RIGHT(sd_nomor, 5) AS UNSIGNED)), 0) as maxNum 
- FROM tsodtf_hdr 
-WHERE LEFT(sd_nomor, ${fullPrefix.length}) = ?
-        FOR UPDATE;
-`;
+    SELECT IFNULL(MAX(CAST(RIGHT(sd_nomor, 4) AS UNSIGNED)), 0) AS maxNum
+    FROM tsodtf_hdr
+    WHERE sd_nomor LIKE ?
+      AND CHAR_LENGTH(sd_nomor) = ?
+    FOR UPDATE;
+  `;
 
-  const [rows] = await connection.query(query, [fullPrefix]);
-
-  const maxNum = rows[0].maxNum;
+  const [rows] = await connection.query(query, [prefixLike, totalLength]);
+  const maxNum = rows[0] && rows[0].maxNum ? Number(rows[0].maxNum) : 0;
   const nextNum = maxNum + 1;
 
-  // [PERBAIKAN] Ubah '4' menjadi '5'
-  const sequentialPart = String(nextNum).padStart(5, "0");
+  // Jika ingin memaksa 4 digit (0001..9999)
+  const sequentialPart = String(nextNum).padStart(4, "0");
 
-  return `${fullPrefix}.${sequentialPart}`;
+  return `${fullPrefix}${sequentialPart}`;
 };
 
 const create = async (data, user) => {
