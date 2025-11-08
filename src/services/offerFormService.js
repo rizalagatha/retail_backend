@@ -6,19 +6,32 @@ const { get } = require("../routes/salesCounterRoute");
  * @description Membuat nomor Penawaran baru (getmaxnomor versi Delphi).
  */
 const generateNewOfferNumber = async (connection, cabang, tanggal) => {
-  // 'tanggal' di sini adalah string 'yyyy-MM-dd'
   const yearPart = tanggal.substring(2, 4);
   const monthPart = tanggal.substring(5, 7);
   const datePrefix = yearPart + monthPart;
 
   const prefix = `${cabang}PEN${datePrefix}`;
+  const prefixLength = prefix.length;
+
   const query = `
-        SELECT IFNULL(MAX(CAST(RIGHT(pen_nomor, 4) AS UNSIGNED)), 0) as maxNum 
-        FROM tpenawaran_hdr 
-        WHERE LEFT(pen_nomor, ${prefix.length}) = ?
-    `;
-  const [rows] = await connection.query(query, [prefix]);
-  const nextNum = rows[0].maxNum + 1;
+    SELECT IFNULL(MAX(CAST(RIGHT(pen_nomor, 4) AS UNSIGNED)), 0) as maxNum 
+    FROM tpenawaran_hdr 
+    WHERE LEFT(pen_nomor, ?) = ?
+  `;
+
+  const [rows] = await connection.query(query, [prefixLength, prefix]);
+
+  // Pastikan hasil query adalah NUMBER
+  const maxNum = parseInt(rows[0].maxNum, 10) || 0;
+  const nextNum = maxNum + 1;
+
+  // Validasi: Jika nextNum > 9999, throw error
+  if (nextNum > 9999) {
+    throw new Error(
+      `Nomor penawaran untuk periode ${datePrefix} sudah mencapai maksimum (9999).`
+    );
+  }
+
   return `${prefix}${String(nextNum).padStart(4, "0")}`;
 };
 
