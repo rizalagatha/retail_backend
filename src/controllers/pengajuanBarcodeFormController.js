@@ -1,4 +1,5 @@
 const service = require("../services/pengajuanBarcodeFormService");
+const fs = require("fs");
 
 const getForEdit = async (req, res) => {
   try {
@@ -63,17 +64,65 @@ const lookupStickers = async (req, res) => {
 };
 
 const getDataForBarcodePrint = async (req, res) => {
-    try {
-        // Ambil 'nomor' dari parameter URL (req.params)
-        const { nomor } = req.params; 
-        if (!nomor) {
-            return res.status(400).json({ message: 'Nomor dokumen diperlukan.' });
-        }
-        const data = await service.getDataForBarcodePrint(nomor);
-        res.json(data);
-    } catch (error) {
-        res.status(404).json({ message: error.message });
+  try {
+    // Ambil 'nomor' dari parameter URL (req.params)
+    const { nomor } = req.params;
+    if (!nomor) {
+      return res.status(400).json({ message: "Nomor dokumen diperlukan." });
     }
+    const data = await service.getDataForBarcodePrint(nomor);
+    res.json(data);
+  } catch (error) {
+    res.status(404).json({ message: error.message });
+  }
+};
+
+const uploadItemImage = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "Tidak ada file yang diunggah." });
+    }
+
+    // Ambil data dari form-data body
+    const { nomor, kode, ukuran } = req.body;
+    if (!nomor || !kode || !ukuran) {
+      // Hapus file temp jika data tidak lengkap
+      if (fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+      return res
+        .status(400)
+        .json({ message: "Informasi item (nomor, kode, ukuran) diperlukan." });
+    }
+
+    // Panggil service baru
+    const { imageUrl } = await service.processItemImage(
+      req.file.path,
+      nomor,
+      kode,
+      ukuran
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Gambar item berhasil diunggah.",
+      imageUrl: imageUrl,
+    });
+  } catch (error) {
+    console.error("UPLOAD ITEM IMAGE ERROR:", error);
+    // Hapus file temp jika ada error
+    if (req.file && fs.existsSync(req.file.path)) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (cleanupError) {
+        console.error("Gagal membersihkan temp file:", cleanupError);
+      }
+    }
+    res.status(500).json({
+      success: false,
+      message: error.message || "Gagal mengunggah gambar item.",
+    });
+  }
 };
 
 module.exports = {
@@ -84,4 +133,5 @@ module.exports = {
   getProductDetails,
   lookupStickers,
   getDataForBarcodePrint,
+  uploadItemImage,
 };

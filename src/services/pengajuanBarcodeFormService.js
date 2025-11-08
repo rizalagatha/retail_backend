@@ -1,4 +1,6 @@
 const pool = require("../config/database");
+const path = require("path");
+const fs = require("fs");
 
 const getForEdit = async (nomor, userCabang) => {
   // 1. Ambil data Header
@@ -15,7 +17,8 @@ const getForEdit = async (nomor, userCabang) => {
             IFNULL((SELECT SUM(m.mst_stok_in-m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif='Y' AND m.mst_cab=? AND m.mst_brg_kode=d.pcd_kode AND m.mst_ukuran=d.pcd_ukuran), 0) AS stok,
             d2.pcd2_kodein AS kodebaru, 
             d2.pcd2_diskon AS diskon, 
-            d2.pcd2_harga AS hargabaru
+            d2.pcd2_harga AS hargabaru,
+            d.pcd_gambar_url AS pcd_gambar_url
         FROM tpengajuanbarcode_dtl d
         LEFT JOIN tbarangdc a ON a.brg_kode = d.pcd_kode
         LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.pcd_kode AND b.brgd_ukuran = d.pcd_ukuran
@@ -299,9 +302,9 @@ const lookupStickers = async (filters) => {
 };
 
 const getDataForBarcodePrint = async (nomor) => {
-    // Query ini secara langsung mengambil hasil approval dari tabel _dtl2
-    // dan mengambil nama barang dari tbarangdc
-    const query = `
+  // Query ini secara langsung mengambil hasil approval dari tabel _dtl2
+  // dan mengambil nama barang dari tbarangdc
+  const query = `
         SELECT 
             d2.pcd2_kodein AS barcode,
             TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
@@ -312,12 +315,52 @@ const getDataForBarcodePrint = async (nomor) => {
         LEFT JOIN tbarangdc a ON a.brg_kode = d2.pcd2_kode
         WHERE d2.pcd2_nomor = ?;
     `;
-    const [rows] = await pool.query(query, [nomor]);
-    
-    if (rows.length === 0) {
-        throw new Error('Tidak ada data barcode baru yang sudah di-approve untuk dicetak pada dokumen ini.');
+  const [rows] = await pool.query(query, [nomor]);
+
+  if (rows.length === 0) {
+    throw new Error(
+      "Tidak ada data barcode baru yang sudah di-approve untuk dicetak pada dokumen ini."
+    );
+  }
+  return rows;
+};
+
+const processItemImage = async (tempFilePath, nomor, itemKode, itemUkuran) => {
+  try {
+    const cabang = nomor.substring(0, 3);
+    const ext = path.extname(tempFilePath);
+
+    // Buat nama file unik: NOMOR-KODE-UKURAN.ext
+    const filename = `${nomor}-${itemKode}-${itemUkuran}${ext}`;
+
+    // Sesuai ingatan saya, target path Anda adalah public/images/cabang
+    const targetDir = path.join(process.cwd(), "public", "images", "cabang");
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
     }
-    return rows;
+
+    const finalPath = path.join(targetDir, filename);
+
+    // Pindahkan file dari /temp ke /public/images/cabang
+    fs.renameSync(tempFilePath, finalPath);
+
+    // Path yang akan disimpan di DB dan dikirim ke frontend
+    const imageUrl = `/images/cabang/${filename}`;
+
+    // Update database
+    await pool.query(
+      "UPDATE tpengajuanbarcode_dtl SET pcd_gambar_url = ? WHERE pcd_nomor = ? AND pcd_kode = ? AND pcd_ukuran = ?",
+      [imageUrl, nomor, itemKode, itemUkuran]
+    );
+
+    return { imageUrl };
+  } catch (error) {
+    // Hapus file temp jika gagal
+    if (fs.existsSync(tempFilePath)) {
+      fs.unlinkSync(tempFilePath);
+    }
+    throw new Error(`Gagal memproses gambar: ${error.message}`);
+  }
 };
 
 module.exports = {
@@ -328,4 +371,5 @@ module.exports = {
   getProductDetails,
   lookupStickers,
   getDataForBarcodePrint,
+  processItemImage,
 };
