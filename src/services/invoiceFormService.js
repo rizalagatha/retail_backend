@@ -1195,12 +1195,15 @@ const getPrintDataKasir = async (nomor) => {
             h.inv_rptunai, h.inv_rpcard, h.inv_rpvoucher,
             DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY) AS tempo,
             c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
-            d.invd_kode, d.invd_ukuran, d.invd_jumlah, d.invd_harga, d.invd_diskon,
+            d.invd_kode, d.invd_ukuran,
+            IFNULL(d.invd_jumlah, 0) AS invd_jumlah,  -- <-- DIBUNGKUS IFNULL
+            IFNULL(d.invd_harga, 0) AS invd_harga,    -- <-- DIBUNGKUS IFNULL
+            IFNULL(d.invd_diskon, 0) AS invd_diskon,  -- <-- DIBUNGKUS IFNULL
             COALESCE(
                 TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)),
                 f.sd_nama
             ) AS nama_barang,
-            (d.invd_jumlah * (d.invd_harga - d.invd_diskon)) AS total,
+            (IFNULL(d.invd_jumlah, 0) * (IFNULL(d.invd_harga, 0) - IFNULL(d.invd_diskon, 0))) AS total,
             h.user_create, DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
             src.gdg_inv_nama AS perush_nama,
             src.gdg_inv_alamat AS perush_alamat,
