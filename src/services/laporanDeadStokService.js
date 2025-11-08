@@ -7,7 +7,7 @@ const getList = async (filters, user) => {
   const { cabang, minUmur } = filters;
 
   let branchFilter = "";
-  const params = [minUmur];
+  const params = [];
 
   if (user.cabang !== "KDC") {
     branchFilter = `AND m.mst_cab = ?`;
@@ -16,6 +16,8 @@ const getList = async (filters, user) => {
     branchFilter = `AND m.mst_cab = ?`;
     params.push(cabang);
   }
+
+  params.push(minUmur);
 
   // Query ini sekarang jauh lebih sederhana dan memiliki filter
   const query = `
