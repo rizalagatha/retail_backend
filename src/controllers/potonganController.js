@@ -1,19 +1,19 @@
-const potonganService = require('../services/potonganService'); 
+const potonganService = require("../services/potonganService");
 
 // --- Lookup ---
 const getCabangList = async (req, res) => {
   try {
-    const user = req.user; 
+    const user = req.user;
     if (!user || !user.cabang) {
-      return res.status(400).json({ message: 'User atau cabang tidak valid.' });
+      return res.status(400).json({ message: "User atau cabang tidak valid." });
     }
 
     const data = await potonganService.getCabangList(user);
     res.status(200).json(data);
   } catch (error) {
-    console.error('getCabangList error:', error.message);
+    console.error("getCabangList error:", error.message);
     res.status(500).json({
-      message: 'Gagal mengambil daftar cabang.',
+      message: "Gagal mengambil daftar cabang.",
       error: error.message,
     });
   }
@@ -38,16 +38,32 @@ const getPotonganList = async (req, res) => {
   }
 };
 
+// === FUNGSI BARU UNTUK EXPANDED ROW ===
+const getBrowseDetails = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const data = await potonganService.getBrowseDetails(nomor); // Memanggil service baru
+    res.status(200).json(data);
+  } catch (error) {
+    console.error("getBrowseDetails error:", error.message);
+    res.status(500).json({
+      message: "Gagal mengambil detail browse potongan.",
+      error: error.message,
+    });
+  }
+};
+// === BATAS FUNGSI BARU ===
 
-// --- Detail ---
+// --- Detail (Untuk Halaman Edit) ---
 const getPotonganDetails = async (req, res) => {
   try {
     const { nomor } = req.params;
-    const data = await potonganService.getPotonganDetails(nomor);
+    // PERBAIKAN: Memanggil 'getDetails' (sesuai service)
+    const data = await potonganService.getDetails(nomor);
     res.status(200).json(data);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Gagal mengambil detail potongan.' });
+    res.status(500).json({ message: "Gagal mengambil detail potongan." });
   }
 };
 
@@ -55,7 +71,7 @@ const getPotonganDetails = async (req, res) => {
 const savePotongan = async (req, res) => {
   try {
     const data = req.body;
-    const user = req.user; 
+    const user = req.user;
     const result = await potonganService.save(data, user);
     res.status(200).json(result);
   } catch (error) {
@@ -68,7 +84,7 @@ const savePotongan = async (req, res) => {
 const deletePotongan = async (req, res) => {
   try {
     const { nomor } = req.params;
-    const user = req.user; 
+    const user = req.user;
     const result = await potonganService.remove(nomor, user);
     res.status(200).json(result);
   } catch (error) {
@@ -81,20 +97,24 @@ const deletePotongan = async (req, res) => {
 const exportPotonganDetails = async (req, res) => {
   try {
     const filters = req.query;
-    const data = await potonganService.exportDetails(filters);
+    // PERBAIKAN: Memanggil 'getExportDetails' (sesuai service)
+    const data = await potonganService.getExportDetails(filters); // contoh response excel
 
-    // contoh response excel
-    res.setHeader('Content-Disposition', 'attachment; filename=potongan_export.xlsx');
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=potongan_export.xlsx"
+    );
     res.status(200).json(data);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Gagal mengekspor data potongan.' });
+    res.status(500).json({ message: "Gagal mengekspor data potongan." });
   }
 };
 
 module.exports = {
   getCabangList,
   getPotonganList,
+  getBrowseDetails, // <-- TAMBAHKAN FUNGSI BARU
   getPotonganDetails,
   savePotongan,
   deletePotongan,
