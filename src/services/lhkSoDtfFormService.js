@@ -3,7 +3,7 @@ const pool = require("../config/database");
 const loadData = async (tanggal, cabang) => {
   const query = `
         SELECT 
-            d.SoDtf AS kode,
+            d.spk_nomor AS kode,
             h.sd_nama AS nama,
             d.depan,
             d.belakang,
@@ -14,7 +14,7 @@ const loadData = async (tanggal, cabang) => {
             d.buangan,
             d.keterangan AS ket
         FROM kencanaprint.tdtf d
-        LEFT JOIN tsodtf_hdr h ON h.sd_nomor = d.SoDtf
+        LEFT JOIN tsodtf_hdr h ON h.sd_nomor = d.spk_nomor
         WHERE d.tanggal = ? AND d.cab = ?;
     `;
   const [rows] = await pool.query(query, [tanggal, cabang]);
@@ -105,7 +105,7 @@ const saveData = async (data, user) => {
         // Hanya simpan baris yang valid
         const insertQuery = `
                     INSERT INTO tdtf 
-                    (tanggal, SoDtf, depan, belakang, lengan, variasi, saku, panjang, buangan, keterangan, cab, user_create, date_create) 
+                    (tanggal, spk_nomor, depan, belakang, lengan, variasi, saku, panjang, buangan, keterangan, cab, user_create, date_create) 
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                 `;
         await connection.query(insertQuery, [
