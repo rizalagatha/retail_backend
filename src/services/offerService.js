@@ -78,7 +78,7 @@ const getOfferDetails = async (nomor) => {
         SELECT
             d.pend_kode AS kode,
             IFNULL(b.brgd_barcode, "") AS barcode,
-            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)), f.sd_nama) AS nama,
+            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) AS Nama,
             d.pend_ukuran AS ukuran,
             d.pend_jumlah AS qty,
             d.pend_harga AS harga,
@@ -118,7 +118,7 @@ const getDataForPrinting = async (nomor) => {
     const detailsQuery = `
         SELECT 
             d.pend_kode AS kode, IFNULL(b.brgd_barcode, "") AS barcode,
-            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)), "") AS nama,
+            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) AS Nama,
             d.pend_ukuran AS ukuran, d.pend_jumlah AS qty, d.pend_harga AS harga,
             d.pend_diskon AS diskon,
             (d.pend_jumlah * (d.pend_harga - d.pend_diskon)) as total
@@ -154,7 +154,7 @@ const getExportDetails = async (startDate, endDate, cabang) => {
             h.pen_cus_kode AS 'Kode Customer',
             c.cus_nama AS 'Nama Customer',
             d.pend_kode AS 'Kode Barang',
-            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)), f.sd_nama) AS 'Nama Barang',
+            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) AS Nama,
             d.pend_ukuran AS 'Ukuran',
             d.pend_jumlah AS 'Qty',
             d.pend_harga AS 'Harga',

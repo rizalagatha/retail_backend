@@ -348,7 +348,7 @@ const getExportDetails = async (filters) => {
             h.so_tanggal AS 'Tanggal',
             c.cus_nama AS 'Customer',
             d.sod_kode AS 'Kode Barang',
-            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)), f.sd_nama) AS 'Nama Barang',
+            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) AS Nama,
             d.sod_ukuran AS 'Ukuran',
             d.sod_jumlah AS 'Qty',
             d.sod_harga AS 'Harga',
