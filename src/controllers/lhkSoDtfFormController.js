@@ -13,18 +13,29 @@ const loadData = async (req, res) => {
 
 const searchSoPo = async (req, res) => {
   try {
-    // 1. Ambil 'tipe' dari query string
-    const { term, cabang, tipe } = req.query;
+    const { term, cabang, tipe, page = 1, limit = 50 } = req.query;
 
     if (!cabang) {
       return res.status(400).json({ message: "Parameter cabang diperlukan." });
     }
 
-    // 2. Teruskan 'tipe' sebagai argumen ketiga ke service
-    const data = await lhkSoDtfFormService.searchSoPo(term, cabang, tipe);
+    const result = await lhkSoDtfFormService.searchSoPo(
+      term,
+      cabang,
+      tipe,
+      page,
+      limit
+    );
 
-    res.json(data);
+    res.json({
+      data: result.data,
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+      totalPages: result.totalPages,
+    });
   } catch (error) {
+    console.error("❌ Error searchSoPo:", error);
     res.status(500).json({ message: error.message });
   }
 };

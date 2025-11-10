@@ -21,56 +21,140 @@ const loadData = async (tanggal, cabang) => {
   return rows; // Kembalikan array data langsung
 };
 
-const searchSoPo = async (term, cabang, tipe) => {
+const searchSoPo = async (term, cabang, tipe, page = 1, limit = 50) => {
   const searchTerm = `%${term || ""}%`;
+  const offset = (page - 1) * limit;
   let query = "";
   let params = [];
 
-  // --- LOGIKA PEMILIHAN QUERY BERDASARKAN TIPE ---
   if (tipe === "SO") {
-    // Query hanya untuk SO DTF (logika F1 / bantuankode)
+    // 🔹 Query untuk SO DTF saja
     query = `
-            SELECT 
-                h.sd_nomor AS kode,
-                h.sd_nama AS nama,
-                (SELECT SUM(sdd_jumlah) FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor) AS jumlah,
-                h.sd_tanggal AS tanggal,
-                'SO DTF' AS tipe
-            FROM tsodtf_hdr h 
-            WHERE (LEFT(h.sd_nomor, 3) = ? OR sd_workshop = ?)
-              AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?)
-            ORDER BY h.sd_tanggal DESC;
-        `;
-    params = [cabang, cabang, searchTerm, searchTerm];
+      SELECT 
+          h.sd_nomor AS kode,
+          h.sd_nama AS nama,
+          (SELECT SUM(sdd_jumlah) FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor) AS jumlah,
+          h.sd_tanggal AS tanggal,
+          'SO DTF' AS tipe
+      FROM retail.tsodtf_hdr h 
+      WHERE (LEFT(h.sd_nomor, 3) = ? OR h.sd_workshop = ?)
+    `;
+    params = [cabang, cabang];
+
+    if (term) {
+      query += ` AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?)`;
+      params.push(searchTerm, searchTerm);
+    }
+
+    // 🔹 Tambahkan pagination di akhir
+    query += ` ORDER BY h.sd_tanggal DESC LIMIT ? OFFSET ?;`;
+    params.push(Number(limit), Number(offset));
   } else if (tipe === "PO") {
-    // Query hanya untuk PO DTF (logika F2 / bantuanpo)
+    // 🔹 Query untuk PO DTF saja
     query = `
-            SELECT 
-                h.pjh_nomor AS kode,
-                h.pjh_ket AS nama,
-                0 AS jumlah,
-                h.pjh_tanggal AS tanggal,
-                'PO DTF' as tipe
-            FROM kencanaprint.tpodtf_hdr h
-            WHERE h.pjh_kode_kaosan = ?
-              AND (h.pjh_nomor LIKE ? OR h.pjh_ket LIKE ?)
-            ORDER BY h.pjh_nomor DESC;
-        `;
-    params = [cabang, searchTerm, searchTerm];
+      SELECT 
+          h.pjh_nomor AS kode,
+          h.pjh_ket AS nama,
+          0 AS jumlah,
+          h.pjh_tanggal AS tanggal,
+          'PO DTF' AS tipe
+      FROM kencanaprint.tpodtf_hdr h
+      WHERE h.pjh_kode_kaosan = ?
+    `;
+    params = [cabang];
+
+    if (term) {
+      query += ` AND (h.pjh_nomor LIKE ? OR h.pjh_ket LIKE ?)`;
+      params.push(searchTerm, searchTerm);
+    }
+
+    // 🔹 Pagination
+    query += ` ORDER BY h.pjh_nomor DESC LIMIT ? OFFSET ?;`;
+    params.push(Number(limit), Number(offset));
   } else {
-    // Logika gabungan (default jika tipe tidak ditentukan)
-    // (Ini adalah kode Anda sebelumnya, kita pertahankan sebagai fallback)
+    // 🔹 Default: gabungan SO + PO (jika tipe = ALL atau undefined)
     query = `
-            (SELECT h.sd_nomor AS kode, h.sd_nama AS nama, (SELECT SUM(sdd_jumlah) FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor) AS jumlah, h.sd_tanggal AS tanggal, 'SO DTF' AS tipe
-            FROM tsodtf_hdr h 
-            WHERE (LEFT(h.sd_nomor, 3) = ? OR sd_workshop = ?) AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?))
-            UNION ALL
-            (SELECT h.pjh_nomor AS kode, h.pjh_ket AS nama, 0 AS jumlah, h.pjh_tanggal AS tanggal, 'PO DTF' as tipe
-            FROM kencanaprint.tpodtf_hdr h
-            WHERE h.pjh_kode_kaosan = ? AND (h.pjh_nomor LIKE ? OR h.pjh_ket LIKE ?))
-            ORDER BY tanggal DESC LIMIT 50
-        `;
+      (SELECT 
+          h.sd_nomor AS kode, 
+          h.sd_nama AS nama, 
+          (SELECT SUM(sdd_jumlah) FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor) AS jumlah, 
+          h.sd_tanggal AS tanggal, 
+          'SO DTF' AS tipe
+        FROM retail.tsodtf_hdr h 
+        WHERE (LEFT(h.sd_nomor, 3) = ? OR h.sd_workshop = ?) 
+          AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?)
+      )
+      UNION ALL
+      (SELECT 
+          h.pjh_nomor AS kode, 
+          h.pjh_ket AS nama, 
+          0 AS jumlah, 
+          h.pjh_tanggal AS tanggal, 
+          'PO DTF' AS tipe
+        FROM kencanaprint.tpodtf_hdr h
+        WHERE h.pjh_kode_kaosan = ? 
+          AND (h.pjh_nomor LIKE ? OR h.pjh_ket LIKE ?)
+      )
+      ORDER BY tanggal DESC 
+      LIMIT ? OFFSET ?;
+    `;
     params = [
+      cabang,
+      cabang,
+      searchTerm,
+      searchTerm,
+      cabang,
+      searchTerm,
+      searchTerm,
+      Number(limit),
+      Number(offset),
+    ];
+  }
+
+  // 🧩 Ambil data page tertentu
+  const [rows] = await pool.query(query, params);
+
+  // 🧩 Hitung total data (untuk pagination UI)
+  let countQuery = "";
+  let countParams = [];
+
+  if (tipe === "SO") {
+    countQuery = `
+      SELECT COUNT(*) AS total
+      FROM retail.tsodtf_hdr h
+      WHERE (LEFT(h.sd_nomor, 3) = ? OR h.sd_workshop = ?)
+    `;
+    countParams = [cabang, cabang];
+    if (term) {
+      countQuery += ` AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?)`;
+      countParams.push(searchTerm, searchTerm);
+    }
+  } else if (tipe === "PO") {
+    countQuery = `
+      SELECT COUNT(*) AS total
+      FROM kencanaprint.tpodtf_hdr h
+      WHERE h.pjh_kode_kaosan = ?
+    `;
+    countParams = [cabang];
+    if (term) {
+      countQuery += ` AND (h.pjh_nomor LIKE ? OR h.pjh_ket LIKE ?)`;
+      countParams.push(searchTerm, searchTerm);
+    }
+  } else {
+    countQuery = `
+      SELECT (
+        (SELECT COUNT(*) 
+         FROM retail.tsodtf_hdr h 
+         WHERE (LEFT(h.sd_nomor, 3) = ? OR h.sd_workshop = ?)
+           AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?))
+        +
+        (SELECT COUNT(*) 
+         FROM kencanaprint.tpodtf_hdr h
+         WHERE h.pjh_kode_kaosan = ? 
+           AND (h.pjh_nomor LIKE ? OR h.pjh_ket LIKE ?))
+      ) AS total;
+    `;
+    countParams = [
       cabang,
       cabang,
       searchTerm,
@@ -80,10 +164,18 @@ const searchSoPo = async (term, cabang, tipe) => {
       searchTerm,
     ];
   }
-  // --- AKHIR LOGIKA ---
 
-  const [rows] = await pool.query(query, params);
-  return rows;
+  const [countRows] = await pool.query(countQuery, countParams);
+  const total = countRows[0]?.total || 0;
+
+  // ✅ Return dalam bentuk object pagination-friendly
+  return {
+    data: rows,
+    total,
+    page: Number(page),
+    limit: Number(limit),
+    totalPages: Math.ceil(total / limit),
+  };
 };
 
 const saveData = async (data, user) => {
