@@ -108,25 +108,25 @@ const generateNomorSjStore = async (connection, tanggal) => {
 };
 
 const generateNomorTolakStbj = async (connection, tanggal) => {
-    const yearMonth = format(new Date(tanggal), "yyMM");
-    const prefix = `KDC.TL.${yearMonth}`;
-    const seqName = `TL_${yearMonth}`;
-    const seqDate = format(new Date(tanggal), "yyyy-MM-dd");
+  const yearMonth = format(new Date(tanggal), "yyMM");
+  const prefix = `KDC.TL.${yearMonth}`;
+  const seqName = `TL_${yearMonth}`;
+  const seqDate = format(new Date(tanggal), "yyyy-MM-dd");
 
-    const nextNum = await incrementSequence(connection, seqName, seqDate);
+  const nextNum = await incrementSequence(connection, seqName, seqDate);
 
-    return `${prefix}${nextNum.toString().padStart(5, "0")}`;
+  return `${prefix}${nextNum.toString().padStart(5, "0")}`;
 };
 
 const generateNomorTerimaRepair = async (connection, tanggal) => {
-    const yearMonth = format(new Date(tanggal), "yyMM");
-    const prefix = `KDC.GT.${yearMonth}.`;
-    const seqName = `GT_${yearMonth}`;
-    const seqDate = format(new Date(tanggal), "yyyy-MM-dd");
+  const yearMonth = format(new Date(tanggal), "yyMM");
+  const prefix = `KDC.GT.${yearMonth}.`;
+  const seqName = `GT_${yearMonth}`;
+  const seqDate = format(new Date(tanggal), "yyyy-MM-dd");
 
-    const nextNum = await incrementSequence(connection, seqName, seqDate);
+  const nextNum = await incrementSequence(connection, seqName, seqDate);
 
-    return `${prefix}${nextNum.toString().padStart(4, "0")}`;
+  return `${prefix}${nextNum.toString().padStart(4, "0")}`;
 };
 
 // ============================================

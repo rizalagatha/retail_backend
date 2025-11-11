@@ -1433,7 +1433,11 @@ const getApplicableItemPromo = async ({ kode, ukuran, tanggal }, user) => {
         INNER JOIN tpromo_cabang c ON c.pc_nomor = p.pro_nomor AND c.pc_cab = ?
         INNER JOIN tpromo_barang o ON o.pb_nomor = p.pro_nomor
         WHERE ? BETWEEN p.pro_tanggal1 AND p.pro_tanggal2 
-          AND p.pro_jenis = 3
+          
+          -- UBAH BARIS INI
+          AND p.pro_jenis IN (3, 4) -- Izinkan 'Lain-lain' (3) DAN 'Diskon Item' (4)
+          -- BATAS PERUBAHAN
+          
           AND o.pb_brg_kode = ? AND o.pb_ukuran = ?
         LIMIT 1;
     `;
@@ -1533,7 +1537,7 @@ const getDataForSjPrint = async (nomorInvoice) => {
 };
 
 const getActivePromos = async (filters, user) => {
-  const { tanggal } = filters;
+  const { tanggal, cabang } = filters; // 1. Ambil 'cabang' dari filters
   const promoQuery = `
     SELECT p.*
     FROM tpromo p
@@ -1541,7 +1545,8 @@ const getActivePromos = async (filters, user) => {
     WHERE p.pro_f1 = "N" 
       AND ? BETWEEN p.pro_tanggal1 AND p.pro_tanggal2;
   `;
-  const [activePromos] = await pool.query(promoQuery, [user.cabang, tanggal]);
+  // 2. Ganti 'user.cabang' dengan 'cabang'
+  const [activePromos] = await pool.query(promoQuery, [cabang, tanggal]);
   return activePromos;
 };
 

@@ -61,19 +61,25 @@ const getForEdit = async (nomor) => {
 const save = async (payload, user) => {
   const { header, applicableItems, bonusItems, cabang, level, isNew } = payload;
   const connection = await pool.getConnection();
+
   try {
     await connection.beginTransaction();
 
+    // --- 1️⃣ Buat / ambil nomor promo ---
     let nomorDokumen = header.nomor;
     if (isNew) {
       const year = new Date().getFullYear().toString();
-      const query = `SELECT IFNULL(MAX(RIGHT(pro_nomor, 3)), 0) + 1 AS next_num FROM tpromo WHERE MID(pro_nomor, 5, 4) = ?`;
-      const [rows] = await connection.query(query, [year]);
+      const [rows] = await connection.query(
+        `SELECT IFNULL(MAX(RIGHT(pro_nomor, 3)), 0) + 1 AS next_num 
+         FROM tpromo WHERE MID(pro_nomor, 5, 4) = ?`,
+        [year]
+      );
       nomorDokumen = `PRO-${year}-${rows[0].next_num
         .toString()
         .padStart(3, "0")}`;
     }
 
+    // --- 2️⃣ Simpan header ---
     const promoData = [
       nomorDokumen,
       header.judul,
@@ -97,25 +103,32 @@ const save = async (payload, user) => {
 
     if (isNew) {
       await connection.query(
-        `INSERT INTO tpromo (pro_nomor, pro_judul, pro_tanggal1, pro_tanggal2, pro_jenis, pro_totalrp, pro_totalqty, pro_disrp, pro_dispersen, pro_rpvoucher, pro_lipat, pro_generate, pro_f1, pro_jenis_kupon, pro_cetak_kupon, pro_keterangan, pro_note, user_create, date_create) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        `INSERT INTO tpromo 
+         (pro_nomor, pro_judul, pro_tanggal1, pro_tanggal2, pro_jenis, pro_totalrp, pro_totalqty, 
+          pro_disrp, pro_dispersen, pro_rpvoucher, pro_lipat, pro_generate, pro_f1, 
+          pro_jenis_kupon, pro_cetak_kupon, pro_keterangan, pro_note, user_create, date_create) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         promoData
       );
     } else {
-      promoData.shift(); // Hapus nomor dari awal array
-      promoData.push(nomorDokumen); // Tambahkan nomor di akhir untuk WHERE clause
+      promoData.shift(); // hapus nomor dari awal
+      promoData.push(nomorDokumen);
       await connection.query(
-        `UPDATE tpromo SET pro_judul=?, pro_tanggal1=?, pro_tanggal2=?, pro_jenis=?, pro_totalrp=?, pro_totalqty=?, pro_disrp=?, pro_dispersen=?, pro_rpvoucher=?, pro_lipat=?, pro_generate=?, pro_f1=?, pro_jenis_kupon=?, pro_cetak_kupon=?, pro_keterangan=?, pro_note=?, user_modified=?, date_modified=NOW()
-                 WHERE pro_nomor = ?`,
+        `UPDATE tpromo 
+         SET pro_judul=?, pro_tanggal1=?, pro_tanggal2=?, pro_jenis=?, pro_totalrp=?, pro_totalqty=?, 
+             pro_disrp=?, pro_dispersen=?, pro_rpvoucher=?, pro_lipat=?, pro_generate=?, pro_f1=?, 
+             pro_jenis_kupon=?, pro_cetak_kupon=?, pro_keterangan=?, pro_note=?, 
+             user_modified=?, date_modified=NOW()
+         WHERE pro_nomor = ?`,
         promoData
       );
     }
 
-    // Simpan Detail dengan pola Delete-then-Insert
+    // --- 3️⃣ Simpan Bonus Items ---
     await connection.query("DELETE FROM tpromo_bonus WHERE bns_nomor = ?", [
       nomorDokumen,
     ]);
-    if (bonusItems.length > 0) {
+    if (Array.isArray(bonusItems) && bonusItems.length > 0) {
       const bonusValues = bonusItems.map((b) => [
         nomorDokumen,
         b.kode,
@@ -127,20 +140,24 @@ const save = async (payload, user) => {
         [bonusValues]
       );
     }
+
+    // --- 4️⃣ Simpan Cabang Berlaku ---
     await connection.query("DELETE FROM tpromo_cabang WHERE pc_nomor = ?", [
       nomorDokumen,
     ]);
-    if (cabang.length > 0) {
+    if (Array.isArray(cabang) && cabang.length > 0) {
       const cabangValues = cabang.map((c) => [nomorDokumen, c]);
       await connection.query(
         "INSERT INTO tpromo_cabang (pc_nomor, pc_cab) VALUES ?",
         [cabangValues]
       );
     }
+
+    // --- 5️⃣ Simpan Level Berlaku ---
     await connection.query("DELETE FROM tpromo_level WHERE pl_nomor = ?", [
       nomorDokumen,
     ]);
-    if (level.length > 0) {
+    if (Array.isArray(level) && level.length > 0) {
       const levelValues = level.map((l) => [nomorDokumen, l]);
       await connection.query(
         "INSERT INTO tpromo_level (pl_nomor, pl_level) VALUES ?",
@@ -148,10 +165,13 @@ const save = async (payload, user) => {
       );
     }
 
-    await connection.query("DELETE FROM tpromo_barang WHERE pb_nomor = ?", [
-      nomorDokumen,
-    ]);
-    if (applicableItems.length > 0) {
+    // --- 6️⃣ Simpan Applicable Items (AMAN untuk edit) ---
+    if (Array.isArray(applicableItems) && applicableItems.length > 0) {
+      // Kalau dikirim array berarti ada perubahan — replace semua data
+      await connection.query("DELETE FROM tpromo_barang WHERE pb_nomor = ?", [
+        nomorDokumen,
+      ]);
+
       const applicableValues = applicableItems.map((item) => [
         nomorDokumen,
         item.kode,
@@ -161,19 +181,29 @@ const save = async (payload, user) => {
         item.disc,
         item.diskon,
       ]);
+
       await connection.query(
-        "INSERT INTO tpromo_barang (pb_nomor, pb_brg_kode, pb_ukuran, pb_qty, pb_harga, pb_disc, pb_diskon) VALUES ?",
+        `INSERT INTO tpromo_barang 
+         (pb_nomor, pb_brg_kode, pb_ukuran, pb_qty, pb_harga, pb_disc, pb_diskon) 
+         VALUES ?`,
         [applicableValues]
+      );
+    } else if (applicableItems === null) {
+      // Tidak ada perubahan di applicableItems — biarkan data lama tetap ada
+      console.log(
+        `[PROMO SAVE] Applicable items tidak berubah → skip update barang.`
       );
     }
 
     await connection.commit();
+
     return {
       message: `Promo berhasil disimpan dengan nomor ${nomorDokumen}`,
       nomor: nomorDokumen,
     };
   } catch (error) {
     await connection.rollback();
+    console.error("[ERROR SAVE PROMO]", error);
     throw error;
   } finally {
     connection.release();
