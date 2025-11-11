@@ -87,6 +87,10 @@ router.get(
 
 router.get("/lookup/active-promos", verifyToken, controller.getActivePromos);
 
+router.get('/lookup/promo-items/:nomorPromo', verifyToken, controller.getPromoItems);
+
+router.get('/lookup/promo/:nomorPromo', verifyToken, controller.getPromoHeader);
+
 // Mengambil detail item dari SO yang dipilih untuk mengisi grid
 router.get(
   "/lookup/so-details/:soNomor",

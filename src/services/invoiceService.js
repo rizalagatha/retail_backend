@@ -17,152 +17,258 @@ const getCabangList = async (user) => {
 
 const getList = async (filters) => {
   const { startDate, endDate, cabang, status } = filters;
-
-  // 1. Parameter disiapkan
   const params = [startDate, endDate];
-
-  // 2. Logika filter cabang (sesuai Delphi)
   let cabangFilter = "";
+
+  // Filter cabang
   if (cabang === "KDC") {
-    // Jika KDC, ambil semua gudang yang merupakan DC
     cabangFilter =
       " AND LEFT(h.inv_nomor, 3) IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)";
   } else {
-    // Jika bukan KDC, filter berdasarkan cabang spesifik
     cabangFilter = " AND LEFT(h.inv_nomor, 3) = ?";
-    params.push(cabang); // Tambahkan cabang ke parameter
+    params.push(cabang);
   }
 
-  // 3. Logika filter status
+  // Filter status
   let statusFilter = "";
   if (status === "belum_lunas") {
     statusFilter = " AND x.SisaPiutang > 0";
   }
 
-  // 4. Query utama yang telah diperbarui
   const query = `
-        SELECT 
-            x.Nomor, x.Tanggal, x.Posting,
-            ${cabang === "KPR" ? "x.NomorSJ, x.TglSJ," : "x.NomorSO, x.TglSO,"}
-            x.Top, x.Tempo,
-            (SELECT ii.pd_tanggal FROM tpiutang_hdr jj
-             LEFT JOIN tpiutang_dtl ii ON ii.pd_ph_nomor=jj.ph_nomor
-             WHERE ii.pd_kredit<>0 AND jj.ph_inv_nomor=x.Nomor
-             ORDER BY ii.pd_tanggal DESC LIMIT 1) AS LastPayment,
-            x.inv_disc1 AS \`Dis%\`, x.Diskon, x.Dp, x.Biayakirim, x.Nominal, 
-            x.Piutang, 
-            
-            -- [PERUBAHAN] Kalkulasi BAYAR (tanpa Retur)
-            (SELECT IFNULL(SUM(b.pd_kredit), 0) FROM tpiutang_dtl b
-             INNER JOIN tpiutang_hdr a ON a.ph_nomor = b.pd_ph_nomor
-             WHERE b.pd_uraian <> "Pembayaran Retur" AND a.ph_inv_nomor = x.Nomor
-            ) AS Bayar,
-            
-            -- [PERUBAHAN] Kalkulasi RPRETUP (hanya Retur)
-            (SELECT IFNULL(SUM(b.pd_kredit), 0) FROM tpiutang_dtl b
-             INNER JOIN tpiutang_hdr a ON a.ph_nomor = b.pd_ph_nomor
-             WHERE b.pd_uraian = "Pembayaran Retur" AND a.ph_inv_nomor = x.Nomor
-            ) AS RpRetur,
+    SELECT 
+      x.Nomor, x.Tanggal, x.Posting,
+      ${cabang === "KPR" ? "x.NomorSJ, x.TglSJ," : "x.NomorSO, x.TglSO,"}
+      x.Top, x.Tempo,
+      (SELECT ii.pd_tanggal FROM tpiutang_hdr jj
+       LEFT JOIN tpiutang_dtl ii ON ii.pd_ph_nomor = jj.ph_nomor
+       WHERE ii.pd_kredit <> 0 AND jj.ph_inv_nomor = x.Nomor
+       ORDER BY ii.pd_tanggal DESC LIMIT 1) AS LastPayment,
+      x.inv_disc1 AS \`Dis%\`,
+      x.Diskon,
+      x.Dp,
+      x.Biayakirim,
+      x.Nominal,
+      x.Piutang,
 
-            x.SisaPiutang, -- Sisa piutang tetap (Total - (Bayar + Retur))
-            x.Kdcus, x.Nama, x.Alamat, x.Kota, x.Telp, x.xLevel AS \`Level\`, 
-            x.Hp, x.Member, x.Keterangan,
-            x.inv_rptunai AS RpTunai, x.inv_novoucher AS NoVoucher, 
-            x.inv_rpvoucher AS RpVoucher, x.inv_rpcard AS RpTransfer, x.NoSetoran, 
-            x.sh_tgltransfer AS TglTransfer, x.sh_akun AS Akun, x.rek_rekening AS NoRekening,
-            x.NoRetur, x.SC, x.Created, x.Prn, x.Puas, x.Closing,
+      -- Hitung pembayaran non-retur
+      (SELECT IFNULL(SUM(b.pd_kredit), 0)
+       FROM tpiutang_dtl b
+       INNER JOIN tpiutang_hdr a ON a.ph_nomor = b.pd_ph_nomor
+       WHERE b.pd_uraian <> "Pembayaran Retur" AND a.ph_inv_nomor = x.Nomor
+      ) AS Bayar,
 
-            -- [TAMBAHAN] Kolom Minus
-            IFNULL((
-                SELECT 'Y'
-                FROM tinv_dtl d
-                JOIN tbarangdc b ON b.brg_kode = d.invd_kode
-                LEFT JOIN tmasterstok m ON m.mst_brg_kode = d.invd_kode AND m.mst_ukuran = d.invd_ukuran AND m.mst_aktif = 'Y'
-                WHERE d.invd_inv_nomor = x.Nomor  -- Referensi 'x' di WHERE (OK)
-                  AND m.mst_cab = LEFT(x.Nomor, 3) -- Referensi 'x' di WHERE (OK)
-                  AND b.brg_logstok = 'Y'
-                GROUP BY d.invd_inv_nomor
-                HAVING SUM(m.mst_stok_in - m.mst_stok_out) < 0
-            ), 'N') AS Minus
+      -- Hitung retur
+      (SELECT IFNULL(SUM(b.pd_kredit), 0)
+       FROM tpiutang_dtl b
+       INNER JOIN tpiutang_hdr a ON a.ph_nomor = b.pd_ph_nomor
+       WHERE b.pd_uraian = "Pembayaran Retur" AND a.ph_inv_nomor = x.Nomor
+      ) AS RpRetur,
 
-        FROM (
-            SELECT 
-                h.inv_nomor AS Nomor, h.inv_tanggal AS Tanggal,
-                IF(h.inv_nomor_so <> "", "",
-                    IF(h.inv_rptunai = 0 AND h.inv_nosetor = "", "",
-                        IF((SELECT COUNT(*) FROM finance.tjurnal j WHERE j.jur_nomor = h.inv_nomor) <> 0, "SUDAH",
-                            IF((SELECT COUNT(*) FROM finance.tjurnal j WHERE j.jur_nomor = h.inv_nosetor AND h.inv_nosetor <> "") <> 0, "SUDAH", "BELUM")
-                        )
-                    )
-                ) AS posting,
-                h.inv_nomor_so AS NomorSO,
-                o.so_tanggal AS TglSO,
-                h.inv_top AS Top,
-                DATE_FORMAT(DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY), "%d/%m/%Y") AS Tempo,
-                h.inv_ppn AS ppn, h.inv_disc1, h.inv_disc AS Diskon, h.inv_dp AS Dp,
-                h.inv_bkrm AS Biayakirim,
-                (SELECT ROUND(SUM(dd.invd_jumlah*(dd.invd_harga-dd.invd_diskon))-hh.inv_disc+(hh.inv_ppn/100*(SUM(dd.invd_jumlah*(dd.invd_harga-dd.invd_diskon))-hh.inv_disc))) FROM tinv_dtl dd LEFT JOIN tinv_hdr hh ON hh.inv_nomor=dd.invd_inv_nomor WHERE hh.inv_nomor = h.inv_nomor GROUP BY hh.inv_nomor) AS Nominal,
-                u.ph_nominal AS Piutang,
-                (v.debet - v.kredit) AS SisaPiutang,
-                h.inv_cus_kode AS kdcus, s.cus_nama AS Nama, s.cus_alamat AS Alamat, s.cus_kota AS Kota, s.cus_telp AS Telp,
-                CONCAT(h.inv_cus_level, " - ", l.level_nama) AS xLevel,
-                h.inv_mem_hp AS HP, h.inv_mem_nama AS Member,
-                h.inv_ket AS Keterangan, h.inv_rptunai, h.inv_novoucher, h.inv_rpvoucher, 
-                h.inv_rj_nomor AS NoRetur, -- Kolom 'RpRetur' diambil di query luar
-                h.inv_rpcard, h.inv_nosetor AS NoSetoran, t.sh_tgltransfer, t.sh_akun, r.rek_rekening, h.inv_print AS Prn, h.inv_puas AS Puas, h.inv_sc AS SC, h.date_create AS Created, h.inv_closing AS Closing
-                ${
-                  cabang === "KPR"
-                    ? ", j.sj_nomor AS NomorSJ, j.sj_tanggal AS TglSJ"
-                    : ""
-                }
-            FROM tinv_hdr h
-            LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
-            ${
-              cabang === "KPR"
-                ? "LEFT JOIN tdc_sj_hdr j ON j.sj_nomor = h.inv_nomor_so"
-                : ""
-            }
-            LEFT JOIN tcustomer s ON s.cus_kode = h.inv_cus_kode
-            LEFT JOIN tcustomer_level l ON l.level_kode = h.inv_cus_level
-            LEFT JOIN tsetor_hdr t ON t.sh_nomor = h.inv_nosetor
-            LEFT JOIN tpiutang_hdr u ON u.ph_inv_nomor = h.inv_nomor AND u.ph_cus_kode = h.inv_cus_kode
-            LEFT JOIN (SELECT pd_ph_nomor, SUM(pd_debet) AS debet, SUM(pd_kredit) AS kredit FROM tpiutang_dtl GROUP BY pd_ph_nomor) v ON v.pd_ph_nomor = u.ph_nomor
-            LEFT JOIN finance.trekening r ON r.rek_kode = t.sh_akun
-            WHERE h.inv_sts_pro = 0 
-              AND h.inv_tanggal BETWEEN ? AND ?
-              ${cabangFilter}
-        ) x 
-        WHERE 1=1 ${statusFilter}
-        ORDER BY x.Nomor ASC;
-    `;
+      x.SisaPiutang,
+      x.Kdcus, x.Nama, x.Alamat, x.Kota, x.Telp, x.xLevel AS \`Level\`, 
+      x.Hp, x.Member, x.Keterangan,
+      x.inv_rptunai AS RpTunai, x.inv_novoucher AS NoVoucher, 
+      x.inv_rpvoucher AS RpVoucher, x.inv_rpcard AS RpTransfer, x.NoSetoran, 
+      x.sh_tgltransfer AS TglTransfer, x.sh_akun AS Akun, x.rek_rekening AS NoRekening,
+      x.NoRetur, x.SC, x.Created, x.Prn, x.Puas, x.Closing,
+
+      -- Kolom Minus
+      IFNULL((
+        SELECT 'Y'
+        FROM tinv_dtl d
+        JOIN tbarangdc b ON b.brg_kode = d.invd_kode
+        LEFT JOIN tmasterstok m ON m.mst_brg_kode = d.invd_kode AND m.mst_ukuran = d.invd_ukuran AND m.mst_aktif = 'Y'
+        WHERE d.invd_inv_nomor = x.Nomor
+          AND m.mst_cab = LEFT(x.Nomor, 3)
+          AND b.brg_logstok = 'Y'
+        GROUP BY d.invd_inv_nomor
+        HAVING SUM(m.mst_stok_in - m.mst_stok_out) < 0
+      ), 'N') AS Minus
+
+    FROM (
+      SELECT 
+        h.inv_nomor AS Nomor,
+        h.inv_tanggal AS Tanggal,
+        IF(h.inv_nomor_so <> "", "",
+          IF(h.inv_rptunai = 0 AND h.inv_nosetor = "", "",
+            IF(
+              (SELECT COUNT(*) FROM finance.tjurnal j WHERE j.jur_nomor = h.inv_nomor) <> 0,
+              "SUDAH",
+              IF((SELECT COUNT(*) FROM finance.tjurnal j WHERE j.jur_nomor = h.inv_nosetor AND h.inv_nosetor <> "") <> 0, "SUDAH", "BELUM")
+            )
+          )
+        ) AS Posting,
+        h.inv_nomor_so AS NomorSO,
+        o.so_tanggal AS TglSO,
+        h.inv_top AS Top,
+        DATE_FORMAT(DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY), "%d/%m/%Y") AS Tempo,
+        h.inv_ppn AS ppn,
+        h.inv_disc1,
+        h.inv_disc AS Diskon,
+        h.inv_dp AS Dp,
+        h.inv_bkrm AS Biayakirim,
+
+        -- 💥 REVISI TOTAL NOMINAL DAN DISKON SESUAI PROMO LIPATAN 💥
+        (
+          SELECT 
+            ROUND(SUM(
+              CASE 
+                WHEN (SELECT p.pro_lipat FROM tpromo p WHERE p.pro_nomor = h.inv_pro_nomor LIMIT 1) = 'N'
+                  AND (
+                      SELECT COUNT(*) FROM tinv_dtl t2 
+                      WHERE t2.invd_inv_nomor = h.inv_nomor 
+                      AND t2.invd_diskon > 0
+                      AND t2.invd_nourut < d.invd_nourut
+                  ) > 0
+                THEN d.invd_jumlah * d.invd_harga
+                ELSE d.invd_jumlah * (d.invd_harga - d.invd_diskon)
+              END
+            ), 0)
+          FROM tinv_dtl d
+          WHERE d.invd_inv_nomor = h.inv_nomor
+        ) AS Nominal,
+
+        -- Total Piutang (sama dengan nominal untuk kasir)
+        (
+          SELECT 
+            ROUND(SUM(
+              CASE 
+                WHEN (SELECT p.pro_lipat FROM tpromo p WHERE p.pro_nomor = h.inv_pro_nomor LIMIT 1) = 'N'
+                      AND (
+                        SELECT COUNT(*) 
+                        FROM tinv_dtl t2 
+                        WHERE t2.invd_inv_nomor = h.inv_nomor 
+                          AND t2.invd_diskon > 0
+                          AND t2.invd_nourut < d.invd_nourut
+                      ) > 0
+                THEN d.invd_jumlah * d.invd_harga
+                ELSE d.invd_jumlah * (d.invd_harga - d.invd_diskon)
+              END
+            ), 0)
+          FROM tinv_dtl d
+          WHERE d.invd_inv_nomor = h.inv_nomor
+        ) AS Piutang,
+
+        (v.debet - v.kredit) AS SisaPiutang,
+        h.inv_cus_kode AS Kdcus, 
+        s.cus_nama AS Nama, 
+        s.cus_alamat AS Alamat, 
+        s.cus_kota AS Kota, 
+        s.cus_telp AS Telp,
+        CONCAT(h.inv_cus_level, " - ", l.level_nama) AS xLevel,
+        h.inv_mem_hp AS Hp,
+        h.inv_mem_nama AS Member,
+        h.inv_ket AS Keterangan,
+        h.inv_rptunai,
+        h.inv_novoucher,
+        h.inv_rpvoucher,
+        h.inv_rj_nomor AS NoRetur,
+        h.inv_rpcard,
+        h.inv_nosetor AS NoSetoran,
+        t.sh_tgltransfer,
+        t.sh_akun,
+        r.rek_rekening,
+        h.inv_print AS Prn,
+        h.inv_puas AS Puas,
+        h.inv_sc AS SC,
+        h.date_create AS Created,
+        h.inv_closing AS Closing
+        ${cabang === "KPR" ? ", j.sj_nomor AS NomorSJ, j.sj_tanggal AS TglSJ" : ""}
+      FROM tinv_hdr h
+      LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
+      ${cabang === "KPR" ? "LEFT JOIN tdc_sj_hdr j ON j.sj_nomor = h.inv_nomor_so" : ""}
+      LEFT JOIN tcustomer s ON s.cus_kode = h.inv_cus_kode
+      LEFT JOIN tcustomer_level l ON l.level_kode = h.inv_cus_level
+      LEFT JOIN tsetor_hdr t ON t.sh_nomor = h.inv_nosetor
+      LEFT JOIN tpiutang_hdr u ON u.ph_inv_nomor = h.inv_nomor AND u.ph_cus_kode = h.inv_cus_kode
+      LEFT JOIN (SELECT pd_ph_nomor, SUM(pd_debet) AS debet, SUM(pd_kredit) AS kredit FROM tpiutang_dtl GROUP BY pd_ph_nomor) v ON v.pd_ph_nomor = u.ph_nomor
+      LEFT JOIN finance.trekening r ON r.rek_kode = t.sh_akun
+      WHERE h.inv_sts_pro = 0 
+        AND h.inv_tanggal BETWEEN ? AND ?
+        ${cabangFilter}
+    ) x 
+    WHERE 1=1 ${statusFilter}
+    ORDER BY x.Nomor ASC;
+  `;
+
   const [rows] = await pool.query(query, params);
   return rows;
 };
 
 const getDetails = async (nomor) => {
   const query = `
-        SELECT 
-            d.invd_kode AS Kode,
-            IFNULL(b.brgd_barcode, "") AS Barcode,
-            IF(d.invd_pro_nomor = "",
-                IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama),
-                TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna, " #BONUS"))
-            ) AS Nama,
-            d.invd_ukuran AS Ukuran,
-            d.invd_jumlah AS Jumlah,
-            d.invd_harga AS Harga,
-            d.invd_disc AS \`Dis%\`,
-            (d.invd_jumlah * (d.invd_harga - d.invd_diskon)) AS Total
-        FROM tinv_dtl d
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
-        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.invd_kode AND b.brgd_ukuran = d.invd_ukuran
-        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
-        WHERE d.invd_inv_nomor = ?
-        ORDER BY d.invd_nourut;
-    `;
+    SELECT 
+      d.invd_kode AS Kode,
+      IFNULL(b.brgd_barcode, "") AS Barcode,
+      IF(
+        d.invd_pro_nomor = "",
+        IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama),
+        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna, " #BONUS"))
+      ) AS Nama,
+      d.invd_ukuran AS Ukuran,
+      d.invd_jumlah AS Jumlah,
+
+      -- harga asli per pcs
+      d.invd_harga AS HargaAsli,
+
+      -- harga setelah diskon (per pcs)
+      CASE
+        WHEN (SELECT p.pro_lipat FROM tpromo p WHERE p.pro_nomor = h.inv_pro_nomor LIMIT 1) = 'N'
+              AND (
+                SELECT COUNT(*) 
+                FROM tinv_dtl x 
+                WHERE x.invd_inv_nomor = h.inv_nomor 
+                  AND x.invd_diskon > 0
+                  AND x.invd_nourut < d.invd_nourut
+              ) > 0
+          THEN d.invd_harga
+          ELSE (d.invd_harga - d.invd_diskon)
+      END AS Harga,
+
+      -- diskon aktif per pcs
+      CASE
+        WHEN (SELECT p.pro_lipat FROM tpromo p WHERE p.pro_nomor = h.inv_pro_nomor LIMIT 1) = 'N'
+              AND (
+                SELECT COUNT(*) 
+                FROM tinv_dtl x 
+                WHERE x.invd_inv_nomor = h.inv_nomor 
+                  AND x.invd_diskon > 0
+                  AND x.invd_nourut < d.invd_nourut
+              ) > 0
+        THEN 0
+        ELSE d.invd_diskon
+      END AS DiskonAktif,
+
+      -- diskon persentase (asli dari kolom)
+      d.invd_disc AS \`Dis%\`,
+
+      -- total nilai item setelah logika diskon
+      CASE
+        WHEN (SELECT p.pro_lipat FROM tpromo p WHERE p.pro_nomor = h.inv_pro_nomor LIMIT 1) = 'N'
+            AND (
+              SELECT COUNT(*) 
+              FROM tinv_dtl x 
+              WHERE x.invd_inv_nomor = h.inv_nomor 
+                AND x.invd_diskon > 0
+                AND x.invd_nourut < d.invd_nourut
+            ) > 0
+        THEN (d.invd_jumlah * d.invd_harga)
+        ELSE (d.invd_jumlah * (d.invd_harga - d.invd_diskon))
+      END AS Total
+
+    FROM tinv_dtl d
+    LEFT JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.invd_kode AND b.brgd_ukuran = d.invd_ukuran
+    LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
+    WHERE d.invd_inv_nomor = ?
+    ORDER BY d.invd_nourut;
+  `;
   const [rows] = await pool.query(query, [nomor]);
   return rows;
 };
+
 
 const remove = async (nomor, user) => {
   const connection = await pool.getConnection();

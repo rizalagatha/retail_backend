@@ -281,9 +281,32 @@ const getDataForSjPrint = async (req, res) => {
 const getActivePromos = async (req, res) => {
   try {
     const data = await service.getActivePromos(req.query, req.user);
+    console.log("🟢 Active promos sent to frontend:", data);
+    res.json(data);
+  } catch (error) {
+    console.error("❌ getActivePromos error:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getPromoItems = async (req, res) => {
+  try {
+    const data = await service.getPromoItems(req.params.nomorPromo);
     res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+};
+
+const getPromoHeader = async (req, res) => {
+  try {
+    const data = await service.getPromoHeader(req.params.nomorPromo);
+    if (!data)
+      return res.status(404).json({ message: "Promo tidak ditemukan" });
+    res.json(data);
+  } catch (e) {
+    console.error("getPromoHeader error:", e);
+    res.status(500).json({ message: e.message });
   }
 };
 
@@ -315,4 +338,6 @@ module.exports = {
   getVoucherPrintData,
   getDataForSjPrint,
   getActivePromos,
+  getPromoItems,
+  getPromoHeader,
 };

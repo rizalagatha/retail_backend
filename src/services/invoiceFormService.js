@@ -1537,17 +1537,87 @@ const getDataForSjPrint = async (nomorInvoice) => {
 };
 
 const getActivePromos = async (filters, user) => {
-  const { tanggal, cabang } = filters; // 1. Ambil 'cabang' dari filters
+  const { tanggal, cabang } = filters;
+
   const promoQuery = `
-    SELECT p.*
+    SELECT 
+      p.pro_nomor,
+      p.pro_judul,
+      p.pro_totalrp,
+      p.pro_totalqty,
+      p.pro_disrp,
+      p.pro_dispersen AS pro_diskon, 
+      p.pro_rpvoucher,
+      p.pro_lipat,
+      p.pro_generate,
+      p.pro_jenis,
+      p.pro_tanggal1,
+      p.pro_tanggal2,
+      p.pro_f1,
+      p.pro_jenis_kupon,
+      p.pro_cetak_kupon,
+      p.pro_keterangan,
+      p.pro_note
     FROM tpromo p
-    INNER JOIN tpromo_cabang c ON c.pc_nomor = p.pro_nomor AND c.pc_cab = ?
-    WHERE p.pro_f1 = "N" 
+    INNER JOIN tpromo_cabang c 
+      ON c.pc_nomor = p.pro_nomor 
+     AND c.pc_cab = ?
+    WHERE p.pro_f1 = "N"
       AND ? BETWEEN p.pro_tanggal1 AND p.pro_tanggal2;
   `;
-  // 2. Ganti 'user.cabang' dengan 'cabang'
+
   const [activePromos] = await pool.query(promoQuery, [cabang, tanggal]);
   return activePromos;
+};
+
+const getPromoItems = async (nomorPromo) => {
+  const query = `
+    SELECT 
+      pb_brg_kode AS kode,
+      pb_ukuran AS ukuran,
+      pb_disc AS discPersen,
+      pb_diskon AS discRp
+    FROM tpromo_barang
+    WHERE pb_nomor = ?
+  `;
+  const [rows] = await pool.query(query, [nomorPromo]);
+  return rows;
+};
+
+const getPromoHeader = async (nomorPromo) => {
+  const q = `
+    SELECT 
+      pro_nomor,
+      pro_judul,
+      pro_tanggal1,
+      pro_tanggal2,
+      pro_jenis,
+      pro_f1,
+      pro_totalrp,
+      pro_totalqty,
+      pro_disrp,
+      pro_dispersen AS pro_diskon,   -- <=== alias
+      pro_rpvoucher,
+      pro_lipat,
+      pro_generate,
+      pro_jenis_kupon,
+      pro_cetak_kupon,
+      pro_keterangan,
+      pro_note
+    FROM tpromo
+    WHERE pro_nomor = ?
+  `;
+  const [rows] = await pool.query(q, [nomorPromo]);
+  if (!rows[0]) return null;
+
+  const r = rows[0];
+  return {
+    ...r,
+    pro_totalrp: Number(r.pro_totalrp) || 0,
+    pro_totalqty: Number(r.pro_totalqty) || 0,
+    pro_disrp: Number(r.pro_disrp) || 0,
+    pro_diskon: Number(r.pro_diskon ?? 0),
+  };
 };
 
 module.exports = {
@@ -1578,4 +1648,6 @@ module.exports = {
   getVoucherPrintData,
   getDataForSjPrint,
   getActivePromos,
+  getPromoItems,
+  getPromoHeader,
 };
