@@ -258,6 +258,15 @@ const getBuffer = async (filters) => {
   return { min: 0, max: 0 };
 };
 
+const getNextBcdId = async () => {
+  const year = new Date().getFullYear().toString();
+  const [rows] = await pool.query(
+    'SELECT IFNULL(MAX(brg_bcdid), 0) + 1 AS next_id FROM tbarangdc WHERE DATE_FORMAT(date_create, "%Y") = ?',
+    [year]
+  );
+  return rows[0].next_id;
+};
+
 module.exports = {
   getInitialData,
   getForEdit,
@@ -265,4 +274,5 @@ module.exports = {
   uploadImage,
   searchWarnaKain,
   getBuffer,
+  getNextBcdId,
 };

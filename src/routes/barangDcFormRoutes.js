@@ -16,12 +16,6 @@ router.get(
   checkPermission(MENU_ID, "view"),
   controller.getInitialData
 );
-router.get(
-  "/:kode",
-  verifyToken,
-  checkPermission(MENU_ID, "edit"),
-  controller.getForEdit
-);
 router.post(
   "/save",
   verifyToken,
@@ -47,6 +41,20 @@ router.get(
   verifyToken,
   checkPermission(MENU_ID, "view"),
   controller.getBuffer
+);
+
+router.get(
+  "/next-bcdid",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getNextBcdId
+);
+
+router.get(
+  "/:kode",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  controller.getForEdit
 );
 
 module.exports = router;

@@ -87,6 +87,16 @@ const getBuffer = async (req, res) => {
   }
 };
 
+const getNextBcdId = async (req, res) => {
+  try {
+    const nextId = await service.getNextBcdId();
+    res.json({ success: true, nextId });
+  } catch (error) {
+    console.error('Error getNextBcdId:', error);
+    res.status(500).json({ success: false, message: 'Gagal generate ID barcode.' });
+  }
+};
+
 module.exports = {
   getInitialData,
   getForEdit,
@@ -94,4 +104,5 @@ module.exports = {
   uploadImage,
   searchWarnaKain,
   getBuffer,
+  getNextBcdId,
 };
