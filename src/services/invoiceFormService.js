@@ -347,17 +347,24 @@ const saveData = async (payload, user) => {
     );
     if (totalQty <= 0) throw new Error("Qty Invoice kosong semua.");
 
+    const pundiAmal = Number(payment.pundiAmal || header.pundiAmal || 0);
+
     const bayarTotal =
       Number(payment.tunai || 0) +
       Number(payment.transfer?.nominal || 0) +
       Number(payment.voucher?.nominal || 0) +
       Number(payment.retur?.nominal || 0);
 
-    const kembalian = Math.max(bayarTotal - grandTotal, 0);
+    const invBayar = bayarTotal;
+
+    const kembalianBeforePundi = Math.max(bayarTotal - grandTotal, 0);
+
+    const kembalianFinal = Math.max(kembalianBeforePundi - pundiAmal, 0);
+
     const sisaBayar = Math.max(grandTotal - bayarTotal, 0);
 
     const bayarTunaiBersih = Math.max(
-      (Number(payment.tunai) || 0) - kembalian,
+      (Number(payment.tunai) || 0) - kembalianFinal,
       0
     );
 
@@ -384,11 +391,11 @@ const saveData = async (payload, user) => {
       const headerSql = `
 INSERT INTO tinv_hdr (
   inv_idrec, inv_nomor, inv_nomor_so, inv_tanggal, inv_cus_kode, inv_cus_level, inv_ket, inv_sc,
-  inv_disc, inv_bkrm, inv_dp, inv_pundiamal,
+  inv_disc, inv_bkrm, inv_dp, inv_bayar, inv_pundiamal,
   inv_rptunai, inv_novoucher, inv_rpvoucher, inv_rpcard, inv_nosetor,
   inv_kembali,
   user_create, date_create
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
 `;
 
       await connection.query(headerSql, [
@@ -397,7 +404,9 @@ INSERT INTO tinv_hdr (
         header.nomorSo,
         toSqlDate(header.tanggal),
         header.customer.kode,
-        String(header.customer.level || '').trim().charAt(0),
+        String(header.customer.level || "")
+          .trim()
+          .charAt(0),
         header.keterangan,
         header.salesCounter,
 
@@ -407,7 +416,8 @@ INSERT INTO tinv_hdr (
         // biaya kirim, dp, pundi
         biayaKirim, // inv_bkrm
         Number(header.dp || 0), // inv_dp
-        Number(header.pundiAmal || 0), // inv_pundiamal
+        invBayar,
+        pundiAmal,
 
         // pembayaran
         bayarTunaiBersih, // inv_rptunai
@@ -415,7 +425,7 @@ INSERT INTO tinv_hdr (
         Number(payment.voucher?.nominal || 0),
         Number(payment.transfer?.nominal || 0),
         nomorSetoran,
-        kembalian,
+        kembalianFinal,
 
         user.kode,
       ]);
@@ -424,7 +434,7 @@ INSERT INTO tinv_hdr (
       const updateSql = `
 UPDATE tinv_hdr SET
   inv_nomor_so = ?, inv_tanggal = ?, inv_cus_kode = ?, inv_cus_level = ?, inv_ket = ?, inv_sc = ?,
-  inv_disc = ?, inv_bkrm = ?, inv_dp = ?, inv_pundiamal = ?,
+  inv_disc = ?, inv_bkrm = ?, inv_dp = ?, inv_bayar = ?, inv_pundiamal = ?,
   inv_rptunai = ?, inv_novoucher = ?, inv_rpvoucher = ?, inv_rpcard = ?, inv_nosetor = ?,
   inv_kembali = ?,                       -- PATCH
   user_modified = ?, date_modified = NOW()
@@ -434,20 +444,23 @@ WHERE inv_nomor = ?
         header.nomorSo,
         toSqlDate(header.tanggal),
         header.customer.kode,
-        String(header.customer.level || '').trim().charAt(0),
+        String(header.customer.level || "")
+          .trim()
+          .charAt(0),
         header.keterangan,
         header.salesCounter,
         totalDiskon,
         biayaKirim,
         Number(header.dp || 0),
-        Number(header.pundiAmal || 0),
+        invBayar,
+        pundiAmal,
 
         bayarTunaiBersih,
         payment.voucher?.nomor || "",
         Number(payment.voucher?.nominal || 0),
         Number(payment.transfer?.nominal || 0),
         nomorSetoran,
-        kembalian,
+        kembalianFinal,
 
         user.kode,
         invNomor,
@@ -1315,6 +1328,7 @@ const getPrintDataKasir = async (nomor) => {
         h.inv_ppn,
         h.inv_bkrm,
         h.inv_dp,
+        h.inv_bayar,
         h.inv_pundiamal,
         h.inv_rptunai,
         h.inv_rpcard,
@@ -1451,20 +1465,12 @@ const getPrintDataKasir = async (nomor) => {
   const grandTotal = subTotal - totalDiskonFaktur + biayaKirim;
 
   // Bayar
-  const bayar = Number(
-    header.inv_bayar ??
-      Number(header.inv_rptunai || 0) +
-        Number(header.inv_rpcard || 0) +
-        Number(header.inv_rpvoucher || 0)
-  );
+  const bayar = Number(header.inv_bayar || 0);
 
   // Pundi amal
   const pundiAmal = Number(header.inv_pundiamal) || 0;
 
-  // Kembali
-  const kembali = Number(
-    header.inv_kembali ?? (bayar > grandTotal ? bayar - grandTotal : 0)
-  );
+  const kembali = Number(header.inv_kembali || 0);
 
   const sisaBayar = grandTotal > bayar ? grandTotal - bayar : 0;
 
@@ -1475,11 +1481,11 @@ const getPrintDataKasir = async (nomor) => {
     biayaKirim,
     dp,
     grandTotal,
-    bayar,
+    bayar, // 🆕 total pembayaran customer
     pundiAmal,
-    kembali,
+    kembali, // final setelah donasi
     sisaBayar,
-    inv_kembali: kembali, // PATCH
+    inv_kembali: kembali,
   };
 
   return { header, details };
