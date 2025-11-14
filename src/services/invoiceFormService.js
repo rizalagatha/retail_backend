@@ -383,11 +383,12 @@ const saveData = async (payload, user) => {
       const invTanggal = toSqlDate(header.tanggal);
       const headerSql = `
 INSERT INTO tinv_hdr (
-  inv_idrec, inv_nomor, inv_nomor_so, inv_tanggal, inv_cus_kode, inv_ket, inv_sc,
+  inv_idrec, inv_nomor, inv_nomor_so, inv_tanggal, inv_cus_kode, inv_cus_level, inv_ket, inv_sc,
   inv_disc, inv_bkrm, inv_dp, inv_pundiamal,
   inv_rptunai, inv_novoucher, inv_rpvoucher, inv_rpcard, inv_nosetor,
+  inv_kembali,
   user_create, date_create
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
 `;
 
       await connection.query(headerSql, [
@@ -396,6 +397,7 @@ INSERT INTO tinv_hdr (
         header.nomorSo,
         toSqlDate(header.tanggal),
         header.customer.kode,
+        header.customer.level,
         header.keterangan,
         header.salesCounter,
 
@@ -413,6 +415,7 @@ INSERT INTO tinv_hdr (
         Number(payment.voucher?.nominal || 0),
         Number(payment.transfer?.nominal || 0),
         nomorSetoran,
+        kembalian,
 
         user.kode,
       ]);
@@ -420,9 +423,10 @@ INSERT INTO tinv_hdr (
       // update logic: make sure to update inv_disc, inv_subtotal, inv_netto and payment columns if editing
       const updateSql = `
 UPDATE tinv_hdr SET
-  inv_nomor_so = ?, inv_tanggal = ?, inv_cus_kode = ?, inv_ket = ?, inv_sc = ?,
+  inv_nomor_so = ?, inv_tanggal = ?, inv_cus_kode = ?, inv_cus_level = ?, inv_ket = ?, inv_sc = ?,
   inv_disc = ?, inv_bkrm = ?, inv_dp = ?, inv_pundiamal = ?,
   inv_rptunai = ?, inv_novoucher = ?, inv_rpvoucher = ?, inv_rpcard = ?, inv_nosetor = ?,
+  inv_kembali = ?,                       -- PATCH
   user_modified = ?, date_modified = NOW()
 WHERE inv_nomor = ?
 `;
@@ -430,6 +434,7 @@ WHERE inv_nomor = ?
         header.nomorSo,
         toSqlDate(header.tanggal),
         header.customer.kode,
+        header.customer.level,
         header.keterangan,
         header.salesCounter,
         totalDiskon,
@@ -442,6 +447,7 @@ WHERE inv_nomor = ?
         Number(payment.voucher?.nominal || 0),
         Number(payment.transfer?.nominal || 0),
         nomorSetoran,
+        kembalian,
 
         user.kode,
         invNomor,
@@ -1313,6 +1319,7 @@ const getPrintDataKasir = async (nomor) => {
         h.inv_rptunai,
         h.inv_rpcard,
         h.inv_rpvoucher,
+        h.inv_kembali,
 
         DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY) AS tempo,
 
@@ -1444,16 +1451,21 @@ const getPrintDataKasir = async (nomor) => {
   const grandTotal = subTotal - totalDiskonFaktur + biayaKirim;
 
   // Bayar
-  const bayar =
-    Number(header.inv_rptunai || 0) +
-    Number(header.inv_rpcard || 0) +
-    Number(header.inv_rpvoucher || 0);
+  const bayar = Number(
+    header.inv_bayar ??
+      Number(header.inv_rptunai || 0) +
+        Number(header.inv_rpcard || 0) +
+        Number(header.inv_rpvoucher || 0)
+  );
 
   // Pundi amal
   const pundiAmal = Number(header.inv_pundiamal) || 0;
 
   // Kembali
-  const kembali = bayar > grandTotal ? bayar - grandTotal : 0;
+  const kembali = Number(
+    header.inv_kembali ?? (bayar > grandTotal ? bayar - grandTotal : 0)
+  );
+
   const sisaBayar = grandTotal > bayar ? grandTotal - bayar : 0;
 
   header.summary = {
@@ -1467,6 +1479,7 @@ const getPrintDataKasir = async (nomor) => {
     pundiAmal,
     kembali,
     sisaBayar,
+    inv_kembali: kembali, // PATCH
   };
 
   return { header, details };
