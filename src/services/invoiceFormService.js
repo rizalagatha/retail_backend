@@ -312,6 +312,29 @@ const saveData = async (payload, user) => {
     const { header, items, dps, payment, isNew, pins, totals } = payload;
     const headerTanggal = toSqlDate(header.tanggal);
     const headerTanggalTime = toSqlDateTime(header.tanggal);
+    const totalDiskonItem = Number(totals.totalDiskonItem || 0);
+    const totalDiskonFaktur = Number(totals.totalDiskonFaktur || 0);
+    const biayaKirim = Number(header.biayaKirim || 0);
+
+    // If frontend provided netto/grandTotal, prefer them; otherwise compute
+    const subTotalFromPayload = Number(totals.subTotal || 0);
+    // compute subTotal from details if payload missing
+    const computedSubTotal = (items || []).reduce(
+      (s, it) => s + (Number(it.total) || 0),
+      0
+    );
+    const subTotal =
+      subTotalFromPayload > 0 ? subTotalFromPayload : computedSubTotal;
+
+    const totalDiskon = totalDiskonItem + totalDiskonFaktur;
+    const netto =
+      Number(totals.netto || 0) > 0
+        ? Number(totals.netto)
+        : Math.max(subTotal - totalDiskon, 0);
+    const grandTotal =
+      Number(totals.grandTotal || 0) > 0
+        ? Number(totals.grandTotal)
+        : netto + biayaKirim - (Number(totals.totalDp || 0) || 0);
 
     if (!header.customer.kode) throw new Error("Customer harus diisi.");
     if (!header.customer.level)
@@ -323,6 +346,20 @@ const saveData = async (payload, user) => {
       0
     );
     if (totalQty <= 0) throw new Error("Qty Invoice kosong semua.");
+
+    const bayarTotal =
+      Number(payment.tunai || 0) +
+      Number(payment.transfer?.nominal || 0) +
+      Number(payment.voucher?.nominal || 0) +
+      Number(payment.retur?.nominal || 0);
+
+    const kembalian = Math.max(bayarTotal - grandTotal, 0);
+    const sisaBayar = Math.max(grandTotal - bayarTotal, 0);
+
+    const bayarTunaiBersih = Math.max(
+      (Number(payment.tunai) || 0) - kembalian,
+      0
+    );
 
     let nomorSetoran = payment.transfer.nomorSetoran || "";
     if ((payment.transfer.nominal || 0) > 0 && !nomorSetoran) {
@@ -345,26 +382,70 @@ const saveData = async (payload, user) => {
     if (isNew) {
       const invTanggal = toSqlDate(header.tanggal);
       const headerSql = `
-                INSERT INTO tinv_hdr (inv_idrec, inv_nomor, inv_nomor_so, inv_tanggal, inv_cus_kode, inv_ket, inv_sc, inv_rptunai, inv_novoucher, inv_rpvoucher, inv_rpcard, inv_nosetor, user_create, date_create)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
-            `;
+INSERT INTO tinv_hdr (
+  inv_idrec, inv_nomor, inv_nomor_so, inv_tanggal, inv_cus_kode, inv_ket, inv_sc,
+  inv_disc, inv_bkrm, inv_dp, inv_pundiamal,
+  inv_rptunai, inv_novoucher, inv_rpvoucher, inv_rpcard, inv_nosetor,
+  user_create, date_create
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
+`;
+
       await connection.query(headerSql, [
         idrec,
         invNomor,
         header.nomorSo,
-        headerTanggal,
+        toSqlDate(header.tanggal),
         header.customer.kode,
         header.keterangan,
         header.salesCounter,
-        payment.tunai,
-        payment.voucher.nomor,
-        payment.voucher.nominal,
-        payment.transfer.nominal,
+
+        // DISKON FAKTUR
+        totalDiskon, // inv_disc
+
+        // biaya kirim, dp, pundi
+        biayaKirim, // inv_bkrm
+        Number(header.dp || 0), // inv_dp
+        Number(header.pundiAmal || 0), // inv_pundiamal
+
+        // pembayaran
+        bayarTunaiBersih, // inv_rptunai
+        payment.voucher?.nomor || "",
+        Number(payment.voucher?.nominal || 0),
+        Number(payment.transfer?.nominal || 0),
         nomorSetoran,
+
         user.kode,
       ]);
     } else {
-      // Logika UPDATE untuk header jika diperlukan
+      // update logic: make sure to update inv_disc, inv_subtotal, inv_netto and payment columns if editing
+      const updateSql = `
+UPDATE tinv_hdr SET
+  inv_nomor_so = ?, inv_tanggal = ?, inv_cus_kode = ?, inv_ket = ?, inv_sc = ?,
+  inv_disc = ?, inv_bkrm = ?, inv_dp = ?, inv_pundiamal = ?,
+  inv_rptunai = ?, inv_novoucher = ?, inv_rpvoucher = ?, inv_rpcard = ?, inv_nosetor = ?,
+  user_modified = ?, date_modified = NOW()
+WHERE inv_nomor = ?
+`;
+      await connection.query(updateSql, [
+        header.nomorSo,
+        toSqlDate(header.tanggal),
+        header.customer.kode,
+        header.keterangan,
+        header.salesCounter,
+        totalDiskon,
+        biayaKirim,
+        Number(header.dp || 0),
+        Number(header.pundiAmal || 0),
+
+        bayarTunaiBersih,
+        payment.voucher?.nomor || "",
+        Number(payment.voucher?.nominal || 0),
+        Number(payment.transfer?.nominal || 0),
+        nomorSetoran,
+
+        user.kode,
+        invNomor,
+      ]);
     }
 
     await connection.query("DELETE FROM tinv_dtl WHERE invd_inv_nomor = ?", [
@@ -372,27 +453,42 @@ const saveData = async (payload, user) => {
     ]);
     if (validItems.length > 0) {
       const detailSql = `
-                INSERT INTO tinv_dtl (invd_idrec, invd_inv_nomor, invd_kode, invd_ukuran, invd_jumlah, invd_harga, invd_hpp, invd_disc, invd_diskon, invd_nourut) 
-                VALUES ?;
-            `;
-      const detailValues = validItems.map((item, index) => [
-        idrec,
-        invNomor,
-        item.kode,
-        item.ukuran,
-        item.jumlah,
-        item.harga,
-        item.hpp || 0,
-        item.diskonPersen,
-        item.diskonRp,
-        index + 1,
-      ]);
+INSERT INTO tinv_dtl (
+  invd_idrec, invd_inv_nomor, invd_kode, invd_ukuran,
+  invd_jumlah, invd_harga, invd_hpp, invd_disc, invd_diskon, invd_nourut
+) VALUES ?
+`;
+
+      const detailValues = validItems.map((item, index) => {
+        const hargaSetelah = Number(item.harga) - Number(item.diskonRp || 0);
+
+        return [
+          idrec,
+          invNomor,
+          item.kode,
+          item.ukuran || "",
+          Number(item.jumlah || 0),
+
+          // ✔ harga setelah diskon (WAJIB!)
+          hargaSetelah,
+
+          Number(item.hpp || 0),
+
+          // diskon persen (boleh 0)
+          Number(item.diskonPersen || 0),
+
+          // diskon rupiah (potongan per pcs)
+          Number(item.diskonRp || 0),
+
+          index + 1,
+        ];
+      });
       await connection.query(detailSql, [detailValues]);
     }
 
     // Pembayaran via Card/Transfer (PEMBAYARAN DARI KASIR)
-    if ((payment.transfer.nominal || 0) > 0) {
-      const nomorSetoran =
+    if ((payment.transfer?.nominal || 0) > 0) {
+      const nomorSetoranReal =
         payment.transfer.nomorSetoran ||
         (await generateNewSetorNumber(connection, user.cabang, header.tanggal));
       const idrecSetoran = `${user.cabang}SH${format(
@@ -400,24 +496,22 @@ const saveData = async (payload, user) => {
         "yyyyMMddHHmmssSSS"
       )}`;
 
-      // Hapus setoran lama jika ada (untuk handle mode edit)
       await connection.query("DELETE FROM tsetor_hdr WHERE sh_nomor = ?", [
-        nomorSetoran,
+        nomorSetoranReal,
       ]);
 
-      // Insert header setoran baru
       const setorHdrSql = `
-                INSERT INTO tsetor_hdr (sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_akun, sh_norek, sh_tgltransfer, sh_otomatis, user_create, date_create)
-                VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 'Y', ?, NOW());
-            `;
+INSERT INTO tsetor_hdr (sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_akun, sh_norek, sh_tgltransfer, sh_otomatis, user_create, date_create)
+VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 'Y', ?, NOW());
+`;
       await connection.query(setorHdrSql, [
         idrecSetoran,
-        nomorSetoran,
+        nomorSetoranReal,
         header.customer.kode,
-        headerTanggalTime,
-        payment.transfer.nominal,
-        payment.transfer.akun.kode,
-        payment.transfer.akun.rekening,
+        toSqlDateTime(header.tanggal),
+        Number(payment.transfer.nominal || 0),
+        payment.transfer.akun?.kode || "",
+        payment.transfer.akun?.rekening || "",
         toSqlDateTime(payment.transfer.tanggal),
         user.kode,
       ]);
@@ -427,30 +521,28 @@ const saveData = async (payload, user) => {
         new Date(),
         "yyyyMMddHHmmssSSS"
       )}`;
-
       const setorDtlSql = `
-                INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut)
-                VALUES (?, ?, ?, ?, ?, 'PEMBAYARAN DARI KASIR', ?, 1);
-            `;
+INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut)
+VALUES (?, ?, ?, ?, ?, 'PEMBAYARAN DARI KASIR', ?, 1);
+`;
       await connection.query(setorDtlSql, [
         idrecSetoran,
-        nomorSetoran,
-        headerTanggalTime,
+        nomorSetoranReal,
+        toSqlDateTime(header.tanggal),
         invNomor,
-        payment.transfer.nominal,
+        Number(payment.transfer.nominal || 0),
         angsurId,
       ]);
 
-      // Insert detail piutang untuk pembayaran card
       const piutangCardSql = `
-                INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur)
-                VALUES (?, ?, 'Pembayaran Card', ?, ?, ?);
-            `;
+INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur)
+VALUES (?, ?, 'Pembayaran Card', ?, ?, ?);
+`;
       await connection.query(piutangCardSql, [
         piutangNomor,
         toSqlDateTime(payment.transfer.tanggal),
-        payment.transfer.nominal,
-        nomorSetoran || "-",
+        Number(payment.transfer.nominal || 0),
+        nomorSetoranReal || "-",
         angsurId,
       ]);
     }
@@ -516,91 +608,82 @@ const saveData = async (payload, user) => {
     await connection.query("DELETE FROM tpiutang_hdr WHERE ph_inv_nomor = ?", [
       invNomor,
     ]);
-    const invTanggal = toSqlDate(header.tanggal);
     const piutangHdrSql = `INSERT INTO tpiutang_hdr (ph_nomor, ph_tanggal, ph_cus_kode, ph_inv_nomor, ph_top, ph_nominal) VALUES (?, ?, ?, ?, ?, ?);`;
     await connection.query(piutangHdrSql, [
       piutangNomor,
-      headerTanggal,
+      toSqlDate(header.tanggal),
       header.customer.kode,
       invNomor,
       header.top,
-      totals.grandTotal,
+      grandTotal,
     ]);
 
-    // Insert piutang detail untuk penjualan dan pembayaran
+    // --- piutang detail: use netto and biaya kirim ---
     const piutangDtlValues = [];
-    // Debet: Penjualan & Biaya Kirim
     piutangDtlValues.push([
       `${user.cabang}INV${format(new Date(), "yyyyMMddHHmmssSSS")}`,
       piutangNomor,
-      headerTanggalTime,
+      toSqlDateTime(header.tanggal),
       "Penjualan",
-      totals.nettoSetelahDiskon,
+      Number(netto),
       0,
     ]);
-    if (header.biayaKirim > 0) {
+    if (biayaKirim > 0) {
       piutangDtlValues.push([
         `${user.cabang}KRM${format(new Date(), "yyyyMMddHHmmssSSS")}`,
         piutangNomor,
-        headerTanggalTime,
+        toSqlDateTime(header.tanggal),
         "Biaya Kirim",
-        header.biayaKirim,
+        Number(biayaKirim),
         0,
       ]);
     }
 
     // Kredit: Semua jenis pembayaran
-    if (payment.tunai > 0) {
+    if (bayarTunaiBersih > 0) {
       piutangDtlValues.push([
         `${user.cabang}CASH${format(new Date(), "yyyyMMddHHmmssSSS")}`,
         piutangNomor,
-        headerTanggalTime,
+        toSqlDateTime(header.tanggal),
         "Bayar Tunai Langsung",
         0,
-        payment.tunai,
+        bayarTunaiBersih,
       ]);
     }
-    if (payment.voucher.nominal > 0) {
+    if ((payment.voucher?.nominal || 0) > 0) {
       piutangDtlValues.push([
         `${user.cabang}VOU${format(new Date(), "yyyyMMddHHmmssSSS")}`,
         piutangNomor,
-        headerTanggalTime,
+        toSqlDateTime(header.tanggal),
         "Bayar Voucher",
         0,
-        payment.voucher.nominal,
-        payment.voucher.nomor,
+        Number(payment.voucher.nominal || 0),
+        payment.voucher.nomor || "",
       ]);
     }
-    if (payment.retur.nominal > 0) {
+    if ((payment.retur?.nominal || 0) > 0) {
       piutangDtlValues.push([
         `${user.cabang}RJ${format(new Date(), "yyyyMMddHHmmssSSS")}`,
         piutangNomor,
-        headerTanggalTime,
+        toSqlDateTime(header.tanggal),
         "Pembayaran Retur",
         0,
-        payment.retur.nominal,
-        payment.retur.nomor,
+        Number(payment.retur.nominal || 0),
+        payment.retur.nomor || "",
       ]);
     }
-    // (Pembayaran via Transfer/Card dan DP sudah ditangani di blok terpisah)
+
     if (piutangDtlValues.length > 0) {
-      const piutangDtlSql = `
-                INSERT INTO tpiutang_dtl 
-                (pd_sd_angsur, pd_ph_nomor, pd_tanggal, pd_uraian, pd_debet, pd_kredit, pd_ket) 
-                VALUES ?;
-            `;
-
-      // validasi biar ga ada yg null di kolom wajib
+      const piutangDtlSql = `INSERT INTO tpiutang_dtl (pd_sd_angsur, pd_ph_nomor, pd_tanggal, pd_uraian, pd_debet, pd_kredit, pd_ket) VALUES ?;`;
       const formattedValues = piutangDtlValues.map((v) => [
-        v[0] || "MANUAL", // pd_sd_angsur
-        v[1], // pd_ph_nomor
-        v[2], // pd_tanggal
-        v[3], // pd_uraian
-        v[4] || 0, // pd_debet
-        v[5] || 0, // pd_kredit
-        v[6] || "", // pd_ket
+        v[0] || "MANUAL",
+        v[1],
+        v[2],
+        v[3],
+        v[4] || 0,
+        v[5] || 0,
+        v[6] || "",
       ]);
-
       await connection.query(piutangDtlSql, [formattedValues]);
     }
 
@@ -916,8 +999,13 @@ const getPrintData = async (nomor) => {
     nama_barang: row.nama_barang,
     invd_ukuran: row.invd_ukuran,
     invd_jumlah: row.invd_jumlah,
-    invd_harga: row.invd_harga,
+
+    // FIX HARGA
+    invd_harga: row.harga_setelah_diskon,
+    invd_harga_asli: row.harga_asli,
     invd_diskon: row.invd_diskon,
+
+    total_diskon: row.total_diskon,
     total: row.total,
   }));
   // --- AKHIR PENGOLAHAN ---
@@ -1210,80 +1298,176 @@ const generateNewSetorNumber = async (connection, cabang, tanggal) => {
 
 const getPrintDataKasir = async (nomor) => {
   const query = `
-        SELECT 
-            h.inv_nomor, h.inv_tanggal, h.inv_nomor_so, h.inv_top, h.inv_ket, h.inv_sc,
-            h.inv_disc, h.inv_ppn, h.inv_bkrm, h.inv_dp, h.inv_pundiamal,
-            h.inv_rptunai, h.inv_rpcard, h.inv_rpvoucher,
-            DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY) AS tempo,
-            c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
-            d.invd_kode, d.invd_ukuran,
-            IFNULL(d.invd_jumlah, 0) AS invd_jumlah,  -- <-- DIBUNGKUS IFNULL
-            IFNULL(d.invd_harga, 0) AS invd_harga,    -- <-- DIBUNGKUS IFNULL
-            IFNULL(d.invd_diskon, 0) AS invd_diskon,  -- <-- DIBUNGKUS IFNULL
-            COALESCE(
-                TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)),
-                f.sd_nama
-            ) AS nama_barang,
-            (IFNULL(d.invd_jumlah, 0) * (IFNULL(d.invd_harga, 0) - IFNULL(d.invd_diskon, 0))) AS total,
-            h.user_create, DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
-            src.gdg_inv_nama AS perush_nama,
-            src.gdg_inv_alamat AS perush_alamat,
-            src.gdg_inv_telp AS perush_telp,
-            src.gdg_inv_instagram,
-            src.gdg_inv_fb
-        FROM tinv_hdr h
-        LEFT JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
-        LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
-        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
-        LEFT JOIN tgudang src ON src.gdg_kode = LEFT(h.inv_nomor, 3)
-        WHERE h.inv_nomor = ?
-        ORDER BY d.invd_nourut;
-    `;
+    SELECT 
+        h.inv_nomor,
+        h.inv_tanggal,
+        h.inv_nomor_so,
+        h.inv_top,
+        h.inv_ket,
+        h.inv_sc,
+        h.inv_disc,
+        h.inv_ppn,
+        h.inv_bkrm,
+        h.inv_dp,
+        h.inv_pundiamal,
+        h.inv_rptunai,
+        h.inv_rpcard,
+        h.inv_rpvoucher,
+
+        DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY) AS tempo,
+
+        c.cus_nama,
+        c.cus_alamat,
+        c.cus_kota,
+        c.cus_telp,
+
+        d.invd_kode,
+        d.invd_ukuran,
+        d.invd_jumlah,
+        d.invd_harga,
+        COALESCE(d.invd_diskon, 0) AS invd_diskon,
+
+        -- ------------------------------------------
+        -- Harga asli sebelum diskon (per pcs)
+        d.invd_harga AS harga_asli,
+
+        -- Harga setelah diskon (per pcs), tapi ikuti aturan promo NOL-LIPAT
+        CASE
+            WHEN (
+              SELECT p.pro_lipat 
+              FROM tpromo p 
+              WHERE p.pro_nomor = h.inv_pro_nomor 
+              LIMIT 1
+            ) = 'N'
+            AND (
+              SELECT COUNT(*) 
+              FROM tinv_dtl x 
+              WHERE x.invd_inv_nomor = h.inv_nomor
+                AND x.invd_diskon > 0
+                AND x.invd_nourut < d.invd_nourut
+            ) > 0
+            THEN d.invd_harga  -- item berikutnya tidak dapat diskon
+            ELSE d.invd_harga - COALESCE(d.invd_diskon,0)
+        END AS harga_setelah_diskon,
+
+        -- Total diskon item
+        CASE
+            WHEN (
+              SELECT p.pro_lipat 
+              FROM tpromo p 
+              WHERE p.pro_nomor = h.inv_pro_nomor 
+              LIMIT 1
+            ) = 'N'
+            AND (
+              SELECT COUNT(*) 
+              FROM tinv_dtl x 
+              WHERE x.invd_inv_nomor = h.inv_nomor
+                AND x.invd_diskon > 0
+                AND x.invd_nourut < d.invd_nourut
+            ) > 0
+            THEN 0  -- tidak dapat diskon
+            ELSE (COALESCE(d.invd_diskon,0) * d.invd_jumlah)
+        END AS total_diskon,
+
+        -- TOTAL SETELAH DISKON (dipakai struk)
+        CASE
+            WHEN (
+              SELECT p.pro_lipat 
+              FROM tpromo p 
+              WHERE p.pro_nomor = h.inv_pro_nomor 
+              LIMIT 1
+            ) = 'N'
+            AND (
+              SELECT COUNT(*) 
+              FROM tinv_dtl x 
+              WHERE x.invd_inv_nomor = h.inv_nomor
+                AND x.invd_diskon > 0
+                AND x.invd_nourut < d.invd_nourut
+            ) > 0
+            THEN (d.invd_jumlah * d.invd_harga)
+            ELSE (d.invd_jumlah * (d.invd_harga - COALESCE(d.invd_diskon,0)))
+        END AS total,
+
+        -- Nama barang
+        COALESCE(
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)),
+            f.sd_nama
+        ) AS nama_barang,
+
+        h.user_create,
+        DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
+        src.gdg_inv_nama AS perush_nama,
+        src.gdg_inv_alamat AS perush_alamat,
+        src.gdg_inv_telp AS perush_telp,
+        src.gdg_inv_instagram,
+        src.gdg_inv_fb
+
+    FROM tinv_hdr h
+    LEFT JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+    LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
+    LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
+    LEFT JOIN tgudang src ON src.gdg_kode = LEFT(h.inv_nomor, 3)
+    WHERE h.inv_nomor = ?
+    ORDER BY d.invd_nourut;
+  `;
 
   const [rows] = await pool.query(query, [nomor]);
   if (rows.length === 0) throw new Error("Data Invoice tidak ditemukan.");
 
-  // --- PENGOLAHAN DATA ---
   const header = { ...rows[0] };
 
-  // Ini adalah bagian yang sebelumnya placeholder, sekarang sudah diisi lengkap
   const details = rows.map((row) => ({
     invd_kode: row.invd_kode,
     nama_barang: row.nama_barang,
     invd_ukuran: row.invd_ukuran,
     invd_jumlah: row.invd_jumlah,
-    invd_harga: row.invd_harga,
+    harga_asli: row.harga_asli,
+    harga_setelah_diskon: row.harga_setelah_diskon,
     invd_diskon: row.invd_diskon,
+    total_diskon: row.total_diskon,
     total: row.total,
   }));
-  // --- AKHIR PENGOLAHAN ---
 
-  // Kalkulasi summary dari header dan detail
-  const subTotal = details.reduce((sum, item) => sum + item.total, 0);
-  const diskonFaktur = header.inv_disc || 0;
-  const netto = subTotal - diskonFaktur;
-  const ppn = (header.inv_ppn / 100) * netto;
-  const grandTotal = netto + ppn + (header.inv_bkrm || 0);
-  const totalBayar =
-    (header.inv_rptunai || 0) +
-    (header.inv_rpcard || 0) +
-    (header.inv_rpvoucher || 0);
+  // Hitung ulang summary untuk struk
+  // Hitung berdasarkan total SETELAH diskon
+  const subTotal = rows.reduce((sum, r) => sum + (Number(r.total) || 0), 0);
+
+  // Diskon faktur (kalau ada)
+  const totalDiskonFaktur = Number(header.inv_disc) || 0;
+
+  // Biaya tambahan
+  const biayaKirim = Number(header.inv_bkrm) || 0;
+  const dp = Number(header.inv_dp) || 0;
+
+  // Grand Total setelah diskon item + diskon faktur
+  const grandTotal = subTotal - totalDiskonFaktur + biayaKirim;
+
+  // Bayar
+  const bayar =
+    Number(header.inv_rptunai || 0) +
+    Number(header.inv_rpcard || 0) +
+    Number(header.inv_rpvoucher || 0);
+
+  // Pundi amal
+  const pundiAmal = Number(header.inv_pundiamal) || 0;
+
+  // Kembali
+  const kembali = bayar > grandTotal ? bayar - grandTotal : 0;
+  const sisaBayar = grandTotal > bayar ? grandTotal - bayar : 0;
 
   header.summary = {
     subTotal,
-    diskon: diskonFaktur,
-    netto,
-    ppn,
-    biayaKirim: header.inv_bkrm || 0,
-    dp: header.inv_dp || 0,
+    diskon: totalDiskonFaktur,
+    netto: subTotal - totalDiskonFaktur,
+    biayaKirim,
+    dp,
     grandTotal,
-    bayar: totalBayar,
-    pundiAmal: header.inv_pundiamal,
-    kembali: totalBayar - (grandTotal - (header.inv_dp || 0)),
+    bayar,
+    pundiAmal,
+    kembali,
+    sisaBayar,
   };
-  header.terbilang =
-    capitalize(terbilang(header.summary.grandTotal)) + " Rupiah";
 
   return { header, details };
 };
@@ -1658,7 +1842,7 @@ const updateHeaderOnly = async (nomor, payload, user) => {
       diskonRp,
       ppnPersen,
       memberHp,
-      memberNama
+      memberNama,
     } = payload;
 
     const sql = `
@@ -1701,7 +1885,6 @@ const updateHeaderOnly = async (nomor, payload, user) => {
       message: `Header invoice ${nomor} berhasil diperbarui.`,
       nomor,
     };
-
   } catch (error) {
     await connection.rollback();
     throw error;

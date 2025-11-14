@@ -66,17 +66,22 @@ DetailCalc AS (
 ),
 -- Hitung nominal total per invoice
 SumNominal AS (
-    SELECT
-      dc.invd_inv_nomor,
-      ROUND(SUM(
-        CASE 
+  SELECT
+    dc.invd_inv_nomor,
+    -- jumlah detail dengan aturan promo 'kelipatan' yang sama seperti di getDetails
+    ROUND(
+      SUM(
+        CASE
           WHEN dc.lipat = 'N' AND dc.prevDiscountCount > 0
             THEN dc.invd_jumlah * dc.invd_harga
-          ELSE dc.invd_jumlah * (dc.invd_harga - dc.invd_diskon)
+          ELSE dc.invd_jumlah * (dc.invd_harga - COALESCE(dc.invd_diskon, 0))
         END
-      ), 0) AS NominalPiutang
-    FROM DetailCalc dc
-    GROUP BY dc.invd_inv_nomor
+      )
+      - COALESCE(h.inv_disc, 0) -- kurangi diskon faktur (inv_disc) agar total piutang konsisten
+    , 0) AS NominalPiutang
+  FROM DetailCalc dc
+  LEFT JOIN tinv_hdr h ON h.inv_nomor = dc.invd_inv_nomor
+  GROUP BY dc.invd_inv_nomor
 ),
 -- Hitung pembayaran (non-retur + retur) per invoice via tpiutang_hdr -> tpiutang_dtl
 Payments AS (
@@ -130,8 +135,8 @@ FinalList AS (
     h.inv_dp AS Dp,
     h.inv_bkrm AS Biayakirim,
 
-    COALESCE(SN.NominalPiutang, 0) AS Nominal,
-    COALESCE(SN.NominalPiutang, 0) AS Piutang,
+    COALESCE(SN.NominalPiutang,0) AS Nominal,
+    COALESCE(SN.NominalPiutang,0) AS Piutang,
 
     (COALESCE(P.BayarNonRetur,0) + COALESCE(P.BayarRetur,0)) AS Bayar,
 

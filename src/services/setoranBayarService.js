@@ -1,23 +1,25 @@
-const pool = require('../config/database');
+const pool = require("../config/database");
 
 const getCabangList = async (user) => {
-    let query = '';
-    const params = [];
-    if (user.cabang === 'KDC') {
-        // Logika dari Delphi: KDC bisa melihat semua cabang non-pusat
-        query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode NOT IN ("KBS","KPS") ORDER BY gdg_kode';
-    } else {
-        // Cabang biasa hanya melihat dirinya sendiri
-        query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ? ORDER BY gdg_kode';
-        params.push(user.cabang);
-    }
-    const [rows] = await pool.query(query, params);
-    return rows;
+  let query = "";
+  const params = [];
+  if (user.cabang === "KDC") {
+    // Logika dari Delphi: KDC bisa melihat semua cabang non-pusat
+    query =
+      'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode NOT IN ("KBS","KPS") ORDER BY gdg_kode';
+  } else {
+    // Cabang biasa hanya melihat dirinya sendiri
+    query =
+      "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ? ORDER BY gdg_kode";
+    params.push(user.cabang);
+  }
+  const [rows] = await pool.query(query, params);
+  return rows;
 };
 
 const getList = async (filters) => {
-    const { startDate, endDate, cabang } = filters;
-    const query = `
+  const { startDate, endDate, cabang } = filters;
+  const query = `
         SELECT 
             h.sh_nomor AS Nomor,
             h.sh_tanggal AS Tanggal, 
@@ -56,12 +58,12 @@ const getList = async (filters) => {
         GROUP BY h.sh_nomor
         ORDER BY h.sh_tanggal, h.sh_nomor;
     `;
-    const [rows] = await pool.query(query, [cabang, startDate, endDate]);
-    return rows;
+  const [rows] = await pool.query(query, [cabang, startDate, endDate]);
+  return rows;
 };
 
 const getDetails = async (nomor) => {
-    const query = `
+  const query = `
         SELECT 
             d.sd_tanggal AS TglBayar,
             d.sd_inv AS Invoice,
@@ -78,46 +80,59 @@ const getDetails = async (nomor) => {
         WHERE d.sd_sh_nomor = ?
         ORDER BY d.sd_nourut, d.sd_angsur;
     `;
-    const [rows] = await pool.query(query, [nomor]);
-    return rows;
+  const [rows] = await pool.query(query, [nomor]);
+  return rows;
 };
 
 const remove = async (nomor, user) => {
-    const connection = await pool.getConnection();
-    try {
-        await connection.beginTransaction();
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
 
-        const [rows] = await connection.query(
-            `SELECT sh_otomatis, sh_closing, sh_so_nomor, 
+    const [rows] = await connection.query(
+      `SELECT sh_otomatis, sh_closing, sh_so_nomor, 
                     (SELECT COUNT(*) FROM finance.tjurnal WHERE jur_nomor = sh_nomor) > 0 AS isPosted 
-             FROM tsetor_hdr WHERE sh_nomor = ?`, [nomor]
-        );
-        if (rows.length === 0) throw new Error('Data tidak ditemukan.');
-        const setoran = rows[0];
+             FROM tsetor_hdr WHERE sh_nomor = ?`,
+      [nomor]
+    );
+    if (rows.length === 0) throw new Error("Data tidak ditemukan.");
+    const setoran = rows[0];
 
-        // Migrasi validasi dari Delphi
-        if (setoran.sh_otomatis === 'Y') throw new Error('Setoran Otomatis tidak bisa dihapus.');
-        if (nomor.substring(0, 3) !== user.cabang) throw new Error(`Anda tidak berhak menghapus data milik cabang ${nomor.substring(0, 3)}.`);
-        if (setoran.isPosted) throw new Error('Pembayaran ini sudah di-Posting oleh Finance.');
-        if (setoran.sh_closing === 'Y') throw new Error('Data setoran sudah Closing.');
-        if (setoran.sh_so_nomor) throw new Error(`Sudah di-link ke No. SO: ${setoran.sh_so_nomor}.`);
+    // Migrasi validasi dari Delphi
+    if (setoran.sh_otomatis === "Y")
+      throw new Error("Setoran Otomatis tidak bisa dihapus.");
+    if (nomor.substring(0, 3) !== user.cabang)
+      throw new Error(
+        `Anda tidak berhak menghapus data milik cabang ${nomor.substring(
+          0,
+          3
+        )}.`
+      );
+    if (setoran.isPosted)
+      throw new Error("Pembayaran ini sudah di-Posting oleh Finance.");
+    if (setoran.sh_closing === "Y")
+      throw new Error("Data setoran sudah Closing.");
+    if (setoran.sh_so_nomor)
+      throw new Error(`Sudah di-link ke No. SO: ${setoran.sh_so_nomor}.`);
 
-        // Hapus data
-        await connection.query('DELETE FROM tsetor_hdr WHERE sh_nomor = ?', [nomor]);
-        
-        await connection.commit();
-        return { message: `Setoran ${nomor} berhasil dihapus.` };
-    } catch (error) {
-        await connection.rollback();
-        throw error;
-    } finally {
-        connection.release();
-    }
+    // Hapus data
+    await connection.query("DELETE FROM tsetor_hdr WHERE sh_nomor = ?", [
+      nomor,
+    ]);
+
+    await connection.commit();
+    return { message: `Setoran ${nomor} berhasil dihapus.` };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 };
 
 const getExportDetails = async (filters) => {
-    const { startDate, endDate, cabang } = filters;
-    const query = `
+  const { startDate, endDate, cabang } = filters;
+  const query = `
         SELECT 
             h.sh_nomor AS 'Nomor Setoran',
             h.sh_tanggal AS 'Tanggal Setoran',
@@ -136,15 +151,14 @@ const getExportDetails = async (filters) => {
           AND h.sh_tanggal BETWEEN ? AND ?
         ORDER BY h.sh_nomor, d.sd_nourut;
     `;
-    const [rows] = await pool.query(query, [cabang, startDate, endDate]);
-    return rows;
+  const [rows] = await pool.query(query, [cabang, startDate, endDate]);
+  return rows;
 };
 
 module.exports = {
-    getCabangList,
-    getList,
-    getDetails,
-    remove,
-    getExportDetails,
+  getCabangList,
+  getList,
+  getDetails,
+  remove,
+  getExportDetails,
 };
-
