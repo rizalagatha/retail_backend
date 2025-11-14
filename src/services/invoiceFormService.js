@@ -397,7 +397,7 @@ INSERT INTO tinv_hdr (
         header.nomorSo,
         toSqlDate(header.tanggal),
         header.customer.kode,
-        header.customer.level,
+        String(header.customer.level || '').trim().charAt(0),
         header.keterangan,
         header.salesCounter,
 
@@ -434,7 +434,7 @@ WHERE inv_nomor = ?
         header.nomorSo,
         toSqlDate(header.tanggal),
         header.customer.kode,
-        header.customer.level,
+        String(header.customer.level || '').trim().charAt(0),
         header.keterangan,
         header.salesCounter,
         totalDiskon,
