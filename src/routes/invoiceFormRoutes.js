@@ -91,6 +91,8 @@ router.get('/lookup/promo-items/:nomorPromo', verifyToken, controller.getPromoIt
 
 router.get('/lookup/promo/:nomorPromo', verifyToken, controller.getPromoHeader);
 
+router.put("/update-header/:nomor", verifyToken, controller.updateInvoiceHeaderOnly);
+
 // Mengambil detail item dari SO yang dipilih untuk mengisi grid
 router.get(
   "/lookup/so-details/:soNomor",

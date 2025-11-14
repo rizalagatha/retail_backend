@@ -258,7 +258,24 @@ const loadForEdit = async (nomor, user) => {
             TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)),
             f.sd_nama
         ) AS nama_barang,
-        b.brgd_barcode AS barcode
+        b.brgd_barcode AS barcode,
+        IFNULL((
+        SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+        FROM tmasterstok m
+        WHERE m.mst_aktif = 'Y'
+          AND m.mst_cab = ?
+          AND m.mst_brg_kode = d.invd_kode
+          AND m.mst_ukuran = d.invd_ukuran
+        ), 0) AS stok,
+        IFNULL((
+        SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+        FROM tmasterstokso m
+        WHERE m.mst_aktif = 'Y'
+          AND m.mst_cab = ?
+          AND m.mst_brg_kode = d.invd_kode
+          AND m.mst_ukuran = d.invd_ukuran
+          AND m.mst_nomor_so = d.invd_kode 
+        ), 0) AS stokSO
     FROM tinv_dtl d
     LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
     LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.invd_kode AND b.brgd_ukuran = d.invd_ukuran
@@ -266,7 +283,11 @@ const loadForEdit = async (nomor, user) => {
     WHERE d.invd_inv_nomor = ?
     ORDER BY d.invd_nourut;
   `;
-  const [items] = await pool.query(itemsQuery, [nomor]);
+  const [items] = await pool.query(itemsQuery, [
+    user.cabang, // stok
+    user.cabang, // stokSO
+    nomor, // nomor invoice
+  ]);
 
   // 3. Ambil data DP yang tertaut
   const dpQuery = `
@@ -1620,6 +1641,75 @@ const getPromoHeader = async (nomorPromo) => {
   };
 };
 
+const updateHeaderOnly = async (nomor, payload, user) => {
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const {
+      customer,
+      keterangan,
+      salesCounter,
+      top,
+      tanggal,
+      biayaKirim,
+      diskonPersen1,
+      diskonRp,
+      ppnPersen,
+      memberHp,
+      memberNama
+    } = payload;
+
+    const sql = `
+      UPDATE tinv_hdr SET 
+        inv_cus_kode = ?,
+        inv_ket = ?,
+        inv_sc = ?,
+        inv_top = ?,
+        inv_tanggal = ?,
+        inv_bkrm = ?,
+        inv_disc1 = ?,
+        inv_disc = ?,
+        inv_ppn = ?,
+        inv_mem_hp = ?,
+        inv_mem_nama = ?,
+        user_modified = ?,
+        date_modified = NOW()
+      WHERE inv_nomor = ?
+    `;
+
+    await connection.query(sql, [
+      customer,
+      keterangan || "",
+      salesCounter || "",
+      top || 0,
+      toSqlDate(tanggal),
+      biayaKirim || 0,
+      diskonPersen1 || 0,
+      diskonRp || 0,
+      ppnPersen || 0,
+      memberHp || "",
+      memberNama || "",
+      user?.kode || "system",
+      nomor,
+    ]);
+
+    await connection.commit();
+
+    return {
+      message: `Header invoice ${nomor} berhasil diperbarui.`,
+      nomor,
+    };
+
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   searchSo,
   getSoDetailsForGrid,
@@ -1650,4 +1740,5 @@ module.exports = {
   getActivePromos,
   getPromoItems,
   getPromoHeader,
+  updateHeaderOnly,
 };

@@ -310,6 +310,27 @@ const getPromoHeader = async (req, res) => {
   }
 };
 
+const updateInvoiceHeaderOnly = async (req, res) => {
+  try {
+    const nomor = req.params.nomor;
+    const body = req.body;
+
+    if (!body.customer) {
+      return res.status(400).json({ message: "Customer tidak boleh kosong." });
+    }
+    if (!body.tanggal) {
+      return res.status(400).json({ message: "Tanggal tidak boleh kosong." });
+    }
+
+    const result = await service.updateHeaderOnly(nomor, body, req.user);
+
+    res.json(result);
+  } catch (error) {
+    console.error("[updateInvoiceHeaderOnly]", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   loadForEdit,
   save,
@@ -340,4 +361,5 @@ module.exports = {
   getActivePromos,
   getPromoItems,
   getPromoHeader,
+  updateInvoiceHeaderOnly,
 };
