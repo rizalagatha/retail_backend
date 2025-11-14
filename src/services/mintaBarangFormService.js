@@ -184,7 +184,7 @@ const save = async (data, user) => {
     let mtNomor = header.nomor;
     let idrec;
 
-    const customerKode = header.customer ? header.customer.kode : null;
+    const customerKode = header?.customer?.kode ? String(header.customer.kode) : '';
 
     if (isNew) {
       // Logika getmaxnomor dari Delphi
