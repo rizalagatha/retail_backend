@@ -1020,12 +1020,9 @@ const getPrintData = async (nomor) => {
     invd_jumlah: row.invd_jumlah,
 
     // FIX HARGA
-    invd_harga: row.harga_setelah_diskon,
-    invd_harga_asli: row.harga_asli,
-    invd_diskon: row.invd_diskon,
-
-    total_diskon: row.total_diskon,
-    total: row.total,
+    invd_harga: row.invd_harga, // ← harga asli dari DB
+    invd_diskon: row.invd_diskon, // ← diskon per pcs
+    total: row.total, // ← total setelah diskon
   }));
   // --- AKHIR PENGOLAHAN ---
 
