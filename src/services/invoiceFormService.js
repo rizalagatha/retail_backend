@@ -600,7 +600,9 @@ INSERT INTO tinv_dtl (
       const nowTs = format(new Date(), "yyyyMMddHHmmssSSS");
       const detailValues = validItems.map((item, index) => {
         const hargaSetelah = Number(item.harga) - Number(item.diskonRp || 0);
-        const invdIdrec = `${invNomor.replace(/\./g, "")}${String(index + 1).padStart(3,"0")}`;
+        const invdIdrec = `${invNomor.replace(/\./g, "")}${String(
+          index + 1
+        ).padStart(3, "0")}`;
 
         return [
           invdIdrec,
@@ -1100,7 +1102,6 @@ const capitalize = (s) =>
   s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : "";
 
 const getPrintData = async (nomor) => {
-  // Query ini diadaptasi dari query 'cetak' di Delphi Anda
   const query = `
         SELECT 
             h.inv_nomor, h.inv_tanggal, h.inv_nomor_so, h.inv_top, h.inv_ket, h.inv_sc,
@@ -1133,37 +1134,46 @@ const getPrintData = async (nomor) => {
   const [rows] = await pool.query(query, [nomor]);
   if (rows.length === 0) throw new Error("Data Invoice tidak ditemukan.");
 
-  // --- PENGOLAHAN DATA ---
   const header = { ...rows[0] };
 
-  // Ini adalah bagian yang sebelumnya placeholder, sekarang sudah diisi lengkap
   const details = rows.map((row) => ({
     invd_kode: row.invd_kode,
     nama_barang: row.nama_barang,
     invd_ukuran: row.invd_ukuran,
     invd_jumlah: row.invd_jumlah,
-
-    // FIX HARGA
-    invd_harga: row.invd_harga, // ← harga asli dari DB
-    invd_diskon: row.invd_diskon, // ← diskon per pcs
-    total: row.total, // ← total setelah diskon
+    invd_harga: row.invd_harga,
+    invd_diskon: row.invd_diskon,
+    total: row.total,
   }));
-  // --- AKHIR PENGOLAHAN ---
 
-  // Kalkulasi summary dari header dan detail
-  const subTotal = details.reduce((sum, item) => sum + item.total, 0);
+  // =============== FIX DP (AMBIL DARI TSETOR_DTL) ===============
+  const [dpRows] = await pool.query(
+    `
+    SELECT SUM(sd_bayar) AS dpDipakai
+    FROM tsetor_dtl
+    WHERE sd_inv = ?
+      AND sd_ket = 'DP LINK DARI INV'
+    `,
+    [nomor]
+  );
+
+  const dpDipakai = Number(dpRows?.[0]?.dpDipakai || 0);
+
+  // =============== SUMMARY CALC ===============
+  const subTotal = details.reduce((s, it) => s + it.total, 0);
   const diskonFaktur = header.inv_disc || 0;
   const netto = subTotal - diskonFaktur;
-  const ppn = (header.inv_ppn / 100) * netto;
+  const ppn = (Number(header.inv_ppn) / 100) * netto;
   const grandTotal = netto + ppn + (header.inv_bkrm || 0);
-  const totalBayar =
-    (header.inv_rptunai || 0) +
-    (header.inv_rpcard || 0) +
-    (header.inv_rpvoucher || 0);
-  const dp = Number(header.inv_dp || 0);
-  const totalYangHarusDibayar = grandTotal - dp;
 
-  const kembali = Math.max(totalBayar - totalYangHarusDibayar, 0);
+  const bayarTunai = Number(header.inv_rptunai || 0);
+  const bayarCard = Number(header.inv_rpcard || 0);
+  const bayarVoucher = Number(header.inv_rpvoucher || 0);
+
+  // =================== FIX TOTAL BAYAR ===================
+  const totalBayar = bayarTunai + bayarCard + bayarVoucher + dpDipakai;
+
+  const kembali = Math.max(totalBayar - grandTotal, 0);
 
   header.summary = {
     subTotal,
@@ -1171,12 +1181,13 @@ const getPrintData = async (nomor) => {
     netto,
     ppn,
     biayaKirim: header.inv_bkrm || 0,
-    dp,
+    dp: dpDipakai, // << FIX: DP BENAR DARI SETORAN
     grandTotal,
-    bayar: totalBayar,
+    bayar: totalBayar, // << FIX: BAYAR = semua payment + DP
     pundiAmal: header.inv_pundiamal,
-    kembali,
+    kembali, // << FIX: KEMBALIAN BENAR
   };
+
   header.terbilang =
     capitalize(terbilang(header.summary.grandTotal)) + " Rupiah";
 
