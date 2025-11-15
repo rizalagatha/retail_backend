@@ -68,16 +68,9 @@ DetailCalc AS (
 SumNominal AS (
   SELECT
     dc.invd_inv_nomor,
-    -- jumlah detail dengan aturan promo 'kelipatan' yang sama seperti di getDetails
     ROUND(
-      SUM(
-        CASE
-          WHEN dc.lipat = 'N' AND dc.prevDiscountCount > 0
-            THEN dc.invd_jumlah * dc.invd_harga
-          ELSE dc.invd_jumlah * (dc.invd_harga - COALESCE(dc.invd_diskon, 0))
-        END
-      )
-      - COALESCE(h.inv_disc, 0) -- kurangi diskon faktur (inv_disc) agar total piutang konsisten
+      SUM(dc.invd_jumlah * dc.invd_harga)
+      - COALESCE(h.inv_disc, 0)  -- hanya kurangi diskon faktur (inv_disc)
     , 0) AS NominalPiutang
   FROM DetailCalc dc
   LEFT JOIN tinv_hdr h ON h.inv_nomor = dc.invd_inv_nomor
@@ -140,7 +133,11 @@ FinalList AS (
 
     (COALESCE(P.BayarNonRetur,0) + COALESCE(P.BayarRetur,0)) AS Bayar,
 
-    (COALESCE(SN.NominalPiutang,0) - (COALESCE(P.BayarNonRetur,0) + COALESCE(P.BayarRetur,0))) AS SisaPiutang,
+    GREATEST(
+  COALESCE(SN.NominalPiutang,0)
+  - (COALESCE(P.BayarNonRetur,0) + COALESCE(P.BayarRetur,0)),
+  0
+) AS SisaPiutang,
 
     h.inv_cus_kode AS Kdcus,
     c.cus_nama AS Nama,

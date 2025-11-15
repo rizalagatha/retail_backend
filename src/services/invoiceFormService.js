@@ -228,7 +228,9 @@ const searchUnpaidDp = async (customerKode, user) => {
 };
 
 const loadForEdit = async (nomor, user) => {
-  // 1. Ambil data header utama
+  /* ============================
+     1) Ambil HEADER (lengkap + member)
+     ============================ */
   const headerQuery = `
     SELECT 
         h.*,
@@ -236,73 +238,174 @@ const loadForEdit = async (nomor, user) => {
         c.cus_alamat,
         c.cus_kota,
         c.cus_telp,
+
+        -- LEVEL CUSTOMER
         COALESCE(l.level_nama, '') AS level_nama,
         COALESCE(CONCAT(h.inv_cus_level, ' - ', l.level_nama), h.inv_cus_level, '') AS xLevel,
+
+        -- SO
         o.so_tanggal,
-        g.gdg_nama
+
+        -- Gudang
+        g.gdg_nama,
+
+        /* === DATA MEMBER === */
+        h.inv_mem_hp,
+        h.inv_mem_nama,
+        h.inv_mem_alamat,
+        h.inv_mem_gender,
+        h.inv_mem_usia,
+        h.inv_mem_referensi
+
     FROM tinv_hdr h
     LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
     LEFT JOIN tcustomer_level l ON l.level_kode = h.inv_cus_level
     LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
     LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.inv_nomor, 3)
-    WHERE h.inv_nomor = ?;
+    WHERE h.inv_nomor = ?
   `;
   const [headerRows] = await pool.query(headerQuery, [nomor]);
   if (headerRows.length === 0) throw new Error("Data Invoice tidak ditemukan.");
+  const header = headerRows[0];
 
-  // 2. Ambil data detail item
+  /* ============================
+     2) Ambil DETAILS
+        Lengkap + harga asli, harga setelah diskon,
+        promo lipat (logika sama seperti getDetails)
+     ============================ */
   const itemsQuery = `
     SELECT 
         d.*,
+
+        /* Nama barang */
         COALESCE(
-            TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)),
+            TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan,
+                        ' ', a.brg_jeniskain, ' ', a.brg_warna)),
             f.sd_nama
         ) AS nama_barang,
+
+        /* barcode */
         b.brgd_barcode AS barcode,
+
+        /* stok gudang */
         IFNULL((
-        SELECT SUM(m.mst_stok_in - m.mst_stok_out)
-        FROM tmasterstok m
-        WHERE m.mst_aktif = 'Y'
-          AND m.mst_cab = ?
-          AND m.mst_brg_kode = d.invd_kode
-          AND m.mst_ukuran = d.invd_ukuran
+            SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+            FROM tmasterstok m
+            WHERE m.mst_aktif = 'Y'
+              AND m.mst_cab = ?
+              AND m.mst_brg_kode = d.invd_kode
+              AND m.mst_ukuran = d.invd_ukuran
         ), 0) AS stok,
+
+        /* stok SO */
         IFNULL((
-        SELECT SUM(m.mst_stok_in - m.mst_stok_out)
-        FROM tmasterstokso m
-        WHERE m.mst_aktif = 'Y'
-          AND m.mst_cab = ?
-          AND m.mst_brg_kode = d.invd_kode
-          AND m.mst_ukuran = d.invd_ukuran
-          AND m.mst_nomor_so = d.invd_kode 
-        ), 0) AS stokSO
+            SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+            FROM tmasterstokso m
+            WHERE m.mst_aktif = 'Y'
+              AND m.mst_cab = ?
+              AND m.mst_brg_kode = d.invd_kode
+              AND m.mst_ukuran = d.invd_ukuran
+              AND m.mst_nomor_so = d.invd_kode
+        ), 0) AS stokSO,
+
+        /* qty SO (open order) */
+        IFNULL((
+            SELECT SUM(dd.sod_jumlah)
+            FROM tso_dtl dd
+            WHERE dd.sod_so_nomor = h.inv_nomor_so
+              AND dd.sod_kode = d.invd_kode
+              AND dd.sod_ukuran = d.invd_ukuran
+        ), 0) AS qtySO,
+
+        /* PROMO LIPAT (ambil dari invoice header) */
+        (SELECT p.pro_lipat 
+         FROM tpromo p 
+         WHERE p.pro_nomor = h.inv_pro_nomor LIMIT 1) AS lipat,
+
+        /* Hitung jumlah item diskon sebelumnya (logika promo Tidak Kelipatan) */
+        (
+          SELECT COUNT(*)
+          FROM tinv_dtl x
+          WHERE x.invd_inv_nomor = h.inv_nomor
+            AND x.invd_diskon > 0
+            AND x.invd_nourut < d.invd_nourut
+        ) AS prevDiscountCount
+
     FROM tinv_dtl d
+    LEFT JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
     LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
     LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.invd_kode AND b.brgd_ukuran = d.invd_ukuran
     LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
     WHERE d.invd_inv_nomor = ?
-    ORDER BY d.invd_nourut;
+    ORDER BY d.invd_nourut
   `;
-  const [items] = await pool.query(itemsQuery, [
-    user.cabang, // stok
-    user.cabang, // stokSO
-    nomor, // nomor invoice
+  const [rawItems] = await pool.query(itemsQuery, [
+    user.cabang,
+    user.cabang,
+    nomor,
   ]);
 
-  // 3. Ambil data DP yang tertaut
+  /* ============================
+     3) NORMALISASI & HITUNG DISKON
+     ============================ */
+  const items = rawItems.map((row) => {
+    const hargaAsli = Number(row.invd_harga || 0);
+    const diskRp = Number(row.invd_diskon || 0);
+    const qty = Number(row.invd_jumlah || 0);
+
+    // PROMO TIDAK KELIPATAN: item ke-2 dst tidak dapat diskon
+    let hargaSetelah = 0;
+    if (row.lipat === "N" && row.prevDiscountCount > 0) {
+      hargaSetelah = hargaAsli; // harga normal
+    } else {
+      hargaSetelah = hargaAsli - diskRp;
+    }
+
+    return {
+      kode: row.invd_kode,
+      ukuran: row.invd_ukuran,
+      jumlah: qty,
+
+      barcode: row.barcode,
+      stok: row.stok,
+      stokSO: row.stokSO,
+      qtySO: row.qtySO,
+
+      nama_barang: row.nama_barang,
+
+      hargaAsli,
+      diskonRp: diskRp,
+      harga: hargaSetelah,
+
+      total: hargaSetelah * qty,
+      nourut: row.invd_nourut,
+    };
+  });
+
+  /* ============================
+     4) Ambil data DP yang pernah dipakai
+     ============================ */
   const dpQuery = `
     SELECT 
         h.sh_nomor AS nomor,
         h.sh_tanggal AS tanggal,
-        IF(h.sh_jenis=0, 'TUNAI', IF(h.sh_jenis=1, 'TRANSFER', 'GIRO')) AS jenis,
+        CASE 
+          WHEN h.sh_jenis = 0 THEN 'TUNAI'
+          WHEN h.sh_jenis = 1 THEN 'TRANSFER'
+          ELSE 'GIRO'
+        END AS jenis,
         d.sd_bayar AS nominal
     FROM tsetor_dtl d
     JOIN tsetor_hdr h ON h.sh_nomor = d.sd_sh_nomor
-    WHERE d.sd_inv = ? AND d.sd_ket = 'DP LINK DARI INV';
+    WHERE d.sd_inv = ? 
+      AND d.sd_ket = 'DP LINK DARI INV'
   `;
   const [dps] = await pool.query(dpQuery, [nomor]);
 
-  return { header: headerRows[0], items, dps };
+  /* ============================
+     RETURN
+     ============================ */
+  return { header, items, dps };
 };
 
 const saveData = async (payload, user) => {
@@ -364,7 +467,7 @@ const saveData = async (payload, user) => {
     const sisaBayar = Math.max(grandTotal - bayarTotal, 0);
 
     const bayarTunaiBersih = Math.max(
-      (Number(payment.tunai) || 0) - kembalianFinal,
+      Number(payment.tunai || 0) - kembalianBeforePundi,
       0
     );
 
@@ -380,11 +483,10 @@ const saveData = async (payload, user) => {
     const invNomor = isNew
       ? await generateNewInvNumber(header.gudang.kode, header.tanggal)
       : header.nomor;
-    const idrec = isNew
+    let idrec = isNew
       ? `${header.gudang.kode}INV${format(new Date(), "yyyyMMddHHmmssSSS")}`
       : header.idrec;
     if (!isNew && (!idrec || String(idrec).trim() === "")) {
-      // ambil inv_idrec dari DB agar tidak null saat insert detail
       const [hdrRows] = await connection.query(
         "SELECT inv_idrec FROM tinv_hdr WHERE inv_nomor = ? LIMIT 1",
         [invNomor]
@@ -392,7 +494,7 @@ const saveData = async (payload, user) => {
       if (hdrRows && hdrRows.length > 0) {
         idrec = hdrRows[0].inv_idrec;
       } else {
-        // fallback: buat idrec baru (meskipun seharusnya header sudah punya)
+        // fallback: buat idrec baru
         idrec = `${header.gudang.kode}INV${format(
           new Date(),
           "yyyyMMddHHmmssSSS"
