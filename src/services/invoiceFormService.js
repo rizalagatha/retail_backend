@@ -600,10 +600,7 @@ INSERT INTO tinv_dtl (
       const nowTs = format(new Date(), "yyyyMMddHHmmssSSS");
       const detailValues = validItems.map((item, index) => {
         const hargaSetelah = Number(item.harga) - Number(item.diskonRp || 0);
-        const invdIdrec = `${invNomor}-D-${String(index + 1).padStart(
-          3,
-          "0"
-        )}-${nowTs}`;
+        const invdIdrec = `${invNomor.replace(/\./g, "")}${String(index + 1).padStart(3,"0")}`;
 
         return [
           invdIdrec,
@@ -751,6 +748,9 @@ VALUES (?, ?, 'Pembayaran Card', ?, ?, ?);
     await connection.query("DELETE FROM tpiutang_hdr WHERE ph_inv_nomor = ?", [
       invNomor,
     ]);
+    const dpTotal = Number(header.inv_dp || 0);
+    const piutangFinal = Math.max(grandTotal - dpTotal, 0);
+
     const piutangHdrSql = `INSERT INTO tpiutang_hdr (ph_nomor, ph_tanggal, ph_cus_kode, ph_inv_nomor, ph_top, ph_nominal) VALUES (?, ?, ?, ?, ?, ?);`;
     await connection.query(piutangHdrSql, [
       piutangNomor,
@@ -758,7 +758,7 @@ VALUES (?, ?, 'Pembayaran Card', ?, ?, ?);
       header.customer.kode,
       invNomor,
       header.top,
-      grandTotal,
+      piutangFinal,
     ]);
 
     // --- piutang detail: use netto and biaya kirim ---
