@@ -383,6 +383,22 @@ const saveData = async (payload, user) => {
     const idrec = isNew
       ? `${header.gudang.kode}INV${format(new Date(), "yyyyMMddHHmmssSSS")}`
       : header.idrec;
+    if (!isNew && (!idrec || String(idrec).trim() === "")) {
+      // ambil inv_idrec dari DB agar tidak null saat insert detail
+      const [hdrRows] = await connection.query(
+        "SELECT inv_idrec FROM tinv_hdr WHERE inv_nomor = ? LIMIT 1",
+        [invNomor]
+      );
+      if (hdrRows && hdrRows.length > 0) {
+        idrec = hdrRows[0].inv_idrec;
+      } else {
+        // fallback: buat idrec baru (meskipun seharusnya header sudah punya)
+        idrec = `${header.gudang.kode}INV${format(
+          new Date(),
+          "yyyyMMddHHmmssSSS"
+        )}`;
+      }
+    }
     const piutangNomor = `${header.customer.kode}${invNomor}`;
 
     // 1. INSERT/UPDATE tinv_hdr
@@ -436,7 +452,7 @@ UPDATE tinv_hdr SET
   inv_nomor_so = ?, inv_tanggal = ?, inv_cus_kode = ?, inv_cus_level = ?, inv_ket = ?, inv_sc = ?,
   inv_disc = ?, inv_bkrm = ?, inv_dp = ?, inv_bayar = ?, inv_pundiamal = ?,
   inv_rptunai = ?, inv_novoucher = ?, inv_rpvoucher = ?, inv_rpcard = ?, inv_nosetor = ?,
-  inv_kembali = ?,                       -- PATCH
+  inv_kembali = ?,
   user_modified = ?, date_modified = NOW()
 WHERE inv_nomor = ?
 `;
@@ -470,6 +486,7 @@ WHERE inv_nomor = ?
     await connection.query("DELETE FROM tinv_dtl WHERE invd_inv_nomor = ?", [
       invNomor,
     ]);
+
     if (validItems.length > 0) {
       const detailSql = `
 INSERT INTO tinv_dtl (
@@ -478,11 +495,16 @@ INSERT INTO tinv_dtl (
 ) VALUES ?
 `;
 
+      const nowTs = format(new Date(), "yyyyMMddHHmmssSSS");
       const detailValues = validItems.map((item, index) => {
         const hargaSetelah = Number(item.harga) - Number(item.diskonRp || 0);
+        const invdIdrec = `${invNomor}-D-${String(index + 1).padStart(
+          3,
+          "0"
+        )}-${nowTs}`;
 
         return [
-          idrec,
+          invdIdrec,
           invNomor,
           item.kode,
           item.ukuran || "",
