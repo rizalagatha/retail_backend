@@ -1160,6 +1160,10 @@ const getPrintData = async (nomor) => {
     (header.inv_rptunai || 0) +
     (header.inv_rpcard || 0) +
     (header.inv_rpvoucher || 0);
+  const dp = Number(header.inv_dp || 0);
+  const totalYangHarusDibayar = grandTotal - dp;
+
+  const kembali = Math.max(totalBayar - totalYangHarusDibayar, 0);
 
   header.summary = {
     subTotal,
@@ -1167,11 +1171,11 @@ const getPrintData = async (nomor) => {
     netto,
     ppn,
     biayaKirim: header.inv_bkrm || 0,
-    dp: header.inv_dp || 0,
+    dp,
     grandTotal,
     bayar: totalBayar,
     pundiAmal: header.inv_pundiamal,
-    kembali: totalBayar - (grandTotal - (header.inv_dp || 0)),
+    kembali,
   };
   header.terbilang =
     capitalize(terbilang(header.summary.grandTotal)) + " Rupiah";
