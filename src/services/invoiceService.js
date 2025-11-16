@@ -81,6 +81,14 @@ SumNominal AS (
   LEFT JOIN tinv_hdr h ON h.inv_nomor = dc.invd_inv_nomor
   GROUP BY dc.invd_inv_nomor
 ),
+DPUsed AS (
+    SELECT 
+        sd.sd_inv AS inv_nomor,
+        SUM(sd.sd_bayar) AS dpDipakai
+    FROM tsetor_dtl sd
+    WHERE sd.sd_ket = 'DP LINK DARI INV'
+    GROUP BY sd.sd_inv
+),
 -- Hitung pembayaran (non-retur + retur) per invoice via tpiutang_hdr -> tpiutang_dtl
 Payments AS (
     SELECT 
@@ -136,7 +144,12 @@ FinalList AS (
     COALESCE(SN.NominalPiutang,0) AS Nominal,
     COALESCE(SN.NominalPiutang,0) AS Piutang,
 
-    (COALESCE(P.BayarNonRetur,0) + COALESCE(P.BayarRetur,0)) AS Bayar,
+    (
+        h.inv_bayar         
+      + COALESCE(DP.dpDipakai,0) 
+      - h.inv_pundiamal    
+      - h.inv_kembali      
+    ) AS Bayar,
 
     GREATEST(
   COALESCE(SN.NominalPiutang,0)
@@ -178,6 +191,7 @@ FinalList AS (
   LEFT JOIN finance.trekening rek ON rek.rek_kode = sh.sh_akun
   LEFT JOIN Payments P ON P.ph_inv_nomor = h.inv_nomor
   LEFT JOIN SumNominal SN ON SN.invd_inv_nomor = h.inv_nomor
+  LEFT JOIN DPUsed DP ON DP.inv_nomor = h.inv_nomor
   WHERE h.inv_sts_pro = 0
     AND h.inv_tanggal BETWEEN ? AND ?
     ${cabangFilter}
