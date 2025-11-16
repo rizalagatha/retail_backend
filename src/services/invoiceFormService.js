@@ -1486,7 +1486,7 @@ const getPrintDataKasir = async (nomor) => {
 
         -- ------------------------------------------
         -- Harga asli sebelum diskon (per pcs)
-        d.invd_harga AS harga_asli,
+        (d.invd_harga + COALESCE(d.invd_diskon, 0)) AS harga_asli,
 
         -- Harga setelah diskon (per pcs), tapi ikuti aturan promo NOL-LIPAT
         CASE
@@ -1504,7 +1504,7 @@ const getPrintDataKasir = async (nomor) => {
                 AND x.invd_nourut < d.invd_nourut
             ) > 0
             THEN d.invd_harga  -- item berikutnya tidak dapat diskon
-            ELSE d.invd_harga - COALESCE(d.invd_diskon,0)
+            ELSE d.invd_harga
         END AS harga_setelah_diskon,
 
         -- Total diskon item
@@ -1542,7 +1542,7 @@ const getPrintDataKasir = async (nomor) => {
                 AND x.invd_nourut < d.invd_nourut
             ) > 0
             THEN (d.invd_jumlah * d.invd_harga)
-            ELSE (d.invd_jumlah * (d.invd_harga - COALESCE(d.invd_diskon,0)))
+            ELSE (d.invd_jumlah * d.invd_harga)
         END AS total,
 
         -- Nama barang
@@ -1588,7 +1588,11 @@ const getPrintDataKasir = async (nomor) => {
 
   // Hitung ulang summary untuk struk
   // Hitung berdasarkan total SETELAH diskon
-  const subTotal = rows.reduce((sum, r) => sum + (Number(r.total) || 0), 0);
+  const subTotal = rows.reduce((sum, r) => {
+    const hargaAsli = Number(r.harga_asli || 0);
+    const qty = Number(r.invd_jumlah || 0);
+    return sum + hargaAsli * qty;
+  }, 0);
 
   // Diskon faktur (kalau ada)
   const totalDiskonFaktur = Number(header.inv_disc) || 0;
@@ -1598,7 +1602,7 @@ const getPrintDataKasir = async (nomor) => {
   const dp = Number(header.inv_dp) || 0;
 
   // Grand Total setelah diskon item + diskon faktur
-  const grandTotal = subTotal - totalDiskonFaktur + biayaKirim;
+  const grandTotal = header.inv_rptunai + header.inv_rpcard + header.inv_rpvoucher;
 
   // Bayar
   const bayar = Number(header.inv_bayar || 0);
