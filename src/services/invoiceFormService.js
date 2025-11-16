@@ -429,7 +429,7 @@ const saveData = async (payload, user) => {
     const subTotal =
       subTotalFromPayload > 0 ? subTotalFromPayload : computedSubTotal;
 
-    const totalDiskon = totalDiskonItem + totalDiskonFaktur;
+    const totalDiskon = totalDiskonFaktur;
     const netto =
       Number(totals.netto || 0) > 0
         ? Number(totals.netto)
@@ -599,7 +599,9 @@ INSERT INTO tinv_dtl (
 
       const nowTs = format(new Date(), "yyyyMMddHHmmssSSS");
       const detailValues = validItems.map((item, index) => {
-        const hargaSetelah = Number(item.harga) - Number(item.diskonRp || 0);
+        const hargaAsli = Number(item.harga || 0); // harga asli per pcs
+        const diskonRp = Number(item.diskonRp || 0); // potongan per pcs
+
         const invdIdrec = `${invNomor.replace(/\./g, "")}${String(
           index + 1
         ).padStart(3, "0")}`;
@@ -611,20 +613,20 @@ INSERT INTO tinv_dtl (
           item.ukuran || "",
           Number(item.jumlah || 0),
 
-          // ✔ harga setelah diskon (WAJIB!)
-          hargaSetelah,
+          // ⭐ SIMPAN HARGA ASLI, bukan harga setelah diskon
+          hargaAsli, // invd_harga
 
           Number(item.hpp || 0),
 
-          // diskon persen (boleh 0)
           Number(item.diskonPersen || 0),
 
-          // diskon rupiah (potongan per pcs)
-          Number(item.diskonRp || 0),
+          // ⭐ SIMPAN POTONGAN (RP) PER PCS
+          diskonRp, // invd_diskon
 
           index + 1,
         ];
       });
+
       await connection.query(detailSql, [detailValues]);
     }
 
@@ -1486,26 +1488,25 @@ const getPrintDataKasir = async (nomor) => {
 
         -- ------------------------------------------
         -- Harga asli sebelum diskon (per pcs)
-        (d.invd_harga + COALESCE(d.invd_diskon, 0)) AS harga_asli,
+        d.invd_harga AS harga_asli,
 
         -- Harga setelah diskon (per pcs), tapi ikuti aturan promo NOL-LIPAT
         CASE
-            WHEN (
-              SELECT p.pro_lipat 
-              FROM tpromo p 
-              WHERE p.pro_nomor = h.inv_pro_nomor 
-              LIMIT 1
-            ) = 'N'
-            AND (
-              SELECT COUNT(*) 
-              FROM tinv_dtl x 
-              WHERE x.invd_inv_nomor = h.inv_nomor
-                AND x.invd_diskon > 0
-                AND x.invd_nourut < d.invd_nourut
-            ) > 0
-            THEN d.invd_harga  -- item berikutnya tidak dapat diskon
-            ELSE d.invd_harga
-        END AS harga_setelah_diskon,
+    WHEN (
+      SELECT p.pro_lipat
+      FROM tpromo p
+      WHERE p.pro_nomor = h.inv_pro_nomor LIMIT 1
+    ) = 'N'
+    AND (
+      SELECT COUNT(*)
+      FROM tinv_dtl x
+      WHERE x.invd_inv_nomor = h.inv_nomor
+        AND x.invd_diskon > 0
+        AND x.invd_nourut < d.invd_nourut
+    ) > 0
+    THEN d.invd_harga  -- item tidak dapat diskon
+    ELSE (d.invd_harga - d.invd_diskon) -- item dapat diskon
+END AS harga_setelah_diskon,
 
         -- Total diskon item
         CASE
@@ -1528,22 +1529,21 @@ const getPrintDataKasir = async (nomor) => {
 
         -- TOTAL SETELAH DISKON (dipakai struk)
         CASE
-            WHEN (
-              SELECT p.pro_lipat 
-              FROM tpromo p 
-              WHERE p.pro_nomor = h.inv_pro_nomor 
-              LIMIT 1
-            ) = 'N'
-            AND (
-              SELECT COUNT(*) 
-              FROM tinv_dtl x 
-              WHERE x.invd_inv_nomor = h.inv_nomor
-                AND x.invd_diskon > 0
-                AND x.invd_nourut < d.invd_nourut
-            ) > 0
-            THEN (d.invd_jumlah * d.invd_harga)
-            ELSE (d.invd_jumlah * d.invd_harga)
-        END AS total,
+    WHEN (
+      SELECT p.pro_lipat
+      FROM tpromo p
+      WHERE p.pro_nomor = h.inv_pro_nomor LIMIT 1
+    ) = 'N'
+    AND (
+      SELECT COUNT(*)
+      FROM tinv_dtl x
+      WHERE x.invd_inv_nomor = h.inv_nomor
+        AND x.invd_diskon > 0
+        AND x.invd_nourut < d.invd_nourut
+    ) > 0
+    THEN (d.invd_jumlah * d.invd_harga)  -- item tidak dapat diskon
+    ELSE (d.invd_jumlah * (d.invd_harga - d.invd_diskon))
+END AS total,
 
         -- Nama barang
         COALESCE(
@@ -1589,20 +1589,27 @@ const getPrintDataKasir = async (nomor) => {
   // Hitung ulang summary untuk struk
   // Hitung berdasarkan total SETELAH diskon
   const subTotal = rows.reduce((sum, r) => {
-    const hargaAsli = Number(r.harga_asli || 0);
-    const qty = Number(r.invd_jumlah || 0);
-    return sum + hargaAsli * qty;
+    return sum + Number(r.harga_asli || 0) * Number(r.invd_jumlah || 0);
+  }, 0);
+
+  // Total diskon item
+  const totalDiskonItem = rows.reduce((sum, r) => {
+    return sum + Number(r.total_diskon || 0);
   }, 0);
 
   // Diskon faktur (kalau ada)
   const totalDiskonFaktur = Number(header.inv_disc) || 0;
+
+  // Netto setelah diskon item + diskon faktur
+  const netto = subTotal - totalDiskonItem - totalDiskonFaktur;
 
   // Biaya tambahan
   const biayaKirim = Number(header.inv_bkrm) || 0;
   const dp = Number(header.inv_dp) || 0;
 
   // Grand Total setelah diskon item + diskon faktur
-  const grandTotal = header.inv_rptunai + header.inv_rpcard + header.inv_rpvoucher;
+  const grandTotal =
+    header.inv_rptunai + header.inv_rpcard + header.inv_rpvoucher;
 
   // Bayar
   const bayar = Number(header.inv_bayar || 0);
@@ -1616,8 +1623,9 @@ const getPrintDataKasir = async (nomor) => {
 
   header.summary = {
     subTotal,
-    diskon: totalDiskonFaktur,
-    netto: subTotal - totalDiskonFaktur,
+    totalDiskonItem,
+    diskonFaktur: totalDiskonFaktur,
+    netto,
     biayaKirim,
     dp,
     grandTotal,
@@ -1627,6 +1635,8 @@ const getPrintDataKasir = async (nomor) => {
     sisaBayar,
     inv_kembali: kembali,
   };
+
+  header.summary.diskon = totalDiskonItem + totalDiskonFaktur;
 
   return { header, details };
 };

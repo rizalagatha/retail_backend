@@ -68,10 +68,15 @@ DetailCalc AS (
 SumNominal AS (
   SELECT
     dc.invd_inv_nomor,
+
     ROUND(
-      SUM(dc.invd_jumlah * dc.invd_harga)
-      - COALESCE(h.inv_disc, 0)  -- hanya kurangi diskon faktur (inv_disc)
+      SUM(
+        dc.invd_jumlah *
+        (dc.invd_harga - dc.invd_diskon)   -- dikurangi diskon item
+      )
+      - COALESCE(h.inv_disc, 0)            -- dikurangi diskon faktur
     , 0) AS NominalPiutang
+
   FROM DetailCalc dc
   LEFT JOIN tinv_hdr h ON h.inv_nomor = dc.invd_inv_nomor
   GROUP BY dc.invd_inv_nomor
