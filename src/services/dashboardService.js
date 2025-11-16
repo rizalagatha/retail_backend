@@ -432,7 +432,7 @@ const getTotalSisaPiutang = async (user) => {
   let params = [user.cabang];
 
   if (user.cabang === "KDC") {
-    branchFilter = ""; 
+    branchFilter = "";
     params = [];
   }
 
@@ -451,9 +451,9 @@ const getTotalSisaPiutang = async (user) => {
     ) v ON v.pd_ph_nomor = u.ph_nomor
     WHERE 1=1 ${branchFilter};
   `;
-  
+
   const [rows] = await pool.query(query, params);
-  return rows[0]; 
+  return rows[0];
 };
 
 /**
@@ -489,6 +489,62 @@ const getPiutangPerCabang = async (user) => {
   return rows;
 };
 
+const getTotalStock = async (user) => {
+  // Jika KDC -> total semua cabang
+  // Jika store -> hanya cabang user.cabang
+  let branchFilter = "AND m.mst_cab = ?";
+  let params = [];
+  if (user.cabang && user.cabang !== "KDC") {
+    params.push(user.cabang);
+  } else {
+    branchFilter = ""; // semua
+  }
+
+  const query = `
+    SELECT
+      SUM(IFNULL(s.stok,0)) AS totalStock
+    FROM (
+      SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_in - mst_stok_out) AS stok, mst_cab
+      FROM (
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_tanggal, mst_aktif FROM tmasterstok
+        UNION ALL
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_tanggal, mst_aktif FROM tmasterstokso
+      ) m
+      WHERE m.mst_aktif = 'Y' ${branchFilter}
+      GROUP BY mst_brg_kode, mst_ukuran, mst_cab
+    ) s;
+  `;
+
+  const [rows] = await pool.query(query, params);
+  return rows[0] || { totalStock: 0 };
+};
+
+const getStockPerCabang = async () => {
+  // Breakdown stok per cabang (untuk KDC hover)
+  const query = `
+    SELECT
+      IFNULL(m.mst_cab, 'UNKNOWN') AS kode_cabang,
+      COALESCE(g.gdg_nama, IFNULL(m.mst_cab,'-')) AS nama_cabang,
+      SUM(m.stok) AS totalStock
+    FROM (
+      SELECT mst_brg_kode, mst_ukuran, mst_cab, SUM(mst_stok_in - mst_stok_out) AS stok
+      FROM (
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_tanggal, mst_aktif FROM tmasterstok
+        UNION ALL
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_tanggal, mst_aktif FROM tmasterstokso
+      ) t
+      WHERE t.mst_aktif = 'Y'
+      GROUP BY mst_cab, mst_brg_kode, mst_ukuran
+    ) m
+    LEFT JOIN tgudang g ON g.gdg_kode = m.mst_cab
+    GROUP BY m.mst_cab, g.gdg_nama
+    ORDER BY totalStock DESC;
+  `;
+
+  const [rows] = await pool.query(query);
+  return rows;
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -501,4 +557,6 @@ module.exports = {
   getStagnantStockSummary,
   getTotalSisaPiutang,
   getPiutangPerCabang,
+  getTotalStock,
+  getStockPerCabang,
 };

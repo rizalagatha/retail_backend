@@ -1,3 +1,4 @@
+const { get } = require("../routes/invoiceFormRoutes");
 const dashboardService = require("../services/dashboardService");
 
 const getTodayStats = async (req, res) => {
@@ -106,6 +107,26 @@ const getPiutangPerCabang = async (req, res) => {
   }
 };
 
+const getTotalStok = async (req, res) => {
+  try {
+    const data = await dashboardService.getTotalStock(req.user);
+    res.json(data);
+  } catch (error) {
+    console.error("Error in getTotalStok controller:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getTotalStokPerCabang = async (req, res) => {
+  try {
+    const data = await dashboardService.getStockPerCabang(req.user);
+    res.json(data);
+  } catch (error) {
+    console.error("Error in getTotalStokPerCabang controller:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -118,4 +139,6 @@ module.exports = {
   getStagnantStockSummary,
   getTotalSisaPiutang,
   getPiutangPerCabang,
+  getTotalStok,
+  getTotalStokPerCabang
 };

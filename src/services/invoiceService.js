@@ -152,9 +152,13 @@ FinalList AS (
     ) AS Bayar,
 
     GREATEST(
-  COALESCE(SN.NominalPiutang,0)
-  - (COALESCE(P.BayarNonRetur,0) + COALESCE(P.BayarRetur,0)),
-  0
+    COALESCE(SN.NominalPiutang,0)
+    - (
+        (h.inv_bayar + COALESCE(DP.dpDipakai,0)) 
+        - h.inv_pundiamal 
+        - h.inv_kembali
+      ),
+    0
 ) AS SisaPiutang,
 
     h.inv_cus_kode AS Kdcus,

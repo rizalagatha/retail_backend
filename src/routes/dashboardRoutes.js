@@ -59,9 +59,17 @@ router.get(
 );
 
 router.get(
-  '/piutang-per-cabang',
+  "/piutang-per-cabang",
   verifyToken,
   dashboardController.getPiutangPerCabang
+);
+
+router.get("/total-stok", verifyToken, dashboardController.getTotalStok);
+
+router.get(
+  "/total-stok-per-cabang",
+  verifyToken,
+  dashboardController.getTotalStokPerCabang
 );
 
 module.exports = router;

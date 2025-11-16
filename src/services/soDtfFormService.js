@@ -581,6 +581,113 @@ const findImageFile = (nomor) => {
   return null;
 };
 
+/**
+ * Lookup daftar SO yang sudah DP, untuk dipilih di halaman SO DTF.
+ */
+const searchSoForDtf = async (term) => {
+  const query = `
+    SELECT 
+      h.so_nomor AS Nomor,
+      h.so_tanggal AS Tanggal,
+      c.cus_nama AS Customer,
+      c.cus_alamat AS Alamat,
+      c.cus_kota AS Kota,
+      IFNULL(SUM(s.sh_nominal), 0) AS totalBayar,
+      IFNULL(h.so_total, 0) AS totalSo
+    FROM tso_hdr h
+    LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
+    LEFT JOIN tsetor_hdr s ON s.sh_so_nomor = h.so_nomor
+    WHERE h.so_aktif = 'Y'
+      AND (h.so_nomor LIKE ? OR c.cus_nama LIKE ?)
+    GROUP BY h.so_nomor
+    HAVING totalBayar >= totalSo
+    ORDER BY h.so_tanggal DESC
+    LIMIT 50;
+  `;
+  const params = [`%${term || ""}%`, `%${term || ""}%`];
+  const [rows] = await pool.query(query, params);
+  return rows;
+};
+
+/**
+ * Ambil detail lengkap 1 SO (header + item + DP), termasuk order custom JSON.
+ */
+const getSoDetailForDtf = async (nomor) => {
+  // === HEADER ===
+  const headerQuery = `
+    SELECT 
+      h.so_nomor AS nomor,
+      h.so_tanggal AS tanggal,
+      h.so_pen_nomor AS penawaran,
+      h.so_ket AS keterangan,
+      h.so_sc AS salesCounter,
+      h.so_cus_kode AS customerKode,
+      c.cus_nama AS customerNama,
+      c.cus_alamat AS customerAlamat,
+      c.cus_kota AS customerKota,
+      c.cus_telp AS customerTelp,
+      h.so_cus_level AS levelKode,
+      l.level_nama AS levelNama,
+      h.so_top AS top,
+      h.so_ppn AS ppnPersen,
+      h.so_aktif AS statusSo,
+      h.so_jenisorder AS jenisOrder,
+      h.so_namadtf AS namaDtf
+    FROM tso_hdr h
+    LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
+    LEFT JOIN tcustomer_level l ON l.level_kode = h.so_cus_level
+    WHERE h.so_nomor = ?
+  `;
+  const [headerRows] = await pool.query(headerQuery, [nomor]);
+  if (headerRows.length === 0) return null;
+  const header = headerRows[0];
+
+  // === DETAIL ITEM ===
+  const itemQuery = `
+    SELECT 
+      d.sod_kode AS kode,
+      COALESCE(
+        TRIM(CONCAT(b.brg_jeniskaos, ' ', b.brg_tipe, ' ', b.brg_lengan, ' ', b.brg_jeniskain, ' ', b.brg_warna)),
+        d.sod_custom_nama
+      ) AS nama,
+      d.sod_ukuran AS ukuran,
+      d.sod_jumlah AS jumlah,
+      d.sod_harga AS harga,
+      d.sod_disc AS diskonPersen,
+      d.sod_diskon AS diskonRp,
+      (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS total,
+      d.sod_custom,
+      d.sod_custom_data,
+      d.sod_custom_nama
+    FROM tso_dtl d
+    LEFT JOIN tbarangdc b ON b.brg_kode = d.sod_kode
+    WHERE d.sod_so_nomor = ?
+    ORDER BY d.sod_nourut
+  `;
+  const [itemRows] = await pool.query(itemQuery, [nomor]);
+
+  // === Parse JSON custom order ===
+  const itemsParsed = itemRows.map((it) => {
+    if (it.sod_custom === "Y" && it.sod_custom_data) {
+      try {
+        const parsed = JSON.parse(it.sod_custom_data);
+        return {
+          ...it,
+          isCustomOrder: true,
+          ukuranKaos: parsed.ukuranKaos || [],
+          titikCetak: parsed.titikCetak || [],
+        };
+      } catch {
+        return { ...it, isCustomOrder: true, ukuranKaos: [], titikCetak: [] };
+      }
+    }
+    return { ...it, isCustomOrder: false };
+  });
+
+  return { header, items: itemsParsed };
+};
+
+
 module.exports = {
   findById,
   create,
@@ -596,4 +703,6 @@ module.exports = {
   calculateDtgPrice,
   getSizeCetakList,
   getDataForPrint,
+  searchSoForDtf,
+  getSoDetailForDtf,
 };
