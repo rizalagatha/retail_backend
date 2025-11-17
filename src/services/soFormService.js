@@ -108,23 +108,37 @@ const save = async (data, user) => {
       soNomor,
     ]);
     for (const [index, item] of details.entries()) {
-      const insertDetailQuery = `
-                INSERT INTO tso_dtl (sod_idrec, sod_so_nomor, sod_kode, sod_ph_nomor, sod_sd_nomor, sod_ukuran, sod_jumlah, sod_harga, sod_disc, sod_diskon, sod_nourut) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `;
-      await connection.query(insertDetailQuery, [
-        idrec,
-        soNomor,
-        item.kode,
-        item.noPengajuanHarga || "",
-        item.noSoDtf || "",
-        item.ukuran,
-        item.jumlah,
-        item.harga,
-        item.diskonPersen,
-        item.diskonRp,
-        index + 1,
-      ]);
+      const kodeBarang = item.kode || (item.isCustomOrder ? "CUSTOM" : "");
+      const isCustom = item.isCustomOrder ? "Y" : "N";
+
+      const customData = item.isCustomOrder
+        ? JSON.stringify({
+            ukuranKaos: item.ukuranKaos || [],
+            titikCetak: item.titikCetak || [],
+          })
+        : null;
+
+      await connection.query(
+        `INSERT INTO tso_dtl 
+        (sod_idrec, sod_so_nomor, sod_kode, sod_ph_nomor, sod_sd_nomor, sod_ukuran, sod_jumlah, sod_harga, sod_disc, sod_diskon, sod_nourut, sod_custom, sod_custom_nama, sod_custom_data)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          idrec,
+          soNomor,
+          kodeBarang,
+          item.noPengajuanHarga || "",
+          item.noSoDtf || "",
+          item.ukuran || "",
+          item.jumlah || 0,
+          item.harga || 0,
+          item.diskonPersen || 0,
+          item.diskonRp || 0,
+          index + 1,
+          isCustom,
+          isCustom === "Y" ? item.nama : null,
+          customData,
+        ]
+      );
     }
 
     // 3. Simpan PIN Otorisasi (logika simpanpin)
@@ -254,14 +268,17 @@ const getSoForEdit = async (nomor) => {
     const firstRow = mainRows[0];
 
     // Format tanggal dengan proper handling
-    const formatDate = (dateValue) => {
-      if (!dateValue) return null;
-      if (dateValue instanceof Date) {
-        return dateValue.toISOString().split("T")[0];
-      }
-      // Jika string, coba convert
-      const date = new Date(dateValue);
-      return isNaN(date.getTime()) ? null : date.toISOString().split("T")[0];
+    const formatDate = (v) => {
+      if (!v) return null;
+
+      const d = new Date(v);
+      if (isNaN(d.getTime())) return null;
+
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+
+      return `${yyyy}-${mm}-${dd}`;
     };
 
     const headerData = {
@@ -531,6 +548,7 @@ const searchAvailableSetoran = async (filters) => {
             LEFT JOIN finance.tjurnal j ON j.jur_nomor = h.sh_nomor
             WHERE h.sh_otomatis = "N" 
               AND (h.sh_so_nomor = "" OR h.sh_so_nomor = ?) 
+              AND j.jur_no IS NULL
               AND LEFT(h.sh_nomor, 3) = ? AND h.sh_cus_kode = ?
               AND h.sh_nomor LIKE ?
         ) x 
@@ -809,6 +827,84 @@ const findByBarcode = async (barcode, gudang) => {
   return rows[0];
 };
 
+const searchJenisOrder = async (term = "") => {
+  const query = `
+    SELECT 
+      jo_kode AS kode, 
+      jo_nama AS nama
+    FROM kencanaprint.tjenisorder
+    WHERE jo_divisi = 3
+      AND (jo_kode LIKE ? OR jo_nama LIKE ?)
+    ORDER BY jo_nama
+  `;
+  const searchTerm = `%${term || ""}%`;
+  const [rows] = await pool.query(query, [searchTerm, searchTerm]);
+  return rows;
+};
+
+const hitungHarga = async ({ jenis, ukuran, titik, items }) => {
+  const factor = jenis === "CUSTOM" ? 1.15 : 1; // markup contoh 15% utk custom
+  const hasil = items.map((it) => ({
+    ...it,
+    harga: Math.round((it.harga || 0) * factor + titik * 5000),
+    total:
+      (it.jumlah || 0) * Math.round((it.harga || 0) * factor + titik * 5000),
+  }));
+  return hasil;
+};
+
+const calculateHargaCustom = async (form) => {
+  const totalJumlah = form.detailsUkuran.reduce(
+    (a, b) => a + (b.jumlah || 0),
+    0
+  );
+  const hargaPerCm = 500; // contoh hitungan awal per cm
+  let totalHarga = 0;
+
+  for (const titik of form.detailsTitik) {
+    const area = (titik.panjang || 0) * (titik.lebar || 0);
+    totalHarga += area * hargaPerCm;
+  }
+
+  return {
+    totalJumlah,
+    totalHarga,
+  };
+};
+
+const deleteDp = async (nomorSetoran) => {
+  const connection = await pool.getConnection();
+  await connection.beginTransaction();
+  try {
+    await connection.query(
+      "UPDATE tsetor_hdr SET sh_so_nomor = '' WHERE sh_nomor = ?",
+      [nomorSetoran]
+    );
+    // 1. Hapus detail setoran jika ada
+    await connection.query("DELETE FROM tsetor_dtl WHERE sd_sh_nomor = ?", [
+      nomorSetoran,
+    ]);
+
+    // 2. Hapus header setoran
+    const [result] = await connection.query(
+      "DELETE FROM tsetor_hdr WHERE sh_nomor = ? AND sh_otomatis = 'N'",
+      [nomorSetoran]
+    );
+
+    if (result.affectedRows === 0) {
+      throw new Error("DP tidak ditemukan atau tidak bisa dihapus.");
+    }
+
+    await connection.commit();
+    return { success: true, message: `DP ${nomorSetoran} berhasil dihapus.` };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   save,
   getSoForEdit,
@@ -821,4 +917,8 @@ module.exports = {
   searchRekening,
   getDataForDpPrint,
   findByBarcode,
+  searchJenisOrder,
+  hitungHarga,
+  calculateHargaCustom,
+  deleteDp,
 };

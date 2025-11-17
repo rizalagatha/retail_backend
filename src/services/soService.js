@@ -81,38 +81,51 @@ const getCabangList = async (user) => {
 
 // Mengambil data detail (SQLDetail)
 const getDetails = async (nomor) => {
-  // Query ini adalah migrasi dari SQLDetail di Delphi Anda
   const query = `
+    SELECT 
+        x.Kode, 
+        x.Barcode, 
+        x.Nama, 
+        x.Ukuran, 
+        x.QtySO, 
+        x.Harga, 
+        x.TotalSO, 
+        x.QtyInvoice,
+        (IF(x.QtyInvoice >= x.QtySO, 0, x.QtySO - x.QtyInvoice)) AS BlmJadiInvoice 
+    FROM (
         SELECT 
-            x.Kode, x.Barcode, x.Nama, x.Ukuran, x.QtySO, x.Harga, x.TotalSO, x.QtyInvoice,
-            (IF(x.QtyInvoice >= x.QtySO, 0, x.QtySO - x.QtyInvoice)) AS BlmJadiInvoice 
-        FROM (
-            SELECT 
-                d.sod_kode AS Kode,
-                IFNULL(b.brgd_barcode, "") AS Barcode,
-                IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) AS Nama,
-                d.sod_ukuran AS Ukuran,
-                d.sod_jumlah AS QtySO,
-                d.sod_harga AS Harga,
-                (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS TotalSO,
-                IFNULL((
-                    SELECT SUM(i.invd_jumlah) 
-                    FROM tinv_hdr j 
-                    JOIN tinv_dtl i ON i.invd_inv_nomor = j.inv_nomor
-                    WHERE j.inv_sts_pro = 0 
-                      AND j.inv_nomor_so = h.so_nomor 
-                      AND i.invd_kode = d.sod_kode 
-                      AND i.invd_ukuran = d.sod_ukuran
-                ), 0) AS QtyInvoice
-            FROM tso_dtl d
-            JOIN tso_hdr h ON h.so_nomor = d.sod_so_nomor
-            LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
-            LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
-            LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_kode
-            WHERE d.sod_so_nomor = ?
-        ) x
-        ORDER BY x.Kode, x.Ukuran
-    `;
+            d.sod_kode AS Kode,
+            IFNULL(b.brgd_barcode, "") AS Barcode,
+            -- Urutan prioritas nama: Barang DC → DTF → Custom
+            COALESCE(
+              TRIM(CONCAT(
+                a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna
+              )),
+              f.sd_nama,
+              d.sod_custom_nama
+            ) AS Nama,
+            d.sod_ukuran AS Ukuran,
+            d.sod_jumlah AS QtySO,
+            d.sod_harga AS Harga,
+            (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS TotalSO,
+            IFNULL((
+                SELECT SUM(i.invd_jumlah) 
+                FROM tinv_hdr j 
+                JOIN tinv_dtl i ON i.invd_inv_nomor = j.inv_nomor
+                WHERE j.inv_sts_pro = 0 
+                  AND j.inv_nomor_so = h.so_nomor 
+                  AND i.invd_kode = d.sod_kode 
+                  AND i.invd_ukuran = d.sod_ukuran
+            ), 0) AS QtyInvoice
+        FROM tso_dtl d
+        JOIN tso_hdr h ON h.so_nomor = d.sod_so_nomor
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
+        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
+        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_kode
+        WHERE d.sod_so_nomor = ?
+    ) x
+    ORDER BY x.Kode, x.Ukuran
+  `;
   const [rows] = await pool.query(query, [nomor]);
   return rows;
 };

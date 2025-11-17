@@ -20,6 +20,9 @@ router.post('/save', verifyToken, checkSavePermission, soFormController.save);
 router.get('/lookup/penawaran', verifyToken, checkPermission(MENU_ID, 'view'), soFormController.searchPenawaran);
 router.get('/lookup/penawaran-details/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), soFormController.getPenawaranDetails);
 router.get('/lookup/default-discount', verifyToken, checkPermission(MENU_ID, 'view'), soFormController.getDefaultDiscount);
+router.get('/lookup/jenis-order', verifyToken, checkPermission(MENU_ID, 'view'), soFormController.searchJenisOrder);
+router.post('/hitung-harga', verifyToken, checkPermission(MENU_ID, 'view'), soFormController.hitungHarga);
+router.post("/hitung-harga-custom", verifyToken, checkPermission(MENU_ID, 'view'), soFormController.calculateHargaCustom);
 // GET: Mencari setoran yang tersedia untuk di-link sebagai DP
 router.get('/lookup/setoran', verifyToken, checkPermission(MENU_ID, 'view'), soFormController.searchSetoran);
 router.get('/lookup/rekening', verifyToken, checkPermission(MENU_ID, 'view'), soFormController.searchRekening);
@@ -29,5 +32,7 @@ router.get('/by-barcode/:barcode', verifyToken, soFormController.getByBarcode);
 
 // POST: Menyimpan data DP baru dari modal
 router.post('/save-dp', verifyToken, checkPermission(MENU_ID, 'insert'), soFormController.saveDp);
+
+router.post('/delete-dp', verifyToken, checkPermission(MENU_ID, 'edit'), soFormController.deleteDp);
 
 module.exports = router;
