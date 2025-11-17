@@ -18,47 +18,69 @@ const getCabangList = async (user) => {
 };
 
 const getList = async (filters) => {
-  const { startDate, endDate, cabang } = filters;
+  const { startDate, endDate, cabang, search = "" } = filters;
+
+  const searchTerm = `%${search}%`;
+
   const query = `
-        SELECT 
-            h.sh_nomor AS Nomor,
-            h.sh_tanggal AS Tanggal, 
-            CASE 
-                WHEN h.sh_jenis = 0 THEN "TUNAI"
-                WHEN h.sh_jenis = 1 THEN "TRANSFER"
-                ELSE "GIRO"
-            END AS JenisBayar,
-            h.sh_nominal AS Nominal,
-            IFNULL(SUM(d.sd_bayar), 0) AS diBayarkan,
-            (h.sh_nominal - IFNULL(SUM(d.sd_bayar), 0)) AS Sisa,
-            IF(j.jur_no IS NULL, "BELUM", "SUDAH") AS Posting,
-            h.sh_so_nomor AS NoSO,
-            h.sh_akun AS Akun,
-            h.sh_norek AS NoRekening,
-            r.rek_nama AS NamaBank,
-            h.sh_tgltransfer AS TglTransfer, 
-            h.sh_giro AS NoGiro,
-            h.sh_tglgiro AS TglGiro, 
-            h.sh_tempogiro AS TglJatuhTempo,
-            c.cus_kode AS KdCus,
-            c.cus_nama AS Customer,
-            c.cus_alamat AS Alamat,
-            c.cus_kota AS Kota,
-            c.cus_telp AS Telepon,
-            h.sh_ket AS Keterangan, 
-            IF(h.sh_otomatis = "Y", "YA", "") AS Otomatis,
-            h.sh_closing AS Closing
-        FROM tsetor_hdr h
-        LEFT JOIN tsetor_dtl d ON d.sd_sh_nomor = h.sh_nomor
-        LEFT JOIN tcustomer c ON c.cus_kode = h.sh_cus_kode
-        LEFT JOIN finance.trekening r ON r.rek_kode = h.sh_akun
-        LEFT JOIN finance.tjurnal j ON j.jur_nomor = h.sh_nomor
-        WHERE LEFT(h.sh_nomor, 3) = ? 
-          AND h.sh_tanggal BETWEEN ? AND ?
-        GROUP BY h.sh_nomor
-        ORDER BY h.sh_tanggal, h.sh_nomor;
-    `;
-  const [rows] = await pool.query(query, [cabang, startDate, endDate]);
+    SELECT 
+        h.sh_nomor AS Nomor,
+        h.sh_tanggal AS Tanggal, 
+        CASE 
+            WHEN h.sh_jenis = 0 THEN "TUNAI"
+            WHEN h.sh_jenis = 1 THEN "TRANSFER"
+            ELSE "GIRO"
+        END AS JenisBayar,
+        h.sh_nominal AS Nominal,
+        IFNULL(SUM(d.sd_bayar), 0) AS diBayarkan,
+        (h.sh_nominal - IFNULL(SUM(d.sd_bayar), 0)) AS Sisa,
+        IF(j.jur_no IS NULL, "BELUM", "SUDAH") AS Posting,
+        h.sh_so_nomor AS NoSO,
+        h.sh_akun AS Akun,
+        h.sh_norek AS NoRekening,
+        r.rek_nama AS NamaBank,
+        h.sh_tgltransfer AS TglTransfer, 
+        h.sh_giro AS NoGiro,
+        h.sh_tglgiro AS TglGiro, 
+        h.sh_tempogiro AS TglJatuhTempo,
+        c.cus_kode AS KdCus,
+        c.cus_nama AS Customer,
+        c.cus_alamat AS Alamat,
+        c.cus_kota AS Kota,
+        c.cus_telp AS Telepon,
+        h.sh_ket AS Keterangan, 
+        IF(h.sh_otomatis = "Y", "YA", "") AS Otomatis,
+        h.sh_closing AS Closing
+    FROM tsetor_hdr h
+    LEFT JOIN tsetor_dtl d ON d.sd_sh_nomor = h.sh_nomor
+    LEFT JOIN tcustomer c ON c.cus_kode = h.sh_cus_kode
+    LEFT JOIN finance.trekening r ON r.rek_kode = h.sh_akun
+    LEFT JOIN finance.tjurnal j ON j.jur_nomor = h.sh_nomor
+    WHERE LEFT(h.sh_nomor, 3) = ? 
+      AND h.sh_tanggal BETWEEN ? AND ?
+      AND (
+            h.sh_nomor LIKE ?
+        OR  c.cus_nama LIKE ?
+        OR  c.cus_kode LIKE ?
+        OR  h.sh_so_nomor LIKE ?
+        OR  h.sh_ket LIKE ?
+      )
+    GROUP BY h.sh_nomor
+    ORDER BY h.sh_tanggal DESC, h.sh_nomor DESC;
+  `;
+
+  const params = [
+    cabang,
+    startDate,
+    endDate,
+    searchTerm,
+    searchTerm,
+    searchTerm,
+    searchTerm,
+    searchTerm,
+  ];
+
+  const [rows] = await pool.query(query, params);
   return rows;
 };
 
