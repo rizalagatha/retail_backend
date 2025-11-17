@@ -467,9 +467,9 @@ const saveData = async (payload, user) => {
     const sisaBayar = Math.max(grandTotal - bayarTotal, 0);
 
     const bayarTunaiBersih = Math.max(
-      Number(payment.tunai || 0) - kembalianBeforePundi - pundiAmal,
+      Number(payment.tunai || 0) - kembalianBeforePundi,
       0
-    );  
+    );
 
     let nomorSetoran = payment.transfer.nomorSetoran || "";
     if ((payment.transfer.nominal || 0) > 0 && !nomorSetoran) {
