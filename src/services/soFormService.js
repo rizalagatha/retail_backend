@@ -508,25 +508,53 @@ const getPenawaranDetailsForSo = async (nomor) => {
   };
 };
 
-const getDefaultDiscount = async (level, total, gudang) => {
+const getDefaultDiscount = async (levelKode, total, gudang, hasPin, hasAcc, penawaran) => {
   let discount = 0;
 
-  // Logika khusus untuk gudang KPR
-  if (gudang === "KPR") {
-    discount = 15;
-  } else {
-    const query = "SELECT * FROM tcustomer_level WHERE level_kode = ?";
-    const [levelRows] = await pool.query(query, [level]);
-
-    if (levelRows.length > 0) {
-      const levelData = levelRows[0];
-      if (total >= levelData.level_nominal) {
-        discount = levelData.level_diskon;
-      } else {
-        discount = levelData.level_diskon2;
-      }
-    }
+  // 1️⃣ Jika sudah ada PIN / ACC / Penawaran → TIDAK pakai diskon otomatis
+  if (hasPin || hasAcc === 'Y' || penawaran) {
+    return { discount: 0 };
   }
+
+  // 2️⃣ Jika level mulai dengan '5' → tidak dapat diskon otomatis
+  if (String(levelKode).startsWith("5")) {
+    return { discount: 0 };
+  }
+
+  // 3️⃣ Gudang KDC-K04 → tidak dapat diskon otomatis
+  if (gudang.includes("KDC-K04")) {
+    return { discount: 0 };
+  }
+
+  // 4️⃣ Gudang KPR → FIX 15%
+  if (gudang === "KPR") {
+    return { discount: 15 };
+  }
+
+  // 5️⃣ Ambil data level
+  const q = "SELECT * FROM tcustomer_level WHERE level_kode = ?";
+  const [rows] = await pool.query(q, [String(levelKode).charAt(0)]);
+
+  if (rows.length === 0) {
+    return { discount: 0 };
+  }
+
+  const levelData = rows[0];
+
+  // 6️⃣ Level 8 → langsung pakai level_diskon
+  if (String(levelKode).startsWith("8")) {
+    return { discount: levelData.level_diskon };
+  }
+
+  // 7️⃣ Level normal: pakai dua threshold
+  if (total >= levelData.level_nominal) {
+    discount = levelData.level_diskon;
+  } else if (total >= levelData.level_nominal2) {
+    discount = levelData.level_diskon2;
+  } else {
+    discount = 0;
+  }
+
   return { discount };
 };
 
