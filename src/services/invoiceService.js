@@ -144,22 +144,29 @@ FinalList AS (
     COALESCE(SN.NominalPiutang,0) AS Nominal,
     COALESCE(SN.NominalPiutang,0) AS Piutang,
 
-    (
-        h.inv_bayar         
-      + COALESCE(DP.dpDipakai,0) 
-      - h.inv_pundiamal    
-      - h.inv_kembali      
-    ) AS Bayar,
+    CASE 
+  WHEN h.inv_nomor_so <> '' THEN COALESCE(SN.NominalPiutang,0)
+  ELSE (
+      h.inv_bayar
+    + COALESCE(DP.dpDipakai,0)
+    - h.inv_pundiamal
+    - h.inv_kembali
+  )
+END AS Bayar,
 
-    GREATEST(
-    COALESCE(SN.NominalPiutang,0)
-    - (
-        (h.inv_bayar + COALESCE(DP.dpDipakai,0)) 
-        - h.inv_pundiamal 
-        - h.inv_kembali
-      ),
-    0
-) AS SisaPiutang,
+    CASE 
+  WHEN h.inv_nomor_so <> '' THEN 0
+  ELSE GREATEST(
+        COALESCE(SN.NominalPiutang,0)
+        - (
+            h.inv_bayar
+          + COALESCE(DP.dpDipakai,0)
+          - h.inv_pundiamal
+          - h.inv_kembali
+        ), 
+        0
+      )
+END AS SisaPiutang,
 
     h.inv_cus_kode AS Kdcus,
     c.cus_nama AS Nama,
