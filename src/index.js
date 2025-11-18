@@ -5,6 +5,9 @@ const clientCertAuth = require('./middleware/clientCertAuth');
 const fs = require("fs");
 const path = require("path");
 require("dotenv/config"); // Memuat variabel dari .env
+// === Global Rounding Policy ===
+global.ROUNDING_POLICY = process.env.ROUNDING_POLICY || "ROUND_1";
+console.log("Rounding Policy:", global.ROUNDING_POLICY);
 
 // Impor file rute
 const dashboardRoutes = require("./routes/dashboardRoutes");

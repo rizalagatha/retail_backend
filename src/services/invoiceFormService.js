@@ -1,6 +1,7 @@
 const pool = require("../config/database");
 const { format } = require("date-fns");
 const { validate } = require("uuid");
+const { applyRoundingPolicy } = require("../lib/numberUtils");
 
 // helper: format ke MySQL DATETIME (yyyy-MM-dd HH:mm:ss)
 const toSqlDateTime = (value) => {
@@ -358,7 +359,7 @@ const loadForEdit = async (nomor, user) => {
     if (row.lipat === "N" && row.prevDiscountCount > 0) {
       hargaSetelah = hargaAsli; // harga normal
     } else {
-      hargaSetelah = hargaAsli - diskRp;
+      hargaSetelah = applyRoundingPolicy(hargaAsli - diskRp);
     }
 
     return {
@@ -377,7 +378,7 @@ const loadForEdit = async (nomor, user) => {
       diskonRp: diskRp,
       harga: hargaSetelah,
 
-      total: hargaSetelah * qty,
+      total: applyRoundingPolicy(hargaSetelah * qty),
       nourut: row.invd_nourut,
     };
   });
@@ -422,22 +423,23 @@ const saveData = async (payload, user) => {
     // If frontend provided netto/grandTotal, prefer them; otherwise compute
     const subTotalFromPayload = Number(totals.subTotal || 0);
     // compute subTotal from details if payload missing
-    const computedSubTotal = (items || []).reduce(
-      (s, it) => s + (Number(it.total) || 0),
-      0
+    const computedSubTotal = applyRoundingPolicy(
+      (items || []).reduce((s, it) => s + (Number(it.total) || 0), 0)
     );
-    const subTotal =
-      subTotalFromPayload > 0 ? subTotalFromPayload : computedSubTotal;
+    const subTotal = applyRoundingPolicy(
+      subTotalFromPayload > 0 ? subTotalFromPayload : computedSubTotal
+    );
 
     const totalDiskon = totalDiskonFaktur;
     const netto =
       Number(totals.netto || 0) > 0
         ? Number(totals.netto)
         : Math.max(subTotal - totalDiskon, 0);
-    const grandTotal =
+    const grandTotal = applyRoundingPolicy(
       Number(totals.grandTotal || 0) > 0
         ? Number(totals.grandTotal)
-        : netto + biayaKirim - (Number(totals.totalDp || 0) || 0);
+        : netto + biayaKirim - (Number(totals.totalDp || 0) || 0)
+    );
 
     if (!header.customer.kode) throw new Error("Customer harus diisi.");
     if (!header.customer.level)
@@ -457,33 +459,40 @@ const saveData = async (payload, user) => {
     // ===============================
 
     // Ambil DP dari payload totals (frontend menghitung dp terpakai)
-    const dpDipakai = Number(totals.totalDp || 0);
+    const dpDipakai = applyRoundingPolicy(Number(totals.totalDp || 0));
 
     // Total Bayar (UANG MASUK) = DP + tunai + transfer + voucher + retur
-    const bayarTotal =
+    const bayarTotal = applyRoundingPolicy(
       dpDipakai +
-      Number(payment.tunai || 0) +
-      Number(payment.transfer?.nominal || 0) +
-      Number(payment.voucher?.nominal || 0) +
-      Number(payment.retur?.nominal || 0);
+        Number(payment.tunai || 0) +
+        Number(payment.transfer?.nominal || 0) +
+        Number(payment.voucher?.nominal || 0) +
+        Number(payment.retur?.nominal || 0)
+    );
 
     // Untuk disimpan di inv_bayar
     const invBayar = bayarTotal;
 
     // Hitung kembalian
-    const kembalianBeforePundi = Math.max(bayarTotal - grandTotal, 0);
-    const kembalianFinal = Math.max(kembalianBeforePundi - pundiAmal, 0);
+    const kembalianBeforePundi = applyRoundingPolicy(
+      Math.max(bayarTotal - grandTotal, 0)
+    );
+    const kembalianFinal = applyRoundingPolicy(
+      Math.max(kembalianBeforePundi - pundiAmal, 0)
+    );
 
     // Mode SO → tunaiAfterChange adalah uang tunai yang benar-benar masuk
     let bayarTunaiBersih = 0;
 
     if (header.nomorSo && header.nomorSo !== "") {
-      bayarTunaiBersih = Number(payment.tunaiAfterChange || 0);
+      // Mode dari SO → langsung ambil tunaiAfterChange
+      bayarTunaiBersih = applyRoundingPolicy(
+        Number(payment.tunaiAfterChange || 0)
+      );
     } else {
-      // Normal Invoice → tunai dikurangi kembalian
-      bayarTunaiBersih = Math.max(
-        Number(payment.tunai || 0) - kembalianBeforePundi,
-        0
+      // Normal invoice: tunai - kembalian
+      bayarTunaiBersih = applyRoundingPolicy(
+        Math.max(Number(payment.tunai || 0) - kembalianBeforePundi, 0)
       );
     }
 
@@ -615,8 +624,8 @@ INSERT INTO tinv_dtl (
 
       const nowTs = format(new Date(), "yyyyMMddHHmmssSSS");
       const detailValues = validItems.map((item, index) => {
-        const hargaAsli = Number(item.harga || 0); // harga asli per pcs
-        const diskonRp = Number(item.diskonRp || 0); // potongan per pcs
+        const hargaAsli = applyRoundingPolicy(Number(item.harga || 0)); // harga asli per pcs
+        const diskonRp = applyRoundingPolicy(Number(item.diskonRp || 0)); // potongan per pcs
 
         const invdIdrec = `${invNomor.replace(/\./g, "")}${String(
           index + 1
@@ -769,7 +778,7 @@ VALUES (?, ?, 'Pembayaran Card', ?, ?, ?);
       invNomor,
     ]);
     const dpTotal = Number(header.inv_dp || 0);
-    const piutangFinal = Math.max(grandTotal - dpTotal, 0);
+    const piutangFinal = applyRoundingPolicy(Math.max(grandTotal - dpTotal, 0));
 
     const piutangHdrSql = `INSERT INTO tpiutang_hdr (ph_nomor, ph_tanggal, ph_cus_kode, ph_inv_nomor, ph_top, ph_nominal) VALUES (?, ?, ?, ?, ?, ?);`;
     await connection.query(piutangHdrSql, [
@@ -1175,14 +1184,16 @@ const getPrintData = async (nomor) => {
     [nomor]
   );
 
-  const dpDipakai = Number(dpRows?.[0]?.dpDipakai || 0);
+  const dpDipakai = applyRoundingPolicy(dpRows?.[0]?.dpDipakai || 0);
 
   // =============== SUMMARY CALC ===============
-  const subTotal = details.reduce((s, it) => s + it.total, 0);
+  const subTotal = applyRoundingPolicy(
+    details.reduce((s, it) => s + it.total, 0)
+  );
   const diskonFaktur = header.inv_disc || 0;
-  const netto = subTotal - diskonFaktur;
-  const ppn = (Number(header.inv_ppn) / 100) * netto;
-  const grandTotal = netto + ppn + (header.inv_bkrm || 0);
+  const netto = applyRoundingPolicy(subTotal - diskonFaktur);
+  const ppn = applyRoundingPolicy((Number(header.inv_ppn) / 100) * netto);
+  const grandTotal = applyRoundingPolicy(netto + ppn + (header.inv_bkrm || 0));
 
   const bayarTunai = Number(header.inv_rptunai || 0);
   const bayarCard = Number(header.inv_rpcard || 0);
@@ -1612,9 +1623,9 @@ END AS total,
   }, 0);
 
   // Total diskon item
-  const totalDiskonItem = rows.reduce((sum, r) => {
-    return sum + Number(r.total_diskon || 0);
-  }, 0);
+  const totalDiskonItem = applyRoundingPolicy(
+    rows.reduce((sum, r) => sum + Number(r.total_diskon || 0), 0)
+  );
 
   // Diskon faktur (kalau ada)
   const totalDiskonFaktur = Number(header.inv_disc) || 0;
@@ -1627,16 +1638,17 @@ END AS total,
   const dp = Number(header.inv_dp) || 0;
 
   // Grand Total setelah diskon item + diskon faktur
-  const grandTotal =
-    header.inv_rptunai + header.inv_rpcard + header.inv_rpvoucher;
+  const grandTotal = applyRoundingPolicy(
+    header.inv_rptunai + header.inv_rpcard + header.inv_rpvoucher
+  );
 
   // Bayar
-  const bayar = Number(header.inv_bayar || 0);
+  const bayar = applyRoundingPolicy(Number(header.inv_bayar || 0));
 
   // Pundi amal
   const pundiAmal = Number(header.inv_pundiamal) || 0;
 
-  const kembali = Number(header.inv_kembali || 0);
+  const kembali = applyRoundingPolicy(Number(header.inv_kembali || 0));
 
   const sisaBayar = grandTotal > bayar ? grandTotal - bayar : 0;
 
