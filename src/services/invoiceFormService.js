@@ -452,24 +452,40 @@ const saveData = async (payload, user) => {
 
     const pundiAmal = Number(payment.pundiAmal || header.pundiAmal || 0);
 
+    // ===============================
+    //  PERHITUNGAN DP & PEMBAYARAN
+    // ===============================
+
+    // Ambil DP dari payload totals (frontend menghitung dp terpakai)
+    const dpDipakai = Number(totals.totalDp || 0);
+
+    // Total Bayar (UANG MASUK) = DP + tunai + transfer + voucher + retur
     const bayarTotal =
+      dpDipakai +
       Number(payment.tunai || 0) +
       Number(payment.transfer?.nominal || 0) +
       Number(payment.voucher?.nominal || 0) +
       Number(payment.retur?.nominal || 0);
 
+    // Untuk disimpan di inv_bayar
     const invBayar = bayarTotal;
 
+    // Hitung kembalian
     const kembalianBeforePundi = Math.max(bayarTotal - grandTotal, 0);
-
     const kembalianFinal = Math.max(kembalianBeforePundi - pundiAmal, 0);
 
-    const sisaBayar = Math.max(grandTotal - bayarTotal, 0);
+    // Mode SO → tunaiAfterChange adalah uang tunai yang benar-benar masuk
+    let bayarTunaiBersih = 0;
 
-    const bayarTunaiBersih = Math.max(
-      Number(payment.tunai || 0) - kembalianBeforePundi,
-      0
-    );
+    if (header.nomorSo && header.nomorSo !== "") {
+      bayarTunaiBersih = Number(payment.tunaiAfterChange || 0);
+    } else {
+      // Normal Invoice → tunai dikurangi kembalian
+      bayarTunaiBersih = Math.max(
+        Number(payment.tunai || 0) - kembalianBeforePundi,
+        0
+      );
+    }
 
     let nomorSetoran = payment.transfer.nomorSetoran || "";
     if ((payment.transfer.nominal || 0) > 0 && !nomorSetoran) {
@@ -1175,7 +1191,10 @@ const getPrintData = async (nomor) => {
   // =================== FIX TOTAL BAYAR ===================
   const totalBayar = bayarTunai + bayarCard + bayarVoucher + dpDipakai;
 
-  const kembali = Math.max(totalBayar - grandTotal, 0);
+  const kembali = Math.max(
+    totalBayar - grandTotal - Number(header.inv_pundiamal || 0),
+    0
+  );
 
   header.summary = {
     subTotal,
