@@ -4,10 +4,9 @@ const pool = require("../config/database");
  * Mengambil daftar detail hasil hitung stok per lokasi.
  */
 const getList = async (filters) => {
-  const { cabang } = filters;
+  const { cabang, search } = filters;
 
-  // Query ini adalah terjemahan dari SQLMaster di Delphi
-  const query = `
+  let query = `
         SELECT 
             h.hs_cab AS Cab,
             h.hs_kode AS Kode,
@@ -19,10 +18,25 @@ const getList = async (filters) => {
         FROM thitungstok h
         INNER JOIN tbarangdc a ON a.brg_kode = h.hs_kode
         WHERE h.hs_proses = "N" AND h.hs_cab = ?
-        ORDER BY Nama, Barcode, Lokasi
     `;
 
-  const [rows] = await pool.query(query, [cabang]);
+  const params = [cabang];
+
+  // Tambahkan logika pencarian
+  if (search) {
+    query += ` AND (
+            h.hs_kode LIKE ? OR 
+            h.hs_barcode LIKE ? OR 
+            h.hs_lokasi LIKE ? OR
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) LIKE ?
+        )`;
+    const searchTerm = `%${search}%`;
+    params.push(searchTerm, searchTerm, searchTerm, searchTerm);
+  }
+
+  query += ` ORDER BY Nama, Barcode, Lokasi`;
+
+  const [rows] = await pool.query(query, params);
   return rows;
 };
 

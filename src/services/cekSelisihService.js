@@ -4,9 +4,9 @@ const pool = require("../config/database");
  * Mengambil daftar selisih stok opname.
  */
 const getList = async (filters) => {
-  const { cabang } = filters;
+  const { cabang, search } = filters;
 
-  // Langkah 1: Dapatkan tanggal stok opname yang aktif untuk cabang ini (dari modul sebelumnya)
+  // Langkah 1: Dapatkan tanggal stok opname
   const [sopTanggalRows] = await pool.query(
     "SELECT st_tanggal FROM tsop_tanggal WHERE st_cab = ? AND st_transfer = 'N' LIMIT 1",
     [cabang]
@@ -19,8 +19,8 @@ const getList = async (filters) => {
   }
   const zsoptgl = sopTanggalRows[0].st_tanggal;
 
-  // Langkah 2: Jalankan query utama yang kompleks dari Delphi
-  const query = `
+  // Langkah 2: Subquery
+  let baseSubQuery = `
         SELECT 
             y.Kode, y.Barcode, y.Nama, y.Ukuran, (y.showroom + y.pesan) AS Stok, y.hitung AS Hitung, y.Selisih,
             IFNULL(CAST(GROUP_CONCAT(CONCAT(h.hs_lokasi, "=", h.hs_qty) SEPARATOR ", ") AS CHAR), "") AS Lokasi,
@@ -64,10 +64,23 @@ const getList = async (filters) => {
         ) y
         LEFT JOIN thitungstok h ON h.hs_kode = y.kode AND h.hs_ukuran = y.ukuran AND h.hs_proses = "N" AND h.hs_cab = ?
         GROUP BY y.kode, y.ukuran 
-        ORDER BY y.Nama, RIGHT(y.barcode, 2)
     `;
 
+  // Array parameter awal
   const params = [zsoptgl, cabang, zsoptgl, cabang, zsoptgl, cabang, cabang];
+
+  // Wrapper Query untuk Filter
+  let query = `SELECT * FROM (${baseSubQuery}) AS FinalResult`;
+
+  // Tambahkan Logika Search
+  if (search) {
+    query += ` WHERE Nama LIKE ? OR Kode LIKE ? OR Barcode LIKE ?`;
+    const searchTerm = `%${search}%`;
+    params.push(searchTerm, searchTerm, searchTerm);
+  }
+
+  query += ` ORDER BY Nama, RIGHT(Barcode, 2)`;
+
   const [rows] = await pool.query(query, params);
   return rows;
 };

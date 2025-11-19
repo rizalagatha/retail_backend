@@ -8,7 +8,7 @@ const getForEdit = async (nomor, userCabang) => {
   const [headerRows] = await pool.query(headerQuery, [nomor]);
   if (headerRows.length === 0) throw new Error("Dokumen tidak ditemukan.");
 
-  // 2. Ambil data Item Pengajuan (_dtl) dan gabungkan dengan data approval (_dtl2)
+  // 2. Ambil data Item Pengajuan (_dtl)
   const itemsQuery = `
         SELECT 
             d.pcd_kode AS kode, b.brgd_barcode AS barcode, d.pcd_ukuran AS ukuran, d.pcd_jumlah AS jumlah,
@@ -18,7 +18,7 @@ const getForEdit = async (nomor, userCabang) => {
             d2.pcd2_kodein AS kodebaru, 
             d2.pcd2_diskon AS diskon, 
             d2.pcd2_harga AS hargabaru,
-            d.pcd_gambar_url AS pcd_gambar_url
+            d.pcd_gambar_url  -- Ambil nilai asli dari DB dulu
         FROM tpengajuanbarcode_dtl d
         LEFT JOIN tbarangdc a ON a.brg_kode = d.pcd_kode
         LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.pcd_kode AND b.brgd_ukuran = d.pcd_ukuran
@@ -26,6 +26,18 @@ const getForEdit = async (nomor, userCabang) => {
         WHERE d.pcd_nomor = ?;
     `;
   const [items] = await pool.query(itemsQuery, [userCabang, nomor]);
+
+  // --- PERBAIKAN PENTING: Lakukan pengecekan fisik file gambar ---
+  const processedItems = items.map(item => {
+      // Cek apakah file fisik ada di server menggunakan helper
+      const physicalPath = findImageFile(nomor, item.kode, item.ukuran);
+      
+      return {
+          ...item,
+          // Prioritaskan hasil scan fisik. Jika tidak ada, pakai nilai DB (fallback), atau null
+          pcd_gambar_url: physicalPath || item.pcd_gambar_url
+      };
+  });
 
   // 3. Ambil data Stiker (_sticker)
   const stickersQuery = `
@@ -41,7 +53,8 @@ const getForEdit = async (nomor, userCabang) => {
     `;
   const [stickers] = await pool.query(stickersQuery, [userCabang, nomor]);
 
-  return { header: headerRows[0], items, stickers };
+  // Kembalikan processedItems, bukan items mentah
+  return { header: headerRows[0], items: processedItems, stickers };
 };
 
 const save = async (payload, user) => {
@@ -363,6 +376,115 @@ const processItemImage = async (tempFilePath, nomor, itemKode, itemUkuran) => {
   }
 };
 
+/**
+ * Mengambil data lengkap untuk Cetak A4 Pengajuan Barcode.
+ */
+const getDataForPrint = async (nomor) => {
+  // 1. Ambil Header + Info Cabang (JOIN tgudang)
+  // Kita ambil 3 digit pertama nomor (LEFT(pc_nomor, 3)) untuk join ke tgudang
+  const headerQuery = `
+    SELECT 
+        h.pc_nomor AS nomor, 
+        h.pc_tanggal AS tanggal, 
+        h.user_create AS usr_ins,
+        LEFT(h.pc_nomor, 3) AS cabang_kode,
+        g.gdg_inv_nama,      -- Nama Perusahaan/Cabang
+        g.gdg_inv_alamat,    -- Alamat
+        g.gdg_inv_kota,      -- Kota
+        g.gdg_inv_telp,      -- Telepon/Fax
+        g.gdg_inv_instagram  -- Instagram (opsional)
+    FROM tpengajuanbarcode_hdr h
+    LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.pc_nomor, 3)
+    WHERE h.pc_nomor = ?
+  `;
+  
+  const [headerRows] = await pool.query(headerQuery, [nomor]);
+  
+  if (headerRows.length === 0) {
+    throw new Error("Dokumen tidak ditemukan.");
+  }
+  const header = headerRows[0];
+
+  // 2. Ambil Items (Kaos)
+  const itemsQuery = `
+    SELECT 
+        d.pcd_kode AS kode, 
+        d.pcd_ukuran AS ukuran, 
+        d.pcd_jumlah AS jumlah,
+        d.pcd_jenis AS jenis, 
+        d.pcd_ket AS ket, 
+        b.brgd_harga AS harga,
+        TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS nama,
+        d.pcd_gambar_url -- Nilai fallback dari database
+    FROM tpengajuanbarcode_dtl d
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.pcd_kode
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.pcd_kode AND b.brgd_ukuran = d.pcd_ukuran
+    WHERE d.pcd_nomor = ?
+    ORDER BY d.pcd_nourut ASC
+  `;
+  const [items] = await pool.query(itemsQuery, [nomor]);
+
+  // Proses Gambar untuk setiap item
+  const processedItems = items.map((item) => {
+    // Cek fisik file di folder server
+    const physicalPath = findImageFile(nomor, item.kode, item.ukuran);
+    
+    return {
+      ...item,
+      // Jika ada file fisik, gunakan itu. Jika tidak, gunakan URL dari DB.
+      pcd_gambar_url: physicalPath || item.pcd_gambar_url
+    };
+  });
+
+  // 3. Ambil Stickers
+  const stickersQuery = `
+    SELECT
+        s.pcs_kode, 
+        s.pcs_kodes, 
+        s.pcs_ukuran, 
+        s.pcs_jumlah,
+        b.brgd_harga AS harga,
+        TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS nama
+    FROM tpengajuanbarcode_sticker s
+    LEFT JOIN tbarangdc a ON a.brg_kode = s.pcs_kodes
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = s.pcs_kodes AND b.brgd_ukuran = s.pcs_ukuran
+    WHERE s.pcs_nomor = ?
+  `;
+  const [stickers] = await pool.query(stickersQuery, [nomor]);
+
+  // Return format JSON lengkap
+  return {
+    header,
+    items: processedItems,
+    stickers
+  };
+};
+
+const findImageFile = (nomor, kode, ukuran) => {
+  // Ekstrak cabang dari nomor (3 huruf pertama)
+  const cabang = nomor.substring(0, 3);
+
+  // Path direktori images/cabang
+  const directoryPath = path.join(process.cwd(), "public", "images", "cabang");
+
+  if (!fs.existsSync(directoryPath)) {
+    return null;
+  }
+
+  const files = fs.readdirSync(directoryPath);
+
+  // Cari file yang namanya dimulai dengan NOMOR-KODE-UKURAN
+  // Contoh: K06.RJT.2511.0001-TS20250001-XL.jpg
+  const prefix = `${nomor}-${kode}-${ukuran}`;
+  const fileName = files.find((file) => file.startsWith(prefix));
+
+  if (fileName) {
+    return `/images/cabang/${fileName}`; // Kembalikan URL publik
+  }
+
+  return null;
+};
+
 module.exports = {
   getForEdit,
   save,
@@ -372,4 +494,5 @@ module.exports = {
   lookupStickers,
   getDataForBarcodePrint,
   processItemImage,
+  getDataForPrint, 
 };

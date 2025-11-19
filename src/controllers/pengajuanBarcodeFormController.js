@@ -125,6 +125,23 @@ const uploadItemImage = async (req, res) => {
   }
 };
 
+const getDataForPrint = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+
+    // Panggil service getDataForPrint yang baru dibuat
+    const data = await service.getDataForPrint(nomor);
+
+    res.json(data);
+  } catch (error) {
+    // Jika dokumen tidak ditemukan, service throw Error, tangkap sebagai 404
+    if (error.message === "Dokumen tidak ditemukan.") {
+      return res.status(404).json({ message: error.message });
+    }
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getForEdit,
   save,
@@ -134,4 +151,5 @@ module.exports = {
   lookupStickers,
   getDataForBarcodePrint,
   uploadItemImage,
+  getDataForPrint,  
 };
