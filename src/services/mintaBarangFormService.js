@@ -184,7 +184,9 @@ const save = async (data, user) => {
     let mtNomor = header.nomor;
     let idrec;
 
-    const customerKode = header?.customer?.kode ? String(header.customer.kode) : '';
+    const customerKode = header?.customer?.kode
+      ? String(header.customer.kode)
+      : "";
 
     if (isNew) {
       // Logika getmaxnomor dari Delphi
@@ -385,15 +387,14 @@ const findByBarcode = async (barcode, gudang) => {
 };
 
 const lookupProducts = async (filters) => {
-  // Ambil parameter pagination
   const page = parseInt(filters.page, 10) || 1;
   const itemsPerPage = parseInt(filters.itemsPerPage, 10) || 10;
   const { term } = filters;
+  const gudang = filters.gudang;  // <-- penting
 
   const offset = (page - 1) * itemsPerPage;
   const searchTerm = term ? `%${term}%` : null;
 
-  // INI BAGIAN YANG PERLU ANDA GANTI
   let fromClause = `
         FROM tbarangdc a
         INNER JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
@@ -403,35 +404,53 @@ const lookupProducts = async (filters) => {
   let params = [];
 
   if (term) {
-    whereClause += ` AND (a.brg_kode LIKE ? OR b.brgd_barcode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) LIKE ?)`;
+    whereClause += `
+      AND (a.brg_kode LIKE ?
+      OR b.brgd_barcode LIKE ?
+      OR TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ",
+         a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) LIKE ?)`;
     params.push(searchTerm, searchTerm, searchTerm);
   }
 
-  // Query untuk menghitung total item yang cocok
+  // COUNT QUERY
   const countQuery = `SELECT COUNT(*) as total ${fromClause} ${whereClause}`;
   const [countRows] = await pool.query(countQuery, params);
   const total = countRows[0].total;
 
-  // Query untuk mengambil data per halaman
+  // DATA QUERY — FIXED VERSION
   const dataQuery = `
         SELECT
             b.brgd_kode AS kode,
             b.brgd_barcode AS barcode,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ",
+                a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
             b.brgd_ukuran AS ukuran,
             b.brgd_harga AS harga,
             a.brg_ktg AS kategori,
+
+            IFNULL((
+                SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+                FROM tmasterstok m
+                WHERE m.mst_aktif = 'Y'
+                  AND m.mst_cab = ?
+                  AND m.mst_brg_kode = b.brgd_kode
+                  AND m.mst_ukuran = b.brgd_ukuran
+            ), 0) AS stok,
+
             CONCAT(b.brgd_kode, '-', b.brgd_ukuran) AS uniqueId
+
         ${fromClause}
         ${whereClause}
         ORDER BY nama, b.brgd_ukuran
         LIMIT ? OFFSET ?
     `;
-  params.push(itemsPerPage, offset); // Tambahkan parameter pagination
+
+  params = [gudang, ...params, itemsPerPage, offset];
 
   const [items] = await pool.query(dataQuery, params);
   return { items, total };
 };
+
 
 module.exports = {
   getSoDetailsForGrid,
