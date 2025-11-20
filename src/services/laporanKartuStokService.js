@@ -79,7 +79,10 @@ const getProductList = async (filters) => {
   }
 
   // Samakan logika periode dengan Delphi
-  const { jenis, dawal, startDateEff } = await resolvePeriode(gudang, startDate);
+  const { jenis, dawal, startDateEff } = await resolvePeriode(
+    gudang,
+    startDate
+  );
 
   const dawalPlus1 = format(addDays(new Date(dawal), 1), "yyyy-MM-dd");
   const startDateMinus1 = format(
@@ -160,151 +163,205 @@ const getProductList = async (filters) => {
 
   // --- JOIN lain (SOP, Koreksi, Retur, Mutasi, Invoice, dst) ---
   query += `
-    LEFT JOIN (
-      SELECT d.sopd_kode, d.sopd_ukuran, SUM(d.sopd_selisih) AS stok
-      FROM tsop_hdr h
-      JOIN tsop_dtl d ON d.sopd_nomor = h.sop_nomor
-      WHERE LEFT(h.sop_nomor,3) = ?
-        AND h.sop_tanggal BETWEEN ? AND ?
-      GROUP BY d.sopd_kode, d.sopd_ukuran
-    ) sop ON sop.sopd_kode   = b.brgd_kode
-         AND sop.sopd_ukuran = b.brgd_ukuran
+  LEFT JOIN (
+  SELECT 
+    d.sopd_kode AS kode,
+    d.sopd_ukuran AS ukuran,
+    SUM(d.sopd_selisih) AS stok
+  FROM tsop_hdr h
+  JOIN tsop_dtl d ON d.sopd_nomor = h.sop_nomor
+  WHERE LEFT(h.sop_nomor,3) = ?
+    AND h.sop_tanggal BETWEEN ? AND ?
+  GROUP BY d.sopd_kode, d.sopd_ukuran
+) sop ON sop.kode = b.brgd_kode
+      AND sop.ukuran = b.brgd_ukuran
 
     LEFT JOIN (
-      SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_in) AS stok
-      FROM tmasterstok
-      WHERE mst_cab = ?
-        AND MID(mst_noreferensi,5,3) = 'KOR'
-        AND mst_tanggal BETWEEN ? AND ?
-      GROUP BY mst_brg_kode, mst_ukuran
-    ) kor ON kor.mst_brg_kode = b.brgd_kode
-         AND kor.mst_ukuran   = b.brgd_ukuran
+  SELECT m.mst_brg_kode, m.mst_ukuran,
+         IFNULL(SUM(m.mst_stok_in),0) AS stok
+  FROM tmasterstok m
+  WHERE m.mst_cab = ?
+    AND m.mst_brg_kode = ?
+    AND MID(m.mst_noreferensi,5,3) = 'KOR'
+    AND m.mst_tanggal BETWEEN ? AND ?
+  GROUP BY m.mst_brg_kode, m.mst_ukuran
+) kor ON kor.mst_brg_kode = b.brgd_kode
+     AND kor.mst_ukuran   = b.brgd_ukuran
 
-    LEFT JOIN (
-      SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_in) AS stok
-      FROM tmasterstok
-      WHERE mst_cab = ?
-        AND MID(mst_noreferensi,5,2) = 'RJ'
-        AND mst_tanggal BETWEEN ? AND ?
-      GROUP BY mst_brg_kode, mst_ukuran
-    ) rj ON rj.mst_brg_kode = b.brgd_kode
-        AND rj.mst_ukuran   = b.brgd_ukuran
+LEFT JOIN (
+  SELECT m.mst_brg_kode, m.mst_ukuran,
+         IFNULL(SUM(m.mst_stok_in),0) AS stok
+  FROM tmasterstok m
+  WHERE m.mst_cab = ?
+    AND m.mst_brg_kode = ?
+    AND MID(m.mst_noreferensi,5,2) = 'RJ'
+    AND m.mst_tanggal BETWEEN ? AND ?
+  GROUP BY m.mst_brg_kode, m.mst_ukuran
+) rj ON rj.mst_brg_kode = b.brgd_kode
+     AND rj.mst_ukuran   = b.brgd_ukuran
 
-    LEFT JOIN (
-      SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_in) AS stok
-      FROM tmasterstok
-      WHERE mst_cab = ?
-        AND MID(mst_noreferensi,5,2) = 'TJ'
-        AND mst_tanggal BETWEEN ? AND ?
-      GROUP BY mst_brg_kode, mst_ukuran
-    ) tj ON tj.mst_brg_kode = b.brgd_kode
-        AND tj.mst_ukuran   = b.brgd_ukuran
+LEFT JOIN (
+  SELECT m.mst_brg_kode, m.mst_ukuran,
+         IFNULL(SUM(m.mst_stok_in),0) AS stok
+  FROM tmasterstok m
+  WHERE m.mst_cab = ?
+    AND m.mst_brg_kode = ?
+    AND MID(m.mst_noreferensi,5,2) = 'TJ'
+    AND m.mst_tanggal BETWEEN ? AND ?
+  GROUP BY m.mst_brg_kode, m.mst_ukuran
+) tj ON tj.mst_brg_kode = b.brgd_kode
+     AND tj.mst_ukuran   = b.brgd_ukuran
 
-    LEFT JOIN (
-      SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_in) AS stok
-      FROM tmasterstok
-      WHERE mst_cab = ?
-        AND MID(mst_noreferensi,5,3) = 'MST'
-        AND mst_tanggal BETWEEN ? AND ?
-      GROUP BY mst_brg_kode, mst_ukuran
-    ) mst ON mst.mst_brg_kode = b.brgd_kode
-         AND mst.mst_ukuran   = b.brgd_ukuran
+LEFT JOIN (
+  SELECT m.mst_brg_kode, m.mst_ukuran,
+         IFNULL(SUM(m.mst_stok_in),0) AS stok
+  FROM tmasterstok m
+  WHERE m.mst_cab = ?
+    AND m.mst_brg_kode = ?
+    AND MID(m.mst_noreferensi,5,3) = 'MST'
+    AND m.mst_tanggal BETWEEN ? AND ?
+  GROUP BY m.mst_brg_kode, m.mst_ukuran
+) mst ON mst.mst_brg_kode = b.brgd_kode
+     AND mst.mst_ukuran   = b.brgd_ukuran
 
-    LEFT JOIN (
-      SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_in) AS stok
-      FROM tmasterstokso
-      WHERE mst_cab = ?
-        AND MID(mst_noreferensi,4,3) = 'MSI'
-        AND mst_tanggal BETWEEN ? AND ?
-      GROUP BY mst_brg_kode, mst_ukuran
-    ) msi ON msi.mst_brg_kode = b.brgd_kode
-         AND msi.mst_ukuran   = b.brgd_ukuran
+LEFT JOIN (
+  SELECT m.mst_brg_kode, m.mst_ukuran,
+         IFNULL(SUM(m.mst_stok_in),0) AS stok
+  FROM tmasterstokso m
+  WHERE m.mst_cab = ?
+    AND m.mst_brg_kode = ?
+    AND MID(m.mst_noreferensi,4,3) = 'MSI'
+    AND m.mst_tanggal BETWEEN ? AND ?
+  GROUP BY m.mst_brg_kode, m.mst_ukuran
+) msi ON msi.mst_brg_kode = b.brgd_kode
+     AND msi.mst_ukuran   = b.brgd_ukuran
 
-    LEFT JOIN (
-      SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_out) AS stok
-      FROM tmasterstok
-      WHERE mst_cab = ?
-        AND MID(mst_noreferensi,5,3) = 'INV'
-        AND mst_tanggal BETWEEN ? AND ?
-      GROUP BY mst_brg_kode, mst_ukuran
-    ) inv ON inv.mst_brg_kode = b.brgd_kode
-         AND inv.mst_ukuran   = b.brgd_ukuran
+LEFT JOIN (
+  SELECT m.mst_brg_kode, m.mst_ukuran,
+         IFNULL(SUM(m.mst_stok_out),0) AS stok
+  FROM tmasterstok m
+  WHERE m.mst_cab = ?
+    AND m.mst_brg_kode = ?
+    AND MID(m.mst_noreferensi,5,3) = 'INV'
+    AND m.mst_tanggal BETWEEN ? AND ?
+  GROUP BY m.mst_brg_kode, m.mst_ukuran
+) inv ON inv.mst_brg_kode = b.brgd_kode
+     AND inv.mst_ukuran   = b.brgd_ukuran
 
-    LEFT JOIN (
-      SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_out) AS stok
-      FROM tmasterstokso
-      WHERE mst_cab = ?
-        AND MID(mst_noreferensi,5,3) = 'INV'
-        AND mst_tanggal BETWEEN ? AND ?
-      GROUP BY mst_brg_kode, mst_ukuran
-    ) invso ON invso.mst_brg_kode = b.brgd_kode
-           AND invso.mst_ukuran   = b.brgd_ukuran
+LEFT JOIN (
+  SELECT m.mst_brg_kode, m.mst_ukuran,
+         IFNULL(SUM(m.mst_stok_out),0) AS stok
+  FROM tmasterstokso m
+  WHERE m.mst_cab = ?
+    AND m.mst_brg_kode = ?
+    AND MID(m.mst_noreferensi,5,3) = 'INV'
+    AND m.mst_tanggal BETWEEN ? AND ?
+  GROUP BY m.mst_brg_kode, m.mst_ukuran
+) invso ON invso.mst_brg_kode = b.brgd_kode
+       AND invso.mst_ukuran   = b.brgd_ukuran
 
-    LEFT JOIN (
-      SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_out) AS stok
-      FROM tmasterstok
-      WHERE mst_cab = ?
-        AND MID(mst_noreferensi,5,2) = 'RB'
-        AND mst_tanggal BETWEEN ? AND ?
-      GROUP BY mst_brg_kode, mst_ukuran
-    ) rb ON rb.mst_brg_kode = b.brgd_kode
-         AND rb.mst_ukuran   = b.brgd_ukuran
+LEFT JOIN (
+  SELECT m.mst_brg_kode, m.mst_ukuran,
+         IFNULL(SUM(m.mst_stok_out),0) AS stok
+  FROM tmasterstok m
+  WHERE m.mst_cab = ?
+    AND m.mst_brg_kode = ?
+    AND MID(m.mst_noreferensi,5,2) = 'RB'
+    AND m.mst_tanggal BETWEEN ? AND ?
+  GROUP BY m.mst_brg_kode, m.mst_ukuran
+) rb ON rb.mst_brg_kode = b.brgd_kode
+     AND rb.mst_ukuran   = b.brgd_ukuran
 
-    LEFT JOIN (
-      SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_out) AS stok
-      FROM tmasterstok
-      WHERE mst_cab = ?
-        AND MID(mst_noreferensi,5,3) = 'MSK'
-        AND mst_tanggal BETWEEN ? AND ?
-      GROUP BY mst_brg_kode, mst_ukuran
-    ) msk ON msk.mst_brg_kode = b.brgd_kode
-         AND msk.mst_ukuran   = b.brgd_ukuran
+LEFT JOIN (
+  SELECT m.mst_brg_kode, m.mst_ukuran,
+         IFNULL(SUM(m.mst_stok_out),0) AS stok
+  FROM tmasterstok m
+  WHERE m.mst_cab = ?
+    AND m.mst_brg_kode = ?
+    AND MID(m.mst_noreferensi,5,3) = 'MSK'
+    AND m.mst_tanggal BETWEEN ? AND ?
+  GROUP BY m.mst_brg_kode, m.mst_ukuran
+) msk ON msk.mst_brg_kode = b.brgd_kode
+     AND msk.mst_ukuran   = b.brgd_ukuran
 
-    LEFT JOIN (
-      SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_out) AS stok
-      FROM tmasterstok
-      WHERE mst_cab = ?
-        AND MID(mst_noreferensi,4,3) = 'MSO'
-        AND mst_tanggal BETWEEN ? AND ?
-      GROUP BY mst_brg_kode, mst_ukuran
-    ) mso ON mso.mst_brg_kode = b.brgd_kode
-         AND mso.mst_ukuran   = b.brgd_ukuran
+LEFT JOIN (
+  SELECT m.mst_brg_kode, m.mst_ukuran,
+         IFNULL(SUM(m.mst_stok_out),0) AS stok
+  FROM tmasterstok m
+  WHERE m.mst_cab = ?
+    AND m.mst_brg_kode = ?
+    AND MID(m.mst_noreferensi,4,3) = 'MSO'
+    AND m.mst_tanggal BETWEEN ? AND ?
+  GROUP BY m.mst_brg_kode, m.mst_ukuran
+) mso ON mso.mst_brg_kode = b.brgd_kode
+     AND mso.mst_ukuran   = b.brgd_ukuran
   `;
 
   params.push(
+    // SOP
     gudang,
     dawalPlus1,
-    endDate, // SOP
+    endDate,
+
+    // KOR
     gudang,
+    kodeBarang,
     startDateEff,
-    endDate, // KOR
+    endDate,
+
+    // RJ
     gudang,
+    kodeBarang,
     startDateEff,
-    endDate, // RJ
+    endDate,
+
+    // TJ
     gudang,
+    kodeBarang,
     startDateEff,
-    endDate, // TJ
+    endDate,
+
+    // MST
     gudang,
+    kodeBarang,
     startDateEff,
-    endDate, // MST
+    endDate,
+
+    // MSI
     gudang,
+    kodeBarang,
     startDateEff,
-    endDate, // MSI
+    endDate,
+
+    // INV TOKO
     gudang,
+    kodeBarang,
     startDateEff,
-    endDate, // INV
+    endDate,
+
+    // INV SO
     gudang,
+    kodeBarang,
     startDateEff,
-    endDate, // INVSO
+    endDate,
+
+    // RB
     gudang,
+    kodeBarang,
     startDateEff,
-    endDate, // RB
+    endDate,
+
+    // MSK
     gudang,
+    kodeBarang,
     startDateEff,
-    endDate, // MSK
+    endDate,
+
+    // MSO
     gudang,
+    kodeBarang,
     startDateEff,
-    endDate // MSO
+    endDate
   );
 
   // Filter barang (kode wajib = satu barang, sama seperti Delphi pakai edtkode)
@@ -325,7 +382,57 @@ const getProductList = async (filters) => {
   `;
 
   const [rows] = await pool.query(query, params);
-  return rows;
+  // ===============================
+  // HITUNG SALDO AKHIR DI NODE
+  // ===============================
+  const result = rows.map((row) => {
+    const stokAwal = Number(row.stokAwal || 0);
+    const selisihSop = Number(row.selisihSop || 0);
+    const koreksi = Number(row.koreksi || 0);
+    const returJual = Number(row.returJual || 0);
+    const terimaSJ = Number(row.terimaSJ || 0);
+    const mutStoreTerima = Number(row.mutStoreTerima || 0);
+    const mutInPesan = Number(row.mutInPesan || 0);
+
+    const invoice = Number(row.invoice || 0);
+    const returKeDC = Number(row.returKeDC || 0);
+    const mutStoreKirim = Number(row.mutStoreKirim || 0);
+    const mutOutPesan = Number(row.mutOutPesan || 0);
+
+    const saldoAkhir =
+      stokAwal +
+      selisihSop +
+      koreksi +
+      returJual +
+      terimaSJ +
+      mutStoreTerima +
+      mutInPesan -
+      (invoice + returKeDC + mutStoreKirim + mutOutPesan);
+
+    // DEBUG per baris
+    console.log("==== DEBUG SALDO HEADER ====");
+    console.log("ID      :", row.kode + row.ukuran);
+    console.log("SAWAL   :", stokAwal);
+    console.log("SOP     :", selisihSop);
+    console.log("KOR     :", koreksi);
+    console.log("RJ      :", returJual);
+    console.log("TJ      :", terimaSJ);
+    console.log("MST IN  :", mutStoreTerima);
+    console.log("MSI IN  :", mutInPesan);
+    console.log("INV     :", invoice);
+    console.log("RB OUT  :", returKeDC);
+    console.log("MSK OUT :", mutStoreKirim);
+    console.log("MSO OUT :", mutOutPesan);
+    console.log("SALDO   :", saldoAkhir);
+
+    return {
+      ...row,
+      invoice,
+      saldoAkhir,
+    };
+  });
+
+  return result;
 };
 
 // ------------------------------------------------------
@@ -339,7 +446,10 @@ const getKartuDetails = async (filters) => {
   }
 
   // Samakan periode dengan Delphi juga
-  const { jenis, dawal, startDateEff } = await resolvePeriode(gudang, startDate);
+  const { jenis, dawal, startDateEff } = await resolvePeriode(
+    gudang,
+    startDate
+  );
 
   const start = parseISO(startDateEff);
   const end = parseISO(endDate);

@@ -71,62 +71,64 @@ const getDailyData = async (filters) => {
   // Query utama dengan DISTINCT di DateRange
   const query = `
         WITH DateRange AS (
-            SELECT DISTINCT tg2 AS tanggal
-            FROM kpi.tanggal 
-            WHERE th = ? AND bl = ? AND tg2 <= CURDATE()
-        ),
-        DailySales AS (
-            SELECT 
-                tanggal,
-                SUM(nominal) AS omset 
-            FROM v_sales_harian 
-            WHERE YEAR(tanggal) = ? AND MONTH(tanggal) = ?
-            ${cabang !== "ALL" ? "AND cabang = ?" : ""}
-            GROUP BY tanggal
-        ),
-        TargetAggregated AS (
-            SELECT 
-                tahun, 
-                bulan,
-                start_date, 
-                end_date,
-                ${cabang !== "ALL" ? "kode_gudang," : ""}
-                SUM(target_omset) AS target_total,
-                1 + DATEDIFF(end_date, start_date) AS jhari,
-                SUM(target_omset) / (1 + DATEDIFF(end_date, start_date)) AS target_harian
-            FROM kpi.ttarget_kaosan
-            WHERE tahun = ? AND bulan = ?
-            ${cabang !== "ALL" ? "AND kode_gudang = ?" : ""}
-            GROUP BY tahun, bulan, start_date, end_date${
-              cabang !== "ALL" ? ", kode_gudang" : ""
-            }
-        ),
-        DailyTargets AS (
-            SELECT 
-                t.tanggal,
-                SUM(ta.target_harian) AS target
-            FROM DateRange t
-            INNER JOIN TargetAggregated ta 
-                ON YEAR(t.tanggal) = ta.tahun 
-                AND MONTH(t.tanggal) = ta.bulan 
-                AND t.tanggal BETWEEN ta.start_date AND ta.end_date
-            GROUP BY t.tanggal
-        )
-        SELECT 
-            ? AS kode_cabang,
-            ${
-              cabang === "ALL"
-                ? "'ALL TOKO' AS nama_cabang"
-                : "(SELECT gdg_nama FROM tgudang WHERE gdg_kode = ? LIMIT 1) AS nama_cabang"
-            },
-            LEFT(DAYNAME(dr.tanggal), 3) AS hari,
-            dr.tanggal,
-            IFNULL(ds.omset, 0) AS omset,
-            IFNULL(dt.target, 0) AS target
-        FROM DateRange dr
-        LEFT JOIN DailySales ds ON dr.tanggal = ds.tanggal
-        LEFT JOIN DailyTargets dt ON dr.tanggal = dt.tanggal
-        ORDER BY dr.tanggal;
+    SELECT DISTINCT tg2 AS tanggal
+    FROM kpi.tanggal 
+    WHERE th = ? AND bl = ? AND tg2 <= CURDATE()
+),
+DailySales AS (
+    SELECT tanggal, SUM(nominal) AS omset 
+    FROM v_sales_harian 
+    WHERE YEAR(tanggal) = ? AND MONTH(tanggal) = ?
+    ${cabang !== "ALL" ? "AND cabang = ?" : ""}
+    GROUP BY tanggal
+),
+TargetAggregated AS (
+    SELECT 
+        tahun, bulan, start_date, end_date,
+        ${cabang !== "ALL" ? "kode_gudang," : ""}
+        SUM(target_omset) AS target_total,
+        1 + DATEDIFF(end_date, start_date) AS jhari,
+        SUM(target_omset) / (1 + DATEDIFF(end_date, start_date)) AS target_harian
+    FROM kpi.ttarget_kaosan
+    WHERE tahun = ? AND bulan = ?
+    ${cabang !== "ALL" ? "AND kode_gudang = ?" : ""}
+    GROUP BY tahun, bulan, start_date, end_date
+),
+MonthlyTarget AS (
+    SELECT SUM(target_total) AS bulan_total FROM TargetAggregated
+),
+DailyTargets AS (
+    SELECT t.tanggal, SUM(ta.target_harian) AS target
+    FROM DateRange t
+    INNER JOIN TargetAggregated ta 
+        ON YEAR(t.tanggal) = ta.tahun 
+        AND MONTH(t.tanggal) = ta.bulan 
+        AND t.tanggal BETWEEN ta.start_date AND ta.end_date
+    GROUP BY t.tanggal
+)
+SELECT 
+    ? AS kode_cabang,
+    ${
+      cabang === "ALL"
+        ? "'ALL TOKO' AS nama_cabang"
+        : "(SELECT gdg_nama FROM tgudang WHERE gdg_kode = ? LIMIT 1) AS nama_cabang"
+    },
+    LEFT(DAYNAME(dr.tanggal), 3) AS hari,
+    dr.tanggal,
+    IFNULL(ds.omset, 0) AS omset,
+    IFNULL(dt.target, 0) AS target,
+    (SELECT bulan_total FROM MonthlyTarget LIMIT 1) AS target_bulanan,
+    (
+      SELECT IFNULL(SUM(rd.rjd_jumlah * (rd.rjd_harga - rd.rjd_diskon)), 0)
+      FROM trj_hdr rh
+      JOIN trj_dtl rd ON rd.rjd_nomor = rh.rj_nomor
+      WHERE DATE(rh.rj_tanggal) = dr.tanggal
+      ${cabang !== "ALL" ? "AND LEFT(rh.rj_nomor, 3) = ?" : ""}
+    ) AS retur_jual
+FROM DateRange dr
+LEFT JOIN DailySales ds ON dr.tanggal = ds.tanggal
+LEFT JOIN DailyTargets dt ON dr.tanggal = dt.tanggal
+ORDER BY dr.tanggal;
     `;
 
   const params = [
@@ -139,6 +141,7 @@ const getDailyData = async (filters) => {
     bulan,
     ...(cabang !== "ALL" ? [cabang] : []),
     cabang,
+    ...(cabang !== "ALL" ? [cabang] : []),
     ...(cabang !== "ALL" ? [cabang] : []),
   ];
 
@@ -176,15 +179,16 @@ const getDailyData = async (filters) => {
     const dateKey = row.tanggal.toISOString();
     if (!seenDates.has(dateKey)) {
       seenDates.add(dateKey);
-      cumulativeSales += row.omset;
+      const nettoHariIni = row.omset - (row.retur_jual || 0);
+      cumulativeSales += nettoHariIni;
       cumulativeTarget += row.target;
+      const targetBulanan = row.target_bulanan || 0;
       uniqueRows.push({
         ...row,
         nama_cabang: cabang === "ALL" ? "ALL TOKO" : row.nama_cabang,
         total_omset: cumulativeSales,
-        total_target: cumulativeTarget,
-        ach:
-          cumulativeTarget > 0 ? (cumulativeSales / cumulativeTarget) * 100 : 0,
+        target_bulanan: targetBulanan,
+        ach: targetBulanan > 0 ? (cumulativeSales / targetBulanan) * 100 : 0,
       });
     }
   }
