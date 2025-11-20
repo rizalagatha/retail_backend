@@ -1,4 +1,4 @@
-const pool = require('../config/database');
+const pool = require("../config/database");
 
 /**
  * Mengambil daftar header Surat Jalan berdasarkan filter.
@@ -6,17 +6,17 @@ const pool = require('../config/database');
  * @returns {Promise<Array>}
  */
 const getList = async (filters) => {
-    const { startDate, endDate, kodeBarang } = filters;
-    
-    let params = [startDate, endDate];
-    let itemFilter = '';
-    
-    if (kodeBarang) {
-        itemFilter = 'AND d.sjd_kode = ?';
-        params.push(kodeBarang);
-    }
-    
-    const query = `
+  const { startDate, endDate, kodeBarang, cabang } = filters;
+
+  let params = [startDate, endDate, cabang];
+  let itemFilter = "";
+
+  if (kodeBarang) {
+    itemFilter = "AND d.sjd_kode = ?";
+    params.push(kodeBarang);
+  }
+
+  const query = `
         SELECT 
             h.sj_nomor AS Nomor,
             h.sj_tanggal AS Tanggal,
@@ -52,13 +52,14 @@ const getList = async (filters) => {
         LEFT JOIN retail.tmintabarang_hdr m ON m.mt_nomor = h.sj_mt_nomor
         WHERE h.sj_peminta = "" 
           AND h.sj_tanggal BETWEEN ? AND ?
+          AND h.sj_kecab = ?
           ${itemFilter}
         GROUP BY h.sj_nomor 
         ORDER BY h.date_create DESC
     `;
-    
-    const [rows] = await pool.query(query, params);
-    return rows;
+
+  const [rows] = await pool.query(query, params);
+  return rows;
 };
 
 /**
@@ -67,7 +68,7 @@ const getList = async (filters) => {
  * @returns {Promise<Array>}
  */
 const getDetails = async (nomor) => {
-    const query = `
+  const query = `
         SELECT 
             d.sjd_kode AS Kode,
             CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna) AS Nama,
@@ -78,8 +79,8 @@ const getDetails = async (nomor) => {
         WHERE d.sjd_nomor = ?
         ORDER BY d.sjd_kode;
     `;
-    const [rows] = await pool.query(query, [nomor]);
-    return rows;
+  const [rows] = await pool.query(query, [nomor]);
+  return rows;
 };
 
 /**
@@ -88,53 +89,56 @@ const getDetails = async (nomor) => {
  * @returns {Promise<object>}
  */
 const remove = async (nomor) => {
-    const connection = await pool.getConnection();
-    try {
-        await connection.beginTransaction();
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
 
-        const [headers] = await connection.query(
-            'SELECT sj_noterima, sj_stbj, sj_closing FROM tdc_sj_hdr WHERE sj_nomor = ?', 
-            [nomor]
-        );
-        if (headers.length === 0) {
-            throw new Error('Data tidak ditemukan.');
-        }
-        const sj = headers[0];
+    const [headers] = await connection.query(
+      "SELECT sj_noterima, sj_stbj, sj_closing FROM tdc_sj_hdr WHERE sj_nomor = ?",
+      [nomor]
+    );
+    if (headers.length === 0) {
+      throw new Error("Data tidak ditemukan.");
+    }
+    const sj = headers[0];
 
-        // Migrasi Validasi dari Delphi (cxButton4Click)
-        if (sj.sj_noterima) {
-            throw new Error('Sudah ada penerimaan. Tidak bisa dihapus.');
-        }
-        if (sj.sj_stbj) {
-            throw new Error('SJ Otomatis dari Terima STBJ. Tidak bisa dihapus.');
-        }
-        if (sj.sj_closing === 'Y') {
-            throw new Error('Sudah Closing Stok Opname. Tidak bisa dihapus.');
-        }
-        
-        await connection.query('DELETE FROM tdc_sj_hdr WHERE sj_nomor = ?', [nomor]);
-        await connection.query('DELETE FROM tdc_sj_dtl WHERE sjd_nomor = ?', [nomor]);
+    // Migrasi Validasi dari Delphi (cxButton4Click)
+    if (sj.sj_noterima) {
+      throw new Error("Sudah ada penerimaan. Tidak bisa dihapus.");
+    }
+    if (sj.sj_stbj) {
+      throw new Error("SJ Otomatis dari Terima STBJ. Tidak bisa dihapus.");
+    }
+    if (sj.sj_closing === "Y") {
+      throw new Error("Sudah Closing Stok Opname. Tidak bisa dihapus.");
+    }
 
-        // Log sinkronisasi (jika diperlukan)
-        const ccab = nomor.substring(0, 3);
-        if (['K02', 'K03', 'K04', 'K05', 'K06', 'K07', 'K08'].includes(ccab)) {
-             const logSql = `
+    await connection.query("DELETE FROM tdc_sj_hdr WHERE sj_nomor = ?", [
+      nomor,
+    ]);
+    await connection.query("DELETE FROM tdc_sj_dtl WHERE sjd_nomor = ?", [
+      nomor,
+    ]);
+
+    // Log sinkronisasi (jika diperlukan)
+    const ccab = nomor.substring(0, 3);
+    if (["K02", "K03", "K04", "K05", "K06", "K07", "K08"].includes(ccab)) {
+      const logSql = `
                 INSERT INTO kencanaprint.tlog_sync (log_tabel, log_nomor, log_cab, log_task, log_sync) 
                 VALUES ('tdc_sj_hdr', ?, ?, "DELETE", "Y") 
                 ON DUPLICATE KEY UPDATE log_sync="Y"
              `;
-             await connection.query(logSql, [nomor, ccab]);
-        }
-        
-        await connection.commit();
-        return { message: `Surat Jalan ${nomor} berhasil dihapus.` };
-
-    } catch (error) {
-        await connection.rollback();
-        throw error;
-    } finally {
-        connection.release();
+      await connection.query(logSql, [nomor, ccab]);
     }
+
+    await connection.commit();
+    return { message: `Surat Jalan ${nomor} berhasil dihapus.` };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 };
 
 /**
@@ -143,24 +147,24 @@ const remove = async (nomor) => {
  * @returns {Promise<object>}
  */
 const getRequestStatus = async (nomor) => {
-    const query = `
+  const query = `
         SELECT pin_urut, pin_alasan, pin_dipakai 
         FROM kencanaprint.tspk_pin5 
         WHERE pin_trs="SURAT JALAN" AND pin_nomor = ?
         ORDER BY pin_urut DESC LIMIT 1
     `;
-    const [rows] = await pool.query(query, [nomor]);
-    
-    if (rows.length === 0) {
-        return { nextUrut: 1, alasan: '' };
-    }
-    
-    const lastRequest = rows[0];
-    if (lastRequest.pin_dipakai === '') {
-        return { nextUrut: lastRequest.pin_urut, alasan: lastRequest.pin_alasan };
-    } else {
-        return { nextUrut: lastRequest.pin_urut + 1, alasan: '' };
-    }
+  const [rows] = await pool.query(query, [nomor]);
+
+  if (rows.length === 0) {
+    return { nextUrut: 1, alasan: "" };
+  }
+
+  const lastRequest = rows[0];
+  if (lastRequest.pin_dipakai === "") {
+    return { nextUrut: lastRequest.pin_urut, alasan: lastRequest.pin_alasan };
+  } else {
+    return { nextUrut: lastRequest.pin_urut + 1, alasan: "" };
+  }
 };
 
 /**
@@ -169,13 +173,13 @@ const getRequestStatus = async (nomor) => {
  * @returns {Promise<object>}
  */
 const submitRequest = async (payload) => {
-    const { nomor, tanggal, keterangan, alasan, urut, kdUser } = payload;
-    
-    if (!alasan || !alasan.trim()) {
-        throw new Error('Alasan harus diisi.');
-    }
-    
-    const query = `
+  const { nomor, tanggal, keterangan, alasan, urut, kdUser } = payload;
+
+  if (!alasan || !alasan.trim()) {
+    throw new Error("Alasan harus diisi.");
+  }
+
+  const query = `
         INSERT INTO kencanaprint.tspk_pin5 (
             pin_trs, pin_nomor, pin_urut, pin_tgl_trs, pin_ket, 
             pin_tgl_minta, pin_user_minta, pin_alasan
@@ -190,9 +194,9 @@ const submitRequest = async (payload) => {
             pin_user_minta = VALUES(pin_user_minta),
             pin_alasan = VALUES(pin_alasan)
     `;
-    
-    await pool.query(query, [nomor, urut, tanggal, keterangan, kdUser, alasan]);
-    return { message: 'Pengajuan perubahan berhasil. Menunggu ACC.' };
+
+  await pool.query(query, [nomor, urut, tanggal, keterangan, kdUser, alasan]);
+  return { message: "Pengajuan perubahan berhasil. Menunggu ACC." };
 };
 
 /**
@@ -202,8 +206,8 @@ const submitRequest = async (payload) => {
  */
 // GANTI FUNGSI LAMA DENGAN INI:
 const getPrintData = async (nomor) => {
-    // 1. Query untuk header, mengambil data SJ, data store tujuan, dan data perusahaan pengirim
-    const headerQuery = `
+  // 1. Query untuk header, mengambil data SJ, data store tujuan, dan data perusahaan pengirim
+  const headerQuery = `
         SELECT 
             h.sj_nomor,
             h.sj_tanggal,
@@ -220,13 +224,13 @@ const getPrintData = async (nomor) => {
         LEFT JOIN tgudang src ON src.gdg_kode = LEFT(h.sj_nomor, 3)
         WHERE h.sj_nomor = ?;
     `;
-    const [headerRows] = await pool.query(headerQuery, [nomor]);
-    if (headerRows.length === 0) {
-        throw new Error('Data Surat Jalan tidak ditemukan.');
-    }
+  const [headerRows] = await pool.query(headerQuery, [nomor]);
+  if (headerRows.length === 0) {
+    throw new Error("Data Surat Jalan tidak ditemukan.");
+  }
 
-    // 2. Query untuk detail item
-    const detailQuery = `
+  // 2. Query untuk detail item
+  const detailQuery = `
     SELECT 
         d.sjd_kode,
         TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama_barang,
@@ -237,19 +241,44 @@ const getPrintData = async (nomor) => {
     WHERE d.sjd_nomor = ?
     ORDER BY d.sjd_kode, d.sjd_ukuran;
     `;
-    const [detailRows] = await pool.query(detailQuery, [nomor]);
+  const [detailRows] = await pool.query(detailQuery, [nomor]);
 
-    return {
-        header: headerRows[0],
-        details: detailRows,
-    };
+  return {
+    header: headerRows[0],
+    details: detailRows,
+  };
+};
+
+const getCabangList = async (user) => {
+  let query = "";
+  const params = [];
+
+  if (user.cabang === "KDC") {
+    query = `
+      SELECT gdg_kode AS kode, gdg_nama AS nama
+      FROM tgudang
+      ORDER BY gdg_kode
+    `;
+  } else {
+    query = `
+      SELECT gdg_kode AS kode, gdg_nama AS nama
+      FROM tgudang
+      WHERE gdg_kode = ?
+      ORDER BY gdg_kode
+    `;
+    params.push(user.cabang);
+  }
+
+  const [rows] = await pool.query(query, params);
+  return rows;
 };
 
 module.exports = {
-    getList,
-    getDetails,
-    remove,
-    getRequestStatus,
-    submitRequest,
-    getPrintData,
+  getList,
+  getDetails,
+  remove,
+  getRequestStatus,
+  submitRequest,
+  getPrintData,
+  getCabangList,
 };

@@ -1,5 +1,5 @@
 const pool = require("../config/database");
-const { addMonths, setDate } = require('date-fns');
+const { addMonths, setDate } = require("date-fns");
 
 // Mengambil daftar utama (Master)
 const getList = async (filters) => {
@@ -109,28 +109,28 @@ const deleteAmbilBarang = async (nomor) => {
 };
 
 const lookupProducts = async (filters) => {
-    const page = parseInt(filters.page, 10) || 1;
-    const itemsPerPage = parseInt(filters.itemsPerPage, 10) || 10;
-    const { term } = filters;
-    
-    const offset = (page - 1) * itemsPerPage;
-    const searchTerm = term ? `%${term}%` : null;
+  const page = parseInt(filters.page, 10) || 1;
+  const itemsPerPage = parseInt(filters.itemsPerPage, 10) || 10;
+  const { term } = filters;
 
-    let fromClause = `FROM retail.tbarangdc a`;
-    let whereClause = `WHERE 1=1`; // Dimulai dengan kondisi true
-    let params = [];
+  const offset = (page - 1) * itemsPerPage;
+  const searchTerm = term ? `%${term}%` : null;
 
-    if (term) {
-        // Pencarian berdasarkan kode atau nama barang (sesuai query Delphi)
-        whereClause += ` AND (a.brg_kode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) LIKE ?)`;
-        params.push(searchTerm, searchTerm);
-    }
-    
-    const countQuery = `SELECT COUNT(*) as total ${fromClause} ${whereClause}`;
-    const [countRows] = await pool.query(countQuery, params);
-    const total = countRows[0].total;
-    
-    const dataQuery = `
+  let fromClause = `FROM retail.tbarangdc a`;
+  let whereClause = `WHERE 1=1`; // Dimulai dengan kondisi true
+  let params = [];
+
+  if (term) {
+    // Pencarian berdasarkan kode atau nama barang (sesuai query Delphi)
+    whereClause += ` AND (a.brg_kode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) LIKE ?)`;
+    params.push(searchTerm, searchTerm);
+  }
+
+  const countQuery = `SELECT COUNT(*) as total ${fromClause} ${whereClause}`;
+  const [countRows] = await pool.query(countQuery, params);
+  const total = countRows[0].total;
+
+  const dataQuery = `
         SELECT
             a.brg_kode AS kode,
             '' AS barcode, -- Kolom ini dibutuhkan komponen modal, beri nilai kosong jika tidak ada
@@ -143,15 +143,15 @@ const lookupProducts = async (filters) => {
         ORDER BY nama
         LIMIT ? OFFSET ?
     `;
-    params.push(itemsPerPage, offset);
-    
-    const [items] = await pool.query(dataQuery, params);
-    return { items, total };
+  params.push(itemsPerPage, offset);
+
+  const [items] = await pool.query(dataQuery, params);
+  return { items, total };
 };
 
 const getExportDetails = async (filters) => {
-    const { startDate, endDate, kodeBarang } = filters;
-    let query = `
+  const { startDate, endDate, kodeBarang } = filters;
+  let query = `
         SELECT 
             h.sj_nomor AS 'Nomor',
             h.sj_tanggal AS 'Tanggal',
@@ -171,16 +171,16 @@ const getExportDetails = async (filters) => {
         WHERE h.sj_peminta <> "" AND h.sj_kecab = "K01"
             AND h.sj_tanggal BETWEEN ? AND ?
     `;
-    const params = [startDate, endDate];
+  const params = [startDate, endDate];
 
-    if (kodeBarang) {
-        query += ` AND d.sjd_kode = ?`;
-        params.push(kodeBarang);
-    }
+  if (kodeBarang) {
+    query += ` AND d.sjd_kode = ?`;
+    params.push(kodeBarang);
+  }
 
-    query += ` ORDER BY h.sj_nomor, d.sjd_kode`;
-    const [rows] = await pool.query(query, params);
-    return rows;
+  query += ` ORDER BY h.sj_nomor, d.sjd_kode`;
+  const [rows] = await pool.query(query, params);
+  return rows;
 };
 
 module.exports = {
@@ -188,5 +188,5 @@ module.exports = {
   getDetails,
   deleteAmbilBarang,
   lookupProducts,
-  getExportDetails
+  getExportDetails,
 };
