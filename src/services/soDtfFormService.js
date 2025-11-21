@@ -536,7 +536,7 @@ const getDataForPrint = async (nomor) => {
             h.*, 
             LEFT(h.sd_nomor, 3) AS store,
             g.pab_nama AS gdg_nama,
-            o.jo_nama,
+            o.jo_nama, s.sal_nama AS salesNama,
             DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
             (SELECT CAST(GROUP_CONCAT(CONCAT(sdd2_nourut, ". ", sdd2_ket, ": P=", sdd2_panjang, "cm L=", sdd2_lebar, "cm") SEPARATOR '\\n') AS CHAR) 
             FROM tsodtf_dtl2 WHERE sdd2_nomor = h.sd_nomor) AS titik,
@@ -546,6 +546,7 @@ const getDataForPrint = async (nomor) => {
         FROM tsodtf_hdr h
         LEFT JOIN kencanaprint.tpabrik g ON g.pab_kode = h.sd_workshop
         LEFT JOIN kencanaprint.tjenisorder o ON h.sd_jo_kode = o.jo_kode
+        LEFT JOIN kencanaprint.tsales s ON s.sal_kode = h.sd_sal_kode
         WHERE h.sd_nomor = ?
   `;
   const [rows] = await pool.query(query, [nomor]);
