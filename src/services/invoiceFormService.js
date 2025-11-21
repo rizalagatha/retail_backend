@@ -1133,7 +1133,7 @@ const getPrintData = async (nomor) => {
         SELECT 
             h.inv_nomor, h.inv_tanggal, h.inv_nomor_so, h.inv_top, h.inv_ket, h.inv_sc,
             h.inv_disc, h.inv_ppn, h.inv_bkrm, h.inv_dp, h.inv_pundiamal,
-            h.inv_rptunai, h.inv_rpcard, h.inv_rpvoucher,
+            h.inv_rptunai, h.inv_rpcard, h.inv_rpvoucher, h.inv_kembali,
             DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY) AS tempo,
             c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
             d.invd_kode, d.invd_ukuran, d.invd_jumlah, d.invd_harga, d.invd_diskon,
@@ -1202,9 +1202,9 @@ const getPrintData = async (nomor) => {
   // =================== FIX TOTAL BAYAR ===================
   const totalBayar = bayarTunai + bayarCard + bayarVoucher + dpDipakai;
 
-  const kembali = Math.max(
-    totalBayar - grandTotal - Number(header.inv_pundiamal || 0),
-    0
+  const kembali = Number(
+    header.inv_kembali ??
+      Math.max(totalBayar - grandTotal - Number(header.inv_pundiamal || 0), 0)
   );
 
   header.summary = {
