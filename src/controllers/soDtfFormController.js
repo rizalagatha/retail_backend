@@ -234,6 +234,31 @@ const getPrintData = async (req, res) => {
   }
 };
 
+const searchSoForDtf = async (req, res) => {
+  try {
+    const { term } = req.query;
+    const rows = await soDtfFormService.searchSoForDtf(term);
+    res.json({ items: rows, total: rows.length });
+  } catch (error) {
+    console.error("Error search SO for DTF:", error);
+    res.status(500).json({ message: "Gagal memuat daftar SO DTF." });
+  }
+};
+
+const getSoDetailForDtf = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const result = await soDtfFormService.getSoDetailForDtf(nomor);
+    if (!result) {
+      return res.status(404).json({ message: "Nomor SO tidak ditemukan." });
+    }
+    res.json(result);
+  } catch (error) {
+    console.error("Error get SO detail for DTF:", error);
+    res.status(500).json({ message: "Gagal memuat detail SO DTF." });
+  }
+};
+
 module.exports = {
   getById,
   create,
@@ -249,4 +274,6 @@ module.exports = {
   calculateDtgPrice,
   getSizeCetak,
   getPrintData,
+  searchSoForDtf,
+  getSoDetailForDtf,
 };

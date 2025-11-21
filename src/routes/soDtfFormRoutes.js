@@ -18,6 +18,8 @@ router.get('/search/workshop', verifyToken, checkPermission(MENU_ID, 'view'), so
 router.get('/lookup/ukuran-kaos', verifyToken, checkPermission(MENU_ID, 'view'), soDtfFormController.getUkuranKaos);
 router.get('/lookup/ukuran-sodtf-detail', verifyToken, checkPermission(MENU_ID, 'view'), soDtfFormController.getUkuranSodtfDetail);
 router.get('/lookup/size-cetak', verifyToken, checkPermission(MENU_ID, 'view'), soDtfFormController.getSizeCetak);
+// 🔍 Untuk modal pencarian SO (yang sudah DP)
+router.get("/lookup/so", verifyToken, checkPermission(MENU_ID, 'view'), soDtfFormController.searchSoForDtf);
 
 // Routes untuk utilitas
 router.get('/sisa-kuota', verifyToken, checkPermission(MENU_ID, 'view'), soDtfFormController.getSisaKuota);
@@ -33,5 +35,8 @@ router.put('/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), soDtfFormCo
 
 // GET by nomor (HARUS paling terakhir karena menggunakan parameter dinamis)
 router.get('/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), soDtfFormController.getById);
+
+// 📦 Untuk ambil detail 1 SO lengkap (header + item + custom JSON + DP)
+router.get("/so-detail/:nomor", verifyToken, checkPermission(MENU_ID, 'view'), soDtfFormController.getSoDetailForDtf);
 
 module.exports = router;

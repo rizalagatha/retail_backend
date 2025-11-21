@@ -631,11 +631,13 @@ const getSoDetailForDtf = async (nomor) => {
       h.so_top AS top,
       h.so_ppn AS ppnPersen,
       h.so_aktif AS statusSo,
-      h.so_jenisorder AS jenisOrder,
+      h.so_jenisorder AS jenisOrderKode,
+      jo.jo_nama AS jenisOrderNama,
       h.so_namadtf AS namaDtf
     FROM tso_hdr h
     LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
     LEFT JOIN tcustomer_level l ON l.level_kode = h.so_cus_level
+    LEFT JOIN kencanaprint.tjenisorder jo ON jo.jo_kode = h.so_jenisorder
     WHERE h.so_nomor = ?
   `;
   const [headerRows] = await pool.query(headerQuery, [nomor]);
@@ -686,7 +688,6 @@ const getSoDetailForDtf = async (nomor) => {
 
   return { header, items: itemsParsed };
 };
-
 
 module.exports = {
   findById,

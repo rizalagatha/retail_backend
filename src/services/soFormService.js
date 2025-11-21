@@ -41,9 +41,11 @@ const save = async (data, user) => {
       )}`;
 
       const insertHeaderQuery = `
-                INSERT INTO tso_hdr 
-                (so_idrec, so_nomor, so_tanggal, so_dateline, so_pen_nomor, so_top, so_ppn, so_disc, so_disc1, so_disc2, so_bkrm, so_dp, so_cus_kode, so_cus_level, so_accdp, so_ket, so_aktif, so_sc, user_create, date_create) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            INSERT INTO tso_hdr 
+(so_idrec, so_nomor, so_tanggal, so_dateline, so_pen_nomor, so_top, so_ppn,
+ so_disc, so_disc1, so_disc2, so_bkrm, so_dp, so_cus_kode, so_cus_level,
+ so_accdp, so_ket, so_aktif, so_sc, so_jenisorder, so_namadtf, user_create, date_create)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
             `;
       await connection.query(insertHeaderQuery, [
         idrec,
@@ -64,6 +66,8 @@ const save = async (data, user) => {
         header.keterangan,
         aktifStatus,
         header.salesCounter,
+        header.jenisOrderKode || null,
+        header.namaDtf || null,
         user.kode,
       ]);
     } else {
@@ -76,10 +80,13 @@ const save = async (data, user) => {
       idrec = idrecRows[0].so_idrec;
 
       const updateHeaderQuery = `
-                UPDATE tso_hdr SET
-                so_cus_kode = ?, so_pen_nomor = ?, so_cus_level = ?, so_tanggal = ?, so_dateline = ?, so_top = ?, so_ppn = ?, so_accdp = ?, so_ket = ?,
-                so_disc = ?, so_disc1 = ?, so_disc2 = ?, so_bkrm = ?, so_dp = ?, so_aktif = ?, so_sc = ?, user_modified = ?, date_modified = NOW()
-                WHERE so_nomor = ?
+            UPDATE tso_hdr SET
+  so_cus_kode = ?, so_pen_nomor = ?, so_cus_level = ?, so_tanggal = ?, 
+  so_dateline = ?, so_top = ?, so_ppn = ?, so_accdp = ?, so_ket = ?,
+  so_jenisorder = ?, so_namadtf = ?,
+  so_disc = ?, so_disc1 = ?, so_disc2 = ?, so_bkrm = ?, so_dp = ?, 
+  so_aktif = ?, so_sc = ?, user_modified = ?, date_modified = NOW()
+WHERE so_nomor = ?
             `;
       await connection.query(updateHeaderQuery, [
         header.customer.kode,
@@ -91,6 +98,8 @@ const save = async (data, user) => {
         header.ppnPersen || 0,
         footer.pinTanpaDp,
         header.keterangan,
+        header.jenisOrderKode || null,
+        header.namaDtf || null,
         footer.diskonRp,
         footer.diskonPersen1,
         footer.diskonPersen2,
@@ -508,11 +517,18 @@ const getPenawaranDetailsForSo = async (nomor) => {
   };
 };
 
-const getDefaultDiscount = async (levelKode, total, gudang, hasPin, hasAcc, penawaran) => {
+const getDefaultDiscount = async (
+  levelKode,
+  total,
+  gudang,
+  hasPin,
+  hasAcc,
+  penawaran
+) => {
   let discount = 0;
 
   // 1️⃣ Jika sudah ada PIN / ACC / Penawaran → TIDAK pakai diskon otomatis
-  if (hasPin || hasAcc === 'Y' || penawaran) {
+  if (hasPin || hasAcc === "Y" || penawaran) {
     return { discount: 0 };
   }
 

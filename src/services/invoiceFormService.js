@@ -147,10 +147,14 @@ const getSoDetailsForGrid = async (soNomor, user) => {
                 h.so_sc AS salesCounter,
                 h.so_disc AS diskonRp, h.so_disc1 AS diskonPersen1, h.so_disc2 AS diskonPersen2,
                 h.so_ppn AS ppnPersen, h.so_bkrm AS biayaKirim,
-                CONCAT(h.so_cus_level, " - ", l.level_nama) AS level
+                CONCAT(h.so_cus_level, " - ", l.level_nama) AS level,
+                h.so_jenisorder AS jenisOrderKode,
+                jo.jo_nama AS jenisOrderNama,
+                h.so_namadtf AS namaDtf
             FROM tso_hdr h
             LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
             LEFT JOIN tcustomer_level l ON l.level_kode = h.so_cus_level
+            LEFT JOIN kencanaprint.tjenisorder jo ON jo.jo_kode = h.so_jenisorder
             WHERE h.so_nomor = ?;
         `;
     itemsQuery = `
@@ -197,6 +201,10 @@ const getSoDetailsForGrid = async (soNomor, user) => {
     telp: headerRows[0].telp,
     level: headerRows[0].level,
   };
+
+  headerData.jenisOrderKode = headerRows[0].jenisOrderKode || null;
+  headerData.jenisOrderNama = headerRows[0].jenisOrderNama || null;
+  headerData.namaDtf = headerRows[0].namaDtf || null;
 
   const [items] = await pool.query(itemsQuery, itemsParams);
 
@@ -618,7 +626,7 @@ WHERE inv_nomor = ?
       const detailSql = `
 INSERT INTO tinv_dtl (
   invd_idrec, invd_inv_nomor, invd_kode, invd_ukuran,
-  invd_jumlah, invd_harga, invd_hpp, invd_disc, invd_diskon, invd_nourut
+  invd_jumlah, invd_harga, invd_hpp, invd_disc, invd_diskon, invd_sd_nomor, invd_nourut
 ) VALUES ?
 `;
 
@@ -647,6 +655,8 @@ INSERT INTO tinv_dtl (
 
           // ⭐ SIMPAN POTONGAN (RP) PER PCS
           diskonRp, // invd_diskon
+
+          item.noSoDtf || "",
 
           index + 1,
         ];
