@@ -31,7 +31,7 @@ const getList = async (filters) => {
 
   let statusFilter = "";
   if (status === "belum_lunas") {
-    statusFilter = " AND FinalList.SisaPiutang > 0";
+    statusFilter = " AND FL.SisaPiutang > 0";
   }
 
   const query = `
