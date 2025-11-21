@@ -1,8 +1,6 @@
 // backend/src/services/customerService.js
 const pool = require("../config/database");
 
-// Di file: src/services/customerService.js
-
 const getAllCustomers = async (user) => {
   const userCabang = user ? user.cabang : null;
 
