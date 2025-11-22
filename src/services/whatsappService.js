@@ -24,6 +24,7 @@ const createClient = (cabang) => {
     authStrategy: new LocalAuth({ clientId: cabang }), // <-- Kunci: Session disimpan per cabang
     puppeteer: {
       headless: true,
+      ignoreHTTPSErrors: true,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -253,6 +254,9 @@ const sendReceipt = async (cabang, nomorInvoice, nomorHp, token) => {
     }, token);
 
     const url = `${process.env.FRONTEND_URL}/transaksi/penjualan/invoice/image-kasir/${nomorInvoice}?source=whatsapp`;
+
+    await page.setBypassCSP(true);
+    await page.setJavaScriptEnabled(true);
 
     await page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
 
