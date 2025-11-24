@@ -8,7 +8,7 @@ const findById = async (nomor) => {
   try {
     const headerQuery = `
             SELECT 
-                sd_nomor as nomor, sd_tanggal as tanggal, sd_datekerja as tglPengerjaan,
+                sd_nomor as nomor, sd_so_nomor AS soNomor, sd_tanggal as tanggal, sd_datekerja as tglPengerjaan,
                 sd_dateline as datelineCustomer, sd_sal_kode as salesKode, sal_nama as salesNama,
                 sd_cus_kode as customerKode, sd_customer as customerNama, cus_alamat as customerAlamat,
                 (SELECT IFNULL(CONCAT(y.clh_level, ' - ', v.level_nama), '') 
@@ -34,8 +34,16 @@ const findById = async (nomor) => {
 
     header.imageUrl = findImageFile(nomor);
 
-    const detailsUkuranQuery =
-      "SELECT sdd_ukuran as ukuran, sdd_jumlah as jumlah, sdd_harga as harga FROM tsodtf_dtl WHERE sdd_nomor = ? ORDER BY sdd_nourut";
+    const detailsUkuranQuery = `
+    SELECT 
+      sdd_nama_barang AS namaBarang,
+      sdd_ukuran AS ukuran,
+      sdd_jumlah AS jumlah,
+      sdd_harga AS harga
+    FROM tsodtf_dtl
+      WHERE sdd_nomor = ?
+      ORDER BY sdd_nourut
+    `;
     const [detailsUkuranRows] = await connection.query(detailsUkuranQuery, [
       nomor,
     ]);
@@ -102,12 +110,21 @@ const create = async (data, user) => {
   const connection = await pool.getConnection();
   await connection.beginTransaction();
   try {
-    // Panggil fungsi generateNewSoNumber untuk mendapatkan nomor baru
+    // Dapatkan nomor baru
     const newNomor = await generateNewSoNumber(connection, data, user);
 
     const header = data.header;
-    // Simpan header dengan nomor baru
-    const headerQuery = `INSERT INTO tsodtf_hdr (sd_nomor, sd_tanggal, sd_datekerja, sd_dateline, sd_cus_kode, sd_customer, sd_sal_kode, sd_jo_kode, sd_nama, sd_kain, sd_finishing, sd_desain, sd_workshop, sd_ket, user_create, date_create) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
+
+    // Insert header
+    const headerQuery = `
+      INSERT INTO tsodtf_hdr (
+        sd_nomor, sd_tanggal, sd_datekerja, sd_dateline,
+        sd_cus_kode, sd_customer, sd_sal_kode, sd_jo_kode,
+        sd_so_nomor, sd_nama, sd_kain, sd_finishing,
+        sd_desain, sd_workshop, sd_ket, user_create, date_create
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+    `;
     await connection.query(headerQuery, [
       newNomor,
       header.tanggal,
@@ -117,6 +134,7 @@ const create = async (data, user) => {
       header.customerNama,
       header.salesKode,
       header.jenisOrderKode,
+      header.soNomor,
       header.namaDtf,
       header.kain,
       header.finishing,
@@ -126,38 +144,70 @@ const create = async (data, user) => {
       user.kode,
     ]);
 
-    // Simpan detail ukuran
+    // Insert detail ukuran
     for (const [index, detail] of data.detailsUkuran.entries()) {
-      const detailUkuranQuery =
-        "INSERT INTO tsodtf_dtl (sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut) VALUES (?, ?, ?, ?, ?)";
-      await connection.query(detailUkuranQuery, [
-        newNomor,
-        detail.ukuran,
-        detail.jumlah,
-        detail.harga,
-        index + 1,
-      ]);
+      await connection.query(
+        `INSERT INTO tsodtf_dtl 
+          (sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut, sdd_nama_barang)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          newNomor,
+          detail.ukuran,
+          detail.jumlah,
+          detail.harga,
+          index + 1,
+          detail.namaBarang,
+        ]
+      );
     }
 
-    // Simpan detail titik
+    // Insert detail titik
     for (const [index, detail] of data.detailsTitik.entries()) {
-      const detailTitikQuery =
-        "INSERT INTO tsodtf_dtl2 (sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut) VALUES (?, ?, ?, ?, ?, ?)";
-      await connection.query(detailTitikQuery, [
-        newNomor,
-        detail.keterangan,
-        detail.sizeCetak,
-        detail.panjang,
-        detail.lebar,
-        index + 1,
-      ]);
+      await connection.query(
+        `INSERT INTO tsodtf_dtl2
+          (sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          newNomor,
+          detail.keterangan,
+          detail.sizeCetak,
+          detail.panjang,
+          detail.lebar,
+          index + 1,
+        ]
+      );
+    }
+
+    // Jika ada no SO, update relasi dan tandai sudah dipakai
+    if (header.soNomor) {
+      await connection.query(
+        `UPDATE tso_hdr 
+         SET so_dipakai_dtf = 'Y'
+         WHERE so_nomor = ?`,
+        [header.soNomor]
+      );
+
+      await connection.query(
+        `UPDATE tso_dtl 
+         SET sod_sd_nomor = ?
+         WHERE sod_so_nomor = ?`,
+        [newNomor, header.soNomor]
+      );
     }
 
     await connection.commit();
+
+    // Ambil data lengkap
     const [createdHeader] = await connection.query(
-      "SELECT *, sales.sal_nama, j.jo_nama, p.pab_nama FROM tsodtf_hdr h LEFT JOIN kencanaprint.tsales sales ON h.sd_sal_kode = sales.sal_kode LEFT JOIN kencanaprint.tjenisorder j ON h.sd_jo_kode = j.jo_kode LEFT JOIN kencanaprint.tpabrik p ON h.sd_workshop = p.pab_kode WHERE sd_nomor = ?",
+      `SELECT *, sales.sal_nama, j.jo_nama, p.pab_nama
+       FROM tsodtf_hdr h
+       LEFT JOIN kencanaprint.tsales sales ON h.sd_sal_kode = sales.sal_kode
+       LEFT JOIN kencanaprint.tjenisorder j ON h.sd_jo_kode = j.jo_kode
+       LEFT JOIN kencanaprint.tpabrik p ON h.sd_workshop = p.pab_kode
+       WHERE sd_nomor = ?`,
       [newNomor]
     );
+
     return {
       message: `Data berhasil disimpan dengan nomor: ${newNomor}`,
       header: createdHeader[0],
@@ -174,9 +224,39 @@ const create = async (data, user) => {
 const update = async (nomor, data, user) => {
   const connection = await pool.getConnection();
   await connection.beginTransaction();
+
   try {
     const header = data.header;
-    const headerQuery = `UPDATE tsodtf_hdr SET sd_tanggal = ?, sd_datekerja = ?, sd_dateline = ?, sd_cus_kode = ?, sd_customer = ?, sd_sal_kode = ?, sd_jo_kode = ?, sd_nama = ?, sd_kain = ?, sd_finishing = ?, sd_desain = ?, sd_workshop = ?, sd_ket = ?, user_modified = ?, date_modified = NOW() WHERE sd_nomor = ?`;
+
+    // 1️⃣ Ambil nomor SO lama sebelum update
+    const [oldRows] = await connection.query(
+      "SELECT sd_so_nomor FROM tsodtf_hdr WHERE sd_nomor = ?",
+      [nomor]
+    );
+    const oldSo = oldRows?.[0]?.sd_so_nomor || null;
+    const newSo = header.soNomor || null;
+
+    // 2️⃣ Update HEADER termasuk sd_so_nomor
+    const headerQuery = `
+      UPDATE tsodtf_hdr SET 
+        sd_tanggal = ?, 
+        sd_datekerja = ?, 
+        sd_dateline = ?, 
+        sd_cus_kode = ?, 
+        sd_customer = ?, 
+        sd_sal_kode = ?, 
+        sd_jo_kode = ?, 
+        sd_so_nomor = ?, 
+        sd_nama = ?, 
+        sd_kain = ?, 
+        sd_finishing = ?, 
+        sd_desain = ?, 
+        sd_workshop = ?, 
+        sd_ket = ?, 
+        user_modified = ?, 
+        date_modified = NOW()
+      WHERE sd_nomor = ?
+    `;
     await connection.query(headerQuery, [
       header.tanggal,
       header.tglPengerjaan,
@@ -185,6 +265,7 @@ const update = async (nomor, data, user) => {
       header.customerNama,
       header.salesKode,
       header.jenisOrderKode,
+      newSo, // 🔥 MUST update
       header.namaDtf,
       header.kain,
       header.finishing,
@@ -195,6 +276,7 @@ const update = async (nomor, data, user) => {
       nomor,
     ]);
 
+    // 3️⃣ Replace detail ukuran & titik
     await connection.query("DELETE FROM tsodtf_dtl WHERE sdd_nomor = ?", [
       nomor,
     ]);
@@ -202,39 +284,64 @@ const update = async (nomor, data, user) => {
       nomor,
     ]);
 
-    for (const [index, detail] of data.detailsUkuran.entries()) {
-      const detailUkuranQuery =
-        "INSERT INTO tsodtf_dtl (sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut) VALUES (?, ?, ?, ?, ?)";
-      await connection.query(detailUkuranQuery, [
-        nomor,
-        detail.ukuran,
-        detail.jumlah,
-        detail.harga,
-        index + 1,
-      ]);
+    for (const [i, det] of data.detailsUkuran.entries()) {
+      await connection.query(
+        `INSERT INTO tsodtf_dtl 
+          (sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut, sdd_nama_barang)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [nomor, det.ukuran, det.jumlah, det.harga, i + 1, det.namaBarang]
+      );
     }
 
-    for (const [index, detail] of data.detailsTitik.entries()) {
-      const detailTitikQuery =
-        "INSERT INTO tsodtf_dtl2 (sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut) VALUES (?, ?, ?, ?, ?, ?)";
-      await connection.query(detailTitikQuery, [
-        nomor,
-        detail.keterangan,
-        detail.sizeCetak,
-        detail.panjang,
-        detail.lebar,
-        index + 1,
-      ]);
+    for (const [i, det] of data.detailsTitik.entries()) {
+      await connection.query(
+        `INSERT INTO tsodtf_dtl2 
+          (sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [nomor, det.keterangan, det.sizeCetak, det.panjang, det.lebar, i + 1]
+      );
+    }
+
+    // 4️⃣ Reset SO lama jika diganti
+    if (oldSo && oldSo !== newSo) {
+      // Reset flag dipakai
+      await connection.query(
+        `UPDATE tso_hdr SET so_dipakai_dtf = 'N' WHERE so_nomor = ?`,
+        [oldSo]
+      );
+
+      // PATCH: Reset relasi detail agar tidak nyangkut
+      await connection.query(
+        `UPDATE tso_dtl SET sod_sd_nomor = '' WHERE sod_so_nomor = ?`,
+        [oldSo]
+      );
+    }
+
+    // 5️⃣ Set relasi & status SO baru
+    if (newSo) {
+      // Update detail agar mengarah ke SODTF ini
+      await connection.query(
+        `UPDATE tso_dtl 
+           SET sod_sd_nomor = ?
+         WHERE sod_so_nomor = ?`,
+        [nomor, newSo]
+      );
+
+      // Tandai SO dipakai oleh DTF
+      await connection.query(
+        `UPDATE tso_hdr SET so_dipakai_dtf = 'Y' WHERE so_nomor = ?`,
+        [newSo]
+      );
     }
 
     await connection.commit();
 
-    // PERBAIKAN: Panggil findById untuk mendapatkan data lengkap dengan imageUrl
-    const updatedData = await findById(nomor);
-    return updatedData;
-  } catch (error) {
+    // 6️⃣ Return data lengkap
+    const updated = await findById(nomor);
+    return updated;
+  } catch (err) {
     await connection.rollback();
-    console.error(`Error in update SO DTF service for nomor ${nomor}:`, error);
+    console.error("ERROR UPDATE SO DTF:", err);
     throw new Error("Gagal memperbarui data SO DTF.");
   } finally {
     connection.release();
@@ -530,33 +637,55 @@ const getSizeCetakList = async (jenisOrder) => {
  * @returns {Promise<object|null>} Objek berisi semua data untuk dicetak.
  */
 const getDataForPrint = async (nomor) => {
-  // Query ini adalah migrasi langsung dari query di fungsi cetak Delphi Anda
+  // Query header SO-DTF
   const query = `
-        SELECT 
-            h.*, 
-            LEFT(h.sd_nomor, 3) AS store,
-            g.pab_nama AS gdg_nama,
-            o.jo_nama, s.sal_nama AS salesNama,
-            DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
-            (SELECT CAST(GROUP_CONCAT(CONCAT(sdd2_nourut, ". ", sdd2_ket, ": P=", sdd2_panjang, "cm L=", sdd2_lebar, "cm") SEPARATOR '\\n') AS CHAR) 
-            FROM tsodtf_dtl2 WHERE sdd2_nomor = h.sd_nomor) AS titik,
-            (SELECT SUM(sdd_jumlah) FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor) AS jumlah,
-            (SELECT CAST(GROUP_CONCAT(CONCAT(sdd_ukuran, "=", sdd_jumlah) SEPARATOR ", ") AS CHAR) 
-            FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor) AS ukuran
-        FROM tsodtf_hdr h
-        LEFT JOIN kencanaprint.tpabrik g ON g.pab_kode = h.sd_workshop
-        LEFT JOIN kencanaprint.tjenisorder o ON h.sd_jo_kode = o.jo_kode
-        LEFT JOIN kencanaprint.tsales s ON s.sal_kode = h.sd_sal_kode
-        WHERE h.sd_nomor = ?
+    SELECT 
+        h.*, 
+        g.pab_nama AS gdg_nama,
+        o.jo_nama,
+        s.sal_nama AS salesNama,
+        DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
+
+        (SELECT CAST(GROUP_CONCAT(
+            CONCAT(sdd2_nourut, ". ", sdd2_ket, ": P=", sdd2_panjang, "cm L=", sdd2_lebar, "cm")
+            SEPARATOR '\\n') AS CHAR)
+         FROM tsodtf_dtl2 
+         WHERE sdd2_nomor = h.sd_nomor) AS titik,
+
+        (SELECT SUM(sdd_jumlah) 
+         FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor) AS jumlah,
+
+        (SELECT CAST(GROUP_CONCAT(CONCAT(sdd_ukuran, "=", sdd_jumlah) SEPARATOR ", ") AS CHAR)
+         FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor) AS ukuran
+
+    FROM tsodtf_hdr h
+    LEFT JOIN kencanaprint.tpabrik g ON g.pab_kode = h.sd_workshop
+    LEFT JOIN kencanaprint.tjenisorder o ON h.sd_jo_kode = o.jo_kode
+    LEFT JOIN kencanaprint.tsales s ON s.sal_kode = h.sd_sal_kode
+    WHERE h.sd_nomor = ?
   `;
+
   const [rows] = await pool.query(query, [nomor]);
-  if (rows.length === 0) return null;
+  if (!rows.length) return null;
+  const data = rows[0];
 
-  const data = rows[0]; // --- PERBAIKAN DI SINI --- // Panggil fungsi 'findImageFile' yang sudah benar
+  // --- DETAIL BARANG DARI DTF ---
+  const detailQuery = `
+    SELECT sdd_nama_barang AS nama, sdd_ukuran AS ukuran, sdd_jumlah AS jumlah
+    FROM tsodtf_dtl
+    WHERE sdd_nomor = ?
+    ORDER BY sdd_nourut
+  `;
 
-  // Hapus logika 'fs.existsSync' yang lama
+  const [detailRows] = await pool.query(detailQuery, [nomor]);
+
+  data.detailBarang = detailRows.map((r) => ({
+    nama: r.nama,
+    ukuran: `${r.ukuran}=${r.jumlah}`,
+  }));
+
+  // Image
   data.imageUrl = findImageFile(nomor);
-  // --- AKHIR PERBAIKAN ---
 
   return data;
 };
@@ -585,29 +714,74 @@ const findImageFile = (nomor) => {
 /**
  * Lookup daftar SO yang sudah DP, untuk dipilih di halaman SO DTF.
  */
-const searchSoForDtf = async (term) => {
-  const query = `
+const searchSoForDtf = async (term, cabang, page, itemsPerPage) => {
+  const offset = (page - 1) * itemsPerPage;
+  const searchTerm = `%${term || ""}%`;
+
+  // Query utama
+  const dataQuery = `
     SELECT 
       h.so_nomor AS Nomor,
       h.so_tanggal AS Tanggal,
       c.cus_nama AS Customer,
       c.cus_alamat AS Alamat,
       c.cus_kota AS Kota,
+
+      -- total bayar
       IFNULL(SUM(s.sh_nominal), 0) AS totalBayar,
-      IFNULL(h.so_total, 0) AS totalSo
+
+      -- total SO: SUM(qty * harga)
+      (
+        SELECT SUM(d.sod_jumlah * (d.sod_harga - d.sod_diskon))
+        FROM tso_dtl d
+        WHERE d.sod_so_nomor = h.so_nomor
+      ) AS totalSo
+
     FROM tso_hdr h
     LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
     LEFT JOIN tsetor_hdr s ON s.sh_so_nomor = h.so_nomor
+
     WHERE h.so_aktif = 'Y'
+      AND h.so_dipakai_dtf = 'N'
+      AND LEFT(h.so_nomor, 3) = ?
       AND (h.so_nomor LIKE ? OR c.cus_nama LIKE ?)
+
     GROUP BY h.so_nomor
-    HAVING totalBayar >= totalSo
     ORDER BY h.so_tanggal DESC
-    LIMIT 50;
+    LIMIT ? OFFSET ?
   `;
-  const params = [`%${term || ""}%`, `%${term || ""}%`];
-  const [rows] = await pool.query(query, params);
-  return rows;
+
+  const [rows] = await pool.query(dataQuery, [
+    cabang,
+    searchTerm,
+    searchTerm,
+    itemsPerPage,
+    offset,
+  ]);
+
+  // Query total
+  const countQuery = `
+    SELECT COUNT(*) AS total
+    FROM (
+      SELECT h.so_nomor
+      FROM tso_hdr h
+      LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
+      LEFT JOIN tsetor_hdr s ON s.sh_so_nomor = h.so_nomor
+      WHERE h.so_aktif = 'Y'
+        AND h.so_dipakai_dtf = 'N'
+        AND LEFT(h.so_nomor, 3) = ?
+        AND (h.so_nomor LIKE ? OR c.cus_nama LIKE ?)
+      GROUP BY h.so_nomor
+    ) x
+  `;
+
+  const [[count]] = await pool.query(countQuery, [
+    cabang,
+    searchTerm,
+    searchTerm,
+  ]);
+
+  return { items: rows, total: count.total };
 };
 
 /**
@@ -649,10 +823,16 @@ const getSoDetailForDtf = async (nomor) => {
   const itemQuery = `
     SELECT 
       d.sod_kode AS kode,
-      COALESCE(
-        TRIM(CONCAT(b.brg_jeniskaos, ' ', b.brg_tipe, ' ', b.brg_lengan, ' ', b.brg_jeniskain, ' ', b.brg_warna)),
-        d.sod_custom_nama
-      ) AS nama,
+      CASE
+        WHEN d.sod_custom = 'Y' THEN d.sod_custom_nama
+        ELSE TRIM(CONCAT(
+          b.brg_jeniskaos, ' ',
+          b.brg_tipe, ' ',
+          b.brg_lengan, ' ',
+          b.brg_jeniskain, ' ',
+          b.brg_warna
+        ))
+      END AS nama,
       d.sod_ukuran AS ukuran,
       d.sod_jumlah AS jumlah,
       d.sod_harga AS harga,
@@ -679,9 +859,16 @@ const getSoDetailForDtf = async (nomor) => {
           isCustomOrder: true,
           ukuranKaos: parsed.ukuranKaos || [],
           titikCetak: parsed.titikCetak || [],
+          sourceItems: parsed.sourceItems || [], // <<--- TAMBAH
         };
       } catch {
-        return { ...it, isCustomOrder: true, ukuranKaos: [], titikCetak: [] };
+        return {
+          ...it,
+          isCustomOrder: true,
+          ukuranKaos: [],
+          titikCetak: [],
+          sourceItems: [],
+        };
       }
     }
     return { ...it, isCustomOrder: false };

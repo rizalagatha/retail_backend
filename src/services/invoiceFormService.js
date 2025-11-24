@@ -40,13 +40,25 @@ const searchSo = async (term, page, itemsPerPage, user) => {
 
   const subQuery = `
         SELECT 
-            h.so_nomor AS Nomor, h.so_tanggal AS Tanggal, h.so_cus_kode AS KdCus, 
-            c.cus_nama AS Customer, c.cus_alamat AS Alamat, c.cus_kota AS Kota,
-            IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) AS qtyso,
-            IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_dtl dd JOIN tinv_hdr hh ON hh.inv_nomor = dd.invd_inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0) AS qtyinv
+            h.so_nomor AS Nomor, 
+            h.so_tanggal AS Tanggal,
+            h.so_cus_kode AS KdCus, 
+            c.cus_nama AS Customer, 
+            c.cus_alamat AS Alamat,
+            c.cus_kota AS Kota,
+            IFNULL((SELECT SUM(dd.sod_jumlah) 
+                    FROM tso_dtl dd 
+                    WHERE dd.sod_so_nomor = h.so_nomor), 0) AS qtyso,
+            IFNULL((SELECT SUM(dd.invd_jumlah) 
+                    FROM tinv_dtl dd 
+                    JOIN tinv_hdr hh ON hh.inv_nomor = dd.invd_inv_nomor 
+                    WHERE hh.inv_sts_pro = 0 
+                    AND hh.inv_nomor_so = h.so_nomor), 0) AS qtyinv
         FROM tso_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
-        WHERE h.so_aktif = "Y" AND h.so_close = 0 AND LEFT(h.so_nomor, 3) = ?
+        WHERE h.so_aktif = "Y" 
+          AND h.so_close = 0 
+          AND LEFT(h.so_nomor, 3) = ?
     `;
 
   const baseQuery = `FROM (${subQuery}) AS x WHERE x.qtyinv < x.qtyso`;
@@ -66,11 +78,21 @@ const searchSo = async (term, page, itemsPerPage, user) => {
   const [countRows] = await pool.query(countQuery, countParams);
 
   dataParams.push(itemsPerPage, offset);
+
   const dataQuery = `
-        SELECT x.Nomor, x.Tanggal, x.KdCus, x.Customer 
-        ${baseQuery} ${term ? searchWhere : ""} 
+        SELECT 
+            x.Nomor, 
+            x.Tanggal, 
+            x.KdCus, 
+            x.Customer,
+            x.Alamat,        -- ✔ FIX
+            x.Kota           -- ✔ FIX
+        ${baseQuery} 
+        ${term ? searchWhere : ""} 
         ORDER BY x.Nomor DESC 
-        LIMIT ? OFFSET ?`;
+        LIMIT ? OFFSET ?
+    `;
+
   const [items] = await pool.query(dataQuery, dataParams);
 
   return { items, total: countRows[0].total };
@@ -159,32 +181,56 @@ const getSoDetailsForGrid = async (soNomor, user) => {
         `;
     itemsQuery = `
             SELECT 
-                d.sod_kode AS kode, b.brgd_barcode AS barcode,
-                COALESCE(
-                    TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)),
-                    f.sd_nama
-                ) AS nama,
-                d.sod_ukuran AS ukuran,
-                d.sod_harga AS harga, d.sod_diskon AS diskonRp, d.sod_disc AS diskonPersen,
-                d.sod_sd_nomor AS noSoDtf,     
-                a.brg_ktgp AS kategori,
-                b.brgd_hpp AS hpp, a.brg_logstok AS logstok,
-                IFNULL(
-  (SELECT SUM(m.mst_stok_in - m.mst_stok_out)
-   FROM tmasterstokso m
-   WHERE m.mst_aktif = 'Y'
-     AND m.mst_cab = ?
-     AND m.mst_brg_kode = d.sod_kode
-     AND m.mst_ukuran = d.sod_ukuran),
-  0
-) AS stok,
-                (d.sod_jumlah - IFNULL((SELECT SUM(id.invd_jumlah) FROM tinv_dtl id JOIN tinv_hdr ih ON id.invd_inv_nomor = ih.inv_nomor WHERE ih.inv_nomor_so = d.sod_so_nomor AND id.invd_kode = d.sod_kode AND id.invd_ukuran = d.sod_ukuran), 0)) AS qtyso
-            FROM tso_dtl d
-            LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
-            LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
-            LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_kode
-            WHERE d.sod_so_nomor = ?;
-        `;
+    d.sod_kode AS kode,
+    b.brgd_barcode AS barcode,
+    COALESCE(
+            TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)),
+            f.sd_nama,
+            d.sod_custom_nama
+        ) AS nama,
+    d.sod_ukuran AS ukuran_asli,
+    dtf.sdd_ukuran AS ukuran_dtf,
+    d.sod_custom_data AS custom_json,
+    d.sod_harga AS harga,
+    d.sod_diskon AS diskonRp,
+    d.sod_disc AS diskonPersen,
+    d.sod_sd_nomor AS noSoDtf,
+    a.brg_ktgp AS kategori,
+    b.brgd_hpp AS hpp,
+    a.brg_logstok AS logstok,
+    IFNULL(
+        (SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+         FROM tmasterstokso m
+         WHERE m.mst_aktif = 'Y'
+           AND m.mst_cab = ?
+           AND m.mst_brg_kode = d.sod_kode
+           AND m.mst_ukuran = d.sod_ukuran),
+        0
+    ) AS stok,
+    (d.sod_jumlah - IFNULL(
+        (SELECT SUM(id.invd_jumlah)
+         FROM tinv_dtl id
+         JOIN tinv_hdr ih ON id.invd_inv_nomor = ih.inv_nomor
+         WHERE ih.inv_nomor_so = d.sod_so_nomor
+           AND id.invd_kode = d.sod_kode
+           AND id.invd_ukuran = d.sod_ukuran),
+        0
+    )) AS qtyso
+FROM tso_dtl d
+    LEFT JOIN tbarangdc a 
+        ON a.brg_kode = d.sod_kode
+    LEFT JOIN tbarangdc_dtl b 
+        ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
+
+    LEFT JOIN tsodtf_hdr f 
+        ON f.sd_nomor = d.sod_sd_nomor                -- nama dari SO-DTF
+
+    LEFT JOIN tsodtf_dtl dtf 
+        ON dtf.sdd_nomor = d.sod_sd_nomor             -- ukuran dari SO-DTF
+        AND dtf.sdd_ukuran = d.sod_ukuran
+
+    WHERE d.sod_so_nomor = ?;
+`;
     itemsParams = [user.cabang, soNomor];
   }
 
@@ -1149,7 +1195,9 @@ const getPrintData = async (nomor) => {
             d.invd_kode, d.invd_ukuran, d.invd_jumlah, d.invd_harga, d.invd_diskon,
             COALESCE(
                 TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)),
-                f.sd_nama
+                f.sd_nama,
+                cso.so_namadtf,
+                d.invd_kode
             ) AS nama_barang,
             (d.invd_jumlah * (d.invd_harga - d.invd_diskon)) AS total,
             h.user_create, DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
@@ -1163,6 +1211,9 @@ const getPrintData = async (nomor) => {
         LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
         LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
         LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
+        LEFT JOIN tso_hdr cso
+            ON cso.so_nomor = h.inv_nomor_so
+            AND d.invd_kode = 'CUSTOM'
         LEFT JOIN tgudang src ON src.gdg_kode = LEFT(h.inv_nomor, 3)
         WHERE h.inv_nomor = ?
         ORDER BY d.invd_nourut;

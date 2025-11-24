@@ -66,8 +66,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         header.keterangan,
         aktifStatus,
         header.salesCounter,
-        header.jenisOrderKode || null,
-        header.namaDtf || null,
+        header.jenisOrderKode ? String(header.jenisOrderKode) : null,
+        header.namaDtf ? String(header.namaDtf) : null,
         user.kode,
       ]);
     } else {
@@ -98,7 +98,7 @@ WHERE so_nomor = ?
         header.ppnPersen || 0,
         footer.pinTanpaDp,
         header.keterangan,
-        header.jenisOrderKode || null,
+        header.jenisOrderKode || header.jenisOrder || null,
         header.namaDtf || null,
         footer.diskonRp,
         footer.diskonPersen1,
@@ -120,12 +120,25 @@ WHERE so_nomor = ?
       const kodeBarang = item.kode || (item.isCustomOrder ? "CUSTOM" : "");
       const isCustom = item.isCustomOrder ? "Y" : "N";
 
-      const customData = item.isCustomOrder
-        ? JSON.stringify({
+      let customData = null;
+
+      if (item.isCustomOrder) {
+        if (item.sod_custom_data) {
+          // Kalau frontend sudah kirim sod_custom_data,
+          // pakai itu saja, jangan dibikin ulang
+          customData =
+            typeof item.sod_custom_data === "string"
+              ? item.sod_custom_data
+              : JSON.stringify(item.sod_custom_data);
+        } else {
+          // Fallback: kalau memang belum ada, baru rakit dari field lain
+          customData = JSON.stringify({
             ukuranKaos: item.ukuranKaos || [],
             titikCetak: item.titikCetak || [],
-          })
-        : null;
+            sourceItems: item.sourceItems || [],
+          });
+        }
+      }
 
       await connection.query(
         `INSERT INTO tso_dtl 
@@ -144,7 +157,7 @@ WHERE so_nomor = ?
           item.diskonRp || 0,
           index + 1,
           isCustom,
-          isCustom === "Y" ? item.nama : null,
+          isCustom === "Y" ? item.sod_custom_nama : null,
           customData,
         ]
       );

@@ -236,9 +236,19 @@ const getPrintData = async (req, res) => {
 
 const searchSoForDtf = async (req, res) => {
   try {
-    const { term } = req.query;
-    const rows = await soDtfFormService.searchSoForDtf(term);
-    res.json({ items: rows, total: rows.length });
+    const { term = "", cabang, page = 1, itemsPerPage = 15 } = req.query;
+
+    const result = await soDtfFormService.searchSoForDtf(
+      term,
+      cabang,
+      Number(page),
+      Number(itemsPerPage)
+    );
+
+    res.json({
+      items: result.items,
+      total: result.total,
+    });
   } catch (error) {
     console.error("Error search SO for DTF:", error);
     res.status(500).json({ message: "Gagal memuat daftar SO DTF." });

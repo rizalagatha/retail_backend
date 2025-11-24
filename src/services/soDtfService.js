@@ -57,9 +57,14 @@ const getSoDtfList = async (filters) => {
 
 const getSoDtfDetails = async (nomor) => {
   const query = `
-        SELECT sdd_ukuran AS Ukuran, sdd_jumlah AS Jumlah 
-        FROM tsodtf_dtl WHERE sdd_nomor = ? ORDER BY sdd_nourut
-    `;
+    SELECT 
+      sdd_nama_barang AS NamaBarang,
+      sdd_ukuran AS Ukuran, 
+      sdd_jumlah AS Jumlah 
+    FROM tsodtf_dtl 
+    WHERE sdd_nomor = ? 
+    ORDER BY sdd_nourut
+  `;
   const [rows] = await pool.query(query, [nomor]);
   return rows;
 };

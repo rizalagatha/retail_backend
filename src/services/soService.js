@@ -16,50 +16,128 @@ const getList = async (filters) => {
 
   let statusFilter = "";
   if (status === "open") {
-    // 'Status' adalah alias yang dihitung di SELECT, jadi kita filter dengan HAVING
     statusFilter = " HAVING Status = 'OPEN'";
   }
 
-  // Query ini mereplikasi semua sub-query dan kalkulasi status dari Delphi
   const query = `
+    SELECT 
+        y.Nomor, y.Tanggal, y.Dateline, y.Penawaran, y.Top, y.Nominal, y.Diskon, y.Dp, 
+        y.QtySO, y.QtyInv, y.Belum, y.AlasanClose, y.StatusKirim,
+        y.kdcus, y.Nama, y.Alamat, y.Kota, y.Level, y.Keterangan, y.Aktif, y.SC,
+        y.DipakaiDTF,
+
+        (CASE
+            WHEN y.DipakaiDTF = 'Y' AND y.Belum = 0 THEN 'CLOSE'
+            WHEN y.sts = 2 THEN "DICLOSE"
+            WHEN y.StatusKirim = "TERKIRIM" THEN "CLOSE"
+            WHEN y.StatusKirim = "BELUM" AND y.keluar = 0 AND y.minta = "" AND y.pesan = 0 THEN "OPEN"
+            WHEN y.StatusKirim = "BELUM" AND y.QtySO = y.pesan THEN "JADI"
+            ELSE "PROSES"
+        END) AS Status
+
+    FROM (
         SELECT 
-            y.Nomor, y.Tanggal, y.Dateline, y.Penawaran, y.Top, y.Nominal, y.Diskon, y.Dp, 
-            y.QtySO, y.QtyInv, y.Belum, y.AlasanClose, y.StatusKirim, y.kdcus, y.Nama, 
-            y.Alamat, y.Kota, y.Level, y.Keterangan, y.Aktif, y.SC,
-            (CASE
-                WHEN y.sts = 2 THEN "DICLOSE"
-                WHEN y.StatusKirim = "TERKIRIM" THEN "CLOSE"
-                WHEN y.StatusKirim = "BELUM" AND y.keluar = 0 AND y.minta = "" AND y.pesan = 0 THEN "OPEN"
-                WHEN y.StatusKirim = "BELUM" AND y.QtySO = y.pesan THEN "JADI"
-                ELSE "PROSES"
-            END) AS Status
+            x.*,
+            IF(x.QtyInv = 0, "BELUM", IF(x.QtyInv >= x.QtySO, "TERKIRIM", "SEBAGIAN")) AS StatusKirim,
+
+            IFNULL((
+                SELECT SUM(m.mst_stok_out)
+                FROM tmasterstok m 
+                WHERE m.mst_noreferensi IN (
+                    SELECT o.mo_nomor FROM tmutasiout_hdr o WHERE o.mo_so_nomor = x.Nomor
+                )
+                AND MID(m.mst_noreferensi, 4, 3) NOT IN ("MSO","MSI")
+            ), 0) AS keluar,
+
+            IFNULL((
+                SELECT m.mt_nomor 
+                FROM tmintabarang_hdr m 
+                WHERE m.mt_so = x.Nomor 
+                LIMIT 1
+            ), "") AS minta,
+
+            IFNULL((
+                SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+                FROM tmasterstokso m
+                WHERE m.mst_aktif = "Y" AND m.mst_nomor_so = x.Nomor
+            ), 0) AS pesan
+
         FROM (
             SELECT 
-                x.*,
-                IF(x.QtyInv = 0, "BELUM", IF(x.QtyInv >= x.QtySO, "TERKIRIM", "SEBAGIAN")) AS StatusKirim,
-                IFNULL((SELECT SUM(m.mst_stok_out) FROM tmasterstok m WHERE m.mst_noreferensi IN (SELECT o.mo_nomor FROM tmutasiout_hdr o WHERE o.mo_so_nomor = x.Nomor) AND mid(m.mst_noreferensi, 4, 3) NOT IN ("MSO", "MSI")), 0) AS keluar,
-                IFNULL((SELECT m.mt_nomor FROM tmintabarang_hdr m WHERE m.mt_so = x.Nomor LIMIT 1), "") AS minta,
-                IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstokso m WHERE m.mst_aktif = "Y" AND m.mst_nomor_so = x.Nomor), 0) AS pesan
-            FROM (
-                SELECT 
-                    h.so_nomor AS Nomor, h.so_pen_nomor AS Penawaran, h.so_dateline AS Dateline, h.so_tanggal AS Tanggal, 
-                    h.so_top AS Top, h.so_disc AS Diskon, h.so_dp AS Dp,
-                    (SELECT ROUND(SUM(dd.sod_jumlah * (dd.sod_harga - dd.sod_diskon)) - hh.so_disc + (hh.so_ppn / 100 * (SUM(dd.sod_jumlah * (dd.sod_harga - dd.sod_diskon)) - hh.so_disc)) + hh.so_bkrm) FROM tso_dtl dd JOIN tso_hdr hh ON hh.so_nomor = dd.sod_so_nomor WHERE hh.so_nomor = h.so_nomor) AS Nominal,
-                    IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
-                    IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0) AS QtyInv,
-                    (IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) - IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0)) AS Belum,
-                    h.so_cus_kode AS kdcus, s.cus_nama AS Nama, s.cus_alamat AS Alamat, s.cus_kota AS Kota, 
-                    CONCAT(h.so_cus_level, " - ", l.level_nama) AS Level, h.so_ket AS Keterangan, 
-                    h.so_close AS sts, h.so_aktif AS Aktif, h.so_alasan AS AlasanClose, h.so_sc AS SC
-                FROM tso_hdr h
-                LEFT JOIN tcustomer s ON s.cus_kode = h.so_cus_kode
-                LEFT JOIN tcustomer_level l ON l.level_kode = h.so_cus_level
-                WHERE h.so_tanggal BETWEEN ? AND ? ${branchFilter}
-            ) x
-        ) y
-        ${statusFilter}
-        ORDER BY y.Tanggal, y.Nomor;
-    `;
+                h.so_nomor AS Nomor,
+                h.so_pen_nomor AS Penawaran,
+                h.so_dateline AS Dateline,
+                h.so_tanggal AS Tanggal,
+                h.so_top AS Top,
+                h.so_disc AS Diskon,
+                h.so_dp AS Dp,
+
+                (SELECT ROUND(
+                    SUM(dd.sod_jumlah * (dd.sod_harga - dd.sod_diskon))
+                    - hh.so_disc 
+                    + (hh.so_ppn / 100 * (SUM(dd.sod_jumlah * (dd.sod_harga - dd.sod_diskon)) - hh.so_disc))
+                    + hh.so_bkrm
+                )
+                FROM tso_dtl dd 
+                JOIN tso_hdr hh ON hh.so_nomor = dd.sod_so_nomor 
+                WHERE hh.so_nomor = h.so_nomor) AS Nominal,
+
+                IFNULL((SELECT SUM(dd.sod_jumlah)
+                        FROM tso_dtl dd
+                        WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
+
+                IFNULL((SELECT SUM(dd.invd_jumlah)
+                        FROM tinv_hdr hh 
+                        JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor 
+                        WHERE hh.inv_sts_pro = 0 
+                        AND hh.inv_nomor_so = h.so_nomor), 0) AS QtyInv,
+
+                (IFNULL((SELECT SUM(dd.sod_jumlah)
+                         FROM tso_dtl dd 
+                         WHERE dd.sod_so_nomor = h.so_nomor), 0)
+                 -
+                 IFNULL((SELECT SUM(dd.invd_jumlah)
+                         FROM tinv_hdr hh 
+                         JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor 
+                         WHERE hh.inv_sts_pro = 0 
+                         AND hh.inv_nomor_so = h.so_nomor), 0)
+                ) AS Belum,
+
+                h.so_cus_kode AS kdcus,
+                s.cus_nama AS Nama,
+                s.cus_alamat AS Alamat,
+                s.cus_kota AS Kota,
+                CONCAT(h.so_cus_level, " - ", l.level_nama) AS Level,
+                h.so_ket AS Keterangan,
+
+                h.so_close AS sts,
+                h.so_aktif AS Aktif,
+                h.so_alasan AS AlasanClose,
+                h.so_sc AS SC,
+                (
+  SELECT 'Y'
+  FROM tsodtf_hdr d
+  WHERE d.sd_nomor IN (
+      SELECT DISTINCT sod_sd_nomor
+      FROM tso_dtl dd
+      WHERE dd.sod_so_nomor = h.so_nomor
+  )
+  LIMIT 1
+) AS DipakaiDTF
+
+            FROM tso_hdr h
+            LEFT JOIN tcustomer s ON s.cus_kode = h.so_cus_kode
+            LEFT JOIN tcustomer_level l ON l.level_kode = h.so_cus_level
+            WHERE h.so_tanggal BETWEEN ? AND ?
+            ${branchFilter}
+        ) x
+    ) y
+
+    ${statusFilter}
+
+    ORDER BY y.Tanggal, y.Nomor;
+  `;
+
   const [rows] = await pool.query(query, params);
   return rows;
 };
@@ -184,41 +262,83 @@ const capitalize = (s) =>
 const getDataForPrint = async (nomor) => {
   // 1. Ambil data Header, Customer, dan Gudang
   const headerQuery = `
-        SELECT 
-            h.so_nomor, h.so_tanggal, h.so_top, h.so_ket, h.so_sc, h.user_create,
-            DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
-            h.so_disc, h.so_ppn, h.so_bkrm, h.so_dp,
-            c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
-            g.gdg_inv_nama, g.gdg_inv_alamat, g.gdg_inv_kota, g.gdg_inv_telp,
-            g.gdg_inv_instagram
-        FROM tso_hdr h
-        LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
-        LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.so_nomor, 3)
-        WHERE h.so_nomor = ?
-    `;
+    SELECT 
+        h.so_nomor, h.so_tanggal, h.so_top, h.so_ket, h.so_sc, h.user_create,
+        DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
+        h.so_disc, h.so_ppn, h.so_bkrm, h.so_dp,
+        c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
+        g.gdg_inv_nama, g.gdg_inv_alamat, g.gdg_inv_kota, g.gdg_inv_telp,
+        g.gdg_inv_instagram
+    FROM tso_hdr h
+    LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
+    LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.so_nomor, 3)
+    WHERE h.so_nomor = ?
+  `;
   const [headerRows] = await pool.query(headerQuery, [nomor]);
   if (headerRows.length === 0) return null;
   const header = headerRows[0];
 
-  // 2. Ambil data Detail
+  // 2. Ambil data Detail (include JSON custom)
   const detailQuery = `
-        SELECT 
-            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) AS nama_barang,
-            d.sod_ukuran AS ukuran,
-            d.sod_jumlah AS qty,
-            d.sod_harga AS harga,
-            d.sod_diskon AS diskon,
-            (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS total
-        FROM tso_dtl d
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
-        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_kode
-        WHERE d.sod_so_nomor = ? 
-        ORDER BY d.sod_nourut
-    `;
-  const [details] = await pool.query(detailQuery, [nomor]);
+    SELECT 
+        d.sod_custom,
+        d.sod_custom_nama,
+        d.sod_custom_data,
+        d.sod_ukuran AS ukuran_asli,
+        d.sod_jumlah AS qty,
+        d.sod_harga AS harga,
+        d.sod_diskon AS diskon,
+        (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS total,
 
-  // 3. Kalkulasi Total & Terbilang di backend
-  const total = details.reduce((sum, item) => sum + item.total, 0);
+        -- Nama barang normal
+        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama_normal,
+
+        -- Nama DTF jika ada di tsodtf_hdr (fallback lama)
+        f.sd_nama AS nama_dtf_lama
+
+    FROM tso_dtl d
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
+    LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_kode
+    WHERE d.sod_so_nomor = ?
+    ORDER BY d.sod_nourut
+  `;
+  const [rows] = await pool.query(detailQuery, [nomor]);
+
+  // 3. Proses detail untuk custom data (JSON parse)
+  const details = rows.map((item) => {
+    let nama_barang = item.nama_normal;
+    let ukuran = item.ukuran_asli;
+
+    if (item.sod_custom === "Y") {
+      nama_barang = item.sod_custom_nama || "CUSTOM ORDER";
+
+      try {
+        const parsed = JSON.parse(item.sod_custom_data);
+
+        // Ambil ukuran pertama (L, XL, dst.)
+        if (Array.isArray(parsed.ukuranKaos) && parsed.ukuranKaos.length > 0) {
+          ukuran = parsed.ukuranKaos[0].ukuran || "";
+        }
+      } catch (e) {
+        // ignore JSON parse error, fallback to existing
+      }
+    } else {
+      // Jika bukan custom tapi nama normal null → fallback dari tsodtf_hdr
+      if (!nama_barang) nama_barang = item.nama_dtf_lama;
+    }
+
+    return {
+      nama_barang,
+      ukuran,
+      qty: item.qty,
+      harga: item.harga,
+      diskon: item.diskon,
+      total: item.total,
+    };
+  });
+
+  // 4. Kalkulasi Total & Terbilang
+  const total = details.reduce((sum, it) => sum + it.total, 0);
   const diskon_faktur = header.so_disc || 0;
   const netto = total - diskon_faktur;
   const ppn = header.so_ppn ? netto * (header.so_ppn / 100) : 0;
@@ -228,7 +348,7 @@ const getDataForPrint = async (nomor) => {
   const summary = {
     total,
     diskon: diskon_faktur,
-    ppn: ppn,
+    ppn,
     biaya_kirim: header.so_bkrm || 0,
     grand_total,
     dp: header.so_dp || 0,
