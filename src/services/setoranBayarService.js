@@ -56,7 +56,7 @@ const getList = async (filters) => {
     LEFT JOIN tcustomer c ON c.cus_kode = h.sh_cus_kode
     LEFT JOIN finance.trekening r ON r.rek_kode = h.sh_akun
     LEFT JOIN finance.tjurnal j ON j.jur_nomor = h.sh_nomor
-    WHERE LEFT(h.sh_nomor, 3) = ? 
+    WHERE h.sh_cab = ? 
       AND h.sh_tanggal BETWEEN ? AND ?
       AND (
             h.sh_nomor LIKE ?
@@ -86,22 +86,22 @@ const getList = async (filters) => {
 
 const getDetails = async (nomor) => {
   const query = `
-        SELECT 
-            d.sd_tanggal AS TglBayar,
-            d.sd_inv AS Invoice,
-            ph.ph_tanggal AS TglInvoice,
-            ph.ph_top AS Top,
-            DATE_FORMAT(DATE_ADD(ph.ph_tanggal, INTERVAL ph.ph_top DAY), "%d/%m/%Y") AS JatuhTempo,
-            ph.ph_nominal AS Nominal,
-            d.sd_bayar AS Bayar,
-            d.sd_ket AS Keterangan
-        FROM tsetor_dtl d
-        LEFT JOIN tsetor_hdr h ON h.sh_nomor = d.sd_sh_nomor
-        LEFT JOIN tpiutang_dtl pd ON pd.pd_sd_angsur = d.sd_angsur AND d.sd_angsur <> ""
-        LEFT JOIN tpiutang_hdr ph ON ph.ph_nomor = pd.pd_ph_nomor
-        WHERE d.sd_sh_nomor = ?
-        ORDER BY d.sd_nourut, d.sd_angsur;
-    `;
+    SELECT 
+      d.sd_tanggal AS TglBayar,
+      d.sd_inv AS Invoice,
+      ph.ph_tanggal AS TglInvoice,
+      ph.ph_top AS Top,
+      DATE_FORMAT(DATE_ADD(ph.ph_tanggal, INTERVAL ph.ph_top DAY), "%d/%m/%Y") AS JatuhTempo,
+      ph.ph_nominal AS Nominal,
+      d.sd_bayar AS Bayar,
+      d.sd_ket AS Keterangan
+    FROM tsetor_dtl d
+    LEFT JOIN tsetor_hdr h ON h.sh_nomor = d.sd_sh_nomor
+    LEFT JOIN tpiutang_dtl pd ON pd.pd_sd_angsur = d.sd_angsur AND d.sd_angsur <> ""
+    LEFT JOIN tpiutang_hdr ph ON ph.ph_nomor = pd.pd_ph_nomor
+    WHERE d.sd_sh_nomor = ?
+    ORDER BY d.sd_nourut, d.sd_angsur;
+  `;
   const [rows] = await pool.query(query, [nomor]);
   return rows;
 };
@@ -113,8 +113,8 @@ const remove = async (nomor, user) => {
 
     const [rows] = await connection.query(
       `SELECT sh_otomatis, sh_closing, sh_so_nomor, 
-                    (SELECT COUNT(*) FROM finance.tjurnal WHERE jur_nomor = sh_nomor) > 0 AS isPosted 
-             FROM tsetor_hdr WHERE sh_nomor = ?`,
+        (SELECT COUNT(*) FROM finance.tjurnal WHERE jur_nomor = sh_nomor) > 0 AS isPosted 
+        FROM tsetor_hdr WHERE sh_nomor = ?`,
       [nomor]
     );
     if (rows.length === 0) throw new Error("Data tidak ditemukan.");
@@ -155,24 +155,24 @@ const remove = async (nomor, user) => {
 const getExportDetails = async (filters) => {
   const { startDate, endDate, cabang } = filters;
   const query = `
-        SELECT 
-            h.sh_nomor AS 'Nomor Setoran',
-            h.sh_tanggal AS 'Tanggal Setoran',
-            c.cus_nama AS 'Customer',
-            d.sd_tanggal AS 'Tgl Bayar',
-            d.sd_inv AS 'Invoice',
-            ph.ph_tanggal AS 'Tgl Invoice',
-            d.sd_bayar AS 'Bayar',
-            d.sd_ket AS 'Keterangan'
-        FROM tsetor_hdr h
-        JOIN tsetor_dtl d ON h.sh_nomor = d.sd_sh_nomor
-        LEFT JOIN tcustomer c ON c.cus_kode = h.sh_cus_kode
-        LEFT JOIN tpiutang_dtl pd ON pd.pd_sd_angsur = d.sd_angsur AND d.sd_angsur <> ""
-        LEFT JOIN tpiutang_hdr ph ON ph.ph_nomor = pd.pd_ph_nomor
-        WHERE LEFT(h.sh_nomor, 3) = ?
-          AND h.sh_tanggal BETWEEN ? AND ?
-        ORDER BY h.sh_nomor, d.sd_nourut;
-    `;
+    SELECT 
+      h.sh_nomor AS 'Nomor Setoran',
+      h.sh_tanggal AS 'Tanggal Setoran',
+      c.cus_nama AS 'Customer',
+      d.sd_tanggal AS 'Tgl Bayar',
+      d.sd_inv AS 'Invoice',
+      ph.ph_tanggal AS 'Tgl Invoice',
+      d.sd_bayar AS 'Bayar',
+      d.sd_ket AS 'Keterangan'
+    FROM tsetor_hdr h
+    JOIN tsetor_dtl d ON h.sh_nomor = d.sd_sh_nomor
+    LEFT JOIN tcustomer c ON c.cus_kode = h.sh_cus_kode
+    LEFT JOIN tpiutang_dtl pd ON pd.pd_sd_angsur = d.sd_angsur AND d.sd_angsur <> ""
+    LEFT JOIN tpiutang_hdr ph ON ph.ph_nomor = pd.pd_ph_nomor
+    WHERE h.sh_cab = ?
+      AND h.sh_tanggal BETWEEN ? AND ?
+    ORDER BY h.sh_nomor, d.sd_nourut;
+  `;
   const [rows] = await pool.query(query, [cabang, startDate, endDate]);
   return rows;
 };

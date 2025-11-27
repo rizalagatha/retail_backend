@@ -4,53 +4,55 @@ const fs = require("fs");
 
 const getForEdit = async (nomor, userCabang) => {
   // 1. Ambil data Header
-  const headerQuery = `SELECT pc_nomor AS nomor, pc_tanggal AS tanggal, pc_acc AS approved FROM tpengajuanbarcode_hdr WHERE pc_nomor = ?`;
+  const headerQuery = `SELECT pc_nomor AS nomor, pc_tanggal AS tanggal, pc_cab AS cabang, pc_acc AS approved FROM tpengajuanbarcode_hdr WHERE pc_nomor = ?`;
   const [headerRows] = await pool.query(headerQuery, [nomor]);
   if (headerRows.length === 0) throw new Error("Dokumen tidak ditemukan.");
 
   // 2. Ambil data Item Pengajuan (_dtl)
   const itemsQuery = `
-        SELECT 
-            d.pcd_kode AS kode, b.brgd_barcode AS barcode, d.pcd_ukuran AS ukuran, d.pcd_jumlah AS jumlah,
-            b.brgd_harga AS harga, d.pcd_jenis AS jenis, d.pcd_ket AS ket, b.brgd_hpp AS hpp,
-            TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS nama,
-            IFNULL((SELECT SUM(m.mst_stok_in-m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif='Y' AND m.mst_cab=? AND m.mst_brg_kode=d.pcd_kode AND m.mst_ukuran=d.pcd_ukuran), 0) AS stok,
-            d2.pcd2_kodein AS kodebaru, 
-            d2.pcd2_diskon AS diskon, 
-            d2.pcd2_harga AS hargabaru,
-            d.pcd_gambar_url  -- Ambil nilai asli dari DB dulu
-        FROM tpengajuanbarcode_dtl d
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.pcd_kode
-        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.pcd_kode AND b.brgd_ukuran = d.pcd_ukuran
-        LEFT JOIN tpengajuanbarcode_dtl2 d2 ON d2.pcd2_nomor = d.pcd_nomor AND d2.pcd2_kode = d.pcd_kode AND d2.pcd2_ukuran = d.pcd_ukuran
-        WHERE d.pcd_nomor = ?;
-    `;
-  const [items] = await pool.query(itemsQuery, [userCabang, nomor]);
+    SELECT 
+      d.pcd_kode AS kode, b.brgd_barcode AS barcode, d.pcd_ukuran AS ukuran, d.pcd_jumlah AS jumlah,
+      b.brgd_harga AS harga, d.pcd_jenis AS jenis, d.pcd_ket AS ket, b.brgd_hpp AS hpp,
+      TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS nama,
+      IFNULL((SELECT SUM(m.mst_stok_in-m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif='Y' AND m.mst_cab=? AND m.mst_brg_kode=d.pcd_kode AND m.mst_ukuran=d.pcd_ukuran), 0) AS stok,
+      d2.pcd2_kodein AS kodebaru, 
+      d2.pcd2_diskon AS diskon, 
+      d2.pcd2_harga AS hargabaru,
+      d.pcd_gambar_url  -- Ambil nilai asli dari DB dulu
+    FROM tpengajuanbarcode_dtl d
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.pcd_kode
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.pcd_kode AND b.brgd_ukuran = d.pcd_ukuran
+    LEFT JOIN tpengajuanbarcode_dtl2 d2 ON d2.pcd2_nomor = d.pcd_nomor AND d2.pcd2_kode = d.pcd_kode AND d2.pcd2_ukuran = d.pcd_ukuran
+    WHERE d.pcd_nomor = ?;
+  `;
+
+  const headerCab = headerRows[0].pc_cab;
+  const [items] = await pool.query(itemsQuery, [headerCab, nomor]);
 
   // --- PERBAIKAN PENTING: Lakukan pengecekan fisik file gambar ---
-  const processedItems = items.map(item => {
-      // Cek apakah file fisik ada di server menggunakan helper
-      const physicalPath = findImageFile(nomor, item.kode, item.ukuran);
-      
-      return {
-          ...item,
-          // Prioritaskan hasil scan fisik. Jika tidak ada, pakai nilai DB (fallback), atau null
-          pcd_gambar_url: physicalPath || item.pcd_gambar_url
-      };
+  const processedItems = items.map((item) => {
+    // Cek apakah file fisik ada di server menggunakan helper
+    const physicalPath = findImageFile(nomor, item.kode, item.ukuran);
+
+    return {
+      ...item,
+      // Prioritaskan hasil scan fisik. Jika tidak ada, pakai nilai DB (fallback), atau null
+      pcd_gambar_url: physicalPath || item.pcd_gambar_url,
+    };
   });
 
   // 3. Ambil data Stiker (_sticker)
   const stickersQuery = `
-        SELECT
-            s.pcs_kode, s.pcs_kodes, s.pcs_ukuran, s.pcs_jumlah,
-            b.brgd_barcode, b.brgd_harga AS harga,
-            TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS nama,
-            IFNULL((SELECT SUM(m.mst_stok_in-m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif='Y' AND m.mst_cab=? AND m.mst_brg_kode=s.pcs_kodes AND m.mst_ukuran=s.pcs_ukuran), 0) AS stok
-        FROM tpengajuanbarcode_sticker s
-        LEFT JOIN tbarangdc a ON a.brg_kode = s.pcs_kodes
-        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = s.pcs_kodes AND b.brgd_ukuran = s.pcs_ukuran
-        WHERE s.pcs_nomor = ?;
-    `;
+    SELECT
+      s.pcs_kode, s.pcs_kodes, s.pcs_ukuran, s.pcs_jumlah,
+      b.brgd_barcode, b.brgd_harga AS harga,
+      TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS nama,
+      IFNULL((SELECT SUM(m.mst_stok_in-m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif='Y' AND m.mst_cab=? AND m.mst_brg_kode=s.pcs_kodes AND m.mst_ukuran=s.pcs_ukuran), 0) AS stok
+    FROM tpengajuanbarcode_sticker s
+    LEFT JOIN tbarangdc a ON a.brg_kode = s.pcs_kodes
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = s.pcs_kodes AND b.brgd_ukuran = s.pcs_ukuran
+    WHERE s.pcs_nomor = ?;
+  `;
   const [stickers] = await pool.query(stickersQuery, [userCabang, nomor]);
 
   // Kembalikan processedItems, bukan items mentah
@@ -76,8 +78,8 @@ const save = async (payload, user) => {
         .toString()
         .padStart(5, "0")}`;
       await connection.query(
-        "INSERT INTO tpengajuanbarcode_hdr (pc_nomor, pc_tanggal, user_create, date_create) VALUES (?, ?, ?, NOW())",
-        [nomorDokumen, header.tanggal, user.kode]
+        "INSERT INTO tpengajuanbarcode_hdr (pc_nomor, pc_tanggal, pc_cab, user_create, date_create) VALUES (?, ?, ?, ?, NOW())",
+        [nomorDokumen, header.tanggal, user.cabang, user.kode]
       );
     }
 
@@ -387,19 +389,19 @@ const getDataForPrint = async (nomor) => {
         h.pc_nomor AS nomor, 
         h.pc_tanggal AS tanggal, 
         h.user_create AS usr_ins,
-        LEFT(h.pc_nomor, 3) AS cabang_kode,
+        h.pc_cab AS cabang_kode,
         g.gdg_inv_nama,      -- Nama Perusahaan/Cabang
         g.gdg_inv_alamat,    -- Alamat
         g.gdg_inv_kota,      -- Kota
         g.gdg_inv_telp,      -- Telepon/Fax
         g.gdg_inv_instagram  -- Instagram (opsional)
     FROM tpengajuanbarcode_hdr h
-    LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.pc_nomor, 3)
+    LEFT JOIN tgudang g ON g.gdg_kode = h.pc_cab
     WHERE h.pc_nomor = ?
   `;
-  
+
   const [headerRows] = await pool.query(headerQuery, [nomor]);
-  
+
   if (headerRows.length === 0) {
     throw new Error("Dokumen tidak ditemukan.");
   }
@@ -428,11 +430,11 @@ const getDataForPrint = async (nomor) => {
   const processedItems = items.map((item) => {
     // Cek fisik file di folder server
     const physicalPath = findImageFile(nomor, item.kode, item.ukuran);
-    
+
     return {
       ...item,
       // Jika ada file fisik, gunakan itu. Jika tidak, gunakan URL dari DB.
-      pcd_gambar_url: physicalPath || item.pcd_gambar_url
+      pcd_gambar_url: physicalPath || item.pcd_gambar_url,
     };
   });
 
@@ -456,7 +458,7 @@ const getDataForPrint = async (nomor) => {
   return {
     header,
     items: processedItems,
-    stickers
+    stickers,
   };
 };
 
@@ -494,5 +496,5 @@ module.exports = {
   lookupStickers,
   getDataForBarcodePrint,
   processItemImage,
-  getDataForPrint, 
+  getDataForPrint,
 };

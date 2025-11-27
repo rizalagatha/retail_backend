@@ -42,7 +42,7 @@ const getSoDtfList = async (filters) => {
             LEFT JOIN tcustomer c ON c.cus_kode = h.sd_cus_kode
             LEFT JOIN kencanaprint.tsales s ON s.sal_kode = h.sd_sal_kode
             WHERE h.sd_stok = "" AND ${dateColumn} BETWEEN ? AND ?
-            ${cabang !== "ALL" ? "AND LEFT(h.sd_nomor, 3) = ?" : ""}
+            ${cabang !== "ALL" ? "AND h.sd_cab = ?" : ""}
         ) x
         ${statusFilter}
         ORDER BY x.Tanggal, x.Nomor;
@@ -191,7 +191,7 @@ const exportDetail = async (filters) => {
     `;
 
   if (cabang !== "ALL") {
-    query += " AND LEFT(h.sd_nomor, 3) = ?";
+    query += " AND h.sd_cab = ?";
     params.push(cabang);
   }
   query += " ORDER BY h.sd_nomor, d.sdd_nourut";

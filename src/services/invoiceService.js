@@ -23,9 +23,9 @@ const getList = async (filters) => {
 
   if (cabang === "KDC") {
     cabangFilter =
-      " AND LEFT(h.inv_nomor, 3) IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)";
+      " AND h.inv_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)";
   } else {
-    cabangFilter = " AND LEFT(h.inv_nomor, 3) = ?";
+    cabangFilter = " AND h.inv_cab = ?";
     params.push(cabang);
   }
 
@@ -359,7 +359,7 @@ const getExportDetails = async (filters) => {
         LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
         WHERE h.inv_sts_pro = 0
           AND h.inv_tanggal BETWEEN ? AND ?
-          AND LEFT(h.inv_nomor, 3) = ?
+          AND h.inv_cab = ?
         ORDER BY h.inv_nomor, d.invd_nourut;
     `;
   const [rows] = await pool.query(query, [startDate, endDate, cabang]);

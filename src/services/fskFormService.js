@@ -332,4 +332,5 @@ module.exports = {
   loadForEdit,
   saveData,
   getPrintData,
+  remove,
 };

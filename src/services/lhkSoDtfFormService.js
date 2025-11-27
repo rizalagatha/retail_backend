@@ -3,7 +3,7 @@ const pool = require("../config/database");
 const loadData = async (tanggal, cabang) => {
   const query = `
         SELECT 
-            d.spk_nomor AS kode,
+            d.sodtf AS kode,
             h.sd_nama AS nama,
             d.depan,
             d.belakang,
@@ -13,12 +13,12 @@ const loadData = async (tanggal, cabang) => {
             d.panjang,
             d.buangan,
             d.keterangan AS ket
-        FROM kencanaprint.tdtf d
-        LEFT JOIN tsodtf_hdr h ON h.sd_nomor = d.spk_nomor
+        FROM retail.tdtf d
+        LEFT JOIN retail.tsodtf_hdr h ON h.sd_nomor = d.sodtf
         WHERE d.tanggal = ? AND d.cab = ?;
     `;
   const [rows] = await pool.query(query, [tanggal, cabang]);
-  return rows; // Kembalikan array data langsung
+  return rows;
 };
 
 const searchSoPo = async (term, cabang, tipe, page = 1, limit = 50) => {
@@ -37,7 +37,7 @@ const searchSoPo = async (term, cabang, tipe, page = 1, limit = 50) => {
           h.sd_tanggal AS tanggal,
           'SO DTF' AS tipe
       FROM retail.tsodtf_hdr h 
-      WHERE (LEFT(h.sd_nomor, 3) = ? OR h.sd_workshop = ?)
+      WHERE (h.sd_cab = ? OR h.sd_workshop = ?)
     `;
     params = [cabang, cabang];
 
@@ -81,7 +81,7 @@ const searchSoPo = async (term, cabang, tipe, page = 1, limit = 50) => {
           h.sd_tanggal AS tanggal, 
           'SO DTF' AS tipe
         FROM retail.tsodtf_hdr h 
-        WHERE (LEFT(h.sd_nomor, 3) = ? OR h.sd_workshop = ?) 
+        WHERE (h.sd_cab = ? OR h.sd_workshop = ?) 
           AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?)
       )
       UNION ALL
@@ -122,7 +122,7 @@ const searchSoPo = async (term, cabang, tipe, page = 1, limit = 50) => {
     countQuery = `
       SELECT COUNT(*) AS total
       FROM retail.tsodtf_hdr h
-      WHERE (LEFT(h.sd_nomor, 3) = ? OR h.sd_workshop = ?)
+      WHERE (h.sd_cab = ? OR h.sd_workshop = ?)
     `;
     countParams = [cabang, cabang];
     if (term) {
@@ -145,7 +145,7 @@ const searchSoPo = async (term, cabang, tipe, page = 1, limit = 50) => {
       SELECT (
         (SELECT COUNT(*) 
          FROM retail.tsodtf_hdr h 
-         WHERE (LEFT(h.sd_nomor, 3) = ? OR h.sd_workshop = ?)
+         WHERE (h.sd_cab= ? OR h.sd_workshop = ?)
            AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?))
         +
         (SELECT COUNT(*) 
@@ -184,25 +184,21 @@ const saveData = async (data, user) => {
   await connection.beginTransaction();
 
   try {
-    // Pola "delete-then-insert" seperti di Delphi
-    // 1. Hapus semua data LHK untuk tanggal dan cabang ini
-    await connection.query("DELETE FROM tdtf WHERE tanggal = ? AND cab = ?", [
-      tanggal,
-      cabang,
-    ]);
+    await connection.query(
+      "DELETE FROM retail.tdtf WHERE tanggal = ? AND cab = ?",
+      [tanggal, cabang]
+    );
 
-    // 2. Insert semua baris baru dari grid
     for (const item of items) {
       if (item.kode && item.nama) {
-        // Hanya simpan baris yang valid
         const insertQuery = `
-                    INSERT INTO tdtf 
-                    (tanggal, spk_nomor, depan, belakang, lengan, variasi, saku, panjang, buangan, keterangan, cab, user_create, date_create) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-                `;
+          INSERT INTO retail.tdtf 
+            (tanggal, sodtf, depan, belakang, lengan, variasi, saku, panjang, buangan, keterangan, cab, user_create, date_create) 
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        `;
         await connection.query(insertQuery, [
           tanggal,
-          item.kode,
+          item.kode, // sodtf
           item.depan || 0,
           item.belakang || 0,
           item.lengan || 0,
@@ -232,21 +228,20 @@ const removeData = async (tanggal, cabang) => {
   try {
     await connection.beginTransaction();
 
-    // Cek data ada atau tidak sebelum dihapus
     const [rows] = await connection.query(
-      "SELECT COUNT(*) as count FROM tdtf WHERE tanggal = ? AND cab = ?",
+      "SELECT COUNT(*) AS count FROM retail.tdtf WHERE tanggal = ? AND cab = ?",
       [tanggal, cabang]
     );
+
     if (rows[0].count === 0)
       throw new Error(
         "Tidak ada data LHK untuk dihapus pada tanggal dan cabang ini."
       );
 
-    // Hapus semua data LHK untuk tanggal dan cabang tersebut
-    await connection.query("DELETE FROM tdtf WHERE tanggal = ? AND cab = ?", [
-      tanggal,
-      cabang,
-    ]);
+    await connection.query(
+      "DELETE FROM retail.tdtf WHERE tanggal = ? AND cab = ?",
+      [tanggal, cabang]
+    );
 
     await connection.commit();
     return {

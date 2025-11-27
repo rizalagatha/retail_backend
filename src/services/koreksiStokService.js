@@ -8,12 +8,12 @@ const getList = async (filters, user) => {
 
   // Terjemahan logika otorisasi dari Delphi
   if (user.cabang !== "KDC") {
-    whereClauses.push("LEFT(h.kor_nomor, 3) = ?");
+    whereClauses.push("h.kor_cab = ?");
     params.push(user.cabang);
   } else if (user.cabang === "KDC" && !user.canApproveCorrection) {
     // Asumsi ada hak akses 'canApproveCorrection'
     whereClauses.push(
-      "LEFT(h.kor_nomor, 3) IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc=1)"
+      "h.kor_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc=1)"
     );
   }
 
@@ -127,7 +127,7 @@ const remove = async (nomor, user) => {
   try {
     await connection.beginTransaction();
     const [headerRows] = await connection.query(
-      "SELECT kor_acc, kor_closing, LEFT(kor_nomor, 3) AS cabang FROM tkor_hdr WHERE kor_nomor = ?",
+      "SELECT kor_acc, kor_closing, kor_cab AS cabang FROM tkor_hdr WHERE kor_nomor = ?",
       [nomor]
     );
     if (headerRows.length === 0) throw new Error("Dokumen tidak ditemukan.");
@@ -164,11 +164,11 @@ const getExportDetails = async (filters, user) => {
 
   // Terapkan filter otorisasi yang sama dengan getList
   if (user.cabang !== "KDC") {
-    whereClauses.push("LEFT(h.kor_nomor, 3) = ?");
+    whereClauses.push("h.kor_cab = ?");
     params.push(user.cabang);
   } else if (user.cabang === "KDC" && !user.canApproveCorrection) {
     whereClauses.push(
-      "LEFT(h.kor_nomor, 3) IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc=1)"
+      "h.kor_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc=1)"
     );
   }
 

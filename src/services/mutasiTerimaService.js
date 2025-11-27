@@ -4,25 +4,25 @@ const getList = async (filters) => {
   const { startDate, endDate, cabang, itemCode } = filters;
 
   const query = `
-        SELECT
-            h.msk_nomor AS nomor,
-            h.msk_tanggal AS tanggal,
-            h.msk_noterima AS nomorTerima,
-            t.mst_tanggal AS tglTerima,
-            f.gdg_nama AS dariStore,
-            h.msk_ket AS keterangan,
-            IFNULL(t.mst_closing, 'N') AS closing
-        FROM tmsk_hdr h
-        INNER JOIN tmsk_dtl d ON d.mskd_nomor = h.msk_nomor
-        LEFT JOIN tmst_hdr t ON t.mst_nomor = h.msk_noterima
-        LEFT JOIN tgudang f ON f.gdg_kode = LEFT(h.msk_nomor, 3)
-        WHERE
-            h.msk_kecab = ?
-            AND h.msk_tanggal BETWEEN ? AND ?
-            AND (? IS NULL OR d.mskd_kode = ?)
-        GROUP BY h.msk_nomor
-        ORDER BY h.msk_noterima, h.msk_tanggal DESC, h.msk_nomor DESC;
-    `;
+    SELECT
+      h.msk_nomor AS nomor,
+      h.msk_tanggal AS tanggal,
+      h.msk_noterima AS nomorTerima,
+      t.mst_tanggal AS tglTerima,
+      f.gdg_nama AS dariStore,
+      h.msk_ket AS keterangan,
+      IFNULL(t.mst_closing, 'N') AS closing
+    FROM tmsk_hdr h
+    INNER JOIN tmsk_dtl d ON d.mskd_nomor = h.msk_nomor
+    LEFT JOIN tmst_hdr t ON t.mst_nomor = h.msk_noterima
+    LEFT JOIN tgudang f ON f.gdg_kode = h.msk_cab
+    WHERE
+      h.msk_kecab = ?
+      AND h.msk_tanggal BETWEEN ? AND ?
+      AND (? IS NULL OR d.mskd_kode = ?)
+    GROUP BY h.msk_nomor
+    ORDER BY h.msk_noterima, h.msk_tanggal DESC, h.msk_nomor DESC;
+  `;
   const params = [cabang, startDate, endDate, itemCode || null, itemCode];
   const [rows] = await pool.query(query, params);
   return rows;
@@ -30,15 +30,15 @@ const getList = async (filters) => {
 
 const getDetails = async (nomor) => {
   const query = `
-        SELECT
-            d.mskd_kode AS kode,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
-            d.mskd_ukuran AS ukuran,
-            d.mskd_jumlah AS jumlah
-        FROM tmsk_dtl d
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.mskd_kode
-        WHERE d.mskd_nomor = ?;
-    `;
+    SELECT
+      d.mskd_kode AS kode,
+      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+      d.mskd_ukuran AS ukuran,
+      d.mskd_jumlah AS jumlah
+    FROM tmsk_dtl d
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.mskd_kode
+    WHERE d.mskd_nomor = ?;
+  `;
   const [rows] = await pool.query(query, [nomor]);
   return rows;
 };
@@ -98,27 +98,27 @@ const getExportDetails = async (filters) => {
   const { startDate, endDate, cabang, itemCode } = filters;
 
   const query = `
-        SELECT
-            h.msk_nomor AS nomor_kirim,
-            h.msk_tanggal AS tanggal_kirim,
-            h.msk_noterima AS nomor_terima,
-            t.mst_tanggal AS tanggal_terima,
-            f.gdg_nama AS dari_store,
-            d.mskd_kode AS kode_barang,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama_barang,
-            d.mskd_ukuran AS ukuran,
-            d.mskd_jumlah AS jumlah
-        FROM tmsk_hdr h
-        INNER JOIN tmsk_dtl d ON d.mskd_nomor = h.msk_nomor
-        LEFT JOIN tmst_hdr t ON t.mst_nomor = h.msk_noterima
-        LEFT JOIN tgudang f ON f.gdg_kode = LEFT(h.msk_nomor, 3)
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.mskd_kode
-        WHERE
-            h.msk_kecab = ?
-            AND h.msk_tanggal BETWEEN ? AND ?
-            AND (? IS NULL OR d.mskd_kode = ?)
-        ORDER BY h.msk_nomor, d.mskd_kode, d.mskd_ukuran;
-    `;
+    SELECT
+      h.msk_nomor AS nomor_kirim,
+      h.msk_tanggal AS tanggal_kirim,
+      h.msk_noterima AS nomor_terima,
+      t.mst_tanggal AS tanggal_terima,
+      f.gdg_nama AS dari_store,
+      d.mskd_kode AS kode_barang,
+      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama_barang,
+      d.mskd_ukuran AS ukuran,
+      d.mskd_jumlah AS jumlah
+    FROM tmsk_hdr h
+    INNER JOIN tmsk_dtl d ON d.mskd_nomor = h.msk_nomor
+    LEFT JOIN tmst_hdr t ON t.mst_nomor = h.msk_noterima
+    LEFT JOIN tgudang f ON f.gdg_kode = h.msk_cab
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.mskd_kode
+    WHERE
+      h.msk_kecab = ?
+      AND h.msk_tanggal BETWEEN ? AND ?
+      AND (? IS NULL OR d.mskd_kode = ?)
+    ORDER BY h.msk_nomor, d.mskd_kode, d.mskd_ukuran;
+  `;
   const params = [cabang, startDate, endDate, itemCode || null, itemCode];
   const [rows] = await pool.query(query, params);
   return rows;

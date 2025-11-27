@@ -3,11 +3,11 @@ const { format } = require("date-fns");
 
 const getSudah = async (connection, soNomor, kode, ukuran, excludeMtNomor) => {
   const query = `
-        SELECT IFNULL(SUM(mtd_jumlah), 0) AS total 
-        FROM tmintabarang_dtl
-        JOIN tmintabarang_hdr ON mt_nomor = mtd_nomor
-        WHERE mt_nomor <> ? AND mt_so = ? AND mtd_kode = ? AND mtd_ukuran = ?
-    `;
+    SELECT IFNULL(SUM(mtd_jumlah), 0) AS total 
+    FROM tmintabarang_dtl
+    JOIN tmintabarang_hdr ON mt_nomor = mtd_nomor
+    WHERE mt_nomor <> ? AND mt_so = ? AND mtd_kode = ? AND mtd_ukuran = ?
+  `;
   const [rows] = await connection.query(query, [
     excludeMtNomor || "",
     soNomor,
@@ -20,32 +20,65 @@ const getSudah = async (connection, soNomor, kode, ukuran, excludeMtNomor) => {
 const getSoDetailsForGrid = async (soNomor, user) => {
   const connection = await pool.getConnection();
   try {
-    const query = `
-            SELECT 
-                d.sod_kode AS kode, 
-                IFNULL(b.brgd_barcode, '') AS barcode,
-                IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), d.sod_kode) AS nama,
-                d.sod_ukuran AS ukuran,
-                IFNULL(b.brgd_min, 0) AS stokmin,
-                IFNULL(b.brgd_max, 0) AS stokmax,
-                IFNULL((
-                    SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
-                    FROM tmasterstok m 
-                    WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_brg_kode=d.sod_kode AND m.mst_ukuran=d.sod_ukuran
-                ), 0) AS stok,
-                d.sod_jumlah AS qtyso,
-                c.cus_kode, c.cus_nama, c.cus_alamat
-            FROM tso_dtl d
-            JOIN tso_hdr h ON d.sod_so_nomor = h.so_nomor
-            LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode AND a.brg_logstok="Y"
-            LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
-            LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
-            WHERE h.so_aktif = "Y" AND h.so_nomor = ?
-            ORDER BY d.sod_nourut
-        `;
-    const [rows] = await connection.query(query, [user.cabang, soNomor]);
+    const [rows] = await connection.query(
+      `
+      SELECT 
+        d.sod_kode AS kode, 
+        IFNULL(b.brgd_barcode, '') AS barcode,
+        TRIM(CONCAT(a.brg_jeniskaos,' ',a.brg_tipe,' ',a.brg_lengan,' ',a.brg_jeniskain,' ',a.brg_warna)) AS nama,
+        d.sod_ukuran AS ukuran,
 
-    const customerData =
+        IFNULL(b.brgd_min,0) AS stokmin,
+        IFNULL(b.brgd_max,0) AS stokmax,
+
+        -- STOK
+        IFNULL((
+          SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+          FROM tmasterstok m
+          WHERE m.mst_aktif='Y'
+            AND m.mst_cab=?
+            AND m.mst_brg_kode=d.sod_kode
+            AND m.mst_ukuran=d.sod_ukuran
+        ),0) AS stok,
+
+        -- SUDAH MINTA FORM INI DAN SEBELUMNYA BASED ON SO-NOMOR (INI YANG TEPAT)
+        IFNULL((
+          SELECT SUM(mtd.mtd_jumlah)
+          FROM tmintabarang_hdr h2
+          JOIN tmintabarang_dtl mtd ON mtd.mtd_nomor = h2.mt_nomor
+          WHERE h2.mt_closing='N'
+            AND h2.mt_so = d.sod_so_nomor
+            AND mtd.mtd_kode = d.sod_kode
+            AND mtd.mtd_ukuran = d.sod_ukuran
+        ),0) AS sudahminta,
+
+        -- SJ BELUM DITERIMA
+        IFNULL((
+          SELECT SUM(sjd.sjd_jumlah)
+          FROM tdc_sj_hdr sh
+          JOIN tdc_sj_dtl sjd ON sjd.sjd_nomor = sh.sj_nomor
+          WHERE sh.sj_kecab=?
+            AND sjd.sjd_kode=d.sod_kode
+            AND sjd.sjd_ukuran=d.sod_ukuran
+            AND sh.sj_noterima=''
+        ), 0) AS sj,
+
+        c.cus_kode,
+        c.cus_nama,
+        c.cus_alamat,
+        d.sod_jumlah AS qtyso
+
+      FROM tso_dtl d
+      JOIN tso_hdr h ON d.sod_so_nomor = h.so_nomor
+      LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
+      LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
+      LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
+      WHERE h.so_nomor = ?
+      `,
+      [user.cabang, user.cabang, soNomor]
+    );
+
+    const customer =
       rows.length > 0
         ? {
             kode: rows[0].cus_kode,
@@ -54,30 +87,16 @@ const getSoDetailsForGrid = async (soNomor, user) => {
           }
         : null;
 
-    const items = [];
-    for (const row of rows) {
-      const sudah = await getSudah(
-        connection,
-        soNomor,
-        row.kode,
-        row.ukuran,
-        ""
-      );
-      items.push({
-        kode: row.kode,
-        barcode: row.barcode,
-        nama: row.nama,
-        ukuran: row.ukuran,
-        stok: row.stok,
-        qtyso: row.qtyso,
-        stokmin: row.stokmin,
-        stokmax: row.stokmax,
-        sudah: sudah,
-        belum: row.qtyso - sudah,
-        jumlah: 0,
-      });
-    }
-    return { items, customer: customerData };
+    const items = rows.map((r) => {
+      const mino = r.stokmax - (r.stok + r.sudahminta + r.sj);
+      return {
+        ...r,
+        mino: mino > 0 ? mino : 0,
+        jumlah: mino > 0 ? mino : 0,
+      };
+    });
+
+    return { items, customer };
   } finally {
     connection.release();
   }
@@ -88,57 +107,54 @@ const getProductDetailsForGrid = async (filters, user) => {
   const connection = await pool.getConnection();
   try {
     let query = `
-            SELECT 
-                b.brgd_kode AS kode,
-                b.brgd_barcode AS barcode,
-                IFNULL(TRIM(CONCAT(
-                    a.brg_jeniskaos, " ", a.brg_tipe, " ",
-                    a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna
-                )), '') AS nama,
-                b.brgd_ukuran AS ukuran,
-                IFNULL(b.brgd_min, 0) AS stokmin,
-                IFNULL(b.brgd_max, 0) AS stokmax,
-                IFNULL((
-                    SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
-                    FROM tmasterstok m 
-                    WHERE m.mst_aktif="Y" AND m.mst_cab=? 
-                      AND m.mst_brg_kode=b.brgd_kode AND m.mst_ukuran=b.brgd_ukuran
-                ), 0) AS stok,
-                IFNULL((
-                    SELECT SUM(mtd.mtd_jumlah) 
-                    FROM tmintabarang_hdr mth 
-                    JOIN tmintabarang_dtl mtd ON mtd.mtd_nomor = mth.mt_nomor 
-                    WHERE mth.mt_closing='N' 
-                      AND LEFT(mth.mt_nomor,3)=? 
-                      AND mtd.mtd_kode=b.brgd_kode 
-                      AND mtd.mtd_ukuran=b.brgd_ukuran 
-                      AND mth.mt_nomor NOT IN (
-                          SELECT sj_mt_nomor FROM tdc_sj_hdr WHERE sj_mt_nomor<>""
-                      )
-                ), 0) AS sudahminta,
-                IFNULL((
-                    SELECT SUM(sjd.sjd_jumlah) 
-                    FROM tdc_sj_hdr sjh 
-                    JOIN tdc_sj_dtl sjd ON sjd.sjd_nomor=sjh.sj_nomor 
-                    WHERE sjh.sj_kecab=? AND sjh.sj_noterima='' 
-                      AND sjd.sjd_kode=b.brgd_kode 
-                      AND sjd.sjd_ukuran=b.brgd_ukuran
-                ), 0) AS sj
-            FROM tbarangdc_dtl b
-            JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
-            WHERE a.brg_aktif = 0
-        `;
-
+        SELECT 
+          b.brgd_kode AS kode,
+          b.brgd_barcode AS barcode,
+          IFNULL(TRIM(CONCAT(
+            a.brg_jeniskaos, " ", a.brg_tipe, " ",
+            a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna
+          )), '') AS nama,
+          b.brgd_ukuran AS ukuran,
+          IFNULL(b.brgd_min, 0) AS stokmin,
+          IFNULL(b.brgd_max, 0) AS stokmax,
+          IFNULL((
+            SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
+            FROM tmasterstok m 
+            WHERE m.mst_aktif="Y" AND m.mst_cab=? 
+            AND m.mst_brg_kode=b.brgd_kode AND m.mst_ukuran=b.brgd_ukuran
+          ), 0) AS stok,
+          IFNULL((
+            SELECT SUM(mtd.mtd_jumlah) 
+            FROM tmintabarang_hdr mth 
+            JOIN tmintabarang_dtl mtd ON mtd.mtd_nomor = mth.mt_nomor 
+            WHERE mth.mt_closing='N' 
+            AND mth.mt_cab = ?
+            AND mtd.mtd_kode=b.brgd_kode 
+            AND mtd.mtd_ukuran=b.brgd_ukuran 
+            AND mth.mt_nomor NOT IN (
+              SELECT sj_mt_nomor FROM tdc_sj_hdr WHERE sj_mt_nomor<>""
+            )
+          ), 0) AS sudahminta,
+          IFNULL((
+            SELECT SUM(sjd.sjd_jumlah) 
+            FROM tdc_sj_hdr sjh 
+            JOIN tdc_sj_dtl sjd ON sjd.sjd_nomor=sjh.sj_nomor 
+            WHERE sjh.sj_kecab=? AND sjh.sj_noterima='' 
+              AND sjd.sjd_kode=b.brgd_kode 
+              AND sjd.sjd_ukuran=b.brgd_ukuran
+            ), 0) AS sj
+          FROM tbarangdc_dtl b
+          JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
+          WHERE a.brg_aktif = 0
+      `;
     // Parameter untuk subquery di SELECT, perlu dipertahankan
     const params = [user.cabang, user.cabang, user.cabang];
 
-    // --- PENAMBAHAN FILTER KONDISIONAL DARI DELPHI ---
     if (user.cabang === "K04") {
       query += ' AND a.brg_ktg <> ""';
     } else if (user.cabang === "K05") {
       query += ' AND a.brg_ktg = ""';
     }
-    // --- AKHIR PENAMBAHAN ---
 
     if (barcode) {
       query += ` AND b.brgd_barcode = ?`;
@@ -169,7 +185,117 @@ const getProductDetailsForGrid = async (filters, user) => {
 };
 
 const getBufferStokItems = async (user) => {
-  /* ... (Implementasi query dari btnRefreshClick PanelPSM) ... */
+  const connection = await pool.getConnection();
+  try {
+    const cab = user.cabang;
+
+    const query = `
+      SELECT 
+        y.Kode,
+        y.Barcode,
+        y.Nama,
+        y.Ukuran,
+        y.StokMinimal AS stokmin,
+        y.StokMaximal AS stokmax,
+        y.sudahminta,
+        y.sj,
+        y.Stok AS stok,
+        (y.StokMaximal - (y.Stok + y.sudahminta + y.sj)) AS mino
+      FROM (
+        SELECT
+          x.Kode,
+          x.Barcode,
+          x.Nama,
+          x.Ukuran,
+          x.StokMinimal,
+          x.StokMaximal,
+
+          /* sudah minta */
+          IFNULL((
+            SELECT SUM(mtd.mtd_jumlah)
+            FROM tmintabarang_hdr mth
+            JOIN tmintabarang_dtl mtd ON mtd.mtd_nomor = mth.mt_nomor
+            WHERE mth.mt_closing = 'N'
+              AND mth.mt_cab = ?
+              AND mtd.mtd_kode = x.Kode
+              AND mtd.mtd_ukuran = x.Ukuran
+              AND mth.mt_nomor NOT IN (
+                SELECT sj_mt_nomor FROM tdc_sj_hdr WHERE sj_mt_nomor <> ''
+              )
+          ), 0) AS sudahminta,
+
+          /* stok DC */
+          IFNULL((
+            SELECT SUM(mst_stok_in - mst_stok_out)
+            FROM tmasterstok
+            WHERE mst_aktif = 'Y'
+              AND mst_cab = ?
+              AND mst_brg_kode = x.Kode
+              AND mst_ukuran = x.Ukuran
+          ), 0) AS Stok,
+
+          /* SJ belum diterima */
+          IFNULL((
+            SELECT SUM(sjd_jumlah)
+            FROM tdc_sj_hdr sjh
+            LEFT JOIN tdc_sj_dtl sjd ON sjd.sjd_nomor = sjh.sj_nomor
+            WHERE sjh.sj_kecab = ?
+              AND sjh.sj_noterima = ''
+              AND sjh.sj_mt_nomor = ''
+              AND sjd.sjd_kode = x.Kode
+              AND sjd.sjd_ukuran = x.Ukuran
+          ), 0) AS sj
+
+        FROM (
+          SELECT
+            a.brg_kode AS Kode,
+            TRIM(CONCAT(
+              a.brg_jeniskaos, ' ',
+              a.brg_tipe, ' ',
+              a.brg_lengan, ' ',
+              a.brg_jeniskain, ' ',
+              a.brg_warna
+            )) AS Nama,
+            b.brgd_ukuran AS Ukuran,
+            b.brgd_barcode AS Barcode,
+            IFNULL(b.brgd_min, 0) AS StokMinimal,
+            IFNULL(b.brgd_max, 0) AS StokMaximal
+          FROM tbarangdc a
+          JOIN tbarangdc_dtl b ON b.brgd_kode = a.brg_kode
+          WHERE a.brg_aktif = 0
+            AND a.brg_logstok = "Y"
+            AND b.brgd_min <> 0
+            AND a.brg_ktgp = "REGULER"
+            ${cab === "K04" ? 'AND a.brg_ktg <> ""' : 'AND a.brg_ktg = ""'}
+        ) x
+      ) y
+      WHERE (y.StokMinimal - (y.Stok + y.sudahminta + y.sj)) > 0
+      ORDER BY y.Nama, y.Ukuran;
+    `;
+
+    const [rows] = await connection.query(query, [cab, cab, cab]);
+
+    // Hitung 'jumlah' dan 'minta' default
+    const items = rows.map((r, idx) => ({
+      id: idx + 1,
+      minta: false,
+      kode: r.Kode,
+      nama: r.Nama,
+      ukuran: r.Ukuran,
+      stokmin: r.stokmin,
+      stokmax: r.stokmax,
+      stok: r.stok,
+      sudahminta: r.sudahminta,
+      sj: r.sj,
+      mino: r.mino,
+      jumlah: r.mino > 0 ? r.mino : 0,
+      barcode: r.Barcode,
+    }));
+
+    return items;
+  } finally {
+    connection.release();
+  }
 };
 
 /**
@@ -203,9 +329,10 @@ const save = async (data, user) => {
       idrec = `${user.cabang}MT${format(new Date(), "yyyyMMddHHmmssSSS")}`;
 
       const insertHeaderQuery = `
-                INSERT INTO tmintabarang_hdr (mt_idrec, mt_nomor, mt_tanggal, mt_so, mt_cus, mt_ket, user_create, date_create) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
-            `;
+        INSERT INTO tmintabarang_hdr 
+        (mt_idrec, mt_nomor, mt_tanggal, mt_so, mt_cus, mt_ket, mt_cab, user_create, date_create)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())  
+      `;
       await connection.query(insertHeaderQuery, [
         idrec,
         mtNomor,
@@ -213,6 +340,7 @@ const save = async (data, user) => {
         header.soNomor,
         customerKode,
         header.keterangan,
+        user.cabang,
         user.kode,
       ]);
     } else {
@@ -225,11 +353,15 @@ const save = async (data, user) => {
       idrec = idrecRows[0].mt_idrec;
 
       const updateHeaderQuery = `
-                UPDATE tmintabarang_hdr SET
-                    mt_tanggal = ?, mt_so = ?, mt_cus = ?, mt_ket = ?,
-                    user_modified = ?, date_modified = NOW()
-                WHERE mt_nomor = ?
-            `;
+        UPDATE tmintabarang_hdr SET
+          mt_tanggal=?,
+          mt_so=?,
+          mt_cus=?,
+          mt_ket=?,
+          user_modified=?,
+          date_modified=NOW()
+        WHERE mt_nomor=? AND mt_cab=?
+      `;
       await connection.query(updateHeaderQuery, [
         header.tanggal,
         header.soNomor,
@@ -237,6 +369,7 @@ const save = async (data, user) => {
         header.keterangan,
         user.kode,
         mtNomor,
+        user.cabang,
       ]);
     }
 
@@ -274,42 +407,43 @@ const loadForEdit = async (nomor, user) => {
   try {
     // Query ini adalah migrasi dari 'loaddataall' di Delphi
     const query = `
-            SELECT 
-                h.mt_nomor, h.mt_tanggal, h.mt_so, h.mt_cus, h.mt_ket,
-                c.cus_nama, c.cus_alamat,
-                d.mtd_kode, d.mtd_ukuran, d.mtd_jumlah,
-                b.brgd_barcode, 
-                IFNULL(b.brgd_min, 0) AS stokmin, 
-                IFNULL(b.brgd_max, 0) AS stokmax,
-                TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
-                IFNULL((
-                    SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m
-                    WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_brg_kode=d.mtd_kode AND m.mst_ukuran=d.mtd_ukuran
-                ), 0) AS stok,
-                IFNULL((
-                    SELECT SUM(prev_mtd.mtd_jumlah) FROM tmintabarang_hdr prev_mth
-                    JOIN tmintabarang_dtl prev_mtd ON prev_mtd.mtd_nomor = prev_mth.mt_nomor
-                    WHERE prev_mth.mt_closing='N' AND prev_mth.mt_nomor <> ? AND prev_mth.mt_so = h.mt_so
-                      AND prev_mtd.mtd_kode = d.mtd_kode AND prev_mtd.mtd_ukuran = d.mtd_ukuran
-                ), 0) AS sudahminta,
-                IFNULL((
-                    SELECT SUM(sjd.sjd_jumlah) FROM tdc_sj_hdr sjh
-                    JOIN tdc_sj_dtl sjd ON sjd.sjd_nomor = sjh.sj_nomor
-                    WHERE sjh.sj_kecab=? AND sjh.sj_noterima='' 
-                      AND sjd.sjd_kode = d.mtd_kode AND sjd.sjd_ukuran = d.mtd_ukuran
-                ), 0) AS sj
-            FROM tmintabarang_hdr h
-            LEFT JOIN tmintabarang_dtl d ON d.mtd_nomor = h.mt_nomor
-            LEFT JOIN tbarangdc a ON a.brg_kode = d.mtd_kode
-            LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mtd_kode AND b.brgd_ukuran = d.mtd_ukuran
-            LEFT JOIN tcustomer c ON c.cus_kode = h.mt_cus
-            WHERE h.mt_nomor = ?
-        `;
+      SELECT 
+        h.mt_nomor, h.mt_tanggal, h.mt_so, h.mt_cus, h.mt_ket,
+        c.cus_nama, c.cus_alamat,
+        d.mtd_kode, d.mtd_ukuran, d.mtd_jumlah,
+        b.brgd_barcode, 
+        IFNULL(b.brgd_min, 0) AS stokmin, 
+        IFNULL(b.brgd_max, 0) AS stokmax,
+        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+        IFNULL((
+          SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m
+          WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_brg_kode=d.mtd_kode AND m.mst_ukuran=d.mtd_ukuran
+        ), 0) AS stok,
+        IFNULL((
+          SELECT SUM(prev_mtd.mtd_jumlah) FROM tmintabarang_hdr prev_mth
+          JOIN tmintabarang_dtl prev_mtd ON prev_mtd.mtd_nomor = prev_mth.mt_nomor
+          WHERE prev_mth.mt_closing='N' AND prev_mth.mt_nomor <> ? AND prev_mth.mt_so = h.mt_so
+            AND prev_mtd.mtd_kode = d.mtd_kode AND prev_mtd.mtd_ukuran = d.mtd_ukuran
+        ), 0) AS sudahminta,
+        IFNULL((
+          SELECT SUM(sjd.sjd_jumlah) FROM tdc_sj_hdr sjh
+          JOIN tdc_sj_dtl sjd ON sjd.sjd_nomor = sjh.sj_nomor
+          WHERE sjh.sj_kecab=? AND sjh.sj_noterima='' 
+            AND sjd.sjd_kode = d.mtd_kode AND sjd.sjd_ukuran = d.mtd_ukuran
+        ), 0) AS sj
+        FROM tmintabarang_hdr h
+        LEFT JOIN tmintabarang_dtl d ON d.mtd_nomor = h.mt_nomor
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.mtd_kode
+        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mtd_kode AND b.brgd_ukuran = d.mtd_ukuran
+        LEFT JOIN tcustomer c ON c.cus_kode = h.mt_cus
+        WHERE h.mt_nomor = ? AND h.mt_cab = ?
+      `;
     const [rows] = await connection.query(query, [
       user.cabang,
       nomor,
       user.cabang,
       nomor,
+      user.cabang,
     ]);
     if (rows.length === 0) {
       throw new Error("Data Permintaan Barang tidak ditemukan.");
@@ -351,46 +485,81 @@ const loadForEdit = async (nomor, user) => {
   }
 };
 
-const findByBarcode = async (barcode, gudang) => {
+const findByBarcode = async (barcode, cabang) => {
   const query = `
-        SELECT
-            d.brgd_barcode AS barcode,
-            d.brgd_kode AS kode,
-            TRIM(CONCAT(h.brg_jeniskaos, " ", h.brg_tipe, " ", h.brg_lengan, " ", h.brg_jeniskain, " ", h.brg_warna)) AS nama,
-            d.brgd_ukuran AS ukuran,
-            d.brgd_harga AS harga,
-            
-            -- Logika perhitungan stok dari Delphi menggunakan tmasterstok --
-            IFNULL((
-                SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
-                FROM tmasterstok m 
-                WHERE m.mst_aktif = 'Y' 
-                  AND m.mst_cab = ? 
-                  AND m.mst_brg_kode = d.brgd_kode 
-                  AND m.mst_ukuran = d.brgd_ukuran
-            ), 0) AS stok
+    SELECT
+      d.brgd_barcode AS barcode,
+      d.brgd_kode AS kode,
+      TRIM(CONCAT(
+        h.brg_jeniskaos, " ", h.brg_tipe, " ",
+        h.brg_lengan, " ", h.brg_jeniskain, " ", h.brg_warna
+      )) AS nama,
+      d.brgd_ukuran AS ukuran,
+      d.brgd_harga AS harga,
 
-        FROM tbarangdc_dtl d
-        LEFT JOIN tbarangdc h ON h.brg_kode = d.brgd_kode
-        WHERE h.brg_aktif = 0 
-          AND h.brg_logstok <> 'N'
-          AND d.brgd_barcode = ?;
-    `;
+      IFNULL(d.brgd_min, 0) AS stokmin,
+      IFNULL(d.brgd_max, 0) AS stokmax,
 
-  // Parameter 'gudang' sekarang digunakan untuk subquery stok
-  const [rows] = await pool.query(query, [gudang, barcode]);
+      -- STOK
+      IFNULL((
+        SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+        FROM tmasterstok m
+        WHERE m.mst_aktif='Y'
+          AND m.mst_cab=?
+          AND m.mst_brg_kode=d.brgd_kode
+          AND m.mst_ukuran=d.brgd_ukuran
+      ), 0) AS stok,
 
-  if (rows.length === 0) {
-    throw new Error("Barcode tidak ditemukan atau barang tidak aktif.");
-  }
-  return rows[0];
+      -- SUDAH MINTA FORM MINTA BARANG (Belum Closing)
+      IFNULL((
+        SELECT SUM(mtd.mtd_jumlah)
+        FROM tmintabarang_hdr hdr
+        JOIN tmintabarang_dtl mtd ON mtd.mtd_nomor = hdr.mt_nomor
+        WHERE hdr.mt_closing='N'
+          AND hdr.mt_cab=?
+          AND mtd.mtd_kode=d.brgd_kode
+          AND mtd.mtd_ukuran=d.brgd_ukuran
+          AND hdr.mt_nomor NOT IN (
+            SELECT sj_mt_nomor FROM tdc_sj_hdr WHERE sj_mt_nomor <> ""
+          )
+      ), 0) AS sudahminta,
+
+      -- SJ Belum Diterima
+      IFNULL((
+        SELECT SUM(sjd.sjd_jumlah)
+        FROM tdc_sj_hdr sjh
+        JOIN tdc_sj_dtl sjd ON sjd.sjd_nomor = sjh.sj_nomor
+        WHERE sjh.sj_kecab=?
+          AND sjh.sj_noterima=''
+          AND sjd.sjd_kode=d.brgd_kode
+          AND sjd.sjd_ukuran=d.brgd_ukuran
+      ), 0) AS sj
+
+    FROM tbarangdc_dtl d
+    LEFT JOIN tbarangdc h ON h.brg_kode=d.brgd_kode
+    WHERE h.brg_aktif=0
+      AND h.brg_logstok <> 'N'
+      AND d.brgd_barcode = ?;
+  `;
+
+  const [rows] = await pool.query(query, [cabang, cabang, cabang, barcode]);
+  if (!rows.length) throw new Error("Barcode tidak ditemukan.");
+
+  const p = rows[0];
+
+  // Hitung mino & jumlah
+  const mino = p.stokmax - (p.stok + p.sudahminta + p.sj);
+  p.mino = mino > 0 ? mino : 0;
+  p.jumlah = p.mino;
+
+  return p;
 };
 
 const lookupProducts = async (filters) => {
   const page = parseInt(filters.page, 10) || 1;
   const itemsPerPage = parseInt(filters.itemsPerPage, 10) || 10;
   const { term } = filters;
-  const gudang = filters.gudang;  // <-- penting
+  const gudang = filters.gudang; // <-- penting
 
   const offset = (page - 1) * itemsPerPage;
   const searchTerm = term ? `%${term}%` : null;
@@ -419,30 +588,30 @@ const lookupProducts = async (filters) => {
 
   // DATA QUERY — FIXED VERSION
   const dataQuery = `
-        SELECT
-            b.brgd_kode AS kode,
-            b.brgd_barcode AS barcode,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ",
-                a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
-            b.brgd_ukuran AS ukuran,
-            b.brgd_harga AS harga,
-            a.brg_ktg AS kategori,
+    SELECT
+      b.brgd_kode AS kode,
+      b.brgd_barcode AS barcode,
+      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ",
+        a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+      b.brgd_ukuran AS ukuran,
+      b.brgd_harga AS harga,
+      a.brg_ktg AS kategori,
 
-            IFNULL((
-                SELECT SUM(m.mst_stok_in - m.mst_stok_out)
-                FROM tmasterstok m
-                WHERE m.mst_aktif = 'Y'
-                  AND m.mst_cab = ?
-                  AND m.mst_brg_kode = b.brgd_kode
-                  AND m.mst_ukuran = b.brgd_ukuran
-            ), 0) AS stok,
+      IFNULL((
+        SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+        FROM tmasterstok m
+        WHERE m.mst_aktif = 'Y'
+          AND m.mst_cab = ?
+          AND m.mst_brg_kode = b.brgd_kode
+          AND m.mst_ukuran = b.brgd_ukuran
+        ), 0) AS stok,
 
-            CONCAT(b.brgd_kode, '-', b.brgd_ukuran) AS uniqueId
+        CONCAT(b.brgd_kode, '-', b.brgd_ukuran) AS uniqueId
 
-        ${fromClause}
-        ${whereClause}
-        ORDER BY nama, b.brgd_ukuran
-        LIMIT ? OFFSET ?
+      ${fromClause}
+      ${whereClause}
+      ORDER BY nama, b.brgd_ukuran
+      LIMIT ? OFFSET ?
     `;
 
   params = [gudang, ...params, itemsPerPage, offset];
@@ -450,7 +619,6 @@ const lookupProducts = async (filters) => {
   const [items] = await pool.query(dataQuery, params);
   return { items, total };
 };
-
 
 module.exports = {
   getSoDetailsForGrid,

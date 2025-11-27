@@ -58,7 +58,7 @@ const searchSo = async (term, page, itemsPerPage, user) => {
         LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
         WHERE h.so_aktif = "Y" 
           AND h.so_close = 0 
-          AND LEFT(h.so_nomor, 3) = ?
+          AND h.so_cab = ?
     `;
 
   const baseQuery = `FROM (${subQuery}) AS x WHERE x.qtyinv < x.qtyso`;
@@ -275,7 +275,7 @@ const searchUnpaidDp = async (customerKode, user) => {
             IF(h.sh_jenis=0, "TUNAI", IF(h.sh_jenis=1, "TRANSFER", "GIRO")) AS jenis,
             (h.sh_nominal - IFNULL((SELECT SUM(d.sd_bayar) FROM tsetor_dtl d WHERE d.sd_sh_nomor = h.sh_nomor), 0)) AS nominal
         FROM tsetor_hdr h
-        WHERE h.sh_cus_kode = ? AND LEFT(h.sh_nomor, 3) = ?
+        WHERE h.sh_cus_kode = ? AND h.sh_cab = ?
         HAVING nominal > 0;
     `;
   const [rows] = await pool.query(query, [customerKode, user.cabang]);
@@ -316,7 +316,7 @@ const loadForEdit = async (nomor, user) => {
     LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
     LEFT JOIN tcustomer_level l ON l.level_kode = h.inv_cus_level
     LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
-    LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.inv_nomor, 3)
+    LEFT JOIN tgudang g ON g.gdg_kode = h.inv_cab
     WHERE h.inv_nomor = ?
   `;
   const [headerRows] = await pool.query(headerQuery, [nomor]);
@@ -586,20 +586,23 @@ const saveData = async (payload, user) => {
     if (isNew) {
       const invTanggal = toSqlDate(header.tanggal);
       const headerSql = `
-INSERT INTO tinv_hdr (
-  inv_idrec, inv_nomor, inv_nomor_so, inv_tanggal, inv_cus_kode, inv_cus_level, inv_ket, inv_sc,
-  inv_disc, inv_bkrm, inv_dp, inv_bayar, inv_pundiamal,
-  inv_rptunai, inv_novoucher, inv_rpvoucher, inv_rpcard, inv_nosetor,
-  inv_kembali,
-  user_create, date_create
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
-`;
+        INSERT INTO tinv_hdr (
+          inv_idrec, inv_nomor, inv_nomor_so, inv_tanggal,
+          inv_cab,
+          inv_cus_kode, inv_cus_level, inv_ket, inv_sc,
+          inv_disc, inv_bkrm, inv_dp, inv_bayar, inv_pundiamal,
+          inv_rptunai, inv_novoucher, inv_rpvoucher, inv_rpcard, inv_nosetor,
+          inv_kembali,
+          user_create, date_create
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
+      `;
 
       await connection.query(headerSql, [
         idrec,
         invNomor,
         header.nomorSo,
         toSqlDate(header.tanggal),
+        user.cabang,
         header.customer.kode,
         String(header.customer.level || "")
           .trim()
@@ -629,17 +632,18 @@ INSERT INTO tinv_hdr (
     } else {
       // update logic: make sure to update inv_disc, inv_subtotal, inv_netto and payment columns if editing
       const updateSql = `
-UPDATE tinv_hdr SET
-  inv_nomor_so = ?, inv_tanggal = ?, inv_cus_kode = ?, inv_cus_level = ?, inv_ket = ?, inv_sc = ?,
-  inv_disc = ?, inv_bkrm = ?, inv_dp = ?, inv_bayar = ?, inv_pundiamal = ?,
-  inv_rptunai = ?, inv_novoucher = ?, inv_rpvoucher = ?, inv_rpcard = ?, inv_nosetor = ?,
-  inv_kembali = ?,
-  user_modified = ?, date_modified = NOW()
-WHERE inv_nomor = ?
-`;
+        UPDATE tinv_hdr SET
+          inv_nomor_so = ?, inv_tanggal = ?, inv_cab = ?, inv_cus_kode = ?, inv_cus_level = ?, inv_ket = ?, inv_sc = ?,
+          inv_disc = ?, inv_bkrm = ?, inv_dp = ?, inv_bayar = ?, inv_pundiamal = ?,
+          inv_rptunai = ?, inv_novoucher = ?, inv_rpvoucher = ?, inv_rpcard = ?, inv_nosetor = ?,
+          inv_kembali = ?,
+          user_modified = ?, date_modified = NOW()
+        WHERE inv_nomor = ?
+      `;
       await connection.query(updateSql, [
         header.nomorSo,
         toSqlDate(header.tanggal),
+        user.cabang,
         header.customer.kode,
         String(header.customer.level || "")
           .trim()
@@ -1214,7 +1218,7 @@ const getPrintData = async (nomor) => {
         LEFT JOIN tso_hdr cso
             ON cso.so_nomor = h.inv_nomor_so
             AND d.invd_kode = 'CUSTOM'
-        LEFT JOIN tgudang src ON src.gdg_kode = LEFT(h.inv_nomor, 3)
+        LEFT JOIN tgudang src ON src.gdg_kode = h.inv_cab
         WHERE h.inv_nomor = ?
         ORDER BY d.invd_nourut;
     `;
@@ -1655,7 +1659,7 @@ END AS total,
     LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
     LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
     LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
-    LEFT JOIN tgudang src ON src.gdg_kode = LEFT(h.inv_nomor, 3)
+    LEFT JOIN tgudang src ON src.gdg_kode = h.inv_cab
     WHERE h.inv_nomor = ?
     ORDER BY d.invd_nourut;
   `;
@@ -1741,7 +1745,7 @@ const searchSoDtf = async (filters, user) => {
         SELECT h.sd_nomor AS nomor, h.sd_tanggal AS tanggal, h.sd_nama AS namaDtf, h.sd_ket AS keterangan
         FROM tsodtf_hdr h
         WHERE h.sd_stok = "" AND h.sd_alasan = "" 
-          AND LEFT(h.sd_nomor, 3) = ?
+          AND h.sd_cab = ?
           AND h.sd_cus_kode = ?
           AND h.sd_nomor NOT IN (
               SELECT DISTINCT sod_sd_nomor FROM tso_dtl WHERE sod_sd_nomor <> ''
@@ -1791,7 +1795,7 @@ const searchReturJual = async (filters, user) => {
                 (SELECT ROUND(SUM(d.rjd_jumlah*d.rjd_harga)-h.rj_disc+(h.rj_ppn/100*(SUM(d.rjd_jumlah*d.rjd_harga)-h.rj_disc))) FROM trj_dtl d WHERE d.rjd_nomor = h.rj_nomor) AS Nominal,
                 IFNULL((SELECT SUM(p.pd_kredit) FROM tpiutang_dtl p WHERE p.pd_ket = h.rj_nomor AND p.pd_ph_nomor <> CONCAT(?,?)), 0) AS link
             FROM trj_hdr h
-            WHERE LEFT(h.rj_nomor, 3) = ?
+            WHERE h.rj_cab = ?
               AND h.rj_cus_kode = ?
               AND h.rj_inv <> ?
         ) x
@@ -1875,7 +1879,7 @@ const validateVoucher = async ({ voucherNo, invoiceNo }, user) => {
   // 2. Cek apakah voucher sudah pernah dipakai di invoice lain
   const usageQuery = `
         SELECT inv_nomor FROM tinv_hdr 
-        WHERE inv_novoucher = ? AND inv_nomor <> ? AND LEFT(inv_nomor, 3) = ?;
+        WHERE inv_novoucher = ? AND inv_nomor <> ? AND inv_cab = ?;
     `;
   const [usageRows] = await pool.query(usageQuery, [
     voucherNo,
@@ -1983,7 +1987,7 @@ const getDataForSjPrint = async (nomorInvoice) => {
         LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
         LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
         LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
-        LEFT JOIN tgudang src ON src.gdg_kode = LEFT(h.inv_nomor, 3)
+        LEFT JOIN tgudang src ON src.gdg_kode = h.inv_cab
         WHERE h.inv_nomor = ?
         ORDER BY d.invd_nourut;
     `;

@@ -8,9 +8,9 @@ const getList = async (filters) => {
   let branchFilter = "";
   if (cabang === "KDC") {
     branchFilter =
-      "AND LEFT(h.so_nomor, 3) IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)";
+      "AND h.so_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)";
   } else {
-    branchFilter = "AND LEFT(h.so_nomor, 3) = ?";
+    branchFilter = "AND h.so_cab = ?";
     params.push(cabang);
   }
 
@@ -271,7 +271,7 @@ const getDataForPrint = async (nomor) => {
         g.gdg_inv_instagram
     FROM tso_hdr h
     LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
-    LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.so_nomor, 3)
+    LEFT JOIN tgudang g ON g.gdg_kode = h.so_cab
     WHERE h.so_nomor = ?
   `;
   const [headerRows] = await pool.query(headerQuery, [nomor]);
@@ -468,9 +468,9 @@ const getExportDetails = async (filters) => {
   let branchFilter = "";
   if (cabang === "KDC") {
     branchFilter =
-      "AND LEFT(h.so_nomor, 3) IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)";
+      "AND h.so_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)";
   } else {
-    branchFilter = "AND LEFT(h.so_nomor, 3) = ?";
+    branchFilter = "AND h.so_cab = ?";
     params.push(cabang);
   }
 

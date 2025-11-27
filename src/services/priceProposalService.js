@@ -17,7 +17,7 @@ const getPriceProposals = async (filters) => {
             h.ph_jenis AS jenisKaos,
             h.ph_ket AS keterangan,
             h.ph_apv AS approval,
-            LEFT(h.ph_nomor, 3) AS cabang,
+            h.ph_cab AS cabang,
             h.user_create AS created
         FROM tpengajuanharga h
         LEFT JOIN tcustomer c ON c.cus_kode = h.ph_kd_cus
@@ -25,7 +25,7 @@ const getPriceProposals = async (filters) => {
     `;
 
     if (cabang !== 'ALL') {
-        query += ' AND LEFT(h.ph_nomor, 3) = ?';
+        query += ' AND h.ph_cab = ?';
         params.push(cabang);
     }
 

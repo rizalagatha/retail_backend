@@ -10,10 +10,10 @@ const generateNewMiNumber = async (cabang, tanggal) => {
   const prefix = `${cabang}MI${format(date, "yyMM")}`;
 
   const query = `
-        SELECT IFNULL(MAX(RIGHT(mi_nomor, 5)), 0) + 1 AS next_num
-        FROM tmutasiin_hdr 
-        WHERE mi_nomor LIKE ?;
-    `;
+    SELECT IFNULL(MAX(RIGHT(mi_nomor, 5)), 0) + 1 AS next_num
+    FROM tmutasiin_hdr 
+    WHERE mi_nomor LIKE ?;
+  `;
   const [rows] = await pool.query(query, [`${prefix}%`]);
   const nextNumber = rows[0].next_num.toString().padStart(5, "0");
 
@@ -26,45 +26,45 @@ const generateNewMiNumber = async (cabang, tanggal) => {
  */
 const loadFromMo = async (nomorMo, user) => {
   const headerQuery = `
-        SELECT 
-            h.mo_nomor AS nomor,
-            h.mo_so_nomor AS nomorSo,
-            h.mo_kecab AS dariCabangKode,
-            p.pab_nama AS dariCabangNama
-        FROM tmutasiout_hdr h
-        LEFT JOIN kencanaprint.tpabrik p ON p.pab_kode = h.mo_kecab
-        WHERE h.mo_nomor = ?;
-    `;
+    SELECT 
+      h.mo_nomor AS nomor,
+      h.mo_so_nomor AS nomorSo,
+      h.mo_kecab AS dariCabangKode,
+      p.pab_nama AS dariCabangNama
+    FROM tmutasiout_hdr h
+    LEFT JOIN kencanaprint.tpabrik p ON p.pab_kode = h.mo_kecab
+    WHERE h.mo_nomor = ?;
+  `;
   const [headerRows] = await pool.query(headerQuery, [nomorMo]);
   if (headerRows.length === 0)
     throw new Error("Data Mutasi Out tidak ditemukan.");
 
   // --- PERBAIKAN DI SINI: Tambahkan subquery 'sudah' ---
   const itemsQuery = `
-        SELECT
-            d.mod_kode AS kode,
-            b.brgd_barcode AS barcode,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
-            d.mod_ukuran AS ukuran,
-            d.mod_jumlah AS qtyMo,
-            IFNULL((
-                SELECT SUM(dd.mid_jumlah) FROM tmutasiin_dtl dd 
-                JOIN tmutasiin_hdr hh ON hh.mi_nomor = dd.mid_nomor 
-                WHERE hh.mi_mo_nomor = ? AND dd.mid_kode = d.mod_kode AND dd.mid_ukuran = d.mod_ukuran
-            ), 0) AS sudah,
-            (d.mod_jumlah - IFNULL((
-            SELECT SUM(dd.mid_jumlah)
-            FROM tmutasiin_dtl dd
-            JOIN tmutasiin_hdr hh ON hh.mi_nomor = dd.mid_nomor
-            WHERE hh.mi_mo_nomor = ? 
-              AND dd.mid_kode = d.mod_kode 
-              AND dd.mid_ukuran = d.mod_ukuran
-            ), 0)) AS belum
-        FROM tmutasiout_dtl d
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.mod_kode
-        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mod_kode AND b.brgd_ukuran = d.mod_ukuran
-        WHERE d.mod_nomor = ?;
-    `;
+    SELECT
+      d.mod_kode AS kode,
+      b.brgd_barcode AS barcode,
+      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+      d.mod_ukuran AS ukuran,
+      d.mod_jumlah AS qtyMo,
+      IFNULL((
+        SELECT SUM(dd.mid_jumlah) FROM tmutasiin_dtl dd 
+        JOIN tmutasiin_hdr hh ON hh.mi_nomor = dd.mid_nomor 
+        WHERE hh.mi_mo_nomor = ? AND dd.mid_kode = d.mod_kode AND dd.mid_ukuran = d.mod_ukuran
+      ), 0) AS sudah,
+      (d.mod_jumlah - IFNULL((
+      SELECT SUM(dd.mid_jumlah)
+      FROM tmutasiin_dtl dd
+      JOIN tmutasiin_hdr hh ON hh.mi_nomor = dd.mid_nomor
+      WHERE hh.mi_mo_nomor = ? 
+        AND dd.mid_kode = d.mod_kode 
+        AND dd.mid_ukuran = d.mod_ukuran
+      ), 0)) AS belum
+    FROM tmutasiout_dtl d
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.mod_kode
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mod_kode AND b.brgd_ukuran = d.mod_ukuran
+    WHERE d.mod_nomor = ?;
+  `;
   const [items] = await pool.query(itemsQuery, [nomorMo, nomorMo, nomorMo]);
   return { header: headerRows[0], items };
 };
@@ -90,23 +90,25 @@ const saveData = async (payload, user) => {
     if (isNew) {
       miNomor = await generateNewMiNumber(user.cabang, header.tanggal);
       const headerSql = `
-                INSERT INTO tmutasiin_hdr (mi_idrec, mi_nomor, mi_tanggal, mi_mo_nomor, mi_so_nomor, mi_ket, user_create, date_create)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NOW());
-            `;
+        INSERT INTO tmutasiin_hdr 
+        (mi_idrec, mi_nomor, mi_tanggal, mi_mo_nomor, mi_so_nomor, mi_cab, mi_ket, user_create, date_create)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW());
+      `;
       await connection.query(headerSql, [
         idrec,
         miNomor,
         header.tanggal,
         header.nomorMutasiOut,
         header.nomorSo,
+        user.cabang,
         header.keterangan,
         user.kode,
       ]);
     } else {
       const headerSql = `
-                UPDATE tmutasiin_hdr SET mi_tanggal = ?, mi_ket = ?, user_modified = ?, date_modified = NOW()
-                WHERE mi_nomor = ?;
-            `;
+        UPDATE tmutasiin_hdr SET mi_tanggal = ?, mi_ket = ?, user_modified = ?, date_modified = NOW()
+        WHERE mi_nomor = ?;
+      `;
       await connection.query(headerSql, [
         header.tanggal,
         header.keterangan,
@@ -120,9 +122,9 @@ const saveData = async (payload, user) => {
     ]);
 
     const detailSql = `
-            INSERT INTO tmutasiin_dtl (mid_idrec, mid_iddrec, mid_nomor, mid_kode, mid_ukuran, mid_jumlah) 
-            VALUES ?;
-        `;
+      INSERT INTO tmutasiin_dtl (mid_idrec, mid_iddrec, mid_nomor, mid_kode, mid_ukuran, mid_jumlah) 
+      VALUES ?;
+    `;
     const detailValues = items.map((item, index) => {
       const nourut = index + 1;
       const iddrec = `${idrec}${nourut}`;
@@ -226,26 +228,26 @@ const loadForEdit = async (nomorMi, user) => {
 const getPrintData = async (nomor) => {
   // Query ini diadaptasi dari query 'cetak' di Delphi Anda
   const query = `
-        SELECT 
-            h.mi_nomor, h.mi_tanggal, h.mi_so_nomor, h.mi_ket,
-            i.mo_kecab AS dari_cabang_kode,
-            p.pab_nama AS dari_cabang_nama,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
-            d.mid_kode, d.mid_ukuran, d.mid_jumlah,
-            DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
-            h.user_create,
-            src.gdg_inv_nama AS perush_nama,
-            src.gdg_inv_alamat AS perush_alamat,
-            src.gdg_inv_telp AS perush_telp
-        FROM tmutasiin_hdr h
-        LEFT JOIN tmutasiin_dtl d ON d.mid_nomor = h.mi_nomor
-        LEFT JOIN tmutasiout_hdr i ON i.mo_nomor = h.mi_mo_nomor
-        LEFT JOIN kencanaprint.tpabrik p ON p.pab_kode = i.mo_kecab
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.mid_kode
-        LEFT JOIN tgudang src ON src.gdg_kode = LEFT(h.mi_nomor, 3)
-        WHERE h.mi_nomor = ?
-        ORDER BY d.mid_kode, d.mid_ukuran;
-    `;
+    SELECT 
+      h.mi_nomor, h.mi_tanggal, h.mi_so_nomor, h.mi_ket,
+      i.mo_kecab AS dari_cabang_kode,
+      p.pab_nama AS dari_cabang_nama,
+      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+      d.mid_kode, d.mid_ukuran, d.mid_jumlah,
+      DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
+      h.user_create,
+      src.gdg_inv_nama AS perush_nama,
+      src.gdg_inv_alamat AS perush_alamat,
+      src.gdg_inv_telp AS perush_telp
+    FROM tmutasiin_hdr h
+    LEFT JOIN tmutasiin_dtl d ON d.mid_nomor = h.mi_nomor
+    LEFT JOIN tmutasiout_hdr i ON i.mo_nomor = h.mi_mo_nomor
+    LEFT JOIN kencanaprint.tpabrik p ON p.pab_kode = i.mo_kecab
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.mid_kode
+    LEFT JOIN tgudang src ON src.gdg_kode = h.mi_cab
+    WHERE h.mi_nomor = ?
+    ORDER BY d.mid_kode, d.mid_ukuran;
+  `;
 
   const [rows] = await pool.query(query, [nomor]);
   if (rows.length === 0) {
@@ -273,19 +275,19 @@ const searchMutasiOut = async (term, page, itemsPerPage, user) => {
 
   // Query inner/subquery yang menghitung qty_out dan qty_in
   const subQuery = `
-        SELECT 
-            h.mo_nomor AS Nomor,
-            h.mo_tanggal AS Tanggal,
-            p.pab_nama AS DariCabangNama,
-            h.mo_so_nomor AS NoSO,
-            c.cus_nama AS Customer,
-            IFNULL((SELECT SUM(dd.mod_jumlah) FROM tmutasiout_dtl dd WHERE dd.mod_nomor = h.mo_nomor), 0) AS qty_out,
-            IFNULL((SELECT SUM(dd.mid_jumlah) FROM tmutasiin_dtl dd JOIN tmutasiin_hdr hh ON hh.mi_nomor = dd.mid_nomor WHERE hh.mi_mo_nomor = h.mo_nomor), 0) AS qty_in
-        FROM tmutasiout_hdr h
-        LEFT JOIN tso_hdr o ON o.so_nomor = h.mo_so_nomor
-        LEFT JOIN tcustomer c ON c.cus_kode = o.so_cus_kode
-        LEFT JOIN kencanaprint.tpabrik p ON p.pab_kode = h.mo_kecab
-        WHERE LEFT(h.mo_nomor, 3) = ?
+    SELECT 
+      h.mo_nomor AS Nomor,
+      h.mo_tanggal AS Tanggal,
+      p.pab_nama AS DariCabangNama,
+      h.mo_so_nomor AS NoSO,
+      c.cus_nama AS Customer,
+      IFNULL((SELECT SUM(dd.mod_jumlah) FROM tmutasiout_dtl dd WHERE dd.mod_nomor = h.mo_nomor), 0) AS qty_out,
+      IFNULL((SELECT SUM(dd.mid_jumlah) FROM tmutasiin_dtl dd JOIN tmutasiin_hdr hh ON hh.mi_nomor = dd.mid_nomor WHERE hh.mi_mo_nomor = h.mo_nomor), 0) AS qty_in
+    FROM tmutasiout_hdr h
+    LEFT JOIN tso_hdr o ON o.so_nomor = h.mo_so_nomor
+    LEFT JOIN tcustomer c ON c.cus_kode = o.so_cus_kode
+    LEFT JOIN kencanaprint.tpabrik p ON p.pab_kode = h.mo_kecab
+    WHERE h.mo_cab = ?
     `;
 
   // Query dibungkus sebagai derived table 'x', persis seperti di Delphi
@@ -309,11 +311,11 @@ const searchMutasiOut = async (term, page, itemsPerPage, user) => {
   const total = countRows[0].total;
 
   const dataQuery = `
-        SELECT x.Nomor, x.Tanggal, x.DariCabangNama, x.NoSO, x.Customer
-        ${baseFrom} ${whereClause} ${term ? searchClause : ""}
-        ORDER BY x.Tanggal DESC, x.Nomor DESC
-        LIMIT ? OFFSET ?;
-    `;
+    SELECT x.Nomor, x.Tanggal, x.DariCabangNama, x.NoSO, x.Customer
+    ${baseFrom} ${whereClause} ${term ? searchClause : ""}
+    ORDER BY x.Tanggal DESC, x.Nomor DESC
+    LIMIT ? OFFSET ?;
+  `;
   dataParams.push(itemsPerPage, offset);
   const [items] = await pool.query(dataQuery, dataParams);
 
@@ -323,25 +325,25 @@ const searchMutasiOut = async (term, page, itemsPerPage, user) => {
 const getExportDetails = async (filters) => {
   const { startDate, endDate, cabang } = filters;
   const query = `
-        SELECT 
-            h.mi_nomor AS 'Nomor Mutasi In',
-            h.mi_tanggal AS 'Tanggal',
-            h.mi_mo_nomor AS 'Nomor Mutasi Out',
-            h.mi_so_nomor AS 'Nomor SO',
-            c.cus_nama AS 'Customer',
-            d.mid_kode AS 'Kode Barang',
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS 'Nama Barang',
-            d.mid_ukuran AS 'Ukuran',
-            d.mid_jumlah AS 'Qty'
-        FROM tmutasiin_hdr h
-        JOIN tmutasiin_dtl d ON h.mi_nomor = d.mid_nomor
-        LEFT JOIN tso_hdr o ON o.so_nomor = h.mi_so_nomor
-        LEFT JOIN tcustomer c ON c.cus_kode = o.so_cus_kode
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.mid_kode
-        WHERE LEFT(h.mi_nomor, 3) = ? 
-          AND h.mi_tanggal BETWEEN ? AND ?
-        ORDER BY h.mi_nomor;
-    `;
+    SELECT 
+      h.mi_nomor AS 'Nomor Mutasi In',
+      h.mi_tanggal AS 'Tanggal',
+      h.mi_mo_nomor AS 'Nomor Mutasi Out',
+      h.mi_so_nomor AS 'Nomor SO',
+      c.cus_nama AS 'Customer',
+      d.mid_kode AS 'Kode Barang',
+      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS 'Nama Barang',
+      d.mid_ukuran AS 'Ukuran',
+      d.mid_jumlah AS 'Qty'
+    FROM tmutasiin_hdr h
+    JOIN tmutasiin_dtl d ON h.mi_nomor = d.mid_nomor
+    LEFT JOIN tso_hdr o ON o.so_nomor = h.mi_so_nomor
+    LEFT JOIN tcustomer c ON c.cus_kode = o.so_cus_kode
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.mid_kode
+    WHERE h.mi_cab = ? 
+      AND h.mi_tanggal BETWEEN ? AND ?
+    ORDER BY h.mi_nomor;
+  `;
   const [rows] = await pool.query(query, [cabang, startDate, endDate]);
   return rows;
 };

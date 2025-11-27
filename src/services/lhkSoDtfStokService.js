@@ -13,7 +13,7 @@ const getList = async (filters) => {
             h.date_create AS Created,
             h.user_create AS Usr
         FROM tdtfstok_hdr h
-        WHERE LEFT(h.ds_nomor, 3) = ?
+        WHERE h.ds_cab = ?
           AND h.ds_tanggal BETWEEN ? AND ?
         ORDER BY h.ds_nomor
     `;

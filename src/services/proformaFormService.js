@@ -4,8 +4,8 @@ const { format } = require("date-fns");
 // Fungsi untuk membuat nomor Proforma baru
 const generateNewNumber = async (connection, branchCode, date) => {
   const prefix = `${branchCode}.INP.${format(new Date(date), "yyMM")}`;
-  const query = `SELECT IFNULL(MAX(RIGHT(inv_nomor, 4)), 0) as max_nomor FROM tinv_hdr WHERE LEFT(inv_nomor, 12) = ?`;
-  const [rows] = await connection.query(query, [prefix]);
+  const query = `SELECT IFNULL(MAX(RIGHT(inv_nomor, 4)), 0) as max_nomor FROM tinv_hdr WHERE inv_cab = ? AND LEFT(inv_nomor, 12) = ?`;
+  const [rows] = await connection.query(query, [branchCode, prefix]);
   const nextNumber = parseInt(rows[0].max_nomor, 10) + 1;
   return `${prefix}.${String(nextNumber).padStart(4, "0")}`;
 };
@@ -22,7 +22,7 @@ const getDataFromSO = async (soNumber, branchCode) => {
         FROM tso_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
         LEFT JOIN tcustomer_level l ON l.level_kode = h.so_cus_level
-        WHERE h.so_nomor = ? AND LEFT(h.so_nomor, 3) = ?;
+        WHERE h.so_nomor = ? AND h.inv_cab = ?;
     `;
   const [headerRows] = await pool.query(headerQuery, [soNumber, branchCode]);
   if (headerRows.length === 0) throw new Error("Nomor SO tidak ditemukan.");
@@ -157,12 +157,14 @@ const saveData = async (payload, user) => {
     if (isEdit) {
       headerData.user_modified = user.kode;
       headerData.date_modified = new Date();
+      headerData.inv_cab = header.cabang;
       await connection.query("UPDATE tinv_hdr SET ? WHERE inv_nomor = ?", [
         headerData,
         nomorProforma,
       ]);
     } else {
       headerData.inv_nomor = nomorProforma;
+      headerData.inv_cab = header.cabang;
       headerData.user_create = user.kode;
       headerData.date_create = new Date();
       await connection.query("INSERT INTO tinv_hdr SET ?", headerData);
@@ -212,7 +214,7 @@ const lookupSO = async (filters) => {
                 IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_dtl dd JOIN tinv_hdr hh ON hh.inv_nomor = dd.invd_inv_nomor WHERE hh.inv_nomor_so = h.so_nomor), 0) AS qtyinv
             FROM tso_hdr h
             LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
-            WHERE h.so_aktif = "Y" AND h.so_close = 0 AND LEFT(h.so_nomor, 3) = ?
+            WHERE h.so_aktif = "Y" AND h.so_close = 0 AND h.so_cab = ?
         ) x
         WHERE x.qtyinv < x.qtyso
     `;
@@ -237,7 +239,7 @@ const lookupSO = async (filters) => {
 };
 
 const getPrintData = async (nomor) => {
-    const query = `
+  const query = `
         SELECT 
             h.inv_nomor AS nomor, h.inv_tanggal AS tanggal, h.inv_top AS top, 
             DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY) as tempo,
@@ -260,33 +262,37 @@ const getPrintData = async (nomor) => {
         LEFT JOIN tcustomer_level l ON h.inv_cus_level = l.level_kode
         LEFT JOIN tbarangdc a ON d.invd_kode = a.brg_kode
         LEFT JOIN tsodtf_hdr f ON d.invd_kode = f.sd_nomor
-        LEFT JOIN tgudang g ON LEFT(h.inv_nomor, 3) = g.gdg_kode
+        LEFT JOIN tgudang g ON h.inv_cab = g.gdg_kode
         WHERE h.inv_nomor = ?
         ORDER BY d.invd_nourut;
     `;
-    const [rows] = await pool.query(query, [nomor]);
-    if (rows.length === 0) throw new Error("Data cetak tidak ditemukan.");
+  const [rows] = await pool.query(query, [nomor]);
+  if (rows.length === 0) throw new Error("Data cetak tidak ditemukan.");
 
-    // Ambil fungsi terbilang jika ada
-    const totalNetto = (rows[0].total - rows[0].diskon + (rows[0].ppn/100 * (rows[0].total - rows[0].diskon)));
-    const [terbilangRows] = await pool.query('SELECT terbilang(?) AS bilang', [totalNetto]);
+  // Ambil fungsi terbilang jika ada
+  const totalNetto =
+    rows[0].total -
+    rows[0].diskon +
+    (rows[0].ppn / 100) * (rows[0].total - rows[0].diskon);
+  const [terbilangRows] = await pool.query("SELECT terbilang(?) AS bilang", [
+    totalNetto,
+  ]);
 
+  const header = { ...rows[0], bilang: terbilangRows[0].bilang };
+  delete header.kode; // Hapus field duplikat dari header
+  // ... hapus field item lain dari header
 
-    const header = { ...rows[0], bilang: terbilangRows[0].bilang };
-    delete header.kode; // Hapus field duplikat dari header
-    // ... hapus field item lain dari header
+  const details = rows.map((row) => ({
+    kode: row.kode,
+    nama: row.nama,
+    ukuran: row.ukuran,
+    jumlah: row.jumlah,
+    harga: row.harga,
+    dis: row.dis,
+    subtotal: row.subtotal,
+  }));
 
-    const details = rows.map(row => ({
-        kode: row.kode,
-        nama: row.nama,
-        ukuran: row.ukuran,
-        jumlah: row.jumlah,
-        harga: row.harga,
-        dis: row.dis,
-        subtotal: row.subtotal,
-    }));
-
-    return { header, details };
+  return { header, details };
 };
 
 module.exports = {
@@ -294,5 +300,5 @@ module.exports = {
   getDataForEdit,
   saveData,
   lookupSO,
-  getPrintData
+  getPrintData,
 };

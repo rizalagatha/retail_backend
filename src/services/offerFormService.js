@@ -14,12 +14,13 @@ const generateNewOfferNumber = async (connection, cabang, tanggal) => {
   const prefixLength = prefix.length;
 
   const query = `
-    SELECT IFNULL(MAX(CAST(RIGHT(pen_nomor, 4) AS UNSIGNED)), 0) as maxNum 
-    FROM tpenawaran_hdr 
-    WHERE LEFT(pen_nomor, ?) = ?
+    SELECT IFNULL(MAX(CAST(RIGHT(pen_nomor, 4) AS UNSIGNED)), 0) AS maxNum
+    FROM tpenawaran_hdr
+    WHERE pen_cab = ?
+      AND pen_nomor LIKE CONCAT(?, '%')
   `;
 
-  const [rows] = await connection.query(query, [prefixLength, prefix]);
+  const [rows] = await connection.query(query, [cabang, prefix]);
 
   // Pastikan hasil query adalah NUMBER
   const maxNum = parseInt(rows[0].maxNum, 10) || 0;
@@ -185,10 +186,11 @@ const saveOffer = async (data) => {
       )}`;
 
       const insertHeaderQuery = `
-                INSERT INTO tpenawaran_hdr 
-                (pen_idrec, pen_nomor, pen_tanggal, pen_top, pen_ppn, pen_disc, pen_disc1, pen_disc2, pen_bkrm, pen_cus_kode, pen_cus_level, pen_ket, user_create, date_create) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-            `;
+        INSERT INTO tpenawaran_hdr 
+        (pen_idrec, pen_nomor, pen_tanggal, pen_top, pen_ppn, pen_disc, pen_disc1, pen_disc2, 
+        pen_bkrm, pen_cus_kode, pen_cus_level, pen_ket, pen_cab, user_create, date_create) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      `;
       await connection.query(insertHeaderQuery, [
         idrec,
         nomorPenawaran,
@@ -202,6 +204,7 @@ const saveOffer = async (data) => {
         header.customer.kode,
         header.customer.level.split(" - ")[0],
         header.keterangan,
+        user.cabang,
         user.kode,
       ]);
     } else {
@@ -354,7 +357,7 @@ const getOfferForEdit = async (nomor) => {
             g.gdg_kode, g.gdg_nama
         FROM tpenawaran_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
-        LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.pen_nomor, 3)
+        LEFT JOIN tgudang g ON g.gdg_kode = h.pen_cab
         WHERE h.pen_nomor = ?;
     `;
   const [headerRows] = await pool.query(headerQuery, [nomor]);
@@ -450,7 +453,7 @@ const searchAvailableSoDtf = async (filters) => {
             h.sd_ket AS keterangan
         FROM tsodtf_hdr h
         WHERE h.sd_stok = "" AND h.sd_alasan = "" 
-          AND LEFT(h.sd_nomor, 3) = ?
+          AND h.sd_cab = ?
           AND h.sd_cus_kode = ?
           AND h.sd_nomor NOT IN (
               SELECT DISTINCT o.sod_sd_nomor FROM tso_dtl o WHERE o.sod_sd_nomor IS NOT NULL AND o.sod_sd_nomor <> ''
@@ -507,7 +510,7 @@ const searchApprovedPriceProposals = async (params) => {
         LEFT JOIN tcustomer c ON c.cus_kode = h.ph_kd_cus
         WHERE h.ph_kd_cus = ?
           AND h.ph_apv <> ""
-          AND LEFT(h.ph_nomor, 3) = ?
+          AND h.ph_cab = ?
           AND (h.ph_nomor LIKE ? OR h.ph_ket LIKE ?)
         ORDER BY h.ph_nomor DESC
     `;
@@ -553,7 +556,7 @@ const getPriceProposalDetailsForSo = async (nomor) => {
         LEFT JOIN (
             SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_in - mst_stok_out) AS Stok 
             FROM tmasterstok 
-            WHERE mst_aktif = "Y" AND mst_cab = LEFT(?, 3)
+            WHERE mst_aktif = "Y" AND mst_cab = ?
             GROUP BY mst_brg_kode, mst_ukuran
         ) stok ON stok.mst_brg_kode = d.phs_kode AND stok.mst_ukuran = d.phs_size
         WHERE d.phs_nomor = ?
@@ -578,7 +581,7 @@ const getDataForPrint = async (nomor) => {
             f.total, f.diskon, f.ppn, f.biaya_kirim, f.grand_total
         FROM tpenawaran_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
-        LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.pen_nomor, 3)
+        LEFT JOIN tgudang g ON g.gdg_kode = h.pen_cab
         LEFT JOIN (
             SELECT 
                 pend_nomor,

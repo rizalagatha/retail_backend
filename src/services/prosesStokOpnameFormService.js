@@ -150,7 +150,7 @@ const getDataForEdit = async (nomor) => {
             (d.sopd_selisih * d.sopd_hpp) AS Nominal, b.brgd_barcode
         FROM tsop_hdr h
         INNER JOIN tsop_dtl2 d ON d.sopd_nomor = h.sop_nomor
-        LEFT JOIN tgudang g ON LEFT(h.sop_nomor, 3) = g.gdg_kode
+        LEFT JOIN tgudang g ON h.sop_cab = g.gdg_kode
         LEFT JOIN tbarangdc a ON a.brg_kode = d.sopd_kode
         LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sopd_kode AND b.brgd_ukuran = d.sopd_ukuran
         WHERE h.sop_nomor = ?;
@@ -188,8 +188,8 @@ const getDataForEdit = async (nomor) => {
 };
 
 const getProductDetailsForSop = async (barcode, cabang, tanggalSop) => {
-    // 1. Ambil detail produk berdasarkan barcode
-    const productQuery = `
+  // 1. Ambil detail produk berdasarkan barcode
+  const productQuery = `
         SELECT 
             b.brgd_kode, b.brgd_barcode,
             TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS nama,
@@ -198,12 +198,12 @@ const getProductDetailsForSop = async (barcode, cabang, tanggalSop) => {
         INNER JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
         WHERE a.brg_aktif = 0 AND b.brgd_barcode = ?
     `;
-    const [productRows] = await pool.query(productQuery, [barcode]);
-    if (productRows.length === 0) throw new Error('Barcode tidak terdaftar.');
-    const product = productRows[0];
+  const [productRows] = await pool.query(productQuery, [barcode]);
+  if (productRows.length === 0) throw new Error("Barcode tidak terdaftar.");
+  const product = productRows[0];
 
-    // 2. Hitung stok awal (logika dari getStokawal)
-    const stockQuery = `
+  // 2. Hitung stok awal (logika dari getStokawal)
+  const stockQuery = `
         SELECT 
             (
                 IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_tanggal < ? AND m.mst_brg_kode=? AND m.mst_ukuran=?), 0)
@@ -211,22 +211,28 @@ const getProductDetailsForSop = async (barcode, cabang, tanggalSop) => {
                 IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstokso m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_tanggal < ? AND m.mst_brg_kode=? AND m.mst_ukuran=?), 0)
             ) as stok
     `;
-    const stockParams = [
-        cabang, tanggalSop, product.brgd_kode, product.brgd_ukuran,
-        cabang, tanggalSop, product.brgd_kode, product.brgd_ukuran
-    ];
-    const [stockRows] = await pool.query(stockQuery, stockParams);
-    const stokAwal = stockRows[0].stok;
+  const stockParams = [
+    cabang,
+    tanggalSop,
+    product.brgd_kode,
+    product.brgd_ukuran,
+    cabang,
+    tanggalSop,
+    product.brgd_kode,
+    product.brgd_ukuran,
+  ];
+  const [stockRows] = await pool.query(stockQuery, stockParams);
+  const stokAwal = stockRows[0].stok;
 
-    // 3. Gabungkan hasilnya
-    return {
-        Kode: product.brgd_kode,
-        Barcode: product.brgd_barcode,
-        Nama: product.nama,
-        Ukuran: product.brgd_ukuran,
-        hpp: product.hpp,
-        Stok: stokAwal
-    };
+  // 3. Gabungkan hasilnya
+  return {
+    Kode: product.brgd_kode,
+    Barcode: product.brgd_barcode,
+    Nama: product.nama,
+    Ukuran: product.brgd_ukuran,
+    hpp: product.hpp,
+    Stok: stokAwal,
+  };
 };
 
 /**
@@ -234,20 +240,22 @@ const getProductDetailsForSop = async (barcode, cabang, tanggalSop) => {
  * Ini adalah migrasi dari prosedur btndataClick.
  */
 const getDataFromStaging = async (user) => {
-    const { cabang } = user;
+  const { cabang } = user;
 
-    // 1. Dapatkan tanggal stok opname yang aktif
-    const [sopTanggalRows] = await pool.query(
-        "SELECT st_tanggal FROM tsop_tanggal WHERE st_cab = ? AND st_transfer = 'N' LIMIT 1",
-        [cabang]
+  // 1. Dapatkan tanggal stok opname yang aktif
+  const [sopTanggalRows] = await pool.query(
+    "SELECT st_tanggal FROM tsop_tanggal WHERE st_cab = ? AND st_transfer = 'N' LIMIT 1",
+    [cabang]
+  );
+  if (sopTanggalRows.length === 0) {
+    throw new Error(
+      `Tidak ada tanggal stok opname yang aktif untuk cabang ${cabang}.`
     );
-    if (sopTanggalRows.length === 0) {
-        throw new Error(`Tidak ada tanggal stok opname yang aktif untuk cabang ${cabang}.`);
-    }
-    const zsoptgl = sopTanggalRows[0].st_tanggal;
+  }
+  const zsoptgl = sopTanggalRows[0].st_tanggal;
 
-    // 2. Query utama yang melakukan UNPIVOT dan kalkulasi
-    const query = `
+  // 2. Query utama yang melakukan UNPIVOT dan kalkulasi
+  const query = `
         SELECT 
             y.kode AS Kode,
             y.nama AS Nama,
@@ -295,10 +303,10 @@ const getDataFromStaging = async (user) => {
         WHERE (y.jumlah - y.stok_awal) <> 0 OR y.jumlah <> 0
     `;
 
-    const params = [cabang, zsoptgl, cabang, zsoptgl];
-    const [items] = await pool.query(query, params);
+  const params = [cabang, zsoptgl, cabang, zsoptgl];
+  const [items] = await pool.query(query, params);
 
-    return { tanggal: zsoptgl, items };
+  return { tanggal: zsoptgl, items };
 };
 
 module.exports = {

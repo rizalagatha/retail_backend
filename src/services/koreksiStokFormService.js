@@ -2,30 +2,61 @@ const pool = require("../config/database");
 
 // Fungsi untuk mengambil data saat form dalam mode Ubah
 const getForEdit = async (nomor, user) => {
-  // ... (Logika untuk mengambil data header dan detail dari tkor_hdr dan tkor_dtl)
-  // Mirip dengan getForEdit di mutasiKirim, tapi disesuaikan untuk tabel koreksi
-  const headerQuery = `SELECT kor_nomor AS nomor, kor_tanggal AS tanggal, kor_ket AS keterangan FROM tkor_hdr WHERE kor_nomor = ?`;
-  const [headerRows] = await pool.query(headerQuery, [nomor]);
-  if (headerRows.length === 0) throw new Error("Dokumen tidak ditemukan");
+  // Ambil header + informasi gudang
+  const headerQuery = `
+    SELECT 
+        h.kor_nomor AS nomor,
+        h.kor_tanggal AS tanggal,
+        h.kor_cab AS gudang,
+        g.gdg_nama AS gudang_nama,
+        h.kor_ket AS keterangan
+    FROM tkor_hdr h
+    LEFT JOIN tgudang g ON g.gdg_kode = h.kor_cab
+    WHERE h.kor_nomor = ?
+  `;
 
+  const [headerRows] = await pool.query(headerQuery, [nomor]);
+
+  if (headerRows.length === 0) {
+    throw new Error("Dokumen tidak ditemukan");
+  }
+
+  const header = {
+    nomor: headerRows[0].nomor,
+    tanggal: headerRows[0].tanggal,
+    gudang: {
+      kode: headerRows[0].gudang,
+      nama: headerRows[0].gudang_nama,
+    },
+    keterangan: headerRows[0].keterangan,
+  };
+
+  // Ambil detail item
   const itemsQuery = `
-        SELECT
-            d.kord_kode AS kode,
-            b.brgd_barcode AS barcode,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
-            d.kord_ukuran AS ukuran,
-            d.kord_stok AS stok,
-            d.kord_jumlah AS jumlah,
-            d.kord_hpp AS hpp,
-            d.kord_ket AS keterangan
-        FROM tkor_dtl d
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.kord_kode
-        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.kord_kode AND b.brgd_ukuran = d.kord_ukuran
-        WHERE d.kord_kor_nomor = ?
-    `;
+    SELECT
+        d.kord_kode AS kode,
+        b.brgd_barcode AS barcode,
+        TRIM(CONCAT(
+          a.brg_jeniskaos, " ",
+          a.brg_tipe, " ",
+          a.brg_lengan, " ",
+          a.brg_jeniskain, " ",
+          a.brg_warna
+        )) AS nama,
+        d.kord_ukuran AS ukuran,
+        d.kord_stok AS stok,
+        d.kord_jumlah AS jumlah,
+        d.kord_hpp AS hpp,
+        d.kord_ket AS keterangan
+    FROM tkor_dtl d
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.kord_kode
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.kord_kode AND b.brgd_ukuran = d.kord_ukuran
+    WHERE d.kord_kor_nomor = ?
+  `;
+
   const [items] = await pool.query(itemsQuery, [nomor]);
 
-  return { header: headerRows[0], items };
+  return { header, items };
 };
 
 // Fungsi untuk menyimpan data
@@ -48,13 +79,29 @@ const save = async (payload, user) => {
       nomorDokumen = `${prefix}${nextNum}`;
 
       await connection.query(
-        "INSERT INTO tkor_hdr (kor_nomor, kor_tanggal, kor_ket, user_create, date_create) VALUES (?, ?, ?, ?, NOW())",
-        [nomorDokumen, header.tanggal, header.keterangan, user.kode]
+        `INSERT INTO tkor_hdr 
+          (kor_nomor, kor_tanggal, kor_cab, kor_ket, user_create, date_create)
+        VALUES (?, ?, ?, ?, ?, NOW())`,
+        [
+          nomorDokumen,
+          header.tanggal,
+          user.cabang, // ← WAJIB
+          header.keterangan,
+          user.kode,
+        ]
       );
     } else {
       await connection.query(
-        "UPDATE tkor_hdr SET kor_tanggal = ?, kor_ket = ?, user_modified = ?, date_modified = NOW() WHERE kor_nomor = ?",
-        [header.tanggal, header.keterangan, user.kode, nomorDokumen]
+        `INSERT INTO tkor_hdr 
+        (kor_nomor, kor_tanggal, kor_cab, kor_ket, user_create, date_create)
+        VALUES (?, ?, ?, ?, ?, NOW())`,
+        [
+          nomorDokumen,
+          header.tanggal,
+          user.cabang, // ← WAJIB
+          header.keterangan,
+          user.kode,
+        ]
       );
     }
 
@@ -116,7 +163,7 @@ const getProductDetails = async (kode, ukuran, gudang, tanggal) => {
   const duplicateCheckQuery = `
         SELECT h.kor_nomor FROM tkor_hdr h
         LEFT JOIN tkor_dtl d ON d.kord_kor_nomor = h.kor_nomor
-        WHERE LEFT(h.kor_nomor, 3) = ?
+        WHERE h.kor_cab = ?
           AND h.kor_tanggal = ?
           AND d.kord_kode = ?
           AND d.kord_ukuran = ?
@@ -161,7 +208,7 @@ const findByBarcode = async (barcode, gudang, tanggal) => {
   const duplicateCheckQuery = `
         SELECT h.kor_nomor FROM tkor_hdr h
         LEFT JOIN tkor_dtl d ON d.kord_kor_nomor = h.kor_nomor
-        WHERE LEFT(h.kor_nomor, 3) = ?
+        WHERE h.kor_cab = ?
           AND h.kor_tanggal = ?
           AND d.kord_kode = ?
           AND d.kord_ukuran = ?
@@ -233,7 +280,7 @@ const lookupProducts = async (filters) => {
 };
 
 const getPrintData = async (nomor) => {
-    const query = `
+  const query = `
         SELECT 
             h.kor_nomor, h.kor_tanggal, h.kor_ket,
             DATE_FORMAT(h.date_create, '%d-%m-%Y %H:%i:%s') AS created,
@@ -248,36 +295,40 @@ const getPrintData = async (nomor) => {
             g.gdg_inv_nama, g.gdg_inv_alamat, g.gdg_inv_kota, g.gdg_inv_telp, g.gdg_inv_instagram, g.gdg_inv_fb
         FROM tkor_hdr h
         LEFT JOIN tkor_dtl d ON d.kord_kor_nomor = h.kor_nomor
-        LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.kor_nomor, 3)
+        LEFT JOIN tgudang g ON g.gdg_kode = h.kor_cab
         LEFT JOIN tbarangdc a ON a.brg_kode = d.kord_kode
         WHERE h.kor_nomor = ?;
     `;
-    const [rows] = await pool.query(query, [nomor]);
-    if (rows.length === 0) throw new Error('Data untuk dicetak tidak ditemukan.');
+  const [rows] = await pool.query(query, [nomor]);
+  if (rows.length === 0) throw new Error("Data untuk dicetak tidak ditemukan.");
 
-    const header = {
-        nomor: rows[0].kor_nomor,
-        tanggal: rows[0].kor_tanggal,
-        keterangan: rows[0].kor_ket,
-        created: rows[0].created,
-        user_create: rows[0].user_create,
-        perush_nama: rows[0].gdg_inv_nama,
-        perush_alamat: `${rows[0].gdg_inv_alamat || ''}, ${rows[0].gdg_inv_kota || ''}`,
-        perush_telp: rows[0].gdg_inv_telp,
-        perush_instagram: rows[0].gdg_inv_instagram,
-        perush_fb: rows[0].gdg_inv_fb,
-    };
-    const details = rows.filter(r => r.kord_kode).map(r => ({
-        kode: r.kord_kode,
-        nama: r.nama_barang,
-        ukuran: r.kord_ukuran,
-        stok: r.kord_stok,
-        koreksi: r.kord_jumlah, // 'jumlah' di delphi adalah stok fisik/koreksi
-        selisih: r.selisih,
-        keterangan: r.keterangan_item,
+  const header = {
+    nomor: rows[0].kor_nomor,
+    tanggal: rows[0].kor_tanggal,
+    keterangan: rows[0].kor_ket,
+    created: rows[0].created,
+    user_create: rows[0].user_create,
+    perush_nama: rows[0].gdg_inv_nama,
+    perush_alamat: `${rows[0].gdg_inv_alamat || ""}, ${
+      rows[0].gdg_inv_kota || ""
+    }`,
+    perush_telp: rows[0].gdg_inv_telp,
+    perush_instagram: rows[0].gdg_inv_instagram,
+    perush_fb: rows[0].gdg_inv_fb,
+  };
+  const details = rows
+    .filter((r) => r.kord_kode)
+    .map((r) => ({
+      kode: r.kord_kode,
+      nama: r.nama_barang,
+      ukuran: r.kord_ukuran,
+      stok: r.kord_stok,
+      koreksi: r.kord_jumlah, // 'jumlah' di delphi adalah stok fisik/koreksi
+      selisih: r.selisih,
+      keterangan: r.keterangan_item,
     }));
-    
-    return { header, details };
+
+  return { header, details };
 };
 
 module.exports = {

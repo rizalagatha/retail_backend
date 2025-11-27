@@ -8,17 +8,17 @@ const getList = async (filters) => {
   const { startDate, endDate, cabang } = filters;
 
   const query = `
-        SELECT 
-            h.sop_nomor AS nomor,
-            h.sop_tanggal AS tanggal,
-            h.sop_transfer AS transfer,
-            (SELECT SUM(d.sopd_selisih * d.sopd_hpp) FROM tsop_dtl2 d WHERE d.sopd_nomor = h.sop_nomor) AS nominal,
-            h.sop_ket AS keterangan 
-        FROM tsop_hdr h
-        WHERE h.sop_tanggal BETWEEN ? AND ?
-          AND LEFT(h.sop_nomor, 3) = ?
-        ORDER BY h.sop_nomor
-    `;
+    SELECT 
+      h.sop_nomor AS nomor,
+      h.sop_tanggal AS tanggal,
+      h.sop_transfer AS transfer,
+      (SELECT SUM(d.sopd_selisih * d.sopd_hpp) FROM tsop_dtl2 d WHERE d.sopd_nomor = h.sop_nomor) AS nominal,
+      h.sop_ket AS keterangan 
+    FROM tsop_hdr h
+    WHERE h.sop_tanggal BETWEEN ? AND ?
+      AND sop_cab = ?
+    ORDER BY h.sop_nomor
+  `;
 
   const [rows] = await pool.query(query, [startDate, endDate, cabang]);
   return rows;
@@ -53,7 +53,7 @@ const transferSop = async (nomor, pin, user) => {
 
     // Ambil data header untuk validasi
     const [headers] = await connection.query(
-      "SELECT sop_nomor, sop_tanggal, sop_transfer, LEFT(sop_nomor, 3) as cabang FROM tsop_hdr WHERE sop_nomor = ?",
+      "SELECT sop_nomor, sop_tanggal, sop_transfer, sop_cab as cabang FROM tsop_hdr WHERE sop_nomor = ?",
       [nomor]
     );
     if (headers.length === 0) throw new Error("Dokumen tidak ditemukan.");
@@ -141,21 +141,21 @@ const getCabangOptions = async (user) => {
 const getDetails = async (nomor) => {
   // Query ini adalah terjemahan dari SQLDetail di Delphi
   const query = `
-        SELECT 
-            d.sopd_kode AS Kode,
-            CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna) AS Nama,
-            d.sopd_ukuran AS Ukuran,
-            d.sopd_Stok AS Stok,
-            d.sopd_jumlah AS Jumlah,
-            d.sopd_selisih AS Selisih,
-            d.sopd_hpp AS Hpp,
-            (d.sopd_selisih * d.sopd_hpp) AS Nominal,
-            d.sopd_ket AS Lokasi
-        FROM tsop_dtl2 d
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.sopd_kode
-        WHERE d.sopd_nomor = ?
-        ORDER BY d.sopd_nomor
-    `;
+    SELECT 
+      d.sopd_kode AS Kode,
+      CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna) AS Nama,
+      d.sopd_ukuran AS Ukuran,
+      d.sopd_Stok AS Stok,
+      d.sopd_jumlah AS Jumlah,
+      d.sopd_selisih AS Selisih,
+      d.sopd_hpp AS Hpp,
+      (d.sopd_selisih * d.sopd_hpp) AS Nominal,
+      d.sopd_ket AS Lokasi
+    FROM tsop_dtl2 d
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.sopd_kode
+    WHERE d.sopd_nomor = ?
+    ORDER BY d.sopd_nomor
+  `;
   const [rows] = await pool.query(query, [nomor]);
   return rows;
 };
@@ -168,24 +168,24 @@ const getExportDetails = async (filters) => {
     
     // Query ini adalah terjemahan dari SQLDetail di Delphi
     const query = `
-        SELECT 
-            d.sopd_nomor AS 'Nomor SOP',
-            h.sop_tanggal AS 'Tanggal',
-            d.sopd_kode AS 'Kode Barang',
-            CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna) AS 'Nama Barang',
-            d.sopd_ukuran AS 'Ukuran',
-            d.sopd_stok AS 'Stok Sistem',
-            d.sopd_jumlah AS 'Jumlah Fisik',
-            d.sopd_selisih AS 'Selisih',
-            d.sopd_hpp AS 'HPP',
-            (d.sopd_selisih * d.sopd_hpp) AS 'Nominal Selisih',
-            d.sopd_ket AS 'Lokasi'
-        FROM tsop_dtl2 d
-        INNER JOIN tsop_hdr h ON h.sop_nomor = d.sopd_nomor
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.sopd_kode
-        WHERE h.sop_tanggal BETWEEN ? AND ?
-          AND LEFT(h.sop_nomor, 3) = ?
-        ORDER BY d.sopd_nomor, a.brg_nama, d.sopd_ukuran
+      SELECT 
+        d.sopd_nomor AS 'Nomor SOP',
+        h.sop_tanggal AS 'Tanggal',
+        d.sopd_kode AS 'Kode Barang',
+        CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna) AS 'Nama Barang',
+        d.sopd_ukuran AS 'Ukuran',
+        d.sopd_stok AS 'Stok Sistem',
+        d.sopd_jumlah AS 'Jumlah Fisik',
+        d.sopd_selisih AS 'Selisih',
+        d.sopd_hpp AS 'HPP',
+        (d.sopd_selisih * d.sopd_hpp) AS 'Nominal Selisih',
+        d.sopd_ket AS 'Lokasi'
+      FROM tsop_dtl2 d
+      INNER JOIN tsop_hdr h ON h.sop_nomor = d.sopd_nomor
+      LEFT JOIN tbarangdc a ON a.brg_kode = d.sopd_kode
+      WHERE h.sop_tanggal BETWEEN ? AND ?
+        AND h.sop_cab = ?
+      ORDER BY d.sopd_nomor, a.brg_nama, d.sopd_ukuran
     `;
     const [rows] = await pool.query(query, [startDate, endDate, cabang]);
     return rows;

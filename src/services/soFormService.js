@@ -9,8 +9,11 @@ const generateNewSoNumber = async (connection, cabang, tanggal) => {
   const datePrefix = format(new Date(tanggal), "yyMM");
   const prefix = `${cabang}.SO.${datePrefix}`;
   const [rows] = await connection.query(
-    `SELECT IFNULL(MAX(RIGHT(so_nomor, 4)), 0) as maxNum FROM tso_hdr WHERE LEFT(so_nomor, ${prefix.length}) = ?`,
-    [prefix]
+    `SELECT IFNULL(MAX(CAST(RIGHT(so_nomor, 4) AS UNSIGNED)), 0) AS maxNum
+     FROM tso_hdr
+     WHERE so_cab = ?
+     AND so_nomor LIKE CONCAT(?, '%')`,
+    [cabang, prefix] // cabang = "K07", prefix = "K07.SO.2511"
   );
   const nextNum = parseInt(rows[0].maxNum, 10) + 1;
   return `${prefix}.${String(10000 + nextNum).slice(1)}`;
@@ -41,12 +44,13 @@ const save = async (data, user) => {
       )}`;
 
       const insertHeaderQuery = `
-            INSERT INTO tso_hdr 
-(so_idrec, so_nomor, so_tanggal, so_dateline, so_pen_nomor, so_top, so_ppn,
- so_disc, so_disc1, so_disc2, so_bkrm, so_dp, so_cus_kode, so_cus_level,
- so_accdp, so_ket, so_aktif, so_sc, so_jenisorder, so_namadtf, user_create, date_create)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-            `;
+          INSERT INTO tso_hdr (
+            so_idrec, so_nomor, so_tanggal, so_dateline, so_pen_nomor, so_top, so_ppn,
+            so_disc, so_disc1, so_disc2, so_bkrm, so_dp, so_cus_kode, so_cus_level,
+            so_accdp, so_ket, so_aktif, so_sc, so_jenisorder, so_namadtf, so_cab, user_create, date_create
+           )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        `;
       await connection.query(insertHeaderQuery, [
         idrec,
         soNomor,
@@ -69,6 +73,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         header.jenisOrderKode ? String(header.jenisOrderKode) : null,
         header.namaDtf ? String(header.namaDtf) : null,
         user.kode,
+        header.gudang.kode
       ]);
     } else {
       const [idrecRows] = await connection.query(
@@ -80,14 +85,14 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
       idrec = idrecRows[0].so_idrec;
 
       const updateHeaderQuery = `
-            UPDATE tso_hdr SET
-  so_cus_kode = ?, so_pen_nomor = ?, so_cus_level = ?, so_tanggal = ?, 
-  so_dateline = ?, so_top = ?, so_ppn = ?, so_accdp = ?, so_ket = ?,
-  so_jenisorder = ?, so_namadtf = ?,
-  so_disc = ?, so_disc1 = ?, so_disc2 = ?, so_bkrm = ?, so_dp = ?, 
-  so_aktif = ?, so_sc = ?, user_modified = ?, date_modified = NOW()
-WHERE so_nomor = ?
-            `;
+        UPDATE tso_hdr SET
+          so_cus_kode = ?, so_pen_nomor = ?, so_cus_level = ?, so_tanggal = ?, 
+          so_dateline = ?, so_top = ?, so_ppn = ?, so_accdp = ?, so_ket = ?,
+          so_jenisorder = ?, so_namadtf = ?,
+          so_disc = ?, so_disc1 = ?, so_disc2 = ?, so_bkrm = ?, so_dp = ?, 
+          so_aktif = ?, so_sc = ?, user_modified = ?, date_modified = NOW()
+        WHERE so_nomor = ?
+      `;
       await connection.query(updateHeaderQuery, [
         header.customer.kode,
         header.penawaran,
@@ -108,6 +113,7 @@ WHERE so_nomor = ?
         aktifStatus,
         header.salesCounter,
         user.kode,
+        header.gudang.kode,
         soNomor,
       ]);
     }
@@ -252,7 +258,7 @@ const getSoForEdit = async (nomor) => {
         SELECT SUM(m.mst_stok_in - m.mst_stok_out)
         FROM tmasterstok m 
         WHERE m.mst_aktif='Y' 
-          AND m.mst_cab = LEFT(h.so_nomor,3) 
+          AND m.mst_cab = h.so_cab
           AND m.mst_brg_kode = d.sod_kode 
           AND m.mst_ukuran = d.sod_ukuran
       ), 0) AS Stok
@@ -263,7 +269,7 @@ const getSoForEdit = async (nomor) => {
   LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
   LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
   LEFT JOIN tcustomer_level l ON l.level_kode = h.so_cus_level
-  LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.so_nomor,3)
+  LEFT JOIN tgudang g ON g.gdg_kode = h.so_cab
   WHERE h.so_nomor = ?
   ORDER BY d.sod_nourut
 `;
@@ -406,7 +412,7 @@ const searchAvailablePenawaran = async (filters) => {
         LEFT JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
         LEFT JOIN tcustomer_level v ON v.level_kode = h.pen_cus_level
         WHERE h.pen_alasan = ""
-          AND LEFT(h.pen_nomor, 3) = ?
+          AND h.pen_cab = ?
           ${customerFilter}
           AND h.pen_nomor NOT IN (SELECT so_pen_nomor FROM tso_hdr WHERE so_pen_nomor <> "")
           AND (h.pen_nomor LIKE ? OR c.cus_nama LIKE ?)
@@ -606,7 +612,7 @@ const searchAvailableSetoran = async (filters) => {
             WHERE h.sh_otomatis = "N" 
               AND (h.sh_so_nomor = "" OR h.sh_so_nomor = ?) 
               AND j.jur_no IS NULL
-              AND LEFT(h.sh_nomor, 3) = ? AND h.sh_cus_kode = ?
+              AND h.sh_cab = ? AND h.sh_cus_kode = ?
               AND h.sh_nomor LIKE ?
         ) x 
         WHERE (x.Nominal - x.Terpakai) > 0
@@ -630,13 +636,16 @@ const generateNewDpNumber = async (connection, cabang, tanggal) => {
   // Buat prefix lengkap, contoh: K01.STR.2509
   const prefix = `${cabang}.STR.${datePrefix}`;
 
+  // Query versi baru: pakai sh_cab + LIKE prefix
   const query = `
-        SELECT IFNULL(MAX(RIGHT(sh_nomor, 4)), 0) as lastNum 
-        FROM tsetor_hdr 
-        WHERE LEFT(sh_nomor, 12) = ?
+        SELECT IFNULL(MAX(CAST(RIGHT(sh_nomor, 4) AS UNSIGNED)), 0) AS lastNum
+        FROM tsetor_hdr
+        WHERE sh_cab = ?
+          AND sh_nomor LIKE CONCAT(?, '%')
     `;
 
-  const [rows] = await connection.query(query, [prefix]);
+  const [rows] = await connection.query(query, [cabang, prefix]);
+
   const lastNum = parseInt(rows[0].lastNum, 10);
   const newNum = lastNum + 1;
 
@@ -650,26 +659,51 @@ const generateNewDpNumber = async (connection, cabang, tanggal) => {
  * @description Menyimpan data DP baru.
  */
 const saveNewDp = async (dpData, user) => {
-  const { customerKode, tanggal, jenis, nominal, keterangan, bankData } =
-    dpData;
+  const {
+    customerKode,
+    tanggal,
+    jenis,
+    nominal,
+    keterangan,
+    bankData,
+    giroData,
+  } = dpData;
+
   const connection = await pool.getConnection();
   await connection.beginTransaction();
+
   try {
     const cabang = user.cabang;
-    // getmaxdp logic
-    const prefix = `${cabang}.STR.${format(new Date(tanggal), "yyMM")}`;
-    const [maxRows] = await connection.query(
-      `SELECT IFNULL(MAX(RIGHT(sh_nomor, 4)), 0) as maxNum FROM tsetor_hdr WHERE LEFT(sh_nomor, 12) = ?`,
-      [prefix]
-    );
-    const nextNum = parseInt(maxRows[0].maxNum, 10) + 1;
-    const dpNomor = `${prefix}.${String(10000 + nextNum).slice(1)}`;
 
+    // 1. Buat prefix: K01.STR.2509
+    const datePrefix = format(new Date(tanggal), "yyMM");
+    const prefix = `${cabang}.STR.${datePrefix}`;
+
+    // 2. Ambil nomor urut terakhir (versi baru)
+    const [maxRows] = await connection.query(
+      `SELECT IFNULL(MAX(CAST(RIGHT(sh_nomor, 4) AS UNSIGNED)), 0) AS maxNum
+       FROM tsetor_hdr
+       WHERE sh_cab = ?
+         AND sh_nomor LIKE CONCAT(?, '%')`,
+      [cabang, prefix]
+    );
+
+    const lastNum = parseInt(maxRows[0].maxNum, 10);
+    const nextNum = lastNum + 1;
+
+    // 3. Susun nomor DP baru
+    const sequentialPart = String(nextNum).padStart(4, "0");
+    const dpNomor = `${prefix}.${sequentialPart}`;
+
+    // 4. Tentukan jenis DP
     let query, params;
     const jenisNum = jenis === "TUNAI" ? 0 : jenis === "TRANSFER" ? 1 : 2;
 
     if (jenis === "TUNAI") {
-      query = `INSERT INTO tsetor_hdr (sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_ket, user_create, date_create) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`;
+      query = `INSERT INTO tsetor_hdr 
+              (sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_ket, sh_cab,
+               user_create, date_create)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
       params = [
         dpNomor,
         customerKode,
@@ -677,10 +711,14 @@ const saveNewDp = async (dpData, user) => {
         jenisNum,
         nominal,
         keterangan,
+        cabang,
         user.kode,
       ];
     } else if (jenis === "TRANSFER") {
-      query = `INSERT INTO tsetor_hdr (sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_akun, sh_norek, sh_tgltransfer, sh_ket, user_create, date_create) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
+      query = `INSERT INTO tsetor_hdr 
+              (sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_akun, sh_norek, 
+               sh_tgltransfer, sh_ket, sh_cab, user_create, date_create)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
       params = [
         dpNomor,
         customerKode,
@@ -691,10 +729,14 @@ const saveNewDp = async (dpData, user) => {
         bankData.norek,
         bankData.tglTransfer,
         keterangan,
+        cabang,
         user.kode,
       ];
     } else if (jenis === "GIRO") {
-      query = `INSERT INTO tsetor_hdr (sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_giro, sh_tglgiro, sh_tempogiro, sh_ket, user_create, date_create) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
+      query = `INSERT INTO tsetor_hdr 
+              (sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_giro, sh_tglgiro,
+               sh_tempogiro, sh_ket, sh_cab, user_create, date_create)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
       params = [
         dpNomor,
         customerKode,
@@ -705,11 +747,14 @@ const saveNewDp = async (dpData, user) => {
         giroData.tglGiro,
         giroData.tglJatuhTempo,
         keterangan,
+        cabang,
         user.kode,
       ];
     }
 
+    // 5. Simpan data
     await connection.query(query, params);
+
     await connection.commit();
 
     return {

@@ -1,12 +1,13 @@
-const pool = require('../config/database');
-const ExcelJS = require('exceljs');
+const pool = require("../config/database");
+const ExcelJS = require("exceljs");
 
 // Mengambil daftar data (SQLMaster)
 const getList = async (filters) => {
-    const { startDate, endDate, cabang, filterDateType } = filters;
-    const dateColumn = filterDateType === 'pengerjaan' ? 'h.sd_datekerja' : 'h.sd_tanggal';
-    
-    const query = `
+  const { startDate, endDate, cabang, filterDateType } = filters;
+  const dateColumn =
+    filterDateType === "pengerjaan" ? "h.sd_datekerja" : "h.sd_tanggal";
+
+  const query = `
         SELECT 
             h.sd_nomor AS Nomor, 
             h.sd_tanggal AS Tanggal, 
@@ -26,22 +27,23 @@ const getList = async (filters) => {
         FROM tsodtf_hdr h
         LEFT JOIN kencanaprint.tsales s ON s.sal_kode = h.sd_sal_kode
         WHERE h.sd_stok = "Y" 
-          AND LEFT(h.sd_nomor, 3) = ?
+          AND h.sd_cab = ?
           AND ${dateColumn} BETWEEN ? AND ?
         ORDER BY ${dateColumn}, h.sd_nomor
     `;
-    const [rows] = await pool.query(query, [cabang, startDate, endDate]);
-    return rows;
+  const [rows] = await pool.query(query, [cabang, startDate, endDate]);
+  return rows;
 };
 
 // Mengambil data detail (SQLDetail)
 const getDetails = async (nomor, filters) => {
-    // Ambil filter yang relevan dari frontend
-    const { startDate, endDate, cabang, filterDateType } = filters;
-    const dateColumn = filterDateType === 'pengerjaan' ? 'h.sd_datekerja' : 'h.sd_tanggal';
+  // Ambil filter yang relevan dari frontend
+  const { startDate, endDate, cabang, filterDateType } = filters;
+  const dateColumn =
+    filterDateType === "pengerjaan" ? "h.sd_datekerja" : "h.sd_tanggal";
 
-    // Query ini sekarang menyertakan semua filter yang diperlukan
-    const query = `
+  // Query ini sekarang menyertakan semua filter yang diperlukan
+  const query = `
         SELECT 
             d.sds_kode AS Kode,
             a.brg_warna AS Nama,
@@ -63,77 +65,149 @@ const getDetails = async (nomor, filters) => {
         LEFT JOIN tbarangdc a ON a.brg_kode = d.sds_kode
         JOIN tsodtf_hdr h ON h.sd_nomor = d.sds_nomor
         WHERE d.sds_nomor = ? 
-          AND LEFT(h.sd_nomor, 3) = ?
+          AND h.sd_cab = ?
           AND ${dateColumn} BETWEEN ? AND ?
         ORDER BY d.sds_nourut
     `;
-    const [rows] = await pool.query(query, [nomor, cabang, startDate, endDate]);
-    return rows;
+  const [rows] = await pool.query(query, [nomor, cabang, startDate, endDate]);
+  return rows;
 };
 
 // Mengambil daftar cabang
 const getCabangList = async (user) => {
-    let query;
-    if (user.cabang === 'KDC') {
-        query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_dc=0 ORDER BY gdg_kode';
-    } else {
-        query = 'SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ?';
-    }
-    const [rows] = await pool.query(query, [user.cabang]);
-    return rows;
+  let query;
+  if (user.cabang === "KDC") {
+    query =
+      "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_dc=0 ORDER BY gdg_kode";
+  } else {
+    query =
+      "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ?";
+  }
+  const [rows] = await pool.query(query, [user.cabang]);
+  return rows;
 };
 
 // Menutup SO
 const close = async (data) => {
-    const { nomor, alasan, user } = data;
+  const { nomor, alasan, user } = data;
 
-    // 1. Ambil data LHK dan Jumlah untuk validasi
-    const [rows] = await pool.query(`
+  // 1. Ambil data LHK dan Jumlah untuk validasi
+  const [rows] = await pool.query(
+    `
         SELECT 
             IFNULL((SELECT SUM(i.sds_jumlah) FROM tsodtf_stok i WHERE i.sds_nomor = h.sd_nomor), 0) AS Jumlah,
             IFNULL((SELECT SUM(i.dsd_jumlah) FROM tdtfstok_dtl i JOIN tdtfstok_hdr j ON j.ds_nomor = i.dsd_nomor WHERE j.ds_sd_nomor = h.sd_nomor), 0) AS LHK
         FROM tsodtf_hdr h
         WHERE h.sd_nomor = ?
-    `, [nomor]);
+    `,
+    [nomor]
+  );
 
-    if (rows.length === 0) {
-        throw new Error('Data tidak ditemukan.');
-    }
+  if (rows.length === 0) {
+    throw new Error("Data tidak ditemukan.");
+  }
 
-    // 2. Lakukan validasi seperti di Delphi
-    if (rows[0].LHK >= rows[0].Jumlah) {
-        throw new Error('LHK sudah terpenuhi, tidak bisa di-close.');
-    }
+  // 2. Lakukan validasi seperti di Delphi
+  if (rows[0].LHK >= rows[0].Jumlah) {
+    throw new Error("LHK sudah terpenuhi, tidak bisa di-close.");
+  }
 
-    // 3. Jika validasi lolos, update data
-    const query = `UPDATE tsodtf_hdr SET sd_alasan = ?, sd_closing = 'Y', user_modified = ?, date_modified = NOW() WHERE sd_nomor = ?`;
-    await pool.query(query, [alasan, user, nomor]);
-    
-    return { message: 'SO berhasil ditutup.' };
+  // 3. Jika validasi lolos, update data
+  const query = `UPDATE tsodtf_hdr SET sd_alasan = ?, sd_closing = 'Y', user_modified = ?, date_modified = NOW() WHERE sd_nomor = ?`;
+  await pool.query(query, [alasan, user, nomor]);
+
+  return { message: "SO berhasil ditutup." };
 };
 
 // Menghapus SO
 const remove = async (nomor, user) => {
-    // Implementasi logika hapus dengan validasi
-    // ...
-    return { message: `SO ${nomor} berhasil dihapus.` };
+  const connection = await pool.getConnection();
+  await connection.beginTransaction();
+
+  try {
+    // Cek cabang
+    const [hdr] = await connection.query(
+      "SELECT sd_cab FROM tsodtf_hdr WHERE sd_nomor = ?",
+      [nomor]
+    );
+
+    if (!hdr.length) {
+      throw new Error("Data tidak ditemukan.");
+    }
+
+    if (user.cabang !== "KDC" && user.cabang !== hdr[0].sd_cab) {
+      throw new Error("Data tersebut bukan milik cabang Anda.");
+    }
+
+    // Hapus detail dulu
+    await connection.query("DELETE FROM tsodtf_stok WHERE sds_nomor = ?", [
+      nomor,
+    ]);
+
+    // Hapus header
+    const [result] = await connection.query(
+      "DELETE FROM tsodtf_hdr WHERE sd_nomor = ?",
+      [nomor]
+    );
+
+    if (result.affectedRows === 0) {
+      throw new Error("Gagal menghapus data.");
+    }
+
+    await connection.commit();
+    return { message: "Data berhasil dihapus." };
+  } catch (e) {
+    await connection.rollback();
+    throw e;
+  } finally {
+    connection.release();
+  }
 };
 
 const exportHeader = async (filters) => {
-    return await getList(filters); // Cukup kembalikan data JSON
+  return await getList(filters); // Cukup kembalikan data JSON
 };
 
 const exportDetail = async (filters) => {
-    // Implementasi query detail untuk export
-    // ... (query ini akan menggabungkan header dan detail)
+  const list = await getList(filters);
+
+  const result = [];
+
+  for (const hdr of list) {
+    const details = await getDetails(hdr.Nomor, filters);
+
+    for (const d of details) {
+      result.push({
+        Nomor: hdr.Nomor,
+        Tanggal: hdr.Tanggal,
+        TglPengerjaan: hdr.TglPengerjaan,
+        NamaDTF: hdr.NamaDTF,
+        Sales: hdr.Sales,
+        Workshop: hdr.Workshop,
+        Keterangan: hdr.Keterangan,
+        Close: hdr.Close,
+        AlasanClose: hdr.AlasanClose,
+
+        // Detail
+        Kode: d.Kode,
+        Nama: d.Nama,
+        Ukuran: d.Ukuran,
+        Jumlah: d.Jumlah,
+        LHK: d.LHK,
+        Kurang: d.Kurang,
+      });
+    }
+  }
+
+  return result;
 };
 
 module.exports = {
-    getList,
-    getDetails,
-    getCabangList,
-    close,
-    remove,
-    exportHeader,
-    exportDetail,
+  getList,
+  getDetails,
+  getCabangList,
+  close,
+  remove,
+  exportHeader,
+  exportDetail,
 };

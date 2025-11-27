@@ -34,10 +34,9 @@ const getList = async (filters, user) => {
 
   // Logika filter cabang dari Delphi
   if (user.cabang === "KDC" && cabang === "KDC") {
-    query +=
-      " AND LEFT(h.inv_nomor, 3) IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc=1)";
+    query += " AND h.inv_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc=1)";
   } else {
-    query += " AND LEFT(h.inv_nomor, 3) = ?";
+    query += " AND h.inv_cab = ?";
     params.push(cabang);
   }
   query += " ORDER BY h.Inv_nomor";
@@ -74,7 +73,7 @@ const deleteProforma = async (nomor, user) => {
 
     // Ambil data untuk validasi
     const [rows] = await connection.query(
-      "SELECT inv_closing, LEFT(inv_nomor, 3) as cabang_doc FROM tinv_hdr WHERE inv_nomor = ?",
+      "SELECT inv_closing, inv_cab as cabang_doc FROM tinv_hdr WHERE inv_nomor = ?",
       [nomor]
     );
     if (rows.length === 0) throw new Error("Dokumen tidak ditemukan.");
@@ -129,9 +128,9 @@ const getExportDetails = async (filters, user) => {
 
   if (user.cabang === "KDC" && cabang === "KDC") {
     query +=
-      " AND LEFT(h.inv_nomor, 3) IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc=1)";
+      " AND h.inv_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc=1)";
   } else {
-    query += " AND LEFT(h.inv_nomor, 3) = ?";
+    query += " AND h.inv_cab = ?";
     params.push(cabang);
   }
   query += " ORDER BY h.Inv_nomor, d.invd_nourut";

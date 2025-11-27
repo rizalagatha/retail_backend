@@ -121,9 +121,9 @@ const create = async (data, user) => {
         sd_nomor, sd_tanggal, sd_datekerja, sd_dateline,
         sd_cus_kode, sd_customer, sd_sal_kode, sd_jo_kode,
         sd_so_nomor, sd_nama, sd_kain, sd_finishing,
-        sd_desain, sd_workshop, sd_ket, user_create, date_create
+        sd_desain, sd_workshop, sd_ket, sd_cab, user_create, date_create
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
     `;
     await connection.query(headerQuery, [
       newNomor,
@@ -141,6 +141,7 @@ const create = async (data, user) => {
       header.desain,
       header.workshopKode,
       header.keterangan,
+      user.cabang,
       user.kode,
     ]);
 
@@ -479,12 +480,12 @@ const getSisaKuota = async (cabang, tanggalKerja) => {
             (SELECT IFNULL(SUM(d.sdd_jumlah), 0) 
              FROM tsodtf_hdr h 
              LEFT JOIN tsodtf_dtl d ON d.sdd_nomor = h.sd_nomor 
-             WHERE h.sd_jo_kode = 'SD' AND LEFT(h.sd_nomor, 3) = ? AND h.sd_datekerja = ?) AS jumlah,
+             WHERE h.sd_jo_kode = 'SD' AND h.sd_cab = ? AND h.sd_datekerja = ?) AS jumlah,
 
             (SELECT IFNULL(COUNT(*), 0) 
              FROM tsodtf_hdr j 
              LEFT JOIN tsodtf_dtl2 i ON i.sdd2_nomor = j.sd_nomor 
-             WHERE j.sd_jo_kode = 'SD' AND LEFT(j.sd_nomor, 3) = ? AND j.sd_datekerja = ?) AS titik
+             WHERE j.sd_jo_kode = 'SD' AND j.sd_cab = ? AND j.sd_datekerja = ?) AS titik
     `;
 
   // Parameter tetap sama, berjumlah 5
@@ -743,7 +744,7 @@ const searchSoForDtf = async (term, cabang, page, itemsPerPage) => {
 
     WHERE h.so_aktif = 'Y'
       AND h.so_dipakai_dtf = 'N'
-      AND LEFT(h.so_nomor, 3) = ?
+      AND h.so_cab = ?
       AND (h.so_nomor LIKE ? OR c.cus_nama LIKE ?)
 
     GROUP BY h.so_nomor
@@ -769,7 +770,7 @@ const searchSoForDtf = async (term, cabang, page, itemsPerPage) => {
       LEFT JOIN tsetor_hdr s ON s.sh_so_nomor = h.so_nomor
       WHERE h.so_aktif = 'Y'
         AND h.so_dipakai_dtf = 'N'
-        AND LEFT(h.so_nomor, 3) = ?
+        AND h.so_cab = ?
         AND (h.so_nomor LIKE ? OR c.cus_nama LIKE ?)
       GROUP BY h.so_nomor
     ) x

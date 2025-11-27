@@ -9,16 +9,20 @@ const { format } = require("date-fns");
  */
 const generateNewProposalNumber = async (cabang, tanggal) => {
   const year = format(new Date(tanggal), "yyyy");
-  const prefix = `${cabang}.${year}`;
+  const prefix = `${cabang}.${year}`; // contoh: K02.2025
+
   const query = `
-        SELECT IFNULL(MAX(RIGHT(ph_nomor, 5)), 0) as lastNum 
-        FROM tpengajuanharga 
-        WHERE LEFT(ph_nomor, 8) = ?
-    `;
-  const [rows] = await pool.query(query, [prefix]);
-  const lastNum = parseInt(rows[0].lastNum, 10);
+    SELECT IFNULL(MAX(CAST(RIGHT(ph_nomor, 5) AS UNSIGNED)), 0) AS lastNum
+    FROM tpengajuanharga
+    WHERE ph_cab = ?
+      AND ph_nomor LIKE CONCAT(?, '%')
+  `;
+
+  const [rows] = await pool.query(query, [cabang, prefix]);
+  const lastNum = parseInt(rows[0].lastNum, 10) || 0;
   const newNum = (lastNum + 1).toString().padStart(5, "0");
-  return `${prefix}.${newNum}`;
+
+  return `${prefix}.${newNum}`; // hasil: K02.2025.00001
 };
 
 /**
@@ -320,10 +324,10 @@ const saveProposal = async (data) => {
     // 1. Simpan/Update Header (tpengajuanharga)
     if (isNew) {
       const headerQuery = `
-                INSERT INTO tpengajuanharga 
-                    (ph_nomor, ph_tanggal, ph_custom, ph_kd_cus, ph_ket, ph_jenis, ph_apv, ph_diskon, user_create, date_create) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-            `;
+      INSERT INTO tpengajuanharga 
+        (ph_nomor, ph_tanggal, ph_custom, ph_kd_cus, ph_ket, ph_jenis, ph_apv, ph_diskon, ph_cab, user_create, date_create) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+     `;
       await connection.query(headerQuery, [
         nomor,
         header.tanggal,
@@ -333,6 +337,7 @@ const saveProposal = async (data) => {
         header.jenisKaos,
         header.approval || "",
         footer?.diskon || 0,
+        user.cabang, // 👈 ini penting
         user.kode,
       ]);
     } else {

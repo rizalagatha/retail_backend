@@ -49,7 +49,9 @@ const generateFinalPayload = async (user, selectedCabang) => {
   let canApproveCorrection = false;
   let canApprovePrice = false;
 
-  if (user.user_kode === "DARUL") {
+  const approverUsers = ["DARUL", "LIA", "HANI"];
+
+  if (approverUsers.includes(user.user_kode)) {
     canApproveCorrection = true;
     canApprovePrice = true;
   }

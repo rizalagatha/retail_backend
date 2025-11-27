@@ -1,11 +1,11 @@
-const pool = require('../config/database');
-const { format } = require('date-fns');
+const pool = require("../config/database");
+const { format } = require("date-fns");
 
 // Fungsi untuk mencari SO Stok yang valid (dari KeyDown F1)
 const searchSoStok = async (filters) => {
-    const { cabang, term } = filters;
-    const searchTerm = `%${term}%`;
-    const query = `
+  const { cabang, term } = filters;
+  const searchTerm = `%${term}%`;
+  const query = `
         SELECT * FROM (
             SELECT 
                 h.sd_nomor AS nomor,
@@ -14,19 +14,19 @@ const searchSoStok = async (filters) => {
                 IFNULL((SELECT SUM(dd.sds_jumlah) FROM tsodtf_stok dd WHERE dd.sds_nomor = h.sd_nomor), 0) AS qtySO,
                 IFNULL((SELECT SUM(dd.dsd_jumlah) FROM tdtfstok_dtl dd JOIN tdtfstok_hdr hh ON hh.ds_nomor = dd.dsd_nomor WHERE hh.ds_sd_nomor = h.sd_nomor), 0) AS qtyLhk
             FROM tsodtf_hdr h
-            WHERE h.sd_stok = "Y" AND h.sd_alasan = "" AND LEFT(h.sd_nomor, 3) = ?
+            WHERE h.sd_stok = "Y" AND h.sd_alasan = "" AND h.sd_cab = ?
               AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?)
         ) x 
         WHERE x.qtyLhk < x.qtySO
         ORDER BY x.tanggal DESC, x.nomor DESC
     `;
-    const [rows] = await pool.query(query, [cabang, searchTerm, searchTerm]);
-    return rows;
+  const [rows] = await pool.query(query, [cabang, searchTerm, searchTerm]);
+  return rows;
 };
 
 // Fungsi untuk mengambil detail SO untuk mengisi grid (dari edtsoExit)
 const getSoDetailsForGrid = async (soNomor) => {
-    const query = `
+  const query = `
         SELECT 
             d.sds_kode AS kode,
             a.brg_warna AS nama,
@@ -39,71 +39,102 @@ const getSoDetailsForGrid = async (soNomor) => {
         WHERE d.sds_nomor = ?
         ORDER BY d.sds_nourut
     `;
-    const [rows] = await pool.query(query, [soNomor]);
-    return rows.map(row => ({ ...row, jumlah: 0 })); // Tambahkan field 'jumlah' untuk inputan user
+  const [rows] = await pool.query(query, [soNomor]);
+  return rows.map((row) => ({ ...row, jumlah: 0 })); // Tambahkan field 'jumlah' untuk inputan user
 };
 
 // Fungsi untuk menyimpan data (dari simpandata)
 const save = async (data, user) => {
-    const { header, items, isNew } = data;
-    const connection = await pool.getConnection();
-    await connection.beginTransaction();
-    try {
-        let lhkNomor = header.nomor;
-        if (isNew) {
-            const prefix = `${user.cabang}DS${format(new Date(header.tanggal), 'yyMM')}`;
-            const [maxRows] = await connection.query(`SELECT IFNULL(MAX(RIGHT(ds_nomor, 5)), 0) as maxNum FROM tdtfstok_hdr WHERE LEFT(ds_nomor, 9) = ?`, [prefix]);
-            const nextNum = parseInt(maxRows[0].maxNum, 10) + 1;
-            lhkNomor = `${prefix}${String(100000 + nextNum).slice(1)}`;
-        }
-
-        if (isNew) {
-            await connection.query('INSERT INTO tdtfstok_hdr (ds_nomor, ds_tanggal, ds_sd_nomor, user_create, date_create) VALUES (?, ?, ?, ?, NOW())', [lhkNomor, header.tanggal, header.soNomor, user.kode]);
-        } else {
-            await connection.query('UPDATE tdtfstok_hdr SET ds_tanggal = ?, user_modified = ?, date_modified = NOW() WHERE ds_nomor = ?', [header.tanggal, user.kode, lhkNomor]);
-        }
-
-        await connection.query('DELETE FROM tdtfstok_dtl WHERE dsd_nomor = ?', [lhkNomor]);
-        const validItems = items.filter(item => item.jumlah > 0);
-        for (const item of validItems) {
-            await connection.query('INSERT INTO tdtfstok_dtl (dsd_nomor, dsd_kode, dsd_ukuran, dsd_jumlah) VALUES (?, ?, ?, ?)', [lhkNomor, item.kode, item.ukuran, item.jumlah]);
-        }
-
-        await connection.commit();
-        return { message: `Data LHK Stok ${lhkNomor} berhasil disimpan.`, nomor: lhkNomor };
-    } catch (error) {
-        await connection.rollback();
-        console.error("Save LHK Stok Error:", error);
-        throw new Error('Gagal menyimpan data LHK Stok.');
-    } finally {
-        connection.release();
+  const { header, items, isNew } = data;
+  const connection = await pool.getConnection();
+  await connection.beginTransaction();
+  try {
+    let lhkNomor = header.nomor;
+    if (isNew) {
+      const prefix = `${user.cabang}DS${format(
+        new Date(header.tanggal),
+        "yyMM"
+      )}`;
+      const [maxRows] = await connection.query(
+        `SELECT IFNULL(MAX(CAST(RIGHT(ds_nomor, 5) AS UNSIGNED)), 0) AS maxNum
+         FROM tdtfstok_hdr
+         WHERE ds_cab = ?
+         AND ds_nomor LIKE CONCAT(?, '%')`,
+        [user.cabang, prefix]
+      );
+      const nextNum = parseInt(maxRows[0].maxNum, 10) + 1;
+      lhkNomor = `${prefix}${String(100000 + nextNum).slice(1)}`;
     }
+
+    if (isNew) {
+      await connection.query(
+        "INSERT INTO tdtfstok_hdr (ds_nomor, ds_tanggal, ds_sd_nomor, ds_cab, user_create, date_create) VALUES (?, ?, ?, ?, ?, NOW())",
+        [lhkNomor, header.tanggal, header.soNomor, user.cabang, user.kode]
+      );
+    } else {
+      await connection.query(
+        "UPDATE tdtfstok_hdr SET ds_tanggal = ?, user_modified = ?, date_modified = NOW() WHERE ds_nomor = ?",
+        [header.tanggal, user.kode, lhkNomor]
+      );
+    }
+
+    await connection.query("DELETE FROM tdtfstok_dtl WHERE dsd_nomor = ?", [
+      lhkNomor,
+    ]);
+    const validItems = items.filter((item) => item.jumlah > 0);
+    for (const item of validItems) {
+      await connection.query(
+        "INSERT INTO tdtfstok_dtl (dsd_nomor, dsd_kode, dsd_ukuran, dsd_jumlah) VALUES (?, ?, ?, ?)",
+        [lhkNomor, item.kode, item.ukuran, item.jumlah]
+      );
+    }
+
+    await connection.commit();
+    return {
+      message: `Data LHK Stok ${lhkNomor} berhasil disimpan.`,
+      nomor: lhkNomor,
+    };
+  } catch (error) {
+    await connection.rollback();
+    console.error("Save LHK Stok Error:", error);
+    throw new Error("Gagal menyimpan data LHK Stok.");
+  } finally {
+    connection.release();
+  }
 };
 
 const getSudah = async (connection, soNomor, kode, ukuran, excludeLhkNomor) => {
-    const query = `
+  const query = `
         SELECT IFNULL(SUM(dsd_jumlah), 0) AS total 
         FROM tdtfstok_dtl
         JOIN tdtfstok_hdr ON ds_nomor = dsd_nomor
         WHERE ds_nomor <> ? AND ds_sd_nomor = ? AND dsd_kode = ? AND dsd_ukuran = ?
     `;
-    const [rows] = await connection.query(query, [excludeLhkNomor, soNomor, kode, ukuran]);
-    return rows[0].total;
+  const [rows] = await connection.query(query, [
+    excludeLhkNomor,
+    soNomor,
+    kode,
+    ukuran,
+  ]);
+  return rows[0].total;
 };
 
 // Fungsi untuk memuat data saat mode Ubah
 const loadForEdit = async (nomor) => {
-    const connection = await pool.getConnection();
-    try {
-        // 1. Ambil data header
-        const [headerRows] = await connection.query('SELECT * FROM tdtfstok_hdr WHERE ds_nomor = ?', [nomor]);
-        if (headerRows.length === 0) {
-            throw new Error('Data LHK tidak ditemukan.');
-        }
-        const header = headerRows[0];
+  const connection = await pool.getConnection();
+  try {
+    // 1. Ambil data header
+    const [headerRows] = await connection.query(
+      "SELECT * FROM tdtfstok_hdr WHERE ds_nomor = ?",
+      [nomor]
+    );
+    if (headerRows.length === 0) {
+      throw new Error("Data LHK tidak ditemukan.");
+    }
+    const header = headerRows[0];
 
-        // 2. Ambil "template" item dari SO Stok terkait (mirip loaddataall bagian pertama)
-        const templateQuery = `
+    // 2. Ambil "template" item dari SO Stok terkait (mirip loaddataall bagian pertama)
+    const templateQuery = `
             SELECT 
                 d.sds_kode AS kode, a.brg_warna AS nama, d.sds_ukuran AS ukuran,
                 d.sds_jumlah AS qtyso
@@ -111,34 +142,47 @@ const loadForEdit = async (nomor) => {
             JOIN tbarangdc a ON a.brg_kode = d.sds_kode
             WHERE d.sds_nomor = ? ORDER BY d.sds_nourut
         `;
-        const [templateItems] = await connection.query(templateQuery, [header.ds_sd_nomor]);
+    const [templateItems] = await connection.query(templateQuery, [
+      header.ds_sd_nomor,
+    ]);
 
-        // 3. Ambil detail LHK yang sudah disimpan
-        const [savedDetails] = await connection.query('SELECT * FROM tdtfstok_dtl WHERE dsd_nomor = ?', [nomor]);
+    // 3. Ambil detail LHK yang sudah disimpan
+    const [savedDetails] = await connection.query(
+      "SELECT * FROM tdtfstok_dtl WHERE dsd_nomor = ?",
+      [nomor]
+    );
 
-        // 4. Gabungkan data: hitung 'sudah', 'belum', dan isi 'jumlah'
-        const items = [];
-        for (const item of templateItems) {
-            const sudah = await getSudah(connection, header.ds_sd_nomor, item.kode, item.ukuran, nomor);
-            const savedItem = savedDetails.find(d => d.dsd_kode === item.kode && d.dsd_ukuran === item.ukuran);
-            
-            items.push({
-                ...item,
-                sudah: sudah,
-                belum: item.qtyso - sudah,
-                jumlah: savedItem ? savedItem.dsd_jumlah : 0,
-            });
-        }
+    // 4. Gabungkan data: hitung 'sudah', 'belum', dan isi 'jumlah'
+    const items = [];
+    for (const item of templateItems) {
+      const sudah = await getSudah(
+        connection,
+        header.ds_sd_nomor,
+        item.kode,
+        item.ukuran,
+        nomor
+      );
+      const savedItem = savedDetails.find(
+        (d) => d.dsd_kode === item.kode && d.dsd_ukuran === item.ukuran
+      );
 
-        return { header, items };
-    } finally {
-        connection.release();
+      items.push({
+        ...item,
+        sudah: sudah,
+        belum: item.qtyso - sudah,
+        jumlah: savedItem ? savedItem.dsd_jumlah : 0,
+      });
     }
+
+    return { header, items };
+  } finally {
+    connection.release();
+  }
 };
 
 module.exports = {
-    searchSoStok,
-    getSoDetailsForGrid,
-    save,
-    loadForEdit,
+  searchSoStok,
+  getSoDetailsForGrid,
+  save,
+  loadForEdit,
 };

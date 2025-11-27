@@ -4,11 +4,12 @@ const lhkSoDtfFormController = require("../controllers/lhkSoDtfFormController");
 const {
   verifyToken,
   checkPermission,
+  checkInsertOrEditPermission,
 } = require("../middleware/authMiddleware");
 
-const MENU_ID = "41"; // ID Menu LHK SO DTF
+const MENU_ID = "41";
 
-// 🟢 Pindahkan ini ke paling atas supaya tidak ketangkap oleh /:tanggal/:cabang
+// PENTING: route spesifik harus di atas route param
 router.get(
   "/search/so-po",
   verifyToken,
@@ -16,19 +17,11 @@ router.get(
   lhkSoDtfFormController.searchSoPo
 );
 
-// GET: Memuat semua data LHK untuk tanggal dan cabang tertentu
-router.get(
-  "/:tanggal/:cabang",
-  verifyToken,
-  checkPermission(MENU_ID, "view"),
-  lhkSoDtfFormController.loadData
-);
-
-// POST: Menyimpan seluruh data LHK untuk satu hari (delete-then-insert)
+// POST save — aman
 router.post(
   "/",
   verifyToken,
-  checkPermission(MENU_ID, ["insert", "edit"]),
+  checkInsertOrEditPermission(MENU_ID),
   lhkSoDtfFormController.saveData
 );
 
@@ -38,6 +31,14 @@ router.delete(
   verifyToken,
   checkPermission(MENU_ID, "delete"),
   lhkSoDtfFormController.removeData
+);
+
+// GET data by tanggal + cabang harus DI PALING BAWAH
+router.get(
+  "/:tanggal/:cabang",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  lhkSoDtfFormController.loadData
 );
 
 module.exports = router;

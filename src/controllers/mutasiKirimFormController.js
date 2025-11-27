@@ -62,7 +62,7 @@ const findByBarcode = async (req, res, next) => {
 
 const getPrintData = async (req, res, next) => {
   try {
-    const data = await service.getPrintData(req.params.nomor);
+    const data = await service.getPrintData(req.params.nomor, req.user);
     res.json(data);
   } catch (error) {
     next(error);
