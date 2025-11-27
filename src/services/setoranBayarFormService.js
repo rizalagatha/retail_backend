@@ -75,11 +75,19 @@ const saveData = async (payload, user) => {
 
     if (isNew) {
       shNomor = await generateNewShNumber(user.cabang, header.tanggal);
+
       const headerSql = `
-        INSERT INTO tsetor_hdr (sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_akun, sh_norek, sh_tgltransfer, sh_giro, sh_tglgiro, sh_tempogiro, sh_ket, user_create, date_create)
+        INSERT INTO tsetor_hdr (
+          sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal,
+          sh_akun, sh_norek, sh_tgltransfer, sh_giro, sh_tglgiro, sh_tempogiro,
+          sh_ket, user_create, date_create
+        )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
-        `;
+      `;
+
       const jenisMap = { TUNAI: 0, TRANSFER: 1, GIRO: 2 };
+
+      // 1️⃣ INSERT HEADER dulu
       await connection.query(headerSql, [
         idrec,
         shNomor,
@@ -96,8 +104,14 @@ const saveData = async (payload, user) => {
         header.keterangan,
         user.kode,
       ]);
-    } else {
-      // Logika update jika diperlukan
+
+      // 2️⃣ Setelah insert → jika ini DP SO → simpan nomor SO
+      if (header.nomorSo) {
+        await connection.query(
+          `UPDATE tsetor_hdr SET sh_so_nomor = ? WHERE sh_nomor = ?`,
+          [header.nomorSo, shNomor]
+        );
+      }
     }
 
     // Hapus detail lama jika mode edit, dan insert ulang
@@ -156,6 +170,10 @@ const saveData = async (payload, user) => {
         await connection.query(detailSql, [detailValues]);
       if (piutangValues.length > 0)
         await connection.query(piutangDetailSql, [piutangValues]);
+    }
+
+    if (header.nomorSo) {
+      await activateSoIfDpEnough(connection, header.nomorSo, shNomor, user);
     }
 
     await connection.commit();
@@ -473,6 +491,134 @@ const searchSoForSetoran = async ({
   };
 };
 
+const getSoDetails = async (nomorSo, user) => {
+  const connection = await pool.getConnection();
+  try {
+    // Ambil header SO singkat (nomor, tanggal, customer kode/nama)
+    const q = `
+      SELECT so_nomor AS nomor, so_tanggal AS tanggal, so_cus_kode AS cus_kode, so_cus_level AS cus_level, so_cab AS cabang
+      FROM tso_hdr
+      WHERE so_nomor = ?
+      LIMIT 1
+    `;
+    const [rows] = await connection.query(q, [nomorSo]);
+    if (rows.length === 0) return null;
+
+    const so = rows[0];
+
+    // Ambil nama customer (jika ada)
+    let customer = { kode: "", nama: "" };
+    if (so.cus_kode) {
+      const [crows] = await connection.query(
+        "SELECT cus_kode, cus_nama, cus_alamat, cus_kota, cus_telp FROM tcustomer WHERE cus_kode = ?",
+        [so.cus_kode]
+      );
+      if (crows.length > 0) {
+        customer = {
+          kode: crows[0].cus_kode,
+          nama: crows[0].cus_nama,
+          alamat: crows[0].cus_alamat || "",
+          kota: crows[0].cus_kota || "",
+          telp: crows[0].cus_telp || "",
+        };
+      }
+    }
+
+    // Hitung minimal DP (pakai fungsi calculateMinDp yang sudah ada)
+    const minimalDp = await calculateMinDp(nomorSo);
+
+    // Cek apakah SO sudah jadi invoice (ada di tinv_hdr.inv_nomor_so)
+    const [invRows] = await connection.query(
+      "SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor_so = ? LIMIT 1",
+      [nomorSo]
+    );
+    const isInvoiced = invRows.length > 0;
+
+    return {
+      nomor: so.nomor,
+      tanggal: so.tanggal,
+      customer,
+      minimalDp,
+      isInvoiced,
+      cabang: so.cab,
+    };
+  } catch (error) {
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
+const getInvoicesFromSo = async (nomorSo) => {
+  const connection = await pool.getConnection();
+  try {
+    const q = `
+      SELECT 
+        h.inv_nomor AS invoice,
+        h.inv_tanggal AS tanggal,
+        h.inv_top AS top,
+        DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY) AS jatuhTempo,
+        h.inv_total AS nominal,
+        IFNULL(h.inv_terbayar, 0) AS terbayar,
+        (h.inv_total - IFNULL(h.inv_terbayar, 0)) AS sisa
+      FROM tinv_hdr h
+      WHERE h.inv_nomor_so = ?
+      ORDER BY h.inv_nomor ASC
+    `;
+
+    const [rows] = await connection.query(q, [nomorSo]);
+    return rows;
+  } finally {
+    connection.release();
+  }
+};
+
+/**
+ * Mengaktifkan SO jika total DP memenuhi minimal DP.
+ */
+const activateSoIfDpEnough = async (connection, nomorSo, shNomor, user) => {
+  if (!nomorSo) return;
+
+  // 1. Hitung total DP yang sudah dibayarkan berdasarkan header setoran.
+  const dpQuery = `
+    SELECT IFNULL(SUM(sh_nominal), 0) AS totalDp
+    FROM tsetor_hdr
+    WHERE sh_so_nomor = ?;
+  `;
+  const [dpRows] = await connection.query(dpQuery, [nomorSo]);
+  const totalDp = Number(dpRows[0].totalDp || 0);
+
+  // 2. Hitung minimal DP (30% total SO)
+  const minimalDp = await calculateMinDp(nomorSo);
+
+  // 3. Ambil status SO saat ini
+  const [soRows] = await connection.query(
+    `SELECT so_aktif FROM tso_hdr WHERE so_nomor = ? LIMIT 1`,
+    [nomorSo]
+  );
+  if (soRows.length === 0) return;
+
+  const currentStatus = soRows[0].so_aktif;
+
+  // 4. Jika total DP memenuhi dan SO masih belum aktif → aktifkan
+  if (totalDp >= minimalDp && currentStatus !== "Y") {
+    await connection.query(
+      `
+      UPDATE tso_hdr
+      SET 
+        so_aktif = 'Y',
+        so_nodp = ?,       -- nomor setoran DP terakhir
+        so_accdp = ?,      -- user yang ACC DP
+        so_dp = ?          -- total DP yang sudah dibayar
+      WHERE so_nomor = ?;
+      `,
+      [shNomor, user.kode, totalDp, nomorSo]
+    );
+
+    console.log(`SO ${nomorSo} DISET AKTIF karena DP >= minimal DP`);
+  }
+};
+
 module.exports = {
   saveData,
   searchUnpaidInvoices,
@@ -480,4 +626,7 @@ module.exports = {
   getPrintData,
   getExportDetails,
   searchSoForSetoran,
+  getSoDetails,
+  getInvoicesFromSo,
+  activateSoIfDpEnough,
 };

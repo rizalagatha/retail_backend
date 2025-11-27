@@ -80,10 +80,41 @@ const searchSoForSetoran = async (req, res) => {
   }
 };
 
+const getSoDetails = async (req, res) => {
+  try {
+    const nomorSo = req.params.nomor;
+    if (!nomorSo)
+      return res.status(400).json({ message: "Nomor SO diperlukan." });
+
+    const data = await service.getSoDetails(nomorSo, req.user);
+    if (!data) return res.status(404).json({ message: "SO tidak ditemukan." });
+
+    res.json(data);
+  } catch (error) {
+    console.error("getSoDetails error:", error);
+    res.status(500).json({ message: "Gagal memuat data SO." });
+  }
+};
+
+const getInvoicesFromSo = async (req, res) => {
+  try {
+    const nomorSo = req.query.nomorSo;
+    if (!nomorSo) return res.status(400).json({ message: "Nomor SO diperlukan." });
+
+    const result = await service.getInvoicesFromSo(nomorSo);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ message: "Gagal mengambil invoice dari SO." });
+  }
+};
+
+
 module.exports = {
   loadForEdit,
   save,
   searchUnpaidInvoices,
   getPrintData,
   searchSoForSetoran,
+  getSoDetails,
+  getInvoicesFromSo
 };

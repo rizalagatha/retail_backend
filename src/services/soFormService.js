@@ -72,8 +72,8 @@ const save = async (data, user) => {
         header.salesCounter,
         header.jenisOrderKode ? String(header.jenisOrderKode) : null,
         header.namaDtf ? String(header.namaDtf) : null,
-        user.kode,
-        header.gudang.kode
+        header.gudang.kode,
+        user.kode
       ]);
     } else {
       const [idrecRows] = await connection.query(

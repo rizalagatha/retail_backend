@@ -22,6 +22,13 @@ router.get(
   controller.loadForEdit
 );
 
+router.get(
+  "/so/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getSoDetails
+);
+
 // Menyimpan data (baru atau ubah)
 router.post("/save", verifyToken, checkSavePermission, controller.save);
 
@@ -39,6 +46,13 @@ router.get(
   verifyToken,
   checkPermission(MENU_ID, "view"),
   controller.searchSoForSetoran
+);
+
+router.get(
+  "/lookup/invoices-from-so",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getInvoicesFromSo
 );
 
 router.get(
