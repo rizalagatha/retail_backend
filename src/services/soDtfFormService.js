@@ -154,8 +154,8 @@ const create = async (data, user) => {
         [
           newNomor,
           detail.ukuran,
-          detail.jumlah,
-          detail.harga,
+          detail.jumlah ?? 0,
+          detail.harga ?? 0,
           index + 1,
           detail.namaBarang,
         ]

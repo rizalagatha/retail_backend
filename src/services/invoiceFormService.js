@@ -674,11 +674,11 @@ const saveData = async (payload, user) => {
 
     if (validItems.length > 0) {
       const detailSql = `
-INSERT INTO tinv_dtl (
-  invd_idrec, invd_inv_nomor, invd_kode, invd_ukuran,
-  invd_jumlah, invd_harga, invd_hpp, invd_disc, invd_diskon, invd_sd_nomor, invd_nourut
-) VALUES ?
-`;
+        INSERT INTO tinv_dtl (
+          invd_idrec, invd_inv_nomor, invd_kode, invd_ukuran,
+          invd_jumlah, invd_harga, invd_hpp, invd_disc, invd_diskon, invd_sd_nomor, invd_nourut
+        ) VALUES ?
+      `;
 
       const nowTs = format(new Date(), "yyyyMMddHHmmssSSS");
       const detailValues = validItems.map((item, index) => {
@@ -730,9 +730,9 @@ INSERT INTO tinv_dtl (
       ]);
 
       const setorHdrSql = `
-INSERT INTO tsetor_hdr (sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_akun, sh_norek, sh_tgltransfer, sh_otomatis, user_create, date_create)
-VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 'Y', ?, NOW());
-`;
+        INSERT INTO tsetor_hdr (sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_akun, sh_norek, sh_tgltransfer, sh_otomatis, user_create, date_create)
+        VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 'Y', ?, NOW());
+      `;
       await connection.query(setorHdrSql, [
         idrecSetoran,
         nomorSetoranReal,
@@ -751,9 +751,9 @@ VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 'Y', ?, NOW());
         "yyyyMMddHHmmssSSS"
       )}`;
       const setorDtlSql = `
-INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut)
-VALUES (?, ?, ?, ?, ?, 'PEMBAYARAN DARI KASIR', ?, 1);
-`;
+        INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut)
+        VALUES (?, ?, ?, ?, ?, 'PEMBAYARAN DARI KASIR', ?, 1);
+      `;
       await connection.query(setorDtlSql, [
         idrecSetoran,
         nomorSetoranReal,
@@ -764,9 +764,9 @@ VALUES (?, ?, ?, ?, ?, 'PEMBAYARAN DARI KASIR', ?, 1);
       ]);
 
       const piutangCardSql = `
-INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur)
-VALUES (?, ?, 'Pembayaran Card', ?, ?, ?);
-`;
+        INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur)
+        VALUES (?, ?, 'Pembayaran Card', ?, ?, ?);
+      `;
       await connection.query(piutangCardSql, [
         piutangNomor,
         toSqlDateTime(payment.transfer.tanggal),
@@ -803,9 +803,9 @@ VALUES (?, ?, 'Pembayaran Card', ?, ?, ?);
 
           // Insert ke tsetor_dtl untuk menandai DP sudah terpakai
           const setorDtlSql = `
-                        INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur)
-                        VALUES (?, ?, ?, ?, ?, 'DP LINK DARI INV', ?);
-                    `;
+            INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur)
+            VALUES (?, ?, ?, ?, ?, 'DP LINK DARI INV', ?);
+          `;
           await connection.query(setorDtlSql, [
             idrecSetoran,
             dp.nomor,
@@ -922,17 +922,17 @@ VALUES (?, ?, 'Pembayaran Card', ?, ?, ?);
     // (7) Logika untuk INSERT/UPDATE tmember (dari edthpExit)
     if (header.memberHp) {
       const memberSql = `
-                INSERT INTO tmember (mem_hp, mem_nama, mem_alamat, mem_gender, mem_usia, mem_referensi, user_create, date_create)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
-                ON DUPLICATE KEY UPDATE
-                    mem_nama = VALUES(mem_nama),
-                    mem_alamat = VALUES(mem_alamat),
-                    mem_gender = VALUES(mem_gender),
-                    mem_usia = VALUES(mem_usia),
-                    mem_referensi = VALUES(mem_referensi),
-                    user_modified = ?,
-                    date_modified = NOW();
-            `;
+        INSERT INTO tmember (mem_hp, mem_nama, mem_alamat, mem_gender, mem_usia, mem_referensi, user_create, date_create)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+        ON DUPLICATE KEY UPDATE
+          mem_nama = VALUES(mem_nama),
+          mem_alamat = VALUES(mem_alamat),
+          mem_gender = VALUES(mem_gender),
+          mem_usia = VALUES(mem_usia),
+          mem_referensi = VALUES(mem_referensi),
+          user_modified = ?,
+          date_modified = NOW();
+      `;
       // Gunakan properti yang sudah kita definisikan di header frontend
       await connection.query(memberSql, [
         header.memberHp,
@@ -952,9 +952,9 @@ VALUES (?, ?, 'Pembayaran Card', ?, ?, ?);
     // Cek dan simpan PIN untuk Diskon Faktur 1
     if (pinDiskon1) {
       const authLogSql = `
-                INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_pin, o_nominal, o_created) 
-                VALUES (?, 'INVOICE', 'DISKON FAKTUR', ?, ?, NOW());
-            `;
+        INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_pin, o_nominal, o_created) 
+        VALUES (?, 'INVOICE', 'DISKON FAKTUR', ?, ?, NOW());
+      `;
       await connection.query(authLogSql, [
         invNomor,
         pinDiskon1,
@@ -965,9 +965,9 @@ VALUES (?, ?, 'Pembayaran Card', ?, ?, ?);
     // Cek dan simpan PIN untuk Diskon Faktur 2
     if (pinDiskon2) {
       const authLogSql = `
-                INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_pin, o_nominal, o_created) 
-                VALUES (?, 'INVOICE', 'DISKON FAKTUR 2', ?, ?, NOW());
-            `;
+        INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_pin, o_nominal, o_created) 
+        VALUES (?, 'INVOICE', 'DISKON FAKTUR 2', ?, ?, NOW());
+      `;
       await connection.query(authLogSql, [
         invNomor,
         pinDiskon2,
@@ -978,9 +978,9 @@ VALUES (?, ?, 'Pembayaran Card', ?, ?, ?);
     // Cek dan simpan PIN untuk Invoice Belum Lunas
     if (pinBelumLunas) {
       const authLogSql = `
-                INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_pin, o_nominal, o_created) 
-                VALUES (?, 'INVOICE', 'BELUM LUNAS', ?, ?, NOW());
-            `;
+        INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_pin, o_nominal, o_created) 
+        VALUES (?, 'INVOICE', 'BELUM LUNAS', ?, ?, NOW());
+      `;
       await connection.query(authLogSql, [
         invNomor,
         pinBelumLunas,
@@ -1032,13 +1032,13 @@ const searchPromo = async (filters, user) => {
 
   // Query ini diadaptasi dari Delphi 'edtproinvKeyDown'
   const query = `
-        SELECT p.pro_nomor AS nomor, p.pro_judul AS namaPromo
-        FROM tpromo p
-        INNER JOIN tpromo_cabang c ON c.pc_nomor = p.pro_nomor AND c.pc_cab = ?
-        WHERE p.pro_f1 = "Y" 
-          AND ? BETWEEN p.pro_tanggal1 AND p.pro_tanggal2
-          AND (p.pro_nomor LIKE ? OR p.pro_judul LIKE ?);
-    `;
+    SELECT p.pro_nomor AS nomor, p.pro_judul AS namaPromo
+      FROM tpromo p
+      INNER JOIN tpromo_cabang c ON c.pc_nomor = p.pro_nomor AND c.pc_cab = ?
+      WHERE p.pro_f1 = "Y" 
+        AND ? BETWEEN p.pro_tanggal1 AND p.pro_tanggal2
+        AND (p.pro_nomor LIKE ? OR p.pro_judul LIKE ?);
+  `;
   const [rows] = await pool.query(query, [
     user.cabang,
     tanggal,
@@ -1060,13 +1060,13 @@ const saveMember = async (payload, user) => {
   if (!hp || !nama) throw new Error("No. HP dan Nama tidak boleh kosong.");
 
   const query = `
-        INSERT INTO tmember (mem_hp, mem_nama, mem_alamat, mem_gender, mem_usia, mem_referensi, user_create, date_create)
-        VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
-        ON DUPLICATE KEY UPDATE
-            mem_nama = VALUES(mem_nama), mem_alamat = VALUES(mem_alamat),
-            mem_gender = VALUES(mem_gender), mem_usia = VALUES(mem_usia),
-            mem_referensi = VALUES(mem_referensi), user_modified = ?, date_modified = NOW();
-    `;
+    INSERT INTO tmember (mem_hp, mem_nama, mem_alamat, mem_gender, mem_usia, mem_referensi, user_create, date_create)
+    VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+    ON DUPLICATE KEY UPDATE
+      mem_nama = VALUES(mem_nama), mem_alamat = VALUES(mem_alamat),
+      mem_gender = VALUES(mem_gender), mem_usia = VALUES(mem_usia),
+      mem_referensi = VALUES(mem_referensi), user_modified = ?, date_modified = NOW();
+  `;
   await pool.query(query, [
     hp,
     nama,
@@ -1089,10 +1089,10 @@ const getDefaultCustomer = async (cabang) => {
     params = ["KDC00001"];
   } else {
     query = `
-            SELECT cus_kode FROM tcustomer 
-            WHERE cus_cab = ? AND (cus_nama LIKE '%RETAIL%' OR cus_nama LIKE 'RETAIL%')
-            ORDER BY cus_kode LIMIT 1
-        `;
+      SELECT cus_kode FROM tcustomer 
+      WHERE cus_cab = ? AND (cus_nama LIKE '%RETAIL%' OR cus_nama LIKE 'RETAIL%')
+      ORDER BY cus_kode LIMIT 1
+    `;
     params = [cabang];
   }
 
@@ -1106,18 +1106,18 @@ const getDefaultCustomer = async (cabang) => {
 
   // Perbaiki query detail customer dengan JOIN yang benar
   const detailQuery = `
-        SELECT 
-            c.cus_kode AS kode, c.cus_nama AS nama, c.cus_alamat AS alamat, 
-            c.cus_kota AS kota, c.cus_telp AS telp,
-            x.clh_level AS level_kode, l.level_nama
-        FROM tcustomer c
-        LEFT JOIN tcustomer_level_history x 
-            ON x.clh_cus_kode = c.cus_kode
-        LEFT JOIN tcustomer_level l 
-            ON l.level_kode = x.clh_level
-        WHERE c.cus_kode = ?
-        ORDER BY x.clh_tanggal DESC 
-    `;
+    SELECT 
+      c.cus_kode AS kode, c.cus_nama AS nama, c.cus_alamat AS alamat, 
+      c.cus_kota AS kota, c.cus_telp AS telp,
+      x.clh_level AS level_kode, l.level_nama
+    FROM tcustomer c
+    LEFT JOIN tcustomer_level_history x 
+      ON x.clh_cus_kode = c.cus_kode
+    LEFT JOIN tcustomer_level l 
+      ON l.level_kode = x.clh_level
+    WHERE c.cus_kode = ?
+    ORDER BY x.clh_tanggal DESC 
+  `;
 
   const [customerRows] = await pool.query(detailQuery, [
     customerKode,
@@ -1190,38 +1190,38 @@ const capitalize = (s) =>
 
 const getPrintData = async (nomor) => {
   const query = `
-        SELECT 
-            h.inv_nomor, h.inv_tanggal, h.inv_nomor_so, h.inv_top, h.inv_ket, h.inv_sc,
-            h.inv_disc, h.inv_ppn, h.inv_bkrm, h.inv_dp, h.inv_pundiamal,
-            h.inv_rptunai, h.inv_rpcard, h.inv_rpvoucher, h.inv_kembali,
-            DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY) AS tempo,
-            c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
-            d.invd_kode, d.invd_ukuran, d.invd_jumlah, d.invd_harga, d.invd_diskon,
-            COALESCE(
-                TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)),
-                f.sd_nama,
-                cso.so_namadtf,
-                d.invd_kode
-            ) AS nama_barang,
-            (d.invd_jumlah * (d.invd_harga - d.invd_diskon)) AS total,
-            h.user_create, DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
-            src.gdg_inv_nama AS perush_nama,
-            src.gdg_inv_alamat AS perush_alamat,
-            src.gdg_inv_telp AS perush_telp,
-            src.gdg_inv_instagram,
-            src.gdg_inv_fb
-        FROM tinv_hdr h
-        LEFT JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
-        LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
-        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
-        LEFT JOIN tso_hdr cso
-            ON cso.so_nomor = h.inv_nomor_so
-            AND d.invd_kode = 'CUSTOM'
-        LEFT JOIN tgudang src ON src.gdg_kode = h.inv_cab
-        WHERE h.inv_nomor = ?
-        ORDER BY d.invd_nourut;
-    `;
+    SELECT 
+      h.inv_nomor, h.inv_tanggal, h.inv_nomor_so, h.inv_top, h.inv_ket, h.inv_sc,
+      h.inv_disc, h.inv_ppn, h.inv_bkrm, h.inv_dp, h.inv_pundiamal,
+      h.inv_rptunai, h.inv_rpcard, h.inv_rpvoucher, h.inv_kembali,
+      DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY) AS tempo,
+      c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
+      d.invd_kode, d.invd_ukuran, d.invd_jumlah, d.invd_harga, d.invd_diskon,
+      COALESCE(
+        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)),
+        f.sd_nama,
+        cso.so_namadtf,
+        d.invd_kode
+      ) AS nama_barang,
+      (d.invd_jumlah * (d.invd_harga - d.invd_diskon)) AS total,
+      h.user_create, DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
+      src.gdg_inv_nama AS perush_nama,
+      src.gdg_inv_alamat AS perush_alamat,
+      src.gdg_inv_telp AS perush_telp,
+      src.gdg_inv_instagram,
+      src.gdg_inv_fb
+    FROM tinv_hdr h
+    LEFT JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+    LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
+    LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
+    LEFT JOIN tso_hdr cso
+      ON cso.so_nomor = h.inv_nomor_so
+      AND d.invd_kode = 'CUSTOM'
+    LEFT JOIN tgudang src ON src.gdg_kode = h.inv_cab
+    WHERE h.inv_nomor = ?
+    ORDER BY d.invd_nourut;
+  `;
 
   const [rows] = await pool.query(query, [nomor]);
   if (rows.length === 0) throw new Error("Data Invoice tidak ditemukan.");
@@ -1296,10 +1296,10 @@ const generateKuponNumber = async (connection, cabang, tanggal) => {
   // Asumsi tidak dalam mode 'BAZAR' untuk penyederhanaan
   const prefix = `${cabang}${format(date, "yy")}`;
   const query = `
-        SELECT IFNULL(MAX(RIGHT(invk_kupon, 5)), 0) + 1 AS next_num
-        FROM tinv_kupon 
-        WHERE invk_kupon LIKE ?;
-    `;
+    SELECT IFNULL(MAX(RIGHT(invk_kupon, 5)), 0) + 1 AS next_num
+    FROM tinv_kupon 
+    WHERE invk_kupon LIKE ?;
+  `;
   const [rows] = await connection.query(query, [`${prefix}%`]);
   const nextNumber = rows[0].next_num.toString().padStart(5, "0");
 
@@ -1331,11 +1331,11 @@ const handlePromotions = async (
 
   // 1. Ambil semua promo yang aktif untuk cabang dan tanggal ini
   const promoQuery = `
-        SELECT p.*
-        FROM tpromo p
-        INNER JOIN tpromo_cabang c ON c.pc_nomor = p.pro_nomor AND c.pc_cab = ?
-        WHERE ? BETWEEN p.pro_tanggal1 AND p.pro_tanggal2;
-    `;
+    SELECT p.*
+    FROM tpromo p
+    INNER JOIN tpromo_cabang c ON c.pc_nomor = p.pro_nomor AND c.pc_cab = ?
+    WHERE ? BETWEEN p.pro_tanggal1 AND p.pro_tanggal2;
+  `;
   const [activePromos] = await connection.query(promoQuery, [
     user.cabang,
     header.tanggal,
@@ -1433,37 +1433,37 @@ const handlePromotions = async (
   // 4. Insert semua kupon/voucher yang baru dibuat ke database
   if (kuponToInsert.length > 0) {
     const kuponSql = `
-            INSERT INTO tinv_kupon (invk_idrec, invk_inv_nomor, invk_kupon, invk_promo, invk_ket, invk_note, invk_cetak, invk_nominal, invk_qty) 
-            VALUES ?`;
+    INSERT INTO tinv_kupon (invk_idrec, invk_inv_nomor, invk_kupon, invk_promo, invk_ket, invk_note, invk_cetak, invk_nominal, invk_qty) 
+    VALUES ?`;
     await connection.query(kuponSql, [kuponToInsert]);
   }
 };
 
 const findByBarcode = async (barcode, gudang) => {
   const query = `
-        SELECT
-            d.brgd_barcode AS barcode,
-            d.brgd_kode AS kode,
-            TRIM(CONCAT(h.brg_jeniskaos, " ", h.brg_tipe, " ", h.brg_lengan, " ", h.brg_jeniskain, " ", h.brg_warna)) AS nama,
-            d.brgd_ukuran AS ukuran,
-            d.brgd_harga AS harga,
+    SELECT
+      d.brgd_barcode AS barcode,
+      d.brgd_kode AS kode,
+      TRIM(CONCAT(h.brg_jeniskaos, " ", h.brg_tipe, " ", h.brg_lengan, " ", h.brg_jeniskain, " ", h.brg_warna)) AS nama,
+      d.brgd_ukuran AS ukuran,
+      d.brgd_harga AS harga,
             
-            -- Logika perhitungan stok dari Delphi menggunakan tmasterstok --
-            IFNULL((
-                SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
-                FROM tmasterstok m 
-                WHERE m.mst_aktif = 'Y' 
-                  AND m.mst_cab = ? 
-                  AND m.mst_brg_kode = d.brgd_kode 
-                  AND m.mst_ukuran = d.brgd_ukuran
-            ), 0) AS stok
+      -- Logika perhitungan stok dari Delphi menggunakan tmasterstok --
+      IFNULL((
+        SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
+        FROM tmasterstok m 
+        WHERE m.mst_aktif = 'Y' 
+          AND m.mst_cab = ? 
+          AND m.mst_brg_kode = d.brgd_kode 
+          AND m.mst_ukuran = d.brgd_ukuran
+        ), 0) AS stok
 
-        FROM tbarangdc_dtl d
-        LEFT JOIN tbarangdc h ON h.brg_kode = d.brgd_kode
-        WHERE h.brg_aktif = 0 
-          AND h.brg_logstok <> 'N'
-          AND d.brgd_barcode = ?;
-    `;
+    FROM tbarangdc_dtl d
+    LEFT JOIN tbarangdc h ON h.brg_kode = d.brgd_kode
+    WHERE h.brg_aktif = 0 
+      AND h.brg_logstok <> 'N'
+      AND d.brgd_barcode = ?;
+  `;
 
   // Parameter 'gudang' sekarang digunakan untuk subquery stok
   const [rows] = await pool.query(query, [gudang, barcode]);
@@ -1481,9 +1481,9 @@ const searchProducts = async (filters, user) => {
 
   let params = [];
   let baseFrom = `
-        FROM tbarangdc_dtl b
-        INNER JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
-    `;
+    FROM tbarangdc_dtl b
+    INNER JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
+  `;
   let baseWhere = `WHERE a.brg_aktif = 0`;
 
   let promoFilterJoin = "";
@@ -1491,9 +1491,9 @@ const searchProducts = async (filters, user) => {
 
   if (promoNomor === "PRO-2025-005") {
     promoFilterJoin = `
-      INNER JOIN tpromo_barang pb ON pb.pb_brg_kode = a.brg_kode 
-                                 AND pb.pb_ukuran = b.brgd_ukuran
-                                 AND pb.pb_nomor = ?
+    INNER JOIN tpromo_barang pb ON pb.pb_brg_kode = a.brg_kode 
+      AND pb.pb_ukuran = b.brgd_ukuran
+      AND pb.pb_nomor = ?
     `;
     params.push(promoNomor);
     hargaSelect = "33333 AS harga"; // 2. Timpa harga jika promo aktif
@@ -1514,20 +1514,20 @@ const searchProducts = async (filters, user) => {
   const [countRows] = await pool.query(countQuery, params);
 
   const dataQuery = `
-        SELECT
-            b.brgd_kode AS kode,
-            b.brgd_barcode AS barcode,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
-            b.brgd_ukuran AS ukuran,
-            ${hargaSelect},
-            IFNULL((
-                SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m 
-                WHERE m.mst_aktif = 'Y' AND m.mst_cab = ? AND m.mst_brg_kode = b.brgd_kode AND m.mst_ukuran = b.brgd_ukuran
-            ), 0) AS stok
-        ${baseFrom} ${promoFilterJoin} ${baseWhere} ${searchWhere}
-        ORDER BY nama, b.brgd_ukuran
-        LIMIT ? OFFSET ?;
-    `;
+    SELECT
+      b.brgd_kode AS kode,
+      b.brgd_barcode AS barcode,
+      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+      b.brgd_ukuran AS ukuran,
+      ${hargaSelect},
+      IFNULL((
+        SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m 
+        WHERE m.mst_aktif = 'Y' AND m.mst_cab = ? AND m.mst_brg_kode = b.brgd_kode AND m.mst_ukuran = b.brgd_ukuran
+      ), 0) AS stok
+    ${baseFrom} ${promoFilterJoin} ${baseWhere} ${searchWhere}
+    ORDER BY nama, b.brgd_ukuran
+    LIMIT ? OFFSET ?;
+  `;
   const dataParams = [user.cabang, ...params, Number(itemsPerPage), offset];
   const [items] = await pool.query(dataQuery, dataParams);
 
@@ -1538,10 +1538,10 @@ const generateNewSetorNumber = async (connection, cabang, tanggal) => {
   const date = new Date(tanggal);
   const prefix = `${cabang}.STR.${format(date, "yyMM")}.`;
   const query = `
-        SELECT IFNULL(MAX(RIGHT(sh_nomor, 4)), 0) + 1 AS next_num
-        FROM tsetor_hdr 
-        WHERE sh_nomor LIKE ?;
-    `;
+    SELECT IFNULL(MAX(RIGHT(sh_nomor, 4)), 0) + 1 AS next_num
+    FROM tsetor_hdr 
+    WHERE sh_nomor LIKE ?;
+  `;
   // Gunakan koneksi dari transaksi agar konsisten
   const [rows] = await connection.query(query, [`${prefix}%`]);
   const nextNumber = rows[0].next_num.toString().padStart(4, "0");

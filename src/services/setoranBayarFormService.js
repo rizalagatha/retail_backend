@@ -21,25 +21,45 @@ const generateNewShNumber = async (cabang, tanggal) => {
 const calculateMinDp = async (nomorSo) => {
   if (!nomorSo) return 0;
 
-  const query = `
+  // --- 1. Hitung total nominal SO (bruto - diskon + ppn + biaya kirim) ---
+  const queryTotal = `
     SELECT 
         ROUND(
-            SUM(dd.sod_jumlah * (dd.sod_harga - dd.sod_diskon)) - hh.so_disc + 
-            (hh.so_ppn / 100 * (SUM(dd.sod_jumlah * (dd.sod_harga - dd.sod_diskon)) - hh.so_disc)) + 
-            hh.so_bkrm
+            SUM(dd.sod_jumlah * (dd.sod_harga - dd.sod_diskon)) 
+            - hh.so_disc 
+            + (hh.so_ppn / 100 * (SUM(dd.sod_jumlah * (dd.sod_harga - dd.sod_diskon)) - hh.so_disc)) 
+            + hh.so_bkrm
         ) AS nominal
     FROM tso_dtl dd
     LEFT JOIN tso_hdr hh ON hh.so_nomor = dd.sod_so_nomor
     WHERE hh.so_nomor = ?
     GROUP BY hh.so_nomor;
-    `;
-  const [rows] = await pool.query(query, [nomorSo]);
+  `;
 
-  if (rows.length > 0 && rows[0].nominal) {
-    // Ambil 30% dari total nominal SO
-    return 0.3 * rows[0].nominal;
-  }
-  return 0;
+  const [totalRows] = await pool.query(queryTotal, [nomorSo]);
+  const nominal = totalRows.length > 0 ? Number(totalRows[0].nominal) : 0;
+  if (!nominal) return 0;
+
+  // --- 2. Deteksi apakah SO punya Custom Order atau DTF ---
+  const queryFlags = `
+    SELECT 
+      SUM(CASE WHEN dd.sod_custom = 'Y' THEN 1 ELSE 0 END) AS hasCustom,
+      SUM(CASE WHEN IFNULL(dd.sod_sd_nomor, '') <> '' THEN 1 ELSE 0 END) AS hasDtf
+    FROM tso_dtl dd
+    WHERE dd.sod_so_nomor = ?;
+  `;
+
+  const [flagRows] = await pool.query(queryFlags, [nomorSo]);
+  const hasCustom = Number(flagRows[0].hasCustom || 0) > 0;
+  const hasDtf = Number(flagRows[0].hasDtf || 0) > 0;
+
+  const containsCustomOrDtf = hasCustom || hasDtf;
+
+  // --- 3. Tentukan persentase DP ---
+  const percent = containsCustomOrDtf ? 0.5 : 0.3;
+
+  // --- 4. Kembalikan minimal DP ---
+  return percent * nominal;
 };
 
 const saveData = async (payload, user) => {
@@ -80,9 +100,9 @@ const saveData = async (payload, user) => {
         INSERT INTO tsetor_hdr (
           sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal,
           sh_akun, sh_norek, sh_tgltransfer, sh_giro, sh_tglgiro, sh_tempogiro,
-          sh_ket, user_create, date_create
+          sh_ket, sh_so_nomor, user_create, date_create
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
       `;
 
       const jenisMap = { TUNAI: 0, TRANSFER: 1, GIRO: 2 };
@@ -102,6 +122,7 @@ const saveData = async (payload, user) => {
         header.tanggalGiro,
         header.tanggalJatuhTempo,
         header.keterangan,
+        header.nomorSo || null,
         user.kode,
       ]);
 
@@ -391,15 +412,16 @@ const getPrintData = async (nomor) => {
   // 2. Query untuk mengambil data detail
   const detailQuery = `
     SELECT 
-        d.sd_inv, 
-        IFNULL(i.inv_nomor_so, "") AS so,
-        d.sd_bayar,
-        d.sd_ket
+      d.sd_inv,
+      IFNULL(i.inv_nomor_so, h.sh_so_nomor) AS so,
+      d.sd_bayar,
+      d.sd_ket
     FROM tsetor_dtl d
     LEFT JOIN tinv_hdr i ON i.inv_nomor = d.sd_inv
+    LEFT JOIN tsetor_hdr h ON h.sh_nomor = d.sd_sh_nomor
     WHERE d.sd_sh_nomor = ?
     ORDER BY d.sd_nourut;
-    `;
+  `;
   const [details] = await pool.query(detailQuery, [nomor]);
 
   // 3. Gabungkan header dan detail
@@ -494,25 +516,29 @@ const searchSoForSetoran = async ({
 const getSoDetails = async (nomorSo, user) => {
   const connection = await pool.getConnection();
   try {
-    // Ambil header SO singkat (nomor, tanggal, customer kode/nama)
+    // Ambil header SO
     const q = `
-      SELECT so_nomor AS nomor, so_tanggal AS tanggal, so_cus_kode AS cus_kode, so_cus_level AS cus_level, so_cab AS cabang
+      SELECT so_nomor AS nomor, so_tanggal AS tanggal, so_cus_kode AS cus_kode,
+             so_cus_level AS cus_level, so_cab AS cabang, so_aktif
       FROM tso_hdr
       WHERE so_nomor = ?
       LIMIT 1
     `;
     const [rows] = await connection.query(q, [nomorSo]);
     if (rows.length === 0) return null;
-
     const so = rows[0];
 
-    // Ambil nama customer (jika ada)
-    let customer = { kode: "", nama: "" };
+    // Ambil customer
+    let customer = { kode: "", nama: "", alamat: "", kota: "", telp: "" };
     if (so.cus_kode) {
       const [crows] = await connection.query(
-        "SELECT cus_kode, cus_nama, cus_alamat, cus_kota, cus_telp FROM tcustomer WHERE cus_kode = ?",
+        `
+        SELECT cus_kode, cus_nama, cus_alamat, cus_kota, cus_telp
+        FROM tcustomer WHERE cus_kode = ?
+      `,
         [so.cus_kode]
       );
+
       if (crows.length > 0) {
         customer = {
           kode: crows[0].cus_kode,
@@ -524,26 +550,68 @@ const getSoDetails = async (nomorSo, user) => {
       }
     }
 
-    // Hitung minimal DP (pakai fungsi calculateMinDp yang sudah ada)
-    const minimalDp = await calculateMinDp(nomorSo);
-
-    // Cek apakah SO sudah jadi invoice (ada di tinv_hdr.inv_nomor_so)
-    const [invRows] = await connection.query(
-      "SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor_so = ? LIMIT 1",
+    // --- CEK CUSTOM atau DTF ---
+    const [customRows] = await connection.query(
+      `SELECT COUNT(*) AS cnt FROM tso_dtl WHERE sod_so_nomor = ? AND sod_custom = 'Y'`,
       [nomorSo]
     );
+    const containsCustom = customRows[0].cnt > 0;
+
+    const [dtfRows] = await connection.query(
+      `SELECT COUNT(*) AS cnt FROM tso_dtl WHERE sod_so_nomor = ? AND IFNULL(sod_sd_nomor,'') <> ''`,
+      [nomorSo]
+    );
+    const containsDtf = dtfRows[0].cnt > 0;
+
+    const containsCustomOrDtf = containsCustom || containsDtf;
+    const minimalPercent = containsCustomOrDtf ? 50 : 30;
+
+    // --- Hitung total nominal SO untuk DP
+    const minimalDpTotal = await calculateMinDp(nomorSo); // Sudah 30% dari total SO
+    const minimalDp = containsCustomOrDtf
+      ? minimalDpTotal * (50 / 30)
+      : minimalDpTotal;
+
+    // --- Total DP yg sudah dibayar
+    const [dpRows] = await connection.query(
+      `
+      SELECT IFNULL(SUM(sh_nominal), 0) AS totalDp
+      FROM tsetor_hdr
+      WHERE sh_so_nomor = ?
+    `,
+      [nomorSo]
+    );
+
+    const totalDp = Number(dpRows[0].totalDp || 0);
+
+    // --- Kekurangan DP (yg harus dibayarkan)
+    const sisaMinimalDp = Math.max(0, minimalDp - totalDp);
+
+    // Cek apakah sudah menjadi invoice
+    const [invRows] = await connection.query(
+      `
+      SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor_so = ? LIMIT 1
+    `,
+      [nomorSo]
+    );
+
     const isInvoiced = invRows.length > 0;
 
     return {
       nomor: so.nomor,
       tanggal: so.tanggal,
       customer,
-      minimalDp,
+      minimalDp, // Total DP mandatory
+      minimalPercent, // 30 atau 50
+      totalDp, // DP yang sudah dibayar
+      sisaMinimalDp, // Kekurangan DP
+      containsCustom,
+      containsDtf,
+      containsCustomOrDtf,
       isInvoiced,
-      cabang: so.cab,
+      soAktif: so.so_aktif,
+      cabang: so.cabang,
     };
-  } catch (error) {
-    throw error;
   } finally {
     connection.release();
   }
