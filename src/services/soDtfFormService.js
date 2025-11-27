@@ -190,8 +190,9 @@ const create = async (data, user) => {
 
       await connection.query(
         `UPDATE tso_dtl 
-         SET sod_sd_nomor = ?
-         WHERE sod_so_nomor = ?`,
+          SET sod_sd_nomor = ?
+        WHERE sod_so_nomor = ?
+          AND sod_custom = 'Y'`,
         [newNomor, header.soNomor]
       );
     }
@@ -313,7 +314,10 @@ const update = async (nomor, data, user) => {
 
       // PATCH: Reset relasi detail agar tidak nyangkut
       await connection.query(
-        `UPDATE tso_dtl SET sod_sd_nomor = '' WHERE sod_so_nomor = ?`,
+        `UPDATE tso_dtl 
+          SET sod_sd_nomor = ''
+        WHERE sod_so_nomor = ?
+          AND sod_custom = 'Y'`,
         [oldSo]
       );
     }
@@ -324,7 +328,8 @@ const update = async (nomor, data, user) => {
       await connection.query(
         `UPDATE tso_dtl 
            SET sod_sd_nomor = ?
-         WHERE sod_so_nomor = ?`,
+         WHERE sod_so_nomor = ?
+           AND sod_custom = 'Y'`,
         [nomor, newSo]
       );
 
