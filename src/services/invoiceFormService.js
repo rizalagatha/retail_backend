@@ -19,6 +19,20 @@ const toSqlDate = (value) => {
   return format(d, "yyyy-MM-dd");
 };
 
+async function getSisaStokSO(connection, nomorSO, kodeBarang, ukuran) {
+  const sql = `
+      SELECT 
+        COALESCE(SUM(mst_stok_in),0) - COALESCE(SUM(mst_stok_out),0) AS sisa
+      FROM tmasterstokso
+      WHERE mst_nomor_so = ?
+        AND mst_brg_kode = ?
+        AND mst_ukuran = ?
+        AND mst_aktif = 'Y'
+  `;
+  const [rows] = await connection.query(sql, [nomorSO, kodeBarang, ukuran]);
+  return Number(rows?.[0]?.sisa || 0);
+}
+
 // --- FUNGSI GENERATE NOMOR ---
 const generateNewInvNumber = async (gudang, tanggal) => {
   const date = new Date(tanggal);
@@ -676,41 +690,58 @@ const saveData = async (payload, user) => {
       const detailSql = `
         INSERT INTO tinv_dtl (
           invd_idrec, invd_inv_nomor, invd_kode, invd_ukuran,
-          invd_jumlah, invd_harga, invd_hpp, invd_disc, invd_diskon, invd_sd_nomor, invd_nourut
+          invd_jumlah,
+          invd_mstpesan, invd_mststok,
+          invd_harga, invd_hpp, invd_disc, invd_diskon,
+          invd_sd_nomor, invd_nourut
         ) VALUES ?
       `;
 
       const nowTs = format(new Date(), "yyyyMMddHHmmssSSS");
-      const detailValues = validItems.map((item, index) => {
-        const hargaAsli = applyRoundingPolicy(Number(item.harga || 0)); // harga asli per pcs
-        const diskonRp = applyRoundingPolicy(Number(item.diskonRp || 0)); // potongan per pcs
+
+      const detailValues = [];
+
+      for (let index = 0; index < validItems.length; index++) {
+        const item = validItems[index];
+        const jumlah = Number(item.jumlah || 0);
+        const hargaAsli = applyRoundingPolicy(Number(item.harga || 0));
+        const diskonRp = applyRoundingPolicy(Number(item.diskonRp || 0));
 
         const invdIdrec = `${invNomor.replace(/\./g, "")}${String(
           index + 1
         ).padStart(3, "0")}`;
 
-        return [
+        let invd_mstpesan = 0;
+        let invd_mststok = jumlah;
+
+        // Jika berasal dari SO → hitung stok SO
+        if (header.nomorSo && header.nomorSo !== "") {
+          const sisaSO = await getSisaStokSO(
+            connection,
+            header.nomorSo,
+            item.kode,
+            item.ukuran
+          );
+          invd_mstpesan = Math.min(jumlah, sisaSO);
+          invd_mststok = jumlah - invd_mstpesan;
+        }
+
+        detailValues.push([
           invdIdrec,
           invNomor,
           item.kode,
           item.ukuran || "",
-          Number(item.jumlah || 0),
-
-          // ⭐ SIMPAN HARGA ASLI, bukan harga setelah diskon
-          hargaAsli, // invd_harga
-
+          jumlah,
+          invd_mstpesan,
+          invd_mststok,
+          hargaAsli,
           Number(item.hpp || 0),
-
           Number(item.diskonPersen || 0),
-
-          // ⭐ SIMPAN POTONGAN (RP) PER PCS
-          diskonRp, // invd_diskon
-
+          diskonRp,
           item.noSoDtf || "",
-
           index + 1,
-        ];
-      });
+        ]);
+      }
 
       await connection.query(detailSql, [detailValues]);
     }
