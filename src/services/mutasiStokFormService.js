@@ -92,25 +92,61 @@ const loadFromSo = async (nomorSo, user) => {
       TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
       d.sod_ukuran AS ukuran,
       d.sod_jumlah AS qtyso,
-      IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_brg_kode=d.sod_kode AND m.mst_ukuran=d.sod_ukuran), 0) AS showroom,
-      IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstokso m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_brg_kode=d.sod_kode AND m.mst_ukuran=d.sod_ukuran AND m.mst_nomor_so=?), 0) AS pesan
+
+      -- SHOWROOM (sama)
+      IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+              FROM tmasterstok m
+              WHERE m.mst_aktif="Y"
+                AND m.mst_cab=?
+                AND m.mst_brg_kode=d.sod_kode
+                AND m.mst_ukuran=d.sod_ukuran), 0) AS showroom,
+
+      -- PESAN (sama)
+      IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+              FROM tmasterstokso m
+              WHERE m.mst_aktif="Y"
+                AND m.mst_cab=?
+                AND m.mst_brg_kode=d.sod_kode
+                AND m.mst_ukuran=d.sod_ukuran
+                AND m.mst_nomor_so=?), 0) AS pesan,
+
+      -- MASUK (DELPHI)
+      IFNULL((SELECT SUM(m.mst_stok_in)
+              FROM tmasterstokso m
+              WHERE m.mst_nomor_so=?
+                AND m.mst_brg_kode=d.sod_kode
+                AND m.mst_ukuran=d.sod_ukuran
+                AND MID(m.mst_noreferensi,4,3) NOT IN ("MSO","MSI")), 0) AS masuk,
+
+      -- KELUAR (DELPHI)
+      IFNULL((SELECT SUM(m.mst_stok_out)
+              FROM tmasterstok m
+              WHERE m.mst_noreferensi IN (
+                    SELECT o.mo_nomor
+                    FROM tmutasiout_hdr o
+                    WHERE o.mo_so_nomor=?
+              )
+                AND m.mst_brg_kode=d.sod_kode
+                AND m.mst_ukuran=d.sod_ukuran
+                AND MID(m.mst_noreferensi,4,3) NOT IN ("MSO","MSI")), 0) AS keluar
+
     FROM tso_dtl d
     JOIN tbarangdc a ON a.brg_kode = d.sod_kode AND a.brg_logstok="Y"
     LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
     WHERE d.sod_so_nomor = ?;
   `;
+
   const [rows] = await pool.query(query, [
     user.cabang,
     user.cabang,
     nomorSo,
     nomorSo,
+    nomorSo,
+    nomorSo,
   ]);
 
-  // Lakukan kalkulasi 'produksi', 'ready', 'kurang' di backend
   return rows.map((item) => {
-    // Logika Delphi: ready = produksi + pesan, kurang = qtyso - ready
-    // Karena 'produksi' tidak bisa dihitung langsung di sini, kita set 0
-    const produksi = 0; // Placeholder
+    const produksi = item.keluar - item.masuk;
     const ready = produksi + item.pesan;
     const kurang = item.qtyso - ready;
     return { ...item, produksi, ready, kurang };

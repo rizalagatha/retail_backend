@@ -60,6 +60,7 @@ const searchSo = async (term, page, itemsPerPage, user) => {
             c.cus_nama AS Customer, 
             c.cus_alamat AS Alamat,
             c.cus_kota AS Kota,
+            h.so_dipakai_dtf AS DipakaiDtf,
             IFNULL((SELECT SUM(dd.sod_jumlah) 
                     FROM tso_dtl dd 
                     WHERE dd.sod_so_nomor = h.so_nomor), 0) AS qtyso,
@@ -100,7 +101,8 @@ const searchSo = async (term, page, itemsPerPage, user) => {
             x.KdCus, 
             x.Customer,
             x.Alamat,        -- ✔ FIX
-            x.Kota           -- ✔ FIX
+            x.Kota,           -- ✔ FIX
+            x.DipakaiDtf 
         ${baseQuery} 
         ${term ? searchWhere : ""} 
         ORDER BY x.Nomor DESC 
