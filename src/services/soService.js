@@ -260,7 +260,7 @@ const capitalize = (s) =>
   s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : "";
 
 const getDataForPrint = async (nomor) => {
-  // 1. Ambil Header, Customer, Gudang
+  // 1. Ambil data Header, Customer, dan Gudang
   const headerQuery = `
     SELECT 
         h.so_nomor, h.so_tanggal, h.so_top, h.so_ket, h.so_sc, h.user_create,
@@ -278,7 +278,7 @@ const getDataForPrint = async (nomor) => {
   if (headerRows.length === 0) return null;
   const header = headerRows[0];
 
-  // 2. Ambil Detail Barang
+  // 2. Ambil data Detail (include JSON custom)
   const detailQuery = `
     SELECT 
         d.sod_custom,
@@ -289,9 +289,13 @@ const getDataForPrint = async (nomor) => {
         d.sod_harga AS harga,
         d.sod_diskon AS diskon,
         (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS total,
-        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", 
-             a.brg_jeniskain, " ", a.brg_warna)) AS nama_normal,
+
+        -- Nama barang normal
+        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama_normal,
+
+        -- Nama DTF jika ada di tsodtf_hdr (fallback lama)
         f.sd_nama AS nama_dtf_lama
+
     FROM tso_dtl d
     LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
     LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_kode
@@ -300,7 +304,7 @@ const getDataForPrint = async (nomor) => {
   `;
   const [rows] = await pool.query(detailQuery, [nomor]);
 
-  // 3. Proses Detail
+  // 3. Proses detail untuk custom data (JSON parse)
   const details = rows.map((item) => {
     let nama_barang = item.nama_normal;
     let ukuran = item.ukuran_asli;
@@ -310,11 +314,16 @@ const getDataForPrint = async (nomor) => {
 
       try {
         const parsed = JSON.parse(item.sod_custom_data);
+
+        // Ambil ukuran pertama (L, XL, dst.)
         if (Array.isArray(parsed.ukuranKaos) && parsed.ukuranKaos.length > 0) {
           ukuran = parsed.ukuranKaos[0].ukuran || "";
         }
-      } catch {}
+      } catch (e) {
+        // ignore JSON parse error, fallback to existing
+      }
     } else {
+      // Jika bukan custom tapi nama normal null → fallback dari tsodtf_hdr
       if (!nama_barang) nama_barang = item.nama_dtf_lama;
     }
 
@@ -328,37 +337,22 @@ const getDataForPrint = async (nomor) => {
     };
   });
 
-  // 4. Hitung Total Barang
+  // 4. Kalkulasi Total & Terbilang
   const total = details.reduce((sum, it) => sum + it.total, 0);
-
-  // 5. Ambil Total DP Real dari tform_setorkasir_dtl
-  const dpQuery = `
-    SELECT COALESCE(SUM(fskd_nominal), 0) AS total_dp
-    FROM tform_setorkasir_dtl
-    WHERE fskd_so = ?
-      AND fskd_posting = 'Y'
-  `;
-  const [dpRows] = await pool.query(dpQuery, [nomor]);
-  const totalDpReal = dpRows[0].total_dp;
-
-  // 6. Hitung Diskon dan Grand Total
   const diskon_faktur = header.so_disc || 0;
   const netto = total - diskon_faktur;
   const ppn = header.so_ppn ? netto * (header.so_ppn / 100) : 0;
   const grand_total = netto + ppn + (header.so_bkrm || 0);
+  const belumbayar = grand_total - (header.so_dp || 0);
 
-  // 7. Hitung Belum Bayar Menggunakan DP Real
-  const belumbayar = grand_total - totalDpReal;
-
-  // 8. Summary
   const summary = {
     total,
     diskon: diskon_faktur,
     ppn,
     biaya_kirim: header.so_bkrm || 0,
     grand_total,
-    dp: totalDpReal, // DP REAL
-    belumbayar, // BELUM BAYAR REAL
+    dp: header.so_dp || 0,
+    belumbayar,
     terbilang: capitalize(terbilang(grand_total)) + " Rupiah",
   };
 
