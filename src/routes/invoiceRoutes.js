@@ -8,6 +8,8 @@ const MENU_ID = '27';
 // Endpoint utama untuk mendapatkan daftar invoice
 router.get('/', verifyToken, checkPermission(MENU_ID, 'view'), controller.getList);
 
+router.get('/check-fsk/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), controller.checkIfInvoiceInFsk);
+
 // Endpoint untuk mendapatkan detail invoice (expanded row)
 router.get('/details/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), controller.getDetails);
 

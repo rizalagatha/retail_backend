@@ -234,16 +234,16 @@ const saveData = async (payload, user) => {
 const getPrintData = async (nomor) => {
   // 1. Ambil data header utama
   const headerQuery = `
-        SELECT 
-            h.fsk_nomor, h.fsk_tanggal, h.user_create,
-            DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
-            src.gdg_inv_nama AS perush_nama,
-            src.gdg_inv_alamat AS perush_alamat,
-            src.gdg_inv_telp AS perush_telp
-        FROM tform_setorkasir_hdr h
-        LEFT JOIN tgudang src ON src.gdg_kode = LEFT(h.fsk_nomor, 3)
-        WHERE h.fsk_nomor = ?;
-    `;
+    SELECT 
+      h.fsk_nomor, h.fsk_tanggal, h.user_create,
+      DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
+      src.gdg_inv_nama AS perush_nama,
+      src.gdg_inv_alamat AS perush_alamat,
+      src.gdg_inv_telp AS perush_telp
+    FROM tform_setorkasir_hdr h
+    LEFT JOIN tgudang src ON src.gdg_kode = LEFT(h.fsk_nomor, 3)
+    WHERE h.fsk_nomor = ?;
+  `;
   const [headerRows] = await pool.query(headerQuery, [nomor]);
   if (headerRows.length === 0) {
     throw new Error("Data FSK tidak ditemukan.");
@@ -251,29 +251,29 @@ const getPrintData = async (nomor) => {
 
   // 2. Ambil rincian setoran (detail 1)
   const detail1Query = `
-        SELECT 
-            d.fskd_jenis AS jenis,
-            d.fskd_tgltrf AS tgltrf,
-            d.fskd_kdcus AS kdcus,
-            c.cus_nama AS nmcus,
-            d.fskd_inv AS inv,
-            d.fskd_sh_nomor AS nomor,
-            d.fskd_nominal AS nominal
-        FROM tform_setorkasir_dtl d
-        LEFT JOIN tcustomer c ON c.cus_kode = d.fskd_kdcus
-        WHERE d.fskd_nomor = ?
-        ORDER BY d.fskd_jenis;
-    `;
+    SELECT 
+      d.fskd_jenis AS jenis,
+      d.fskd_tgltrf AS tgltrf,
+      d.fskd_kdcus AS kdcus,
+      c.cus_nama AS nmcus,
+      d.fskd_inv AS inv,
+      d.fskd_sh_nomor AS nomor,
+      d.fskd_nominal AS nominal
+    FROM tform_setorkasir_dtl d
+    LEFT JOIN tcustomer c ON c.cus_kode = d.fskd_kdcus
+    WHERE d.fskd_nomor = ?
+    ORDER BY d.fskd_jenis;
+  `;
   const [details1] = await pool.query(detail1Query, [nomor]);
 
   // 3. Ambil rekapitulasi setoran (detail 2)
   const detail2Query = `
-        SELECT 
-            fskd2_jenis AS jenis,
-            fskd2_nominal AS summary_nominal
-        FROM tform_setorkasir_dtl2
-        WHERE fskd2_nomor = ?;
-    `;
+    SELECT 
+      fskd2_jenis AS jenis,
+      fskd2_nominal AS summary_nominal
+    FROM tform_setorkasir_dtl2
+    WHERE fskd2_nomor = ?;
+  `;
   const [details2] = await pool.query(detail2Query, [nomor]);
 
   // Gabungkan semua data menjadi satu objek
@@ -286,9 +286,9 @@ const remove = async (nomor, user) => {
     await connection.beginTransaction();
 
     const [rows] = await connection.query(
-      `
-            SELECT fsk_userv, fsk_closing FROM tform_setorkasir_hdr WHERE fsk_nomor = ?
-        `,
+    `
+      SELECT fsk_userv, fsk_closing FROM tform_setorkasir_hdr WHERE fsk_nomor = ?
+    `,
       [nomor]
     );
 

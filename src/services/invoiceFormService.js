@@ -339,6 +339,12 @@ const loadForEdit = async (nomor, user) => {
   if (headerRows.length === 0) throw new Error("Data Invoice tidak ditemukan.");
   const header = headerRows[0];
 
+  const [fskCheckRows] = await pool.query(
+    `SELECT 1 FROM tform_setorkasir_dtl WHERE fskd_inv = ? LIMIT 1`,
+    [nomor]
+  );
+  const isLockedFsk = fskCheckRows.length > 0;
+
   /* ============================
      2) Ambil DETAILS
         Lengkap + harga asli, harga setelah diskon,
@@ -476,7 +482,7 @@ const loadForEdit = async (nomor, user) => {
   /* ============================
      RETURN
      ============================ */
-  return { header, items, dps };
+  return { header, items, dps, isLockedFsk };
 };
 
 const saveData = async (payload, user) => {
@@ -484,6 +490,18 @@ const saveData = async (payload, user) => {
   try {
     await connection.beginTransaction();
     const { header, items, dps, payment, isNew, pins, totals } = payload;
+    const nomorInv = header.nomor;
+    if (!isNew && nomorInv) {
+      const [rows] = await pool.query(
+        "SELECT 1 FROM tform_setorkasir_dtl WHERE fskd_inv = ? LIMIT 1",
+        [nomorInv]
+      );
+      if (rows.length > 0) {
+        throw new Error(
+          `Invoice ${nomorInv} sudah masuk Form Setoran Kasir — tidak bisa diubah.`
+        );
+      }
+    }
     const headerTanggal = toSqlDate(header.tanggal);
     const headerTanggalTime = toSqlDateTime(header.tanggal);
     const totalDiskonItem = Number(totals.totalDiskonItem || 0);
@@ -2127,6 +2145,20 @@ const updateHeaderOnly = async (nomor, payload, user) => {
   const connection = await pool.getConnection();
 
   try {
+    /* ===============================================
+       CEK LOCK FSK — tidak boleh update jika sudah FSK
+    ================================================ */
+    const [lockRows] = await pool.query(
+      `SELECT 1 FROM tform_setorkasir_dtl WHERE fskd_inv = ? LIMIT 1`,
+      [nomor]
+    );
+    if (lockRows.length > 0) {
+      throw new Error(
+        `Invoice ${nomor} sudah masuk Form Setoran Kasir (FSK) — tidak bisa diubah.`
+      );
+    }
+
+    /* Lanjut proses normal */
     await connection.beginTransaction();
 
     const {

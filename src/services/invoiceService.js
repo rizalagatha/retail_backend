@@ -366,10 +366,22 @@ const getExportDetails = async (filters) => {
   return rows;
 };
 
+const checkIfInvoiceInFsk = async (nomorInv) => {
+  const query = `
+    SELECT 1
+    FROM tform_setorkasir_dtl
+    WHERE fskd_inv = ?
+    LIMIT 1;
+  `;
+  const [rows] = await pool.query(query, [nomorInv]);
+  return rows.length > 0; // true = sudah disetorkan
+};
+
 module.exports = {
   getCabangList,
   getList,
   getDetails,
   remove,
   getExportDetails,
+  checkIfInvoiceInFsk,
 };

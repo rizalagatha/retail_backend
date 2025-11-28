@@ -47,10 +47,21 @@ const exportDetails = async (req, res) => {
   }
 };
 
+const checkIfInvoiceInFsk = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const used = await service.checkIfInvoiceInFsk(nomor);
+    res.json({ used });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getCabangList,
   getList,
   getDetails,
   remove,
   exportDetails,
+  checkIfInvoiceInFsk,
 };

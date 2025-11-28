@@ -278,31 +278,54 @@ const update = async (nomor, data, user) => {
       nomor,
     ]);
 
-    // 3️⃣ Replace detail ukuran & titik
-    await connection.query("DELETE FROM tsodtf_dtl WHERE sdd_nomor = ?", [
-      nomor,
-    ]);
-    await connection.query("DELETE FROM tsodtf_dtl2 WHERE sdd2_nomor = ?", [
-      nomor,
-    ]);
+    // 3️⃣ Replace detail ukuran & titik — ONLY if frontend actually provided them.
+    const hasDetailsUkuran =
+      Array.isArray(data.detailsUkuran) && data.detailsUkuran.length > 0;
+    const hasDetailsTitik =
+      Array.isArray(data.detailsTitik) && data.detailsTitik.length > 0;
 
-    for (const [i, det] of data.detailsUkuran.entries()) {
-      await connection.query(
-        `INSERT INTO tsodtf_dtl 
-          (sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut, sdd_nama_barang)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [nomor, det.ukuran, det.jumlah, det.harga, i + 1, det.namaBarang]
-      );
-    }
+    // If frontend intentionally sends empty arrays to mean "clear details", then handle that
+    // by checking for presence (even an empty array). We treat undefined/null as "do not touch".
+    const providedUkuran = Array.isArray(data.detailsUkuran);
+    const providedTitik = Array.isArray(data.detailsTitik);
 
-    for (const [i, det] of data.detailsTitik.entries()) {
-      await connection.query(
-        `INSERT INTO tsodtf_dtl2 
-          (sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [nomor, det.keterangan, det.sizeCetak, det.panjang, det.lebar, i + 1]
-      );
-    }
+    if (providedUkuran) {
+      // remove existing ukuran rows (frontend intends to replace)
+      await connection.query("DELETE FROM tsodtf_dtl WHERE sdd_nomor = ?", [
+        nomor,
+      ]);
+      // insert (if any)
+      for (const [i, det] of (data.detailsUkuran || []).entries()) {
+        await connection.query(
+          `INSERT INTO tsodtf_dtl 
+            (sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut, sdd_nama_barang)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            nomor,
+            det.ukuran,
+            det.jumlah ?? 0,
+            det.harga ?? 0,
+            i + 1,
+            det.namaBarang,
+          ]
+        );
+      }
+    } // else: frontend didn't provide ukuran => keep existing records as-is
+
+    if (providedTitik) {
+      // remove existing titik rows (frontend intends to replace)
+      await connection.query("DELETE FROM tsodtf_dtl2 WHERE sdd2_nomor = ?", [
+        nomor,
+      ]);
+      for (const [i, det] of (data.detailsTitik || []).entries()) {
+        await connection.query(
+          `INSERT INTO tsodtf_dtl2 
+            (sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [nomor, det.keterangan, det.sizeCetak, det.panjang, det.lebar, i + 1]
+        );
+      }
+    } // else: keep existing titik rows
 
     // 4️⃣ Reset SO lama jika diganti
     if (oldSo && oldSo !== newSo) {
@@ -312,10 +335,11 @@ const update = async (nomor, data, user) => {
         [oldSo]
       );
 
-      // PATCH: Reset relasi detail agar tidak nyangkut
+      // PATCH: Reset relasi detail agar tidak nyangkut.
+      // Use NULL if column allows it; otherwise you can revert to empty string ''.
       await connection.query(
         `UPDATE tso_dtl 
-          SET sod_sd_nomor = ''
+          SET sod_sd_nomor = NULL
         WHERE sod_so_nomor = ?
           AND sod_custom = 'Y'`,
         [oldSo]
