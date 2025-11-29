@@ -113,7 +113,6 @@ const save = async (data, user) => {
         aktifStatus,
         header.salesCounter,
         user.kode,
-        header.gudang.kode,
         soNomor,
       ]);
     }

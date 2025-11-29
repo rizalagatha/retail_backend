@@ -13,16 +13,16 @@ const getTodayStats = async (user) => {
   }
 
   const query = `
-        SELECT
-            COUNT(DISTINCT h.inv_nomor) AS todayTransactions,
-            SUM(
-                (SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc + 
-                (h.inv_ppn / 100 * ((SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc))
-            ) AS todaySales
-        FROM tinv_hdr h
-        WHERE h.inv_sts_pro = 0 AND h.inv_tanggal BETWEEN ? AND ?
-        ${branchFilter};
-    `;
+    SELECT
+      COUNT(DISTINCT h.inv_nomor) AS todayTransactions,
+      SUM(
+          (SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc + 
+            (h.inv_ppn / 100 * ((SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc))
+          ) AS todaySales
+    FROM tinv_hdr h
+    WHERE h.inv_sts_pro = 0 AND h.inv_tanggal BETWEEN ? AND ?
+    ${branchFilter};
+  `;
 
   const [rows] = await pool.query(query, params);
   return rows[0];

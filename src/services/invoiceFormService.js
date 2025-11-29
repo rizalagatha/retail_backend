@@ -1498,6 +1498,7 @@ const findByBarcode = async (barcode, gudang) => {
       TRIM(CONCAT(h.brg_jeniskaos, " ", h.brg_tipe, " ", h.brg_lengan, " ", h.brg_jeniskain, " ", h.brg_warna)) AS nama,
       d.brgd_ukuran AS ukuran,
       d.brgd_harga AS harga,
+      h.brg_ktgp AS kategori,
             
       -- Logika perhitungan stok dari Delphi menggunakan tmasterstok --
       IFNULL((
@@ -1571,6 +1572,7 @@ const searchProducts = async (filters, user) => {
       TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
       b.brgd_ukuran AS ukuran,
       ${hargaSelect},
+      a.brg_ktgp AS kategori,
       IFNULL((
         SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m 
         WHERE m.mst_aktif = 'Y' AND m.mst_cab = ? AND m.mst_brg_kode = b.brgd_kode AND m.mst_ukuran = b.brgd_ukuran
@@ -2084,6 +2086,7 @@ const getActivePromos = async (filters, user) => {
       ON c.pc_nomor = p.pro_nomor 
      AND c.pc_cab = ?
     WHERE p.pro_f1 = "N"
+      AND p.pro_nomor <> 'PRO-2025-009' 
       AND ? BETWEEN p.pro_tanggal1 AND p.pro_tanggal2;
   `;
 
