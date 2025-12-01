@@ -888,8 +888,23 @@ const saveData = async (payload, user) => {
     await connection.query("DELETE FROM tpiutang_hdr WHERE ph_inv_nomor = ?", [
       invNomor,
     ]);
-    const dpTotal = Number(header.inv_dp || 0);
-    const piutangFinal = applyRoundingPolicy(Math.max(grandTotal - dpTotal, 0));
+    // TOTAL PEMBAYARAN KASIR
+    const totalPayment =
+      bayarTunaiBersih +
+      (payment.voucher?.nominal || 0) +
+      (payment.transfer?.nominal || 0) +
+      (payment.retur?.nominal || 0);
+
+    // TOTAL DP YANG DIPAKAI (yang sudah kamu hitung saat DP LINK)
+    const totalDpDipakai = dpDipakai;
+
+    // TOTAL Semua Kredit
+    const totalKredit = applyRoundingPolicy(totalPayment + totalDpDipakai);
+
+    // PIUTANG FINAL (nominal di tpiutang_hdr)
+    const piutangFinal = applyRoundingPolicy(
+      Math.max(grandTotal - totalKredit, 0)
+    );
 
     const piutangHdrSql = `INSERT INTO tpiutang_hdr (ph_nomor, ph_tanggal, ph_cus_kode, ph_inv_nomor, ph_top, ph_nominal) VALUES (?, ?, ?, ?, ?, ?);`;
     await connection.query(piutangHdrSql, [
