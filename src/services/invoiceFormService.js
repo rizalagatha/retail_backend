@@ -702,6 +702,18 @@ const saveData = async (payload, user) => {
       ]);
     }
 
+    // =========================================
+    // UPDATE INFO RETUR JUAL (JIKA ADA)
+    // =========================================
+    if (payment.retur?.nominal > 0 && payment.retur?.nomor) {
+      await connection.query(
+        `UPDATE tinv_hdr 
+         SET inv_rj_nomor = ?, inv_rj_rp = ?
+         WHERE inv_nomor = ?`,
+        [payment.retur.nomor, Number(payment.retur.nominal || 0), invNomor]
+      );
+    }
+
     await connection.query("DELETE FROM tinv_dtl WHERE invd_inv_nomor = ?", [
       invNomor,
     ]);

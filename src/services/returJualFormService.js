@@ -159,16 +159,35 @@ const save = async (payload, user) => {
 
     // Link ke piutang jika jenis retur 'Salah Qty'
     if (header.jenis === "Y") {
-      const piutangHeaderNomor = `${header.customer.kode}${header.invoice}`;
-      const angsurID = nomorDokumen;
+      // --- 1. Ambil ph_nomor PIUTANG untuk invoice ini ---
+      const [piutangRows] = await connection.query(
+        `SELECT ph_nomor 
+         FROM tpiutang_hdr 
+         WHERE ph_inv_nomor = ? 
+         LIMIT 1`,
+        [header.invoice]
+      );
+
+      if (piutangRows.length === 0) {
+        throw new Error(
+          `Piutang untuk invoice ${header.invoice} tidak ditemukan`
+        );
+      }
+
+      const piutangHeaderNomor = piutangRows[0].ph_nomor;
+
+      // --- 2. Insert ke tpiutang_dtl sebagai Pembayaran Retur ---
       await connection.query(
-        `INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket) VALUES (?, ?, 'Pembayaran Retur', ?, ?)
-                 ON DUPLICATE KEY UPDATE pd_kredit = VALUES(pd_kredit)`,
+        `INSERT INTO tpiutang_dtl (
+         pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket
+         ) VALUES (?, ?, 'Pembayaran Retur', ?, ?)
+         ON DUPLICATE KEY UPDATE 
+         pd_kredit = VALUES(pd_kredit)`,
         [
-          piutangHeaderNomor,
+          piutangHeaderNomor, // ← ph_nomor valid
           header.tanggal,
-          payload.footer.grandTotal,
-          nomorDokumen,
+          payload.footer.grandTotal, // jumlah retur
+          nomorDokumen, // nomor retur sebagai ket
         ]
       );
     }

@@ -189,6 +189,7 @@ END AS SisaPiutang,
     rek.rek_rekening AS NoRekening,
 
     h.inv_rj_nomor AS NoRetur,
+    h.inv_rj_rp AS RpRetur,
     h.inv_sc AS SC,
     h.inv_print AS Prn,
     h.inv_puas AS Puas,
