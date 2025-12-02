@@ -123,18 +123,36 @@ const save = async (payload, user) => {
     ]);
 
     if (items.length > 0) {
-      const itemValues = items.map((item, index) => [
-        nomorDokumen,
-        item.kode,
-        item.ukuran,
-        item.jumlah,
-        item.harga,
-        item.disc,
-        item.diskon,
-        index + 1,
-      ]);
+      const itemValues = items.map((item, index) => {
+        const nourut = index + 1;
+        const idrec = `${header.cabangKode}.RJD.${Date.now()}${nourut}`;
+        // atau: const idrec = `${nomorDokumen}-${nourut}`;
+
+        return [
+          idrec,
+          nomorDokumen,
+          item.kode,
+          item.ukuran,
+          item.jumlah,
+          item.harga,
+          item.disc,
+          item.diskon,
+          nourut,
+        ];
+      });
+
       await connection.query(
-        "INSERT INTO trj_dtl (rjd_nomor, rjd_kode, rjd_ukuran, rjd_jumlah, rjd_harga, rjd_disc, rjd_diskon, rjd_nourut) VALUES ?",
+        `INSERT INTO trj_dtl (
+          rjd_idrec,
+          rjd_nomor,
+          rjd_kode,
+          rjd_ukuran,
+          rjd_jumlah,
+          rjd_harga,
+          rjd_disc,
+          rjd_diskon,
+          rjd_nourut
+        ) VALUES ?`,
         [itemValues]
       );
     }
@@ -144,16 +162,13 @@ const save = async (payload, user) => {
       const piutangHeaderNomor = `${header.customer.kode}${header.invoice}`;
       const angsurID = nomorDokumen;
       await connection.query(
-        `INSERT INTO tpiutang_dtl (
-         pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur
-         ) VALUES (?, ?, 'Pembayaran Retur', ?, ?, ?)
-         ON DUPLICATE KEY UPDATE pd_kredit = VALUES(pd_kredit)`,
+        `INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket) VALUES (?, ?, 'Pembayaran Retur', ?, ?)
+                 ON DUPLICATE KEY UPDATE pd_kredit = VALUES(pd_kredit)`,
         [
           piutangHeaderNomor,
           header.tanggal,
           payload.footer.grandTotal,
           nomorDokumen,
-          nomorDokumen, // ← isi pk
         ]
       );
     }
