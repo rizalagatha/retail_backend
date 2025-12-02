@@ -827,66 +827,20 @@ const saveData = async (payload, user) => {
       ]);
     }
 
-    // 6. Penautan DP (DP LINK DARI INV)
-    if (dps && dps.length > 0) {
-      let totalDpTerpakai = 0;
-      const piutangDtlDpValues = [];
-
-      for (const [index, dp] of dps.entries()) {
-        const sisaPiutangSaatIni = totals.grandTotal - totalDpTerpakai;
-        if (sisaPiutangSaatIni <= 0) break; // Berhenti jika piutang sudah lunas
-
-        // Tentukan jumlah DP yang akan dipakai
-        const dpYangDipakai = Math.min(dp.nominal, sisaPiutangSaatIni);
-        totalDpTerpakai += dpYangDipakai;
-
-        // Ambil idrec dari setoran DP yang asli
-        const [setorHdr] = await connection.query(
-          "SELECT sh_idrec FROM tsetor_hdr WHERE sh_nomor = ?",
-          [dp.nomor]
-        );
-        if (setorHdr.length > 0) {
-          const idrecSetoran = setorHdr[0].sh_idrec;
-          const angsurId = `${user.cabang}DP${format(
-            new Date(),
-            "yyyyMMddHHmmssSSS"
-          )}${index}`;
-
-          // Insert ke tsetor_dtl untuk menandai DP sudah terpakai
-          const setorDtlSql = `
-            INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur)
-            VALUES (?, ?, ?, ?, ?, 'DP LINK DARI INV', ?);
-          `;
-          await connection.query(setorDtlSql, [
-            idrecSetoran,
-            dp.nomor,
-            headerTanggalTime,
-            invNomor,
-            dpYangDipakai,
-            angsurId,
-          ]);
-
-          // Insert ke tpiutang_dtl sebagai pembayaran
-          piutangDtlDpValues.push([
-            piutangNomor,
-            headerTanggalTime,
-            "DP",
-            dpYangDipakai,
-            dp.nomor,
-            angsurId,
-          ]);
-        }
-      }
-
-      if (piutangDtlDpValues.length > 0) {
-        const piutangDtlSql = `INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur) VALUES ?;`;
-        await connection.query(piutangDtlSql, [piutangDtlDpValues]);
-      }
-    }
-
     // 3. DELETE/INSERT tpiutang_hdr & tpiutang_dtl
     await connection.query("DELETE FROM tpiutang_hdr WHERE ph_inv_nomor = ?", [
       invNomor,
+    ]);
+
+    await connection.query("DELETE FROM tpiutang_hdr WHERE ph_nomor = ?", [
+      piutangNomor,
+    ]);
+
+    // ====================================
+    // PATCH: hapus piutang detail lama
+    // ====================================
+    await connection.query("DELETE FROM tpiutang_dtl WHERE pd_ph_nomor = ?", [
+      piutangNomor,
     ]);
 
     // TOTAL TAGIHAN PENUH (sebelum DP) → harus sama dengan debet di tpiutang_dtl
@@ -990,6 +944,110 @@ const saveData = async (payload, user) => {
         v[6] || "",
       ]);
       await connection.query(piutangDtlSql, [formattedValues]);
+    }
+
+    // =====================================================
+    // 6. PENAUTAN DP (DP LINK DARI INV) — FINAL PATCH
+    // =====================================================
+    {
+      // 1) Ambil DP lama yang sudah pernah di-link ke invoice ini
+      const [dpLama] = await connection.query(
+        `
+    SELECT sd.sd_sh_nomor AS nomor, sd.sd_bayar AS nominal
+    FROM tsetor_dtl sd
+    WHERE sd.sd_inv = ?
+      AND sd.sd_ket = 'DP LINK DARI INV'
+    `,
+        [invNomor]
+      );
+
+      // 2) Gabungkan DP lama + DP baru dari frontend
+      let dpList = [];
+      if (dpLama.length > 0) {
+        dpList = dpLama.map((d) => ({
+          nomor: d.nomor,
+          nominal: Number(d.nominal) || 0,
+        }));
+      }
+      if (dps && dps.length > 0) {
+        dpList = [
+          ...dpList,
+          ...dps.map((dp) => ({
+            nomor: dp.nomor,
+            nominal: Number(dp.nominal) || 0,
+          })),
+        ];
+      }
+
+      // Kalau setelah digabung tetap kosong, lewatin saja
+      if (dpList.length === 0) {
+        // tidak ada dp yang perlu di-link
+      } else {
+        // 3) Hapus link DP lama khusus invoice ini
+        await connection.query(
+          "DELETE FROM tsetor_dtl WHERE sd_inv = ? AND sd_ket = 'DP LINK DARI INV'",
+          [invNomor]
+        );
+        await connection.query(
+          "DELETE FROM tpiutang_dtl WHERE pd_ph_nomor = ? AND pd_uraian = 'DP'",
+          [piutangNomor]
+        );
+
+        // 4) Tulis ulang semua DP
+        let totalDpTerpakai = 0;
+
+        for (const [index, dp] of dpList.entries()) {
+          const sisaPiutangSaatIni = totals.grandTotal - totalDpTerpakai;
+          if (sisaPiutangSaatIni <= 0) break;
+
+          const dpYangDipakai = Math.min(dp.nominal, sisaPiutangSaatIni);
+          if (dpYangDipakai <= 0) continue;
+
+          totalDpTerpakai += dpYangDipakai;
+
+          // Ambil idrec setoran DP yang asli
+          const [setorHdr] = await connection.query(
+            "SELECT sh_idrec FROM tsetor_hdr WHERE sh_nomor = ?",
+            [dp.nomor]
+          );
+          if (setorHdr.length === 0) continue;
+
+          const idrecSetoran = setorHdr[0].sh_idrec;
+          const angsurId = `${user.cabang}DP${format(
+            new Date(),
+            "yyyyMMddHHmmssSSS"
+          )}${index}`;
+
+          // Insert ke tsetor_dtl untuk menandai DP sudah terpakai
+          await connection.query(
+            `
+        INSERT INTO tsetor_dtl (
+          sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur
+        )
+        VALUES (?, ?, ?, ?, ?, 'DP LINK DARI INV', ?)
+        `,
+            [
+              idrecSetoran,
+              dp.nomor,
+              headerTanggalTime,
+              invNomor,
+              dpYangDipakai,
+              angsurId,
+            ]
+          );
+
+          // Insert ke tpiutang_dtl sebagai pembayaran DP
+          await connection.query(
+            `
+        INSERT INTO tpiutang_dtl (
+          pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur
+        )
+        VALUES (?, ?, 'DP', ?, ?, ?)
+        `,
+            [piutangNomor, headerTanggalTime, dpYangDipakai, dp.nomor, angsurId]
+          );
+        }
+      }
     }
 
     // (7) Logika untuk INSERT/UPDATE tmember (dari edthpExit)

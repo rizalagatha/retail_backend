@@ -135,13 +135,33 @@ const saveData = async (payload, user) => {
       }
     }
 
-    // Hapus detail lama jika mode edit, dan insert ulang
-    await connection.query("DELETE FROM tsetor_dtl WHERE sd_sh_nomor = ?", [
-      shNomor,
-    ]);
-    await connection.query("DELETE FROM tpiutang_dtl WHERE pd_ket = ?", [
-      shNomor,
-    ]);
+    // ===============================
+    // PATCH: Jangan hapus DP LINK DARI INV
+    // ===============================
+    await connection.query(
+      `
+      DELETE FROM tsetor_dtl 
+      WHERE sd_sh_nomor = ?
+        AND sd_ket NOT LIKE 'DP LINK DARI INV'
+    `,
+      [shNomor]
+    );
+    // ===============================
+    // PATCH: hapus hanya pembayaran, bukan DP
+    // ===============================
+    await connection.query(
+      `
+      DELETE FROM tpiutang_dtl 
+      WHERE pd_ket = ?
+        AND (
+          pd_uraian LIKE 'Pembayaran Tunai%'
+        OR pd_uraian LIKE 'Pembayaran Transfer%'
+        OR pd_uraian LIKE 'Pembayaran Giro%'
+        OR pd_uraian LIKE 'Pembayaran Card%'
+      )
+    `,
+      [shNomor]
+    );
 
     const validItems = items.filter(
       (item) => item.invoice && (item.bayar || 0) > 0

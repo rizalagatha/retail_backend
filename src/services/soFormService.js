@@ -73,7 +73,7 @@ const save = async (data, user) => {
         header.jenisOrderKode ? String(header.jenisOrderKode) : null,
         header.namaDtf ? String(header.namaDtf) : null,
         header.gudang.kode,
-        user.kode
+        user.kode,
       ]);
     } else {
       const [idrecRows] = await connection.query(
@@ -204,6 +204,14 @@ const save = async (data, user) => {
         [soNomor, noSetoran]
       );
     }
+
+    await connection.query(
+      `UPDATE tsetor_hdr
+       SET sh_so_nomor = ?
+       WHERE sh_cus_kode = ?
+        AND (sh_so_nomor = '' OR sh_so_nomor IS NULL)`,
+      [soNomor, header.customer.kode]
+    );
 
     await connection.commit();
     return {
@@ -666,7 +674,10 @@ const saveNewDp = async (dpData, user) => {
     keterangan,
     bankData,
     giroData,
+    nomorSo, // DP SELALU UNTUK SO
   } = dpData;
+
+  const soNomor = nomorSo || "";
 
   const connection = await pool.getConnection();
   await connection.beginTransaction();
@@ -674,11 +685,10 @@ const saveNewDp = async (dpData, user) => {
   try {
     const cabang = user.cabang;
 
-    // 1. Buat prefix: K01.STR.2509
+    // 1. Buat nomor setoran: K06.STR.2512.0001
     const datePrefix = format(new Date(tanggal), "yyMM");
     const prefix = `${cabang}.STR.${datePrefix}`;
 
-    // 2. Ambil nomor urut terakhir (versi baru)
     const [maxRows] = await connection.query(
       `SELECT IFNULL(MAX(CAST(RIGHT(sh_nomor, 4) AS UNSIGNED)), 0) AS maxNum
        FROM tsetor_hdr
@@ -689,70 +699,137 @@ const saveNewDp = async (dpData, user) => {
 
     const lastNum = parseInt(maxRows[0].maxNum, 10);
     const nextNum = lastNum + 1;
-
-    // 3. Susun nomor DP baru
     const sequentialPart = String(nextNum).padStart(4, "0");
     const dpNomor = `${prefix}.${sequentialPart}`;
 
-    // 4. Tentukan jenis DP
-    let query, params;
+    // 2. siapkan sh_idrec (supaya mirip Delphi: K06SHyyyymmdd...)
+    const idrec = `${cabang}SH${format(new Date(), "yyyyMMddHHmmssSSS")}`;
+
+    // 3. Tentukan jenis
     const jenisNum = jenis === "TUNAI" ? 0 : jenis === "TRANSFER" ? 1 : 2;
 
+    let query, params;
+
     if (jenis === "TUNAI") {
-      query = `INSERT INTO tsetor_hdr 
-              (sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_ket, sh_cab,
-               user_create, date_create)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
+      query = `
+        INSERT INTO tsetor_hdr (
+          sh_idrec,
+          sh_nomor,
+          sh_cus_kode,
+          sh_tanggal,
+          sh_jenis,
+          sh_nominal,
+          sh_ket,
+          sh_cab,
+          sh_so_nomor,
+          sh_otomatis,
+          user_create,
+          date_create
+        ) VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, 'N', ?, NOW()
+        )
+      `;
+
       params = [
+        idrec,
         dpNomor,
         customerKode,
         tanggal,
         jenisNum,
         nominal,
-        keterangan,
+        keterangan || "",
         cabang,
+        soNomor,
         user.kode,
       ];
     } else if (jenis === "TRANSFER") {
-      query = `INSERT INTO tsetor_hdr 
-              (sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_akun, sh_norek, 
-               sh_tgltransfer, sh_ket, sh_cab, user_create, date_create)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
+      query = `
+        INSERT INTO tsetor_hdr (
+          sh_idrec,
+          sh_nomor,
+          sh_cus_kode,
+          sh_tanggal,
+          sh_jenis,
+          sh_nominal,
+          sh_akun,
+          sh_norek,
+          sh_tgltransfer,
+          sh_ket,
+          sh_so_nomor,
+          sh_cab,
+          sh_otomatis,
+          user_create,
+          date_create
+        ) VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'N', ?, NOW()
+        )
+      `;
+
+      // ⚠ urutan params HARUS sesuai urutan kolom di atas
       params = [
+        idrec,
         dpNomor,
         customerKode,
         tanggal,
         jenisNum,
         nominal,
-        bankData.akun,
-        bankData.norek,
-        bankData.tglTransfer,
-        keterangan,
-        cabang,
+        bankData?.akun || "",
+        bankData?.norek || "",
+        bankData?.tglTransfer || tanggal,
+        keterangan || "",
+        soNomor, // sh_so_nomor
+        cabang, // sh_cab
         user.kode,
       ];
     } else if (jenis === "GIRO") {
-      query = `INSERT INTO tsetor_hdr 
-              (sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_giro, sh_tglgiro,
-               sh_tempogiro, sh_ket, sh_cab, user_create, date_create)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
+      query = `
+        INSERT INTO tsetor_hdr (
+          sh_idrec,
+          sh_nomor,
+          sh_cus_kode,
+          sh_tanggal,
+          sh_jenis,
+          sh_nominal,
+          sh_giro,
+          sh_tglgiro,
+          sh_tempogiro,
+          sh_ket,
+          sh_cab,
+          sh_so_nomor,
+          sh_otomatis,
+          user_create,
+          date_create
+        ) VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'N', ?, NOW()
+        )
+      `;
+
       params = [
+        idrec,
         dpNomor,
         customerKode,
         tanggal,
         jenisNum,
         nominal,
-        giroData.noGiro,
-        giroData.tglGiro,
-        giroData.tglJatuhTempo,
-        keterangan,
+        giroData?.noGiro || "",
+        giroData?.tglGiro || tanggal,
+        giroData?.tglJatuhTempo || tanggal,
+        keterangan || "",
         cabang,
+        soNomor,
         user.kode,
       ];
+    } else {
+      throw new Error("Jenis DP tidak dikenal.");
     }
 
-    // 5. Simpan data
+    // 4. Simpan HEADER DP (tanpa detail dulu)
     await connection.query(query, params);
+
+    // ❌ TIDAK ADA insert tsetor_dtl di sini.
+    // DP baru akan dibuat "terpakai" saat:
+    // - Invoice saveData → insert tsetor_dtl (sd_ket = 'DP LINK DARI INV')
+    // - Form Setoran manual → insert tsetor_dtl pembayaran invoice
 
     await connection.commit();
 
