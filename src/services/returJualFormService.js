@@ -142,14 +142,18 @@ const save = async (payload, user) => {
     // Link ke piutang jika jenis retur 'Salah Qty'
     if (header.jenis === "Y") {
       const piutangHeaderNomor = `${header.customer.kode}${header.invoice}`;
+      const angsurID = nomorDokumen;
       await connection.query(
-        `INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket) VALUES (?, ?, 'Pembayaran Retur', ?, ?)
-                 ON DUPLICATE KEY UPDATE pd_kredit = VALUES(pd_kredit)`,
+        `INSERT INTO tpiutang_dtl (
+         pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur
+         ) VALUES (?, ?, 'Pembayaran Retur', ?, ?, ?)
+         ON DUPLICATE KEY UPDATE pd_kredit = VALUES(pd_kredit)`,
         [
           piutangHeaderNomor,
           header.tanggal,
           payload.footer.grandTotal,
           nomorDokumen,
+          nomorDokumen, // ← isi pk
         ]
       );
     }

@@ -50,7 +50,11 @@ const getList = async (filters) => {
         c.cus_telp AS Telepon,
         h.sh_ket AS Keterangan, 
         IF(h.sh_otomatis = "Y", "YA", "") AS Otomatis,
-        h.sh_closing AS Closing
+        h.sh_closing AS Closing,
+        h.user_create AS UserCreate,
+        h.date_create AS DateCreate,
+        h.user_modified AS UserModified,
+        h.date_modified AS DateModified
     FROM tsetor_hdr h
     LEFT JOIN tsetor_dtl d ON d.sd_sh_nomor = h.sh_nomor
     LEFT JOIN tcustomer c ON c.cus_kode = h.sh_cus_kode

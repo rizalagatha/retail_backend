@@ -193,7 +193,9 @@ END AS SisaPiutang,
     h.inv_print AS Prn,
     h.inv_puas AS Puas,
     h.date_create AS Created,
-    h.inv_closing AS Closing
+    h.inv_closing AS Closing,
+    h.user_modified AS UserModified,
+    h.date_modified AS DateModified
   FROM tinv_hdr h
   LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
   LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
