@@ -37,7 +37,8 @@ const getSoDtfList = async (filters) => {
                 s.sal_nama AS Sales, h.sd_desain AS BagDesain, h.sd_Workshop AS Workshop,
                 h.sd_cus_kode AS KdCus, c.cus_nama AS Customer, h.sd_kain AS Kain, h.sd_finishing AS Finishing,
                 h.sd_ket AS Keterangan, h.sd_alasan AS AlasanClose,
-                h.user_create AS Created, h.sd_closing AS Close
+                h.user_create AS Created, h.user_modified AS UserModified,
+                h.date_modified AS DateModified, h.sd_closing AS Close
             FROM tsodtf_hdr h
             LEFT JOIN tcustomer c ON c.cus_kode = h.sd_cus_kode
             LEFT JOIN kencanaprint.tsales s ON s.sal_kode = h.sd_sal_kode

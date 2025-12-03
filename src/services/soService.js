@@ -71,6 +71,8 @@ const getList = async (filters) => {
                 h.so_top AS Top,
                 h.so_disc AS Diskon,
                 h.so_dp AS Dp,
+                h.user_modified AS UserModified,
+                h.date_modified AS DateModified,
 
                 (SELECT ROUND(
                     SUM(dd.sod_jumlah * (dd.sod_harga - dd.sod_diskon))

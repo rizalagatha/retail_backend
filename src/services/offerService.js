@@ -35,6 +35,8 @@ const getOffers = async (startDate, endDate, cabang) => {
             h.pen_ket AS keterangan,
             h.pen_alasan AS alasan,
             h.user_create AS created,
+            h.user_modified AS userModified,
+            h.date_modified AS dateModified,
             (
                 SELECT ROUND(SUM(dd.pend_jumlah * (dd.pend_harga - dd.pend_diskon)) - hh.pen_disc 
                     + (hh.pen_ppn/100 * (SUM(dd.pend_jumlah * (dd.pend_harga - dd.pend_diskon)) - hh.pen_disc)) 

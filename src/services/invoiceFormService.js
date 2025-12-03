@@ -778,67 +778,6 @@ const saveData = async (payload, user) => {
       await connection.query(detailSql, [detailValues]);
     }
 
-    // Pembayaran via Card/Transfer (PEMBAYARAN DARI KASIR)
-    if ((payment.transfer?.nominal || 0) > 0) {
-      const nomorSetoranReal =
-        payment.transfer.nomorSetoran ||
-        (await generateNewSetorNumber(connection, user.cabang, header.tanggal));
-      const idrecSetoran = `${user.cabang}SH${format(
-        new Date(),
-        "yyyyMMddHHmmssSSS"
-      )}`;
-
-      await connection.query("DELETE FROM tsetor_hdr WHERE sh_nomor = ?", [
-        nomorSetoranReal,
-      ]);
-
-      const setorHdrSql = `
-        INSERT INTO tsetor_hdr (sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_akun, sh_norek, sh_tgltransfer, sh_otomatis, user_create, date_create)
-        VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 'Y', ?, NOW());
-      `;
-      await connection.query(setorHdrSql, [
-        idrecSetoran,
-        nomorSetoranReal,
-        header.customer.kode,
-        toSqlDateTime(header.tanggal),
-        Number(payment.transfer.nominal || 0),
-        payment.transfer.akun?.kode || "",
-        payment.transfer.akun?.rekening || "",
-        toSqlDateTime(payment.transfer.tanggal),
-        user.kode,
-      ]);
-
-      // Insert detail setoran
-      const angsurId = `${user.cabang}KS${format(
-        new Date(),
-        "yyyyMMddHHmmssSSS"
-      )}`;
-      const setorDtlSql = `
-        INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut)
-        VALUES (?, ?, ?, ?, ?, 'PEMBAYARAN DARI KASIR', ?, 1);
-      `;
-      await connection.query(setorDtlSql, [
-        idrecSetoran,
-        nomorSetoranReal,
-        toSqlDateTime(header.tanggal),
-        invNomor,
-        Number(payment.transfer.nominal || 0),
-        angsurId,
-      ]);
-
-      const piutangCardSql = `
-        INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur)
-        VALUES (?, ?, 'Pembayaran Card', ?, ?, ?);
-      `;
-      await connection.query(piutangCardSql, [
-        piutangNomor,
-        toSqlDateTime(payment.transfer.tanggal),
-        Number(payment.transfer.nominal || 0),
-        nomorSetoranReal || "-",
-        angsurId,
-      ]);
-    }
-
     // 3. DELETE/INSERT tpiutang_hdr & tpiutang_dtl
     await connection.query("DELETE FROM tpiutang_hdr WHERE ph_inv_nomor = ?", [
       invNomor,
@@ -1060,6 +999,67 @@ const saveData = async (payload, user) => {
           );
         }
       }
+    }
+
+    // Pembayaran via Card/Transfer (PEMBAYARAN DARI KASIR)
+    if ((payment.transfer?.nominal || 0) > 0) {
+      const nomorSetoranReal =
+        payment.transfer.nomorSetoran ||
+        (await generateNewSetorNumber(connection, user.cabang, header.tanggal));
+      const idrecSetoran = `${user.cabang}SH${format(
+        new Date(),
+        "yyyyMMddHHmmssSSS"
+      )}`;
+
+      await connection.query("DELETE FROM tsetor_hdr WHERE sh_nomor = ?", [
+        nomorSetoranReal,
+      ]);
+
+      const setorHdrSql = `
+        INSERT INTO tsetor_hdr (sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_akun, sh_norek, sh_tgltransfer, sh_otomatis, user_create, date_create)
+        VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 'Y', ?, NOW());
+      `;
+      await connection.query(setorHdrSql, [
+        idrecSetoran,
+        nomorSetoranReal,
+        header.customer.kode,
+        toSqlDateTime(header.tanggal),
+        Number(payment.transfer.nominal || 0),
+        payment.transfer.akun?.kode || "",
+        payment.transfer.akun?.rekening || "",
+        toSqlDateTime(payment.transfer.tanggal),
+        user.kode,
+      ]);
+
+      // Insert detail setoran
+      const angsurId = `${user.cabang}KS${format(
+        new Date(),
+        "yyyyMMddHHmmssSSS"
+      )}`;
+      const setorDtlSql = `
+        INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut)
+        VALUES (?, ?, ?, ?, ?, 'PEMBAYARAN DARI KASIR', ?, 1);
+      `;
+      await connection.query(setorDtlSql, [
+        idrecSetoran,
+        nomorSetoranReal,
+        toSqlDateTime(header.tanggal),
+        invNomor,
+        Number(payment.transfer.nominal || 0),
+        angsurId,
+      ]);
+
+      const piutangCardSql = `
+        INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur)
+        VALUES (?, ?, 'Pembayaran Card', ?, ?, ?);
+      `;
+      await connection.query(piutangCardSql, [
+        piutangNomor,
+        toSqlDateTime(payment.transfer.tanggal),
+        Number(payment.transfer.nominal || 0),
+        nomorSetoranReal || "-",
+        angsurId,
+      ]);
     }
 
     // (7) Logika untuk INSERT/UPDATE tmember (dari edthpExit)
