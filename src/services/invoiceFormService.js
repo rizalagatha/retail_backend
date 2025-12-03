@@ -1120,14 +1120,21 @@ const saveData = async (payload, user) => {
 
     // Cek dan simpan PIN untuk Invoice Belum Lunas
     if (pinBelumLunas) {
+      const kurangBayar = applyRoundingPolicy(
+        Math.max(grandTotal - bayarTotal, 0)
+      );
+
       const authLogSql = `
-        INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_pin, o_nominal, o_created) 
-        VALUES (?, 'INVOICE', 'BELUM LUNAS', ?, ?, NOW());
+        INSERT INTO totorisasi (
+          o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_nominal
+        )
+        VALUES (?, 'INVOICE', 'BELUM LUNAS', '', NOW(), ?, ?);
       `;
+
       await connection.query(authLogSql, [
         invNomor,
         pinBelumLunas,
-        totals.sisaPiutang,
+        kurangBayar,
       ]);
     }
 

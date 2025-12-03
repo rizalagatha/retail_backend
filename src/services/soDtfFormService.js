@@ -190,10 +190,11 @@ const create = async (data, user) => {
 
       await connection.query(
         `UPDATE tso_dtl 
-          SET sod_sd_nomor = ?
-        WHERE sod_so_nomor = ?
-          AND sod_custom = 'Y'`,
-        [newNomor, header.soNomor]
+            SET sod_kode = ?, 
+              sod_sd_nomor = ?
+          WHERE sod_so_nomor = ?
+            AND sod_custom = 'Y'`,
+        [newNomor, newNomor, header.soNomor]
       );
     }
 
@@ -350,7 +351,8 @@ const update = async (nomor, data, user) => {
     if (newSo) {
       // Update detail agar mengarah ke SODTF ini
       await connection.query(
-        `UPDATE tso_dtl 
+        `UPDATE tso_dtl
+           SET sod_kode = ? 
            SET sod_sd_nomor = ?
          WHERE sod_so_nomor = ?
            AND sod_custom = 'Y'`,

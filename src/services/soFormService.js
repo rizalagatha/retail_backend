@@ -250,15 +250,16 @@ const getSoForEdit = async (nomor) => {
       g.gdg_kode,
       g.gdg_nama,
       CONCAT(h.so_cus_level, ' - ', l.level_nama) AS xLevel,
-      IFNULL(
-        TRIM(CONCAT(
+      COALESCE(
+        NULLIF(TRIM(CONCAT(
           COALESCE(a.brg_jeniskaos, ''), ' ',
           COALESCE(a.brg_tipe, ''), ' ',
           COALESCE(a.brg_lengan, ''), ' ',
           COALESCE(a.brg_jeniskain, ''), ' ',
           COALESCE(a.brg_warna, '')
-        )),
-        f.sd_nama
+      )), ''),
+      f.sd_nama,
+      d.sod_custom_nama
       ) AS NamaBarang,
       (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS total,
       IFNULL((
