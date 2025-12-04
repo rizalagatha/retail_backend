@@ -76,6 +76,8 @@ const createCustomer = async (customerData, user) => {
       ? new Date(tglLahir).toISOString().split("T")[0]
       : null;
 
+    const toNull = (v) => (v === "" || v === undefined ? null : v);
+
     await connection.query(
       `INSERT INTO tcustomer (cus_kode, cus_nama, cus_alamat, cus_kota, cus_telp, cus_nama_kontak, cus_tgllahir, cus_top, cus_aktif, cus_npwp, cus_nama_npwp, cus_alamat_npwp, cus_kota_npwp) 
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -89,10 +91,10 @@ const createCustomer = async (customerData, user) => {
         formattedTglLahir,
         top,
         cusAktif,
-        npwp,
-        namaNpwp,
-        alamatNpwp,
-        kotaNpwp,
+        toNull(npwp),
+        toNull(namaNpwp),
+        toNull(alamatNpwp),
+        toNull(kotaNpwp),
       ]
     );
 
@@ -171,6 +173,8 @@ const updateCustomer = async (kode, customerData) => {
       ? new Date(tglLahir).toISOString().split("T")[0]
       : null;
 
+    const toNull = (v) => (v === "" || v === undefined ? null : v);
+
     await connection.query(
       `UPDATE tcustomer SET cus_nama = ?, cus_alamat = ?, cus_kota = ?, cus_telp = ?, cus_nama_kontak = ?, cus_tgllahir = ?, cus_top = ?, cus_aktif = ?, cus_npwp = ?, cus_nama_npwp = ?, cus_alamat_npwp = ?, cus_kota_npwp = ?
              WHERE cus_kode = ?`,
@@ -183,10 +187,10 @@ const updateCustomer = async (kode, customerData) => {
         formattedTglLahir,
         top,
         cusAktif,
-        npwp,
-        namaNpwp,
-        alamatNpwp,
-        kotaNpwp,
+        toNull(npwp),
+        toNull(namaNpwp),
+        toNull(alamatNpwp),
+        toNull(kotaNpwp),
         kode,
       ]
     );
