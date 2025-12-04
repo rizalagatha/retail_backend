@@ -52,8 +52,14 @@ const searchCustomers = async (term, gudang, page, itemsPerPage) => {
 
   let searchFilter = "";
   if (term) {
-    searchFilter = " AND (c.cus_kode LIKE ? OR c.cus_nama LIKE ?)";
-    params.push(searchTerm, searchTerm);
+    searchFilter = `
+      AND (
+        c.cus_kode LIKE ? 
+        OR c.cus_nama LIKE ?
+        OR c.cus_telp LIKE ?
+      )
+    `;
+    params.push(searchTerm, searchTerm, searchTerm);
   }
 
   const baseQuery = `
