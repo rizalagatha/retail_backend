@@ -126,21 +126,22 @@ const getRecentTransactions = async (user) => {
   return rows;
 };
 
-// Di dalam file services/dashboardService.js
-
 const getPendingActions = async (user) => {
-  const oneMonthAgo = format(subDays(new Date(), 30), "yyyy-MM-dd");
+  // 1. Ubah rentang waktu menjadi "Seluruh Waktu" (misal mulai tahun 2000)
+  const allTimeDate = "2020-01-01";
 
   let branchFilterClause = "AND LEFT(nomor, 3) = ?";
   let params = [user.cabang];
+
   if (user.cabang === "KDC") {
     branchFilterClause = "";
     params = [];
   }
 
-  const dateParams = [oneMonthAgo, ...params];
+  // Parameter tanggal (allTimeDate) + Parameter cabang (jika ada)
+  const dateParams = [allTimeDate, ...params];
 
-  // Query untuk Penawaran Open
+  // --- QUERY 1: Penawaran Open ---
   const penawaranQuery = `
         SELECT COUNT(*) as count 
         FROM tpenawaran_hdr h
@@ -150,7 +151,7 @@ const getPendingActions = async (user) => {
           ${branchFilterClause.replace("nomor", "h.pen_nomor")};
     `;
 
-  // Query untuk Pengajuan Harga pending
+  // --- QUERY 2: Pengajuan Harga Pending ---
   const pengajuanQuery = `
         SELECT COUNT(*) as count 
         FROM tpengajuanharga h
@@ -159,7 +160,7 @@ const getPendingActions = async (user) => {
         ${branchFilterClause.replace("nomor", "h.ph_nomor")};
     `;
 
-  // Query untuk SO yang masih open
+  // --- QUERY 3: SO Open ---
   const soOpenQuery = `
         SELECT COUNT(*) as count FROM (
             SELECT 
@@ -181,30 +182,29 @@ const getPendingActions = async (user) => {
                         IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
                         IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0) AS QtyInv
                     FROM tso_hdr h
-                    WHERE h.so_tanggal >= ? AND h.so_aktif = 'Y' ${branchFilterClause.replace(
-                      "nomor",
-                      "h.so_nomor"
-                    )}
+                    WHERE h.so_tanggal >= ? AND h.so_aktif = 'Y' 
+                    ${branchFilterClause.replace("nomor", "h.so_nomor")}
                 ) x
             ) y
         ) z
         WHERE z.StatusFinal = 'OPEN';
     `;
 
-  // Query untuk Invoice yang belum lunas
+  // --- QUERY 4: Invoice Sisa Piutang (UPDATED) ---
+  // Menggunakan logika saldo debet - kredit > 0
   const invoiceQuery = `
         SELECT COUNT(*) AS count
-        FROM tinv_hdr h
+        FROM tpiutang_hdr u
         LEFT JOIN (
             SELECT pd_ph_nomor, SUM(pd_debet) AS debet, SUM(pd_kredit) AS kredit 
             FROM tpiutang_dtl GROUP BY pd_ph_nomor
-        ) v ON v.pd_ph_nomor = (SELECT ph_nomor FROM tpiutang_hdr u WHERE u.ph_inv_nomor = h.inv_nomor LIMIT 1)
-        WHERE h.inv_tanggal >= ? 
-          AND h.inv_sts_pro = 0 AND (v.debet - v.kredit) > 0
-        ${branchFilterClause.replace("nomor", "h.inv_nomor")};
+        ) v ON v.pd_ph_nomor = u.ph_nomor
+        WHERE u.ph_tanggal >= ? 
+          AND (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) > 100 -- Toleransi pembulatan
+          ${branchFilterClause.replace("nomor", "u.ph_inv_nomor")}; 
     `;
 
-  // Query untuk SO DTF Open
+  // --- QUERY 5: SO DTF Open ---
   const soDtfOpenQuery = `
         SELECT COUNT(*) as count 
         FROM tsodtf_hdr h
@@ -213,7 +213,7 @@ const getPendingActions = async (user) => {
           ${branchFilterClause.replace("nomor", "h.sd_nomor")};
     `;
 
-  // Jalankan semua query
+  // Jalankan semua query secara paralel
   const [
     [penawaranResult],
     [pengajuanResult],
@@ -316,23 +316,22 @@ const getSalesTargetSummary = async (user) => {
  * berdasarkan pencapaian target bulan ini.
  */
 const getBranchPerformance = async (user) => {
-  // Fitur ini hanya relevan untuk KDC
+  // Fitur ini hanya relevan untuk KDC (Head Office)
   if (user.cabang !== "KDC") {
-    return { top: [], bottom: [] };
+    return [];
   }
 
   const tahun = new Date().getFullYear();
   const bulan = new Date().getMonth() + 1;
 
-  // Query ini menggabungkan penjualan dan target, menghitung Ach%,
-  // lalu mengambil 3 teratas dan 3 terbawah dalam satu panggilan.
+  // Menggunakan logika yang sama dengan Monitoring Achievement (v_sales_harian & ttarget_kaosan)
   const query = `
         WITH MonthlySales AS (
             SELECT 
-                LEFT(inv_nomor, 3) AS cabang,
-                SUM((SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc) AS nominal
-            FROM tinv_hdr h
-            WHERE h.inv_sts_pro = 0 AND YEAR(h.inv_tanggal) = ? AND MONTH(h.inv_tanggal) = ?
+                cabang, 
+                SUM(nominal) AS nominal 
+            FROM v_sales_harian
+            WHERE YEAR(tanggal) = ? AND MONTH(tanggal) = ?
             GROUP BY cabang
         ),
         MonthlyTargets AS (
@@ -342,33 +341,27 @@ const getBranchPerformance = async (user) => {
             FROM kpi.ttarget_kaosan
             WHERE tahun = ? AND bulan = ?
             GROUP BY cabang
-        ),
-        Performance AS (
-            SELECT 
-                g.gdg_kode AS kode_cabang,
-                g.gdg_nama AS nama_cabang,
-                IFNULL(s.nominal, 0) AS nominal,
-                IFNULL(t.target, 0) AS target,
-                IF(IFNULL(t.target, 0) > 0, (IFNULL(s.nominal, 0) / t.target) * 100, 0) AS ach
-            FROM tgudang g
-            LEFT JOIN MonthlySales s ON g.gdg_kode = s.cabang
-            LEFT JOIN MonthlyTargets t ON g.gdg_kode = t.cabang
-            WHERE g.gdg_dc = 0 AND g.gdg_kode <> 'KDC' -- Hanya toko/non-DC
-            AND IFNULL(t.target, 0) > 0 -- Hanya yang punya target
         )
-        (SELECT *, 'top' as type FROM Performance ORDER BY ach DESC LIMIT 3)
-        UNION ALL
-        (SELECT *, 'bottom' as type FROM Performance ORDER BY ach ASC LIMIT 3);
+        SELECT 
+            g.gdg_kode AS kode_cabang,
+            g.gdg_nama AS nama_cabang,
+            COALESCE(ms.nominal, 0) AS nominal,
+            COALESCE(mt.target, 0) AS target,
+            CASE 
+                WHEN COALESCE(mt.target, 0) > 0 THEN (COALESCE(ms.nominal, 0) / mt.target) * 100 
+                ELSE 0 
+            END AS ach
+        FROM tgudang g
+        LEFT JOIN MonthlySales ms ON g.gdg_kode = ms.cabang
+        LEFT JOIN MonthlyTargets mt ON g.gdg_kode = mt.cabang
+        WHERE g.gdg_dc = 0 AND g.gdg_kode <> 'KDC' -- Hanya toko fisik
+        ORDER BY ach DESC; -- Diurutkan dari pencapaian tertinggi
     `;
 
   const params = [tahun, bulan, tahun, bulan];
   const [rows] = await pool.query(query, params);
 
-  // Pisahkan hasilnya
-  const top = rows.filter((r) => r.type === "top");
-  const bottom = rows.filter((r) => r.type === "bottom" && r.ach < 100); // Hanya tampilkan yang di bawah target
-
-  return { top, bottom };
+  return rows;
 };
 
 const getStagnantStockSummary = async (user) => {
