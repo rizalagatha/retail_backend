@@ -270,7 +270,9 @@ const getDataForPrint = async (nomor) => {
         h.so_disc, h.so_ppn, h.so_bkrm, h.so_dp,
         c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
         g.gdg_inv_nama, g.gdg_inv_alamat, g.gdg_inv_kota, g.gdg_inv_telp,
-        g.gdg_inv_instagram
+        g.gdg_inv_instagram, 
+        g.gdg_akun,
+        g.gdg_transferbank
     FROM tso_hdr h
     LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
     LEFT JOIN tgudang g ON g.gdg_kode = h.so_cab

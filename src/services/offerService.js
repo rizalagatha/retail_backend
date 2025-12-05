@@ -110,9 +110,10 @@ const getDataForPrinting = async (nomor) => {
   if (headerRows.length === 0) {
     throw { status: 404, message: "Data penawaran tidak ditemukan." };
   }
-  const header = headerRows[0];
+  let header = headerRows[0]; // Gunakan let agar bisa ditambah properti
 
   // 2. Ambil data Gudang
+  // SELECT * akan mengambil gdg_akun & gdg_transferbank juga
   const gudangQuery = `SELECT * FROM tgudang WHERE gdg_kode = ?;`;
   const [gudangRows] = await pool.query(gudangQuery, [
     header.pen_nomor.substring(0, 3),
@@ -122,33 +123,53 @@ const getDataForPrinting = async (nomor) => {
   // 3. Ambil data Detail
   const detailsQuery = `
         SELECT 
-            d.pend_kode AS kode, IFNULL(b.brgd_barcode, "") AS barcode,
-            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) AS Nama,
-            d.pend_ukuran AS ukuran, d.pend_jumlah AS qty, d.pend_harga AS harga,
+            d.pend_kode AS kode, 
+            IFNULL(b.brgd_barcode, "") AS barcode,
+            -- Gunakan alias 'nama_barang' agar konsisten dengan frontend
+            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) AS nama_barang,
+            d.pend_ukuran AS ukuran, 
+            d.pend_jumlah AS qty, 
+            d.pend_harga AS harga,
             d.pend_diskon AS diskon,
             (d.pend_jumlah * (d.pend_harga - d.pend_diskon)) as total
         FROM tpenawaran_dtl d
         LEFT JOIN tbarangdc a ON a.brg_kode = d.pend_kode
         LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.pend_kode AND b.brgd_ukuran = d.pend_ukuran
-        WHERE d.pend_nomor = ? ORDER BY d.pend_nourut;
+        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.pend_kode -- Join ke SO DTF jika perlu nama dari sana
+        WHERE d.pend_nomor = ? 
+        ORDER BY d.pend_nourut;
     `;
   const [details] = await pool.query(detailsQuery, [nomor]);
 
-  // 4. Siapkan data Footer (kalkulasi)
-  const total = details.reduce((sum, item) => sum + item.total, 0);
-  const diskon_faktur = header.pen_disc || 0;
+  // 4. Kalkulasi Footer
+  const total = details.reduce((sum, item) => sum + Number(item.total), 0);
+  const diskon_faktur = Number(header.pen_disc || 0);
   const netto = total - diskon_faktur;
   const ppn = header.pen_ppn ? netto * (header.pen_ppn / 100) : 0;
-  const footer = {
+  const biaya_kirim = Number(header.pen_bkrm || 0);
+  const grand_total = netto + ppn + biaya_kirim;
+
+  // 5. MERGE DATA KE HEADER (Flattening)
+  // Ini kunci agar frontend Anda jalan tanpa ubah template
+  header = {
+    ...header,
+    // Info Gudang
+    gdg_inv_alamat: gudang?.gdg_inv_alamat,
+    gdg_inv_kota: gudang?.gdg_inv_kota,
+    gdg_inv_telp: gudang?.gdg_inv_telp,
+    gdg_akun: gudang?.gdg_akun,
+    gdg_transferbank: gudang?.gdg_transferbank,
+
+    // Info Footer Kalkulasi
     total: total,
-    diskon_faktur: diskon_faktur,
+    diskon: diskon_faktur,
     ppn: ppn,
-    bkrm: header.pen_bkrm || 0,
-    netto: netto,
+    biaya_kirim: biaya_kirim,
+    grand_total: grand_total,
   };
 
-  // Kembalikan semua data dalam satu objek
-  return { header, details, customer: header, gudang, footer };
+  // Kembalikan struktur sederhana: header & details
+  return { header, details };
 };
 
 const getExportDetails = async (startDate, endDate, cabang) => {
