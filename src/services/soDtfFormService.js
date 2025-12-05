@@ -352,11 +352,11 @@ const update = async (nomor, data, user) => {
       // Update detail agar mengarah ke SODTF ini
       await connection.query(
         `UPDATE tso_dtl
-           SET sod_kode = ? 
-           SET sod_sd_nomor = ?
-         WHERE sod_so_nomor = ?
-           AND sod_custom = 'Y'`,
-        [nomor, newSo]
+          SET sod_kode = ?, 
+              sod_sd_nomor = ?
+          WHERE sod_so_nomor = ?
+            AND sod_custom = 'Y'`,
+        [nomor, newSo, newSo] // ← BENAR
       );
 
       // Tandai SO dipakai oleh DTF

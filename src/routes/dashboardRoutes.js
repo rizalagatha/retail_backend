@@ -64,6 +64,12 @@ router.get(
   dashboardController.getPiutangPerCabang
 );
 
+router.get(
+  "/piutang-per-invoice",
+  verifyToken,
+  dashboardController.getPiutangPerInvoice
+);
+
 router.get("/total-stok", verifyToken, dashboardController.getTotalStok);
 
 router.get(

@@ -489,6 +489,36 @@ const getPiutangPerCabang = async (user) => {
   return rows;
 };
 
+/**
+ * @description Invoice yang masih punya sisa piutang untuk store tertentu.
+ */
+const getPiutangPerInvoice = async (user) => {
+  // Hanya untuk store, bukan KDC
+  if (user.cabang === "KDC") return [];
+
+  const query = `
+        SELECT 
+            u.ph_inv_nomor AS invoice,
+            DATE_FORMAT(h.inv_tanggal, '%Y-%m-%d') AS tanggal,
+            IFNULL(v.debet - v.kredit, 0) AS sisa_piutang
+        FROM tpiutang_hdr u
+        LEFT JOIN (
+            SELECT pd_ph_nomor, 
+                   SUM(pd_debet) AS debet, 
+                   SUM(pd_kredit) AS kredit 
+            FROM tpiutang_dtl 
+            GROUP BY pd_ph_nomor
+        ) v ON v.pd_ph_nomor = u.ph_nomor
+        LEFT JOIN tinv_hdr h ON h.inv_nomor = u.ph_inv_nomor
+        WHERE LEFT(u.ph_inv_nomor, 3) = ?
+          AND (v.debet - v.kredit) > 0
+        ORDER BY sisa_piutang DESC;
+    `;
+
+  const [rows] = await pool.query(query, [user.cabang]);
+  return rows;
+};
+
 const getTotalStock = async (user) => {
   // Jika KDC -> total semua cabang
   // Jika store -> hanya cabang user.cabang
@@ -557,6 +587,7 @@ module.exports = {
   getStagnantStockSummary,
   getTotalSisaPiutang,
   getPiutangPerCabang,
+  getPiutangPerInvoice,
   getTotalStock,
   getStockPerCabang,
 };

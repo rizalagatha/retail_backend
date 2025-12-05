@@ -60,84 +60,125 @@ const loadInitialData = async (nomorSj) => {
 const saveData = async (payload, user) => {
   const { header, items } = payload;
   const connection = await pool.getConnection();
+
   try {
     await connection.beginTransaction();
 
-    if (items.some((item) => item.jumlahTerima > item.jumlahKirim)) {
-      throw new Error("Jumlah terima tidak boleh melebihi jumlah kirim.");
-    }
+    const nomorSj = header.nomorSj;
+    const tanggalTerima = header.tanggalTerima;
+    const nomorMinta = header.nomorMinta;
 
-    const tjNomor = await generateNewTjNumber(
-      user.cabang,
-      header.tanggalTerima
+    // Hitung total terima
+    const totalTerima = items.reduce(
+      (sum, i) => sum + (Number(i.jumlahTerima) || 0),
+      0
     );
 
-    // Generate `idrec` untuk header, sesuai logika Delphi
-    const timestamp = format(new Date(), "yyyyMMddHHmmssSSS");
-    const idrec = `${user.cabang}TJ${timestamp}`;
+    // --- 1️⃣ BATAL TERIMA (jika semua jumlahTerima = 0) ---
+    if (totalTerima === 0) {
+      // Clear nomor terima di SJ (TANPA NULL)
+      await connection.query(
+        `UPDATE tdc_sj_hdr 
+         SET sj_noterima = '' 
+         WHERE sj_nomor = ?`,
+        [nomorSj]
+      );
 
-    // Insert ke header penerimaan (ttrm_sj_hdr)
-    const headerSql = `
-        INSERT INTO ttrm_sj_hdr 
-        (tj_idrec, tj_nomor, tj_tanggal, tj_mt_nomor, tj_cab, user_create, date_create)
-        VALUES (?, ?, ?, ?, ?, ?, NOW());
-    `;
-    await connection.query(headerSql, [
-      idrec,
-      tjNomor,
-      header.tanggalTerima,
-      header.nomorMinta,
-      user.cabang, // ← cabang penerima
-      user.kode,
-    ]);
+      // Hapus detail penerimaan
+      await connection.query(
+        `DELETE d.* 
+         FROM ttrm_sj_dtl d
+         JOIN ttrm_sj_hdr h ON h.tj_nomor = d.tjd_nomor
+         WHERE h.tj_mt_nomor = ? AND h.tj_cab = ?`,
+        [nomorMinta, user.cabang]
+      );
 
-    // Hapus detail lama (jika ada, untuk kasus edit di masa depan)
-    await connection.query("DELETE FROM ttrm_sj_dtl WHERE tjd_nomor = ?", [
-      tjNomor,
-    ]);
+      // Hapus header penerimaan
+      await connection.query(
+        `DELETE FROM ttrm_sj_hdr 
+         WHERE tj_mt_nomor = ? AND tj_cab = ?`,
+        [nomorMinta, user.cabang]
+      );
 
-    // Insert ke detail penerimaan (ttrm_sj_dtl)
-    const detailSql = `
-        INSERT INTO ttrm_sj_dtl (tjd_idrec, tjd_iddrec, tjd_nomor, tjd_kode, tjd_ukuran, tjd_jumlah) 
-        VALUES ?;
-    `;
+      await connection.commit();
+      return { message: "Penerimaan dibatalkan.", nomor: null };
+    }
 
+    // --- 2️⃣ CEK APAKAH SUDAH PERNAH TERIMA (EDIT MODE) ---
+    const [cekExist] = await connection.query(
+      `SELECT tj_nomor, tj_idrec 
+       FROM ttrm_sj_hdr 
+       WHERE tj_mt_nomor = ? AND tj_cab = ?`,
+      [nomorMinta, user.cabang]
+    );
+
+    const isEdit = cekExist.length > 0;
+    let tjNomor = null;
+    let idrec = null;
+
+    // --- 3️⃣ MODE EDIT ---
+    if (isEdit) {
+      tjNomor = cekExist[0].tj_nomor;
+      idrec = cekExist[0].tj_idrec;
+
+      // Hapus detail lama (akan replace)
+      await connection.query(`DELETE FROM ttrm_sj_dtl WHERE tjd_nomor = ?`, [
+        tjNomor,
+      ]);
+    } else {
+      // --- 4️⃣ MODE INSERT BARU ---
+      tjNomor = await generateNewTjNumber(user.cabang, tanggalTerima);
+
+      const timestamp = format(new Date(), "yyyyMMddHHmmssSSS");
+      idrec = `${user.cabang}TJ${timestamp}`;
+
+      await connection.query(
+        `INSERT INTO ttrm_sj_hdr 
+          (tj_idrec, tj_nomor, tj_tanggal, tj_mt_nomor, tj_cab, user_create, date_create)
+         VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+        [idrec, tjNomor, tanggalTerima, nomorMinta, user.cabang, user.kode]
+      );
+    }
+
+    // --- 5️⃣ INSERT DETAIL BARU ---
     const detailValues = items
-      .filter((item) => item.jumlahTerima > 0)
-      .map((item, index) => {
+      .filter((i) => i.jumlahTerima > 0)
+      .map((it, index) => {
         const nourut = index + 1;
         const iddrec = `${idrec}${nourut}`;
-        return [
-          idrec,
-          iddrec,
-          tjNomor,
-          item.kode,
-          item.ukuran,
-          item.jumlahTerima,
-        ];
+        return [idrec, iddrec, tjNomor, it.kode, it.ukuran, it.jumlahTerima];
       });
 
     if (detailValues.length > 0) {
-      await connection.query(detailSql, [detailValues]);
+      await connection.query(
+        `INSERT INTO ttrm_sj_dtl 
+          (tjd_idrec, tjd_iddrec, tjd_nomor, tjd_kode, tjd_ukuran, tjd_jumlah)
+         VALUES ?`,
+        [detailValues]
+      );
     }
 
-    // Update nomor terima di Surat Jalan header (tdc_sj_hdr)
-    const updateSjSql = `
-        UPDATE tdc_sj_hdr 
-        SET sj_noterima = ?
-        WHERE sj_nomor = ?;
-    `;
-
-    await connection.query(updateSjSql, [tjNomor, header.nomorSj]);
+    // --- 6️⃣ UPDATE SJ HEADER (nomor terima) ---
+    // Pakai '' (empty string) bukan NULL!
+    await connection.query(
+      `UPDATE tdc_sj_hdr 
+       SET sj_noterima = ?
+       WHERE sj_nomor = ?`,
+      [tjNomor, nomorSj]
+    );
 
     await connection.commit();
+
     return {
-      message: `Penerimaan SJ berhasil disimpan dengan nomor ${tjNomor}.`,
+      message: isEdit
+        ? `Penerimaan SJ ${tjNomor} berhasil diperbarui.`
+        : `Penerimaan SJ berhasil disimpan dengan nomor ${tjNomor}.`,
       nomor: tjNomor,
     };
   } catch (error) {
     await connection.rollback();
-    throw error;
+    console.error("ERROR SAVE TERIMA SJ:", error);
+    throw new Error("Gagal menyimpan penerimaan SJ.");
   } finally {
     connection.release();
   }

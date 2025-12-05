@@ -107,6 +107,18 @@ const getPiutangPerCabang = async (req, res) => {
   }
 };
 
+const getPiutangPerInvoice = async (req, res) => {
+  try {
+    const data = await dashboardService.getPiutangPerInvoice(req.user);
+    res.json(data);
+  } catch (error) {
+    console.error("Error in getPiutangPerInvoice controller:", error);
+    res
+      .status(500)
+      .json({ message: "Gagal mengambil data breakdown invoice." });
+  }
+};
+
 const getTotalStok = async (req, res) => {
   try {
     const data = await dashboardService.getTotalStock(req.user);
@@ -139,6 +151,7 @@ module.exports = {
   getStagnantStockSummary,
   getTotalSisaPiutang,
   getPiutangPerCabang,
+  getPiutangPerInvoice,
   getTotalStok,
-  getTotalStokPerCabang
+  getTotalStokPerCabang,
 };
