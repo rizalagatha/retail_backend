@@ -230,8 +230,9 @@ const update = async (nomor, data, user) => {
 
   try {
     const header = data.header;
+    const userKode = user ? user.kode : null; // Handle jika user tidak terdeteksi
 
-    // 1️⃣ Ambil nomor SO lama sebelum update
+    // 1️⃣ Ambil nomor SO lama
     const [oldRows] = await connection.query(
       "SELECT sd_so_nomor FROM tsodtf_hdr WHERE sd_nomor = ?",
       [nomor]
@@ -239,25 +240,13 @@ const update = async (nomor, data, user) => {
     const oldSo = oldRows?.[0]?.sd_so_nomor || null;
     const newSo = header.soNomor || null;
 
-    // 2️⃣ Update HEADER termasuk sd_so_nomor
+    // 2️⃣ Update HEADER
     const headerQuery = `
       UPDATE tsodtf_hdr SET 
-        sd_tanggal = ?, 
-        sd_datekerja = ?, 
-        sd_dateline = ?, 
-        sd_cus_kode = ?, 
-        sd_customer = ?, 
-        sd_sal_kode = ?, 
-        sd_jo_kode = ?, 
-        sd_so_nomor = ?, 
-        sd_nama = ?, 
-        sd_kain = ?, 
-        sd_finishing = ?, 
-        sd_desain = ?, 
-        sd_workshop = ?, 
-        sd_ket = ?, 
-        user_modified = ?, 
-        date_modified = NOW()
+        sd_tanggal = ?, sd_datekerja = ?, sd_dateline = ?, sd_cus_kode = ?, sd_customer = ?, 
+        sd_sal_kode = ?, sd_jo_kode = ?, sd_so_nomor = ?, sd_nama = ?, sd_kain = ?, 
+        sd_finishing = ?, sd_desain = ?, sd_workshop = ?, sd_ket = ?, 
+        user_modified = ?, date_modified = NOW()
       WHERE sd_nomor = ?
     `;
     await connection.query(headerQuery, [
@@ -268,98 +257,90 @@ const update = async (nomor, data, user) => {
       header.customerNama,
       header.salesKode,
       header.jenisOrderKode,
-      newSo, // 🔥 MUST update
+      newSo,
       header.namaDtf,
       header.kain,
       header.finishing,
       header.desain,
       header.workshopKode,
       header.keterangan,
-      user.kode,
+      userKode, // Pastikan tidak error jika user kosong
       nomor,
     ]);
 
-    // 3️⃣ Replace detail ukuran & titik — ONLY if frontend actually provided them.
-    const hasDetailsUkuran =
-      Array.isArray(data.detailsUkuran) && data.detailsUkuran.length > 0;
-    const hasDetailsTitik =
-      Array.isArray(data.detailsTitik) && data.detailsTitik.length > 0;
-
-    // If frontend intentionally sends empty arrays to mean "clear details", then handle that
-    // by checking for presence (even an empty array). We treat undefined/null as "do not touch".
-    const providedUkuran = Array.isArray(data.detailsUkuran);
-    const providedTitik = Array.isArray(data.detailsTitik);
-
-    if (providedUkuran) {
-      // remove existing ukuran rows (frontend intends to replace)
+    // 3️⃣ Replace DETAIL UKURAN (tsodtf_dtl)
+    if (Array.isArray(data.detailsUkuran)) {
+      // Hapus data lama
       await connection.query("DELETE FROM tsodtf_dtl WHERE sdd_nomor = ?", [
         nomor,
       ]);
-      // insert (if any)
-      for (const [i, det] of (data.detailsUkuran || []).entries()) {
-        await connection.query(
-          `INSERT INTO tsodtf_dtl 
-            (sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut, sdd_nama_barang)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [
-            nomor,
-            det.ukuran,
-            det.jumlah ?? 0,
-            det.harga ?? 0,
-            i + 1,
-            det.namaBarang,
-          ]
-        );
-      }
-    } // else: frontend didn't provide ukuran => keep existing records as-is
 
-    if (providedTitik) {
-      // remove existing titik rows (frontend intends to replace)
+      // Insert hanya jika ada data
+      if (data.detailsUkuran.length > 0) {
+        for (const [i, det] of data.detailsUkuran.entries()) {
+          // SAFE INSERT: Gunakan ?? 0 untuk angka dan || '' untuk string
+          await connection.query(
+            `INSERT INTO tsodtf_dtl 
+              (sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut, sdd_nama_barang)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [
+              nomor,
+              det.ukuran || "",
+              det.jumlah ?? 0,
+              det.harga ?? 0,
+              i + 1,
+              det.namaBarang || "", // Mencegah masuk sebagai NULL
+            ]
+          );
+        }
+      }
+    }
+
+    // 4️⃣ Replace DETAIL TITIK (tsodtf_dtl2)
+    if (Array.isArray(data.detailsTitik)) {
+      // Hapus data lama
       await connection.query("DELETE FROM tsodtf_dtl2 WHERE sdd2_nomor = ?", [
         nomor,
       ]);
-      for (const [i, det] of (data.detailsTitik || []).entries()) {
-        await connection.query(
-          `INSERT INTO tsodtf_dtl2 
-            (sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [nomor, det.keterangan, det.sizeCetak, det.panjang, det.lebar, i + 1]
-        );
-      }
-    } // else: keep existing titik rows
 
-    // 4️⃣ Reset SO lama jika diganti
+      // Insert hanya jika ada data
+      if (data.detailsTitik.length > 0) {
+        for (const [i, det] of data.detailsTitik.entries()) {
+          // SAFE INSERT: Pastikan panjang/lebar minimal 0 jika null
+          await connection.query(
+            `INSERT INTO tsodtf_dtl2 
+              (sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [
+              nomor,
+              det.keterangan || "",
+              det.sizeCetak || "",
+              det.panjang ?? 0,
+              det.lebar ?? 0,
+              i + 1,
+            ]
+          );
+        }
+      }
+    }
+
+    // 5️⃣ Update Flag SO dipakai/tidak (Logic SO Lama vs Baru)
     if (oldSo && oldSo !== newSo) {
-      // Reset flag dipakai
       await connection.query(
         `UPDATE tso_hdr SET so_dipakai_dtf = 'N' WHERE so_nomor = ?`,
         [oldSo]
       );
-
-      // PATCH: Reset relasi detail agar tidak nyangkut.
-      // Use NULL if column allows it; otherwise you can revert to empty string ''.
       await connection.query(
-        `UPDATE tso_dtl 
-          SET sod_sd_nomor = NULL
-        WHERE sod_so_nomor = ?
-          AND sod_custom = 'Y'`,
+        `UPDATE tso_dtl SET sod_sd_nomor = NULL WHERE sod_so_nomor = ? AND sod_custom = 'Y'`,
         [oldSo]
       );
     }
 
-    // 5️⃣ Set relasi & status SO baru
     if (newSo) {
-      // Update detail agar mengarah ke SODTF ini
       await connection.query(
-        `UPDATE tso_dtl
-          SET sod_kode = ?, 
-              sod_sd_nomor = ?
-          WHERE sod_so_nomor = ?
-            AND sod_custom = 'Y'`,
-        [nomor, newSo, newSo] // ← BENAR
+        `UPDATE tso_dtl SET sod_kode = ?, sod_sd_nomor = ? WHERE sod_so_nomor = ? AND sod_custom = 'Y'`,
+        [nomor, newSo, newSo]
       );
-
-      // Tandai SO dipakai oleh DTF
       await connection.query(
         `UPDATE tso_hdr SET so_dipakai_dtf = 'Y' WHERE so_nomor = ?`,
         [newSo]
@@ -368,13 +349,16 @@ const update = async (nomor, data, user) => {
 
     await connection.commit();
 
-    // 6️⃣ Return data lengkap
-    const updated = await findById(nomor);
-    return updated;
+    // 6️⃣ Return Data Terbaru
+    // Panggil findById DI LUAR try/catch ini atau buat koneksi baru di dalamnya,
+    // karena findById membuat koneksi sendiri.
+    // Cukup return object sederhana jika findById ribet, tapi sebaiknya panggil findById.
+    const updatedData = await findById(nomor);
+    return updatedData;
   } catch (err) {
     await connection.rollback();
     console.error("ERROR UPDATE SO DTF:", err);
-    throw new Error("Gagal memperbarui data SO DTF.");
+    throw new Error("Gagal menyimpan perubahan: " + err.message);
   } finally {
     connection.release();
   }
