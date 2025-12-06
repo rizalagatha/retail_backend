@@ -546,7 +546,7 @@ const getPriceProposalDetailsForSo = async (nomor) => {
         SELECT 
             d.phs_kode AS kode,
             b.brgd_barcode as barcode,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS Nama,
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
             d.phs_size AS ukuran,
             d.phs_jumlah AS jumlah,
             (d.phs_harga + IFNULL(t.tambahan, 0) + IFNULL(brd.bordir, 0) + IFNULL(dt.dtf, 0)) AS harga,

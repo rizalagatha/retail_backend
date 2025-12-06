@@ -25,6 +25,8 @@ router.get('/get-discount', verifyToken, checkInsertOrEditPermission(PRICE_PROPO
 router.get('/search-products-by-type', verifyToken, checkInsertOrEditPermission(PRICE_PROPOSAL_MENU_ID), priceProposalFormController.searchProductsByType);
 router.get('/search-additional-costs', verifyToken, checkInsertOrEditPermission(PRICE_PROPOSAL_MENU_ID), priceProposalFormController.searchAdditionalCosts);
 
+router.get('/edit-details/:nomor', verifyToken, checkInsertOrEditPermission(PRICE_PROPOSAL_MENU_ID), priceProposalFormController.getForEdit);
+
 // Hanya butuh hak 'insert' untuk mendapatkan nomor baru
 router.get('/next-number', verifyToken, checkPermission(PRICE_PROPOSAL_MENU_ID, 'insert'), priceProposalFormController.getNextNumber);
 
