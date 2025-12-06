@@ -84,6 +84,7 @@ const getSoDetailsForGrid = async (soNomor, user) => {
         SELECT 
             d.sod_kode AS kode, 
             IFNULL(b.brgd_barcode, '') AS barcode,
+            -- Gunakan nama dari master jika ada, jika tidak gunakan kode barang sebagai fallback
             IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), d.sod_kode) AS nama,
             d.sod_ukuran AS ukuran,
             IFNULL((
@@ -94,8 +95,9 @@ const getSoDetailsForGrid = async (soNomor, user) => {
             d.sod_jumlah AS qtyso
         FROM tso_dtl d
         JOIN tso_hdr h ON d.sod_so_nomor = h.so_nomor
-        INNER JOIN tbarangdc a ON a.brg_kode = d.sod_kode AND a.brg_logstok="Y"
-        INNER JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
+        -- UBAH INNER JOIN MENJADI LEFT JOIN DI SINI
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode AND a.brg_logstok="Y"
+        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
         WHERE h.so_aktif = "Y" AND h.so_nomor = ?
         AND d.sod_sd_nomor = ''
         ORDER BY d.sod_nourut
