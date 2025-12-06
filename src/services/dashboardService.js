@@ -2,6 +2,7 @@ const pool = require("../config/database");
 const { startOfMonth, endOfMonth, format, subDays } = require("date-fns");
 
 // Fungsi untuk mengambil statistik penjualan & transaksi hari ini
+// Fungsi untuk mengambil statistik penjualan, transaksi, DAN QTY hari ini
 const getTodayStats = async (user) => {
   const today = format(new Date(), "yyyy-MM-dd");
   let branchFilter = "AND LEFT(h.inv_nomor, 3) = ?";
@@ -15,17 +16,25 @@ const getTodayStats = async (user) => {
   const query = `
     SELECT
       COUNT(DISTINCT h.inv_nomor) AS todayTransactions,
+      
+      -- Hitung Total Nominal (Rupiah)
       SUM(
           (SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc + 
             (h.inv_ppn / 100 * ((SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc))
-          ) AS todaySales
+          ) AS todaySales,
+
+      -- [BARU] Hitung Total Qty Barang Terjual
+      IFNULL(SUM(
+        (SELECT SUM(dd.invd_jumlah) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor)
+      ), 0) AS todayQty
+
     FROM tinv_hdr h
     WHERE h.inv_sts_pro = 0 AND h.inv_tanggal BETWEEN ? AND ?
     ${branchFilter};
   `;
 
   const [rows] = await pool.query(query, params);
-  return rows[0];
+  return rows[0]; // { todayTransactions, todaySales, todayQty }
 };
 
 // Fungsi untuk mengambil data grafik penjualan
@@ -324,7 +333,6 @@ const getBranchPerformance = async (user) => {
   const tahun = new Date().getFullYear();
   const bulan = new Date().getMonth() + 1;
 
-  // Menggunakan logika yang sama dengan Monitoring Achievement (v_sales_harian & ttarget_kaosan)
   const query = `
         WITH MonthlySales AS (
             SELECT 
@@ -341,27 +349,47 @@ const getBranchPerformance = async (user) => {
             FROM kpi.ttarget_kaosan
             WHERE tahun = ? AND bulan = ?
             GROUP BY cabang
+        ),
+        MonthlyReturns AS (
+            SELECT 
+                LEFT(rh.rj_nomor, 3) AS cabang,
+                SUM(rd.rjd_jumlah * (rd.rjd_harga - rd.rjd_diskon)) AS total_retur
+            FROM trj_hdr rh
+            JOIN trj_dtl rd ON rd.rjd_nomor = rh.rj_nomor
+            WHERE YEAR(rh.rj_tanggal) = ? AND MONTH(rh.rj_tanggal) = ?
+            GROUP BY LEFT(rh.rj_nomor, 3)
         )
         SELECT 
             g.gdg_kode AS kode_cabang,
             g.gdg_nama AS nama_cabang,
-            COALESCE(ms.nominal, 0) AS nominal,
+            -- Hitung Netto: Omset Kotor - Retur
+            (COALESCE(ms.nominal, 0) - COALESCE(mr.total_retur, 0)) AS nominal,
             COALESCE(mt.target, 0) AS target,
             CASE 
-                WHEN COALESCE(mt.target, 0) > 0 THEN (COALESCE(ms.nominal, 0) / mt.target) * 100 
+                WHEN COALESCE(mt.target, 0) > 0 THEN 
+                    ((COALESCE(ms.nominal, 0) - COALESCE(mr.total_retur, 0)) / mt.target) * 100 
                 ELSE 0 
             END AS ach
         FROM tgudang g
         LEFT JOIN MonthlySales ms ON g.gdg_kode = ms.cabang
         LEFT JOIN MonthlyTargets mt ON g.gdg_kode = mt.cabang
-        WHERE g.gdg_dc = 0 AND g.gdg_kode <> 'KDC' -- Hanya toko fisik
-        ORDER BY ach DESC; -- Diurutkan dari pencapaian tertinggi
+        LEFT JOIN MonthlyReturns mr ON g.gdg_kode = mr.cabang
+        WHERE 
+            (g.gdg_dc = 0 OR g.gdg_kode = 'KPR') -- Tambahkan KPR secara eksplisit
+            AND g.gdg_kode <> 'KDC' -- Pastikan KDC tetap tidak ikut
+        ORDER BY ach DESC;
     `;
 
-  const params = [tahun, bulan, tahun, bulan];
-  const [rows] = await pool.query(query, params);
+  // Urutan parameter: Sales(2) -> Target(2) -> Returns(2)
+  const params = [tahun, bulan, tahun, bulan, tahun, bulan];
 
-  return rows;
+  try {
+    const [rows] = await pool.query(query, params);
+    return rows;
+  } catch (error) {
+    console.error("Error getBranchPerformance:", error);
+    throw error;
+  }
 };
 
 const getStagnantStockSummary = async (user) => {
@@ -513,17 +541,20 @@ const getPiutangPerInvoice = async (user) => {
 };
 
 const getTotalStock = async (user) => {
-  // Jika KDC -> total semua cabang
-  // Jika store -> hanya cabang user.cabang
+  // Jika KDC -> total semua cabang (Query Lama)
+  // Jika store -> hitung total stok + stok in/out hari ini
+
   let branchFilter = "AND m.mst_cab = ?";
   let params = [];
+
   if (user.cabang && user.cabang !== "KDC") {
     params.push(user.cabang);
   } else {
-    branchFilter = ""; // semua
+    branchFilter = ""; // KDC (semua)
   }
 
-  const query = `
+  // 1. Query Total Stok (Semua Waktu)
+  const totalQuery = `
     SELECT
       SUM(IFNULL(s.stok,0)) AS totalStock
     FROM (
@@ -538,8 +569,37 @@ const getTotalStock = async (user) => {
     ) s;
   `;
 
-  const [rows] = await pool.query(query, params);
-  return rows[0] || { totalStock: 0 };
+  // 2. Query Stok In/Out HARI INI (Khusus Store)
+  let todayIn = 0;
+  let todayOut = 0;
+
+  if (user.cabang !== "KDC") {
+    const today = format(new Date(), "yyyy-MM-dd");
+    const dailyQuery = `
+        SELECT 
+            SUM(mst_stok_in) as stokIn,
+            SUM(mst_stok_out) as stokOut
+        FROM tmasterstok m
+        WHERE m.mst_aktif = 'Y' 
+          AND m.mst_cab = ? 
+          AND m.mst_tanggal = ?
+    `;
+    // Gunakan params[0] karena params sudah berisi user.cabang
+    const [dailyRows] = await pool.query(dailyQuery, [user.cabang, today]);
+
+    if (dailyRows.length > 0) {
+      todayIn = Number(dailyRows[0].stokIn || 0);
+      todayOut = Number(dailyRows[0].stokOut || 0);
+    }
+  }
+
+  const [rows] = await pool.query(totalQuery, params);
+
+  return {
+    totalStock: Number(rows[0]?.totalStock || 0),
+    todayStokIn: todayIn, // Tambahan data
+    todayStokOut: todayOut, // Tambahan data
+  };
 };
 
 const getStockPerCabang = async () => {
@@ -568,6 +628,48 @@ const getStockPerCabang = async () => {
   return rows;
 };
 
+const getItemSalesTrend = async (user) => {
+  // Hanya KDC
+  if (user.cabang !== "KDC") return [];
+
+  const query = `
+    SELECT 
+        a.brg_kode AS kode,
+        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+        
+        -- Penjualan Bulan Ini (Running)
+        SUM(CASE WHEN DATE_FORMAT(h.inv_tanggal, '%Y-%m') = DATE_FORMAT(NOW(), '%Y-%m') 
+            THEN d.invd_jumlah ELSE 0 END) AS bulan_ini,
+            
+        -- Penjualan 1 Bulan Lalu
+        SUM(CASE WHEN DATE_FORMAT(h.inv_tanggal, '%Y-%m') = DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m') 
+            THEN d.invd_jumlah ELSE 0 END) AS bulan_min_1,
+
+        -- Penjualan 2 Bulan Lalu
+        SUM(CASE WHEN DATE_FORMAT(h.inv_tanggal, '%Y-%m') = DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 2 MONTH), '%Y-%m') 
+            THEN d.invd_jumlah ELSE 0 END) AS bulan_min_2,
+
+        -- Penjualan 3 Bulan Lalu
+        SUM(CASE WHEN DATE_FORMAT(h.inv_tanggal, '%Y-%m') = DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 3 MONTH), '%Y-%m') 
+            THEN d.invd_jumlah ELSE 0 END) AS bulan_min_3,
+
+        -- Total 4 Bulan
+        SUM(d.invd_jumlah) AS total_qty
+
+    FROM tinv_hdr h
+    JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+    JOIN tbarangdc a ON a.brg_kode = d.invd_kode
+    WHERE h.inv_sts_pro = 0 
+      AND h.inv_tanggal >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 3 MONTH), '%Y-%m-01') -- Ambil sejak 3 bulan lalu
+    GROUP BY a.brg_kode, nama
+    ORDER BY bulan_ini DESC -- Urutkan dari yang terlaris bulan ini
+    LIMIT 10; -- Ambil Top 10 saja agar tidak berat
+  `;
+
+  const [rows] = await pool.query(query);
+  return rows;
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -583,4 +685,5 @@ module.exports = {
   getPiutangPerInvoice,
   getTotalStock,
   getStockPerCabang,
+  getItemSalesTrend,
 };

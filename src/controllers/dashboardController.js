@@ -139,6 +139,15 @@ const getTotalStokPerCabang = async (req, res) => {
   }
 };
 
+const getItemSalesTrend = async (req, res) => {
+  try {
+    const data = await dashboardService.getItemSalesTrend(req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: "Gagal memuat trend barang." });
+  }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -154,4 +163,5 @@ module.exports = {
   getPiutangPerInvoice,
   getTotalStok,
   getTotalStokPerCabang,
+  getItemSalesTrend,
 };

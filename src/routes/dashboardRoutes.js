@@ -78,4 +78,6 @@ router.get(
   dashboardController.getTotalStokPerCabang
 );
 
+router.get('/item-sales-trend', verifyToken, dashboardController.getItemSalesTrend);
+
 module.exports = router;

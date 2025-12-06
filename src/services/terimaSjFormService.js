@@ -4,18 +4,36 @@ const { format } = require("date-fns"); // Pastikan import ini ada di paling ata
 /**
  * Menghasilkan nomor Terima SJ (TJ) baru.
  */
-const generateNewTjNumber = async (gudang, tanggal) => {
+const generateNewTjNumber = async (connection, gudang, tanggal) => {
+  // 1. DEBUG LOG: Cek apa yang masuk ke sini
+  console.log("--- DEBUG GENERATOR ---");
+  console.log("Gudang (Cabang):", gudang); // <--- INI KUNCINYA
+  console.log("Tanggal:", tanggal);
+
+  if (!gudang) {
+    throw new Error(
+      "FATAL: Kode Cabang (user.cabang) tidak terbaca/undefined!"
+    );
+  }
+
   const date = new Date(tanggal);
   const prefix = `${gudang}.TJ.${format(date, "yyMM")}.`;
 
-  const query = `
-        SELECT IFNULL(MAX(RIGHT(tj_nomor, 4)), 0) + 1 AS next_num
-        FROM ttrm_sj_hdr 
-        WHERE tj_nomor LIKE ?;
-    `;
-  const [rows] = await pool.query(query, [`${prefix}%`]);
-  const nextNumber = rows[0].next_num.toString().padStart(4, "0");
+  console.log("Mencari Prefix:", prefix); // Pastikan hasilnya misal: "KPR.TJ.2512."
 
+  // Query dengan CAST agar aman
+  const query = `
+        SELECT IFNULL(MAX(CAST(RIGHT(tj_nomor, 4) AS UNSIGNED)), 0) + 1 AS next_num
+        FROM ttrm_sj_hdr 
+        WHERE tj_nomor LIKE ?
+    `;
+
+  // Gunakan connection transaction yang dilempar
+  const [rows] = await connection.query(query, [`${prefix}%`]);
+
+  console.log("Next Num Raw:", rows[0].next_num); // Harusnya 9 jika data terakhir 8
+
+  const nextNumber = rows[0].next_num.toString().padStart(4, "0");
   return `${prefix}${nextNumber}`;
 };
 
@@ -58,6 +76,8 @@ const loadInitialData = async (nomorSj) => {
  * Menyimpan data Terima SJ.
  */
 const saveData = async (payload, user) => {
+  console.log("--- DEBUG SAVE DATA ---");
+  console.log("User Object:", user);
   const { header, items } = payload;
   const connection = await pool.getConnection();
 
@@ -76,58 +96,90 @@ const saveData = async (payload, user) => {
 
     // --- 1️⃣ BATAL TERIMA (jika semua jumlahTerima = 0) ---
     if (totalTerima === 0) {
-      // Clear nomor terima di SJ (TANPA NULL)
-      await connection.query(
-        `UPDATE tdc_sj_hdr 
-         SET sj_noterima = '' 
-         WHERE sj_nomor = ?`,
+      // Ambil nomor terima dulu dari SJ-nya
+      const [cekSjBatal] = await connection.query(
+        `SELECT sj_noterima FROM tdc_sj_hdr WHERE sj_nomor = ?`,
         [nomorSj]
       );
+      const tjNomorBatal = cekSjBatal[0]?.sj_noterima;
 
-      // Hapus detail penerimaan
-      await connection.query(
-        `DELETE d.* 
-         FROM ttrm_sj_dtl d
-         JOIN ttrm_sj_hdr h ON h.tj_nomor = d.tjd_nomor
-         WHERE h.tj_mt_nomor = ? AND h.tj_cab = ?`,
-        [nomorMinta, user.cabang]
-      );
-
-      // Hapus header penerimaan
-      await connection.query(
-        `DELETE FROM ttrm_sj_hdr 
-         WHERE tj_mt_nomor = ? AND tj_cab = ?`,
-        [nomorMinta, user.cabang]
-      );
+      if (tjNomorBatal) {
+        // Hapus detail
+        await connection.query(`DELETE FROM ttrm_sj_dtl WHERE tjd_nomor = ?`, [
+          tjNomorBatal,
+        ]);
+        // Hapus header
+        await connection.query(`DELETE FROM ttrm_sj_hdr WHERE tj_nomor = ?`, [
+          tjNomorBatal,
+        ]);
+        // Kosongkan link di SJ
+        await connection.query(
+          `UPDATE tdc_sj_hdr SET sj_noterima = '' WHERE sj_nomor = ?`,
+          [nomorSj]
+        );
+      }
 
       await connection.commit();
       return { message: "Penerimaan dibatalkan.", nomor: null };
     }
 
-    // --- 2️⃣ CEK APAKAH SUDAH PERNAH TERIMA (EDIT MODE) ---
-    const [cekExist] = await connection.query(
-      `SELECT tj_nomor, tj_idrec 
-       FROM ttrm_sj_hdr 
-       WHERE tj_mt_nomor = ? AND tj_cab = ?`,
-      [nomorMinta, user.cabang]
+    // --- 2️⃣ CEK STATUS SJ (EDIT ATAU BARU) ---
+    // Jangan cek ke ttrm_sj_hdr via mt_nomor (karena bisa kosong).
+    // Cek langsung ke tdc_sj_hdr: Apakah SJ ini sudah punya sj_noterima?
+
+    const [cekSj] = await connection.query(
+      `SELECT sj_noterima FROM tdc_sj_hdr WHERE sj_nomor = ?`,
+      [nomorSj]
     );
 
-    const isEdit = cekExist.length > 0;
+    if (cekSj.length === 0) {
+      throw new Error("Nomor Surat Jalan tidak valid / tidak ditemukan.");
+    }
+
+    const existingTjNomor = cekSj[0].sj_noterima;
+
+    // Jika sj_noterima ada isinya, berarti EDIT MODE. Jika kosong, INSERT MODE.
+    const isEdit = existingTjNomor && existingTjNomor.trim() !== "";
+
     let tjNomor = null;
     let idrec = null;
 
-    // --- 3️⃣ MODE EDIT ---
+    // --- 3️⃣ MENENTUKAN VARIABEL ---
     if (isEdit) {
-      tjNomor = cekExist[0].tj_nomor;
-      idrec = cekExist[0].tj_idrec;
+      tjNomor = existingTjNomor;
+
+      // Ambil idrec dari header terima yang sudah ada untuk konsistensi
+      const [oldHeader] = await connection.query(
+        `SELECT tj_idrec FROM ttrm_sj_hdr WHERE tj_nomor = ?`,
+        [tjNomor]
+      );
+
+      if (oldHeader.length > 0) {
+        idrec = oldHeader[0].tj_idrec;
+      } else {
+        // Fallback jika data header hilang tapi di SJ tercatat (kasus aneh data kotor)
+        const timestamp = format(new Date(), "yyyyMMddHHmmssSSS");
+        idrec = `${user.cabang}TJ${timestamp}`;
+      }
 
       // Hapus detail lama (akan replace)
       await connection.query(`DELETE FROM ttrm_sj_dtl WHERE tjd_nomor = ?`, [
         tjNomor,
       ]);
+
+      // Update header info (optional, misal user ubah tanggal terima)
+      await connection.query(
+        `UPDATE ttrm_sj_hdr SET tj_tanggal = ?, user_update = ?, date_update = NOW() WHERE tj_nomor = ?`,
+        [tanggalTerima, user.kode, tjNomor]
+      );
     } else {
       // --- 4️⃣ MODE INSERT BARU ---
-      tjNomor = await generateNewTjNumber(user.cabang, tanggalTerima);
+      // Panggil generator dengan connection
+      tjNomor = await generateNewTjNumber(
+        connection,
+        user.cabang,
+        tanggalTerima
+      );
 
       const timestamp = format(new Date(), "yyyyMMddHHmmssSSS");
       idrec = `${user.cabang}TJ${timestamp}`;
