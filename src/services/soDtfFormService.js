@@ -231,7 +231,10 @@ const update = async (nomor, data, user) => {
   try {
     const header = data.header;
     const userKode = user ? user.kode : null; // Handle jika user tidak terdeteksi
-
+    
+    // sebelum apapun, baca data lama
+    const existing = await findById(nomor);
+    
     // 1️⃣ Ambil nomor SO lama
     const [oldRows] = await connection.query(
       "SELECT sd_so_nomor FROM tsodtf_hdr WHERE sd_nomor = ?",
@@ -268,61 +271,61 @@ const update = async (nomor, data, user) => {
       nomor,
     ]);
 
-    // 3️⃣ Replace DETAIL UKURAN (tsodtf_dtl)
-    if (Array.isArray(data.detailsUkuran)) {
-      // Hapus data lama
-      await connection.query("DELETE FROM tsodtf_dtl WHERE sdd_nomor = ?", [
-        nomor,
-      ]);
+    // === PATCH START ===
+    // gunakan detail lama jika frontend tidak kirim
+    const detailsUkuran = Array.isArray(data.detailsUkuran)
+      ? data.detailsUkuran
+      : existing.detailsUkuran;
 
-      // Insert hanya jika ada data
-      if (data.detailsUkuran.length > 0) {
-        for (const [i, det] of data.detailsUkuran.entries()) {
-          // SAFE INSERT: Gunakan ?? 0 untuk angka dan || '' untuk string
-          await connection.query(
-            `INSERT INTO tsodtf_dtl 
-              (sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut, sdd_nama_barang)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [
-              nomor,
-              det.ukuran || "",
-              det.jumlah ?? 0,
-              det.harga ?? 0,
-              i + 1,
-              det.namaBarang || "", // Mencegah masuk sebagai NULL
-            ]
-          );
-        }
-      }
+    const detailsTitik = Array.isArray(data.detailsTitik)
+      ? data.detailsTitik
+      : existing.detailsTitik;
+
+    // Hapus ukuran lama
+    await connection.query("DELETE FROM tsodtf_dtl WHERE sdd_nomor = ?", [
+      nomor,
+    ]);
+
+    // Insert ukuran baru/lama
+    for (const [i, det] of detailsUkuran.entries()) {
+      await connection.query(
+        `INSERT INTO tsodtf_dtl 
+     (sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut, sdd_nama_barang)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          nomor,
+          det.ukuran || "",
+          det.jumlah ?? 0,
+          det.harga ?? 0,
+          i + 1,
+          det.namaBarang || "",
+        ]
+      );
     }
 
-    // 4️⃣ Replace DETAIL TITIK (tsodtf_dtl2)
-    if (Array.isArray(data.detailsTitik)) {
-      // Hapus data lama
-      await connection.query("DELETE FROM tsodtf_dtl2 WHERE sdd2_nomor = ?", [
-        nomor,
-      ]);
+    // Hapus titik lama
+    await connection.query("DELETE FROM tsodtf_dtl2 WHERE sdd2_nomor = ?", [
+      nomor,
+    ]);
 
-      // Insert hanya jika ada data
-      if (data.detailsTitik.length > 0) {
-        for (const [i, det] of data.detailsTitik.entries()) {
-          // SAFE INSERT: Pastikan panjang/lebar minimal 0 jika null
-          await connection.query(
-            `INSERT INTO tsodtf_dtl2 
-              (sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [
-              nomor,
-              det.keterangan || "",
-              det.sizeCetak || "",
-              det.panjang ?? 0,
-              det.lebar ?? 0,
-              i + 1,
-            ]
-          );
-        }
-      }
+    // Insert titik baru/lama
+    for (const [i, det] of detailsTitik.entries()) {
+      await connection.query(
+        `INSERT INTO tsodtf_dtl2
+     (sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          nomor,
+          det.keterangan || "",
+          det.sizeCetak || "",
+          det.panjang ?? 0,
+          det.lebar ?? 0,
+          i + 1,
+        ]
+      );
     }
+
+    // === PATCH END ===
 
     // 5️⃣ Update Flag SO dipakai/tidak (Logic SO Lama vs Baru)
     if (oldSo && oldSo !== newSo) {

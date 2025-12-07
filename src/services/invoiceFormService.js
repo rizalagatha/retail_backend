@@ -326,18 +326,25 @@ const loadForEdit = async (nomor, user) => {
         h.inv_mem_alamat,
         h.inv_mem_gender,
         h.inv_mem_usia,
-        h.inv_mem_referensi
+        h.inv_mem_referensi,
+
+        /* === PROMO INFO === */
+        p.pro_judul AS namaPromo
 
     FROM tinv_hdr h
     LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
     LEFT JOIN tcustomer_level l ON l.level_kode = h.inv_cus_level
     LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
     LEFT JOIN tgudang g ON g.gdg_kode = h.inv_cab
+    LEFT JOIN tpromo p ON p.pro_nomor = h.inv_pro_nomor -- Join ke promo
     WHERE h.inv_nomor = ?
   `;
   const [headerRows] = await pool.query(headerQuery, [nomor]);
   if (headerRows.length === 0) throw new Error("Data Invoice tidak ditemukan.");
   const header = headerRows[0];
+
+  header.nomorPromo = header.inv_pro_nomor || "";
+  header.namaPromo = header.namaPromo || "";
 
   const [fskCheckRows] = await pool.query(
     `SELECT 1 FROM tform_setorkasir_dtl WHERE fskd_inv = ? LIMIT 1`,
@@ -363,6 +370,7 @@ const loadForEdit = async (nomor, user) => {
 
         /* barcode */
         b.brgd_barcode AS barcode,
+        a.brg_ktgp AS kategori,
 
         /* stok gudang */
         IFNULL((
@@ -428,13 +436,17 @@ const loadForEdit = async (nomor, user) => {
   const items = rawItems.map((row) => {
     const hargaAsli = Number(row.invd_harga || 0);
     const diskRp = Number(row.invd_diskon || 0);
+    const discPersen = Number(row.invd_disc || 0);
     const qty = Number(row.invd_jumlah || 0);
 
-    // PROMO TIDAK KELIPATAN: item ke-2 dst tidak dapat diskon
+    // Tentukan harga setelah diskon (untuk perhitungan total per baris)
+    // Jika ada promo tidak kelipatan, cek prevDiscountCount
     let hargaSetelah = 0;
     if (row.lipat === "N" && row.prevDiscountCount > 0) {
-      hargaSetelah = hargaAsli; // harga normal
+      hargaSetelah = hargaAsli; // harga normal, diskon dibatalkan
     } else {
+      // Diskon per unit = (Diskon Rp Langsung + (Harga * Persen/100))
+      // Tapi biasanya di DB invd_diskon sudah fix Rp per unit
       hargaSetelah = applyRoundingPolicy(hargaAsli - diskRp);
     }
 
@@ -449,13 +461,17 @@ const loadForEdit = async (nomor, user) => {
       qtySO: row.qtySO,
 
       nama_barang: row.nama_barang,
+      kategori: row.kategori,
 
       hargaAsli,
       diskonRp: diskRp,
+      diskonPersen: discPersen,
       harga: hargaSetelah,
 
       total: applyRoundingPolicy(hargaSetelah * qty),
       nourut: row.invd_nourut,
+      
+      terhitungPromo: (diskRp > 0 || discPersen > 0) && !!header.inv_pro_nomor
     };
   });
 
