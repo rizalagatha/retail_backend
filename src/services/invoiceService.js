@@ -105,10 +105,14 @@ const getList = async (filters) => {
         COALESCE(SN.NominalPiutang,0) AS Piutang,
         
         -- Display Bayar (Hanya kosmetik di tabel)
-        (h.inv_bayar + COALESCE(DP.dpDipakai,0) - h.inv_pundiamal - h.inv_kembali) AS Bayar,
+        (h.inv_bayar - h.inv_pundiamal - h.inv_kembali) AS Bayar,
 
         -- Display Sisa (Hanya kosmetik di tabel, filter asli pakai EXISTS di bawah)
-        GREATEST(COALESCE(SN.NominalPiutang,0) + h.inv_ppn + h.inv_bkrm - (h.inv_bayar + COALESCE(DP.dpDipakai,0) - h.inv_pundiamal - h.inv_kembali), 0) AS SisaPiutang,
+        GREATEST(
+           (COALESCE(SN.NominalPiutang,0) + h.inv_ppn + h.inv_bkrm) - 
+           (h.inv_bayar - h.inv_pundiamal - h.inv_kembali), 
+           0
+        ) AS SisaPiutang,
 
         h.inv_cus_kode AS Kdcus,
         c.cus_nama AS Nama,
