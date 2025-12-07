@@ -1,4 +1,5 @@
 const pool = require("../config/database");
+const { format, subMonths } = require("date-fns");
 
 const getRealTimeStock = async (filters) => {
   const { gudang, kodeBarang, jenisStok, tampilkanKosong, tanggal } = filters;
@@ -100,17 +101,46 @@ const getLowStock = async (filters) => {
   const connection = await pool.getConnection();
 
   try {
-    let params = [new Date(), gudang];
-    let gudangFilter = `m.mst_cab = ?`;
+    // Hitung tanggal 3 bulan ke belakang
+    const threeMonthsAgo = format(subMonths(new Date(), 3), "yyyy-MM-dd");
+    const today = format(new Date(), "yyyy-MM-dd");
 
-    // Query ini lebih sederhana karena hanya butuh NAMA, TOTAL, dan Buffer
+    // Params urutan:
+    // 1. Tanggal Stok (Today)
+    // 2. Cabang Stok
+    // 3. Tanggal Awal Sales (3 Bulan lalu)
+    // 4. Cabang Sales (Untuk filter penjualan cabang tsb)
+    let params = [today, gudang, threeMonthsAgo];
+
+    let gudangFilter = `m.mst_cab = ?`;
+    let salesBranchFilter = `AND LEFT(h.inv_nomor, 3) = ?`;
+
+    // Jika KDC (Pusat), biasanya tidak ada filter penjualan per cabang (Global)
+    // Tapi jika dashboard KDC ingin melihat low stock GUDANG KDC, sesuaikan logika ini.
+    // Asumsi: Ini dashboard Store/Cabang.
+    if (gudang === "KDC") {
+      // Jika KDC ingin lihat global, sesuaikan filternya
+      // Disini saya biarkan KDC melihat stok dia sendiri
+      params.push(gudang);
+    } else {
+      params.push(gudang);
+    }
+
     const query = `
             SELECT
                 a.brg_kode AS KODE,
+                (SELECT brgd_barcode FROM tbarangdc_dtl WHERE brgd_kode = a.brg_kode LIMIT 1) AS BARCODE,
                 TRIM(CONCAT_WS(' ', a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna)) AS NAMA,
-                SUM(s.stok) AS TOTAL,
-                IFNULL((SELECT SUM(brgd_min) FROM tbarangdc_dtl b WHERE b.brgd_kode = a.brg_kode), 0) AS Buffer
+                
+                -- Stok Saat Ini
+                IFNULL(SUM(s.stok), 0) AS TOTAL,
+                
+                -- Hitung Rata-rata Penjualan 3 Bulan (Total Qty / 3)
+                IFNULL(sales.total_qty, 0) / 3 AS AVG_SALE
+
             FROM tbarangdc a
+            
+            -- 1. JOIN KE STOK (Sama seperti sebelumnya)
             LEFT JOIN (
                 SELECT 
                     m.mst_brg_kode, 
@@ -123,10 +153,30 @@ const getLowStock = async (filters) => {
                 WHERE m.mst_aktif = 'Y' AND m.mst_tanggal <= ? AND ${gudangFilter}
                 GROUP BY m.mst_brg_kode
             ) s ON a.brg_kode = s.mst_brg_kode
+
+            -- 2. JOIN KE PENJUALAN (3 Bulan Terakhir)
+            LEFT JOIN (
+                SELECT 
+                    d.invd_kode,
+                    SUM(d.invd_jumlah) as total_qty
+                FROM tinv_hdr h
+                JOIN tinv_dtl d ON h.inv_nomor = d.invd_inv_nomor
+                WHERE h.inv_sts_pro = 0 
+                  AND h.inv_tanggal >= ? -- Filter Tanggal 3 Bulan Lalu
+                  ${salesBranchFilter}   -- Filter Cabang
+                GROUP BY d.invd_kode
+            ) sales ON a.brg_kode = sales.invd_kode
+
             WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
             GROUP BY a.brg_kode, NAMA
-            HAVING TOTAL < Buffer AND Buffer > 0 -- Kondisi stok menipis langsung di sini
-            ORDER BY NAMA;
+            
+            -- KONDISI: Stok Habis (<=0) DAN Punya Penjualan (>0)
+            -- Jadi barang mati (tidak laku) tidak akan muncul meskipun stok 0
+            HAVING TOTAL <= 0 AND AVG_SALE > 0
+            
+            -- URUTKAN: Prioritas barang yang paling laku (Fast Moving)
+            ORDER BY AVG_SALE DESC
+            LIMIT 20;
         `;
 
     const [rows] = await connection.query(query, params);
