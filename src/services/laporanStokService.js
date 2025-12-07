@@ -101,26 +101,15 @@ const getLowStock = async (filters) => {
   const connection = await pool.getConnection();
 
   try {
-    // Hitung tanggal 3 bulan ke belakang
     const threeMonthsAgo = format(subMonths(new Date(), 3), "yyyy-MM-dd");
     const today = format(new Date(), "yyyy-MM-dd");
 
-    // Params urutan:
-    // 1. Tanggal Stok (Today)
-    // 2. Cabang Stok
-    // 3. Tanggal Awal Sales (3 Bulan lalu)
-    // 4. Cabang Sales (Untuk filter penjualan cabang tsb)
     let params = [today, gudang, threeMonthsAgo];
 
     let gudangFilter = `m.mst_cab = ?`;
-    let salesBranchFilter = `AND LEFT(h.inv_nomor, 3) = ?`;
+    let salesBranchFilter = `AND h.inv_cab = ?`;
 
-    // Jika KDC (Pusat), biasanya tidak ada filter penjualan per cabang (Global)
-    // Tapi jika dashboard KDC ingin melihat low stock GUDANG KDC, sesuaikan logika ini.
-    // Asumsi: Ini dashboard Store/Cabang.
     if (gudang === "KDC") {
-      // Jika KDC ingin lihat global, sesuaikan filternya
-      // Disini saya biarkan KDC melihat stok dia sendiri
       params.push(gudang);
     } else {
       params.push(gudang);
@@ -129,52 +118,58 @@ const getLowStock = async (filters) => {
     const query = `
             SELECT
                 a.brg_kode AS KODE,
-                (SELECT brgd_barcode FROM tbarangdc_dtl WHERE brgd_kode = a.brg_kode LIMIT 1) AS BARCODE,
+                b.brgd_barcode AS BARCODE,
+                b.brgd_ukuran AS UKURAN, -- [BARU] Ambil Ukuran
+                
                 TRIM(CONCAT_WS(' ', a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna)) AS NAMA,
                 
-                -- Stok Saat Ini
-                IFNULL(SUM(s.stok), 0) AS TOTAL,
+                -- Stok Per Ukuran
+                IFNULL(s.stok, 0) AS TOTAL,
                 
-                -- Hitung Rata-rata Penjualan 3 Bulan (Total Qty / 3)
+                -- Buffer (Min Stok) per Ukuran
+                IFNULL(b.brgd_min, 0) AS Buffer,
+                
+                -- Rata-rata Penjualan Per Ukuran
                 IFNULL(sales.total_qty, 0) / 3 AS AVG_SALE
 
             FROM tbarangdc a
+            -- [PENTING] Join ke tabel detail barang untuk memecah per ukuran
+            JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
             
-            -- 1. JOIN KE STOK (Sama seperti sebelumnya)
+            -- 1. JOIN KE STOK (Group by Kode + Ukuran)
             LEFT JOIN (
                 SELECT 
                     m.mst_brg_kode, 
+                    m.mst_ukuran, -- [BARU] Grouping Ukuran
                     SUM(m.mst_stok_in - m.mst_stok_out) as stok
                 FROM (
-                    SELECT mst_brg_kode, mst_stok_in, mst_stok_out, mst_cab, mst_tanggal, mst_aktif FROM tmasterstok
+                    SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_tanggal, mst_aktif FROM tmasterstok
                     UNION ALL
-                    SELECT mst_brg_kode, mst_stok_in, mst_stok_out, mst_cab, mst_tanggal, mst_aktif FROM tmasterstokso
+                    SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_tanggal, mst_aktif FROM tmasterstokso
                 ) m
                 WHERE m.mst_aktif = 'Y' AND m.mst_tanggal <= ? AND ${gudangFilter}
-                GROUP BY m.mst_brg_kode
-            ) s ON a.brg_kode = s.mst_brg_kode
+                GROUP BY m.mst_brg_kode, m.mst_ukuran
+            ) s ON a.brg_kode = s.mst_brg_kode AND b.brgd_ukuran = s.mst_ukuran -- [BARU] Join Ukuran
 
-            -- 2. JOIN KE PENJUALAN (3 Bulan Terakhir)
+            -- 2. JOIN KE PENJUALAN (Group by Kode + Ukuran)
             LEFT JOIN (
                 SELECT 
                     d.invd_kode,
+                    d.invd_ukuran, -- [BARU] Grouping Ukuran
                     SUM(d.invd_jumlah) as total_qty
                 FROM tinv_hdr h
                 JOIN tinv_dtl d ON h.inv_nomor = d.invd_inv_nomor
                 WHERE h.inv_sts_pro = 0 
-                  AND h.inv_tanggal >= ? -- Filter Tanggal 3 Bulan Lalu
-                  ${salesBranchFilter}   -- Filter Cabang
-                GROUP BY d.invd_kode
-            ) sales ON a.brg_kode = sales.invd_kode
+                  AND h.inv_tanggal >= ? 
+                  ${salesBranchFilter}
+                GROUP BY d.invd_kode, d.invd_ukuran
+            ) sales ON a.brg_kode = sales.invd_kode AND b.brgd_ukuran = sales.invd_ukuran -- [BARU] Join Ukuran
 
             WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
-            GROUP BY a.brg_kode, NAMA
             
-            -- KONDISI: Stok Habis (<=0) DAN Punya Penjualan (>0)
-            -- Jadi barang mati (tidak laku) tidak akan muncul meskipun stok 0
+            -- Filter hanya yang stoknya habis DAN laku
             HAVING TOTAL <= 0 AND AVG_SALE > 0
             
-            -- URUTKAN: Prioritas barang yang paling laku (Fast Moving)
             ORDER BY AVG_SALE DESC
             LIMIT 20;
         `;
