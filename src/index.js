@@ -184,7 +184,7 @@ requiredDirs.forEach((dir) => {
 // Menggunakan Rute
 app.use("/api/auth", clientCertAuth, authRoutes);
 app.use("/api/dashboard", clientCertAuth, dashboardRoutes);
-app.use("/api/health", clientCertAuth, healthRoutes);
+app.use("/api/health-check", clientCertAuth, healthRoutes);
 app.use("/api/activity", clientCertAuth, userActivityRoutes);
 app.use("/api/sales-counters", clientCertAuth, salesCounterRoutes);
 app.use("/api/history-updates", clientCertAuth, historyUpdateRoutes);

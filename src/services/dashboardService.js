@@ -9,32 +9,65 @@ const getTodayStats = async (user) => {
   let params = [today, today, user.cabang];
 
   if (user.cabang === "KDC") {
-    branchFilter = ""; // KDC bisa melihat semua
+    branchFilter = ""; 
     params = [today, today];
   }
+
+  // Pola REGEX yang sama untuk mengecualikan Custom Order
+  const excludePattern = "^K[0-9]{2}\\.(SD|BR|PM|DP|TG|PL|SB)\\.";
 
   const query = `
     SELECT
       COUNT(DISTINCT h.inv_nomor) AS todayTransactions,
       
-      -- Hitung Total Nominal (Rupiah)
+      -- 1. Total Nominal (UANG): Tetap hitung semua (termasuk Jasa & Custom) karena ini omzet
       SUM(
-          (SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc + 
-            (h.inv_ppn / 100 * ((SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc))
-          ) AS todaySales,
+          (SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) 
+           FROM tinv_dtl dd 
+           WHERE dd.invd_inv_nomor = h.inv_nomor) 
+          - h.inv_disc 
+          + (h.inv_ppn / 100 * (
+              (SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) 
+               FROM tinv_dtl dd 
+               WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc
+            ))
+      ) AS todaySales,
 
-      -- [BARU] Hitung Total Qty Barang Terjual
+      -- 2. Total Qty (BARANG): Filter Jasa & Custom agar yang terhitung hanya Kaos Retail
       IFNULL(SUM(
-        (SELECT SUM(dd.invd_jumlah) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor)
+        (
+          SELECT SUM(dd.invd_jumlah) 
+          FROM tinv_dtl dd 
+          WHERE dd.invd_inv_nomor = h.inv_nomor
+            AND dd.invd_kode NOT LIKE 'JASA%'  -- Filter Jasa
+            AND dd.invd_kode NOT REGEXP ?      -- Filter Custom SO DTF
+        )
       ), 0) AS todayQty
 
     FROM tinv_hdr h
-    WHERE h.inv_sts_pro = 0 AND h.inv_tanggal BETWEEN ? AND ?
-    ${branchFilter};
+    WHERE h.inv_sts_pro = 0 
+      AND h.inv_tanggal BETWEEN ? AND ?
+      ${branchFilter};
   `;
 
-  const [rows] = await pool.query(query, params);
-  return rows[0]; // { todayTransactions, todaySales, todayQty }
+  // Masukkan excludePattern ke dalam params. 
+  // Urutan params query: [RegexPattern, DateStart, DateEnd, (BranchCode)]
+  // Kita perlu memodifikasi array params agar Regex Pattern masuk di posisi yang benar (sebelum branch filter)
+  
+  // Karena struktur query di atas kompleks (subquery di dalam select), 
+  // lebih aman kita masukkan parameter secara eksplisit:
+  
+  let finalParams;
+  if (user.cabang === "KDC") {
+      // Params: [RegexPattern, Today, Today]
+      finalParams = [excludePattern, today, today];
+  } else {
+      // Params: [RegexPattern, Today, Today, Cabang]
+      finalParams = [excludePattern, today, today, user.cabang];
+  }
+
+  const [rows] = await pool.query(query, finalParams);
+  return rows[0]; 
 };
 
 // Fungsi untuk mengambil data grafik penjualan
@@ -541,51 +574,60 @@ const getPiutangPerInvoice = async (user) => {
 };
 
 const getTotalStock = async (user) => {
-  // Jika KDC -> total semua cabang (Query Lama)
-  // Jika store -> hitung total stok + stok in/out hari ini
-
   let branchFilter = "AND m.mst_cab = ?";
   let params = [];
 
   if (user.cabang && user.cabang !== "KDC") {
     params.push(user.cabang);
   } else {
-    branchFilter = ""; // KDC (semua)
+    branchFilter = ""; // KDC melihat semua
   }
 
-  // 1. Query Total Stok (Semua Waktu)
+  // Pola REGEX untuk mengecualikan Custom Order (SO DTF)
+  // Mencocokkan: K + 2 angka + titik + (Kode Jenis) + titik
+  // Contoh: K01.SD.2023..., K11.BR.2023...
+  const excludePattern = "^K[0-9]{2}\\.(SD|BR|PM|DP|TG|PL|SB)\\.";
+
+  // --- 1. Query Total Stok (Semua Waktu) ---
   const totalQuery = `
     SELECT
       SUM(IFNULL(s.stok,0)) AS totalStock
     FROM (
-      SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_in - mst_stok_out) AS stok, mst_cab
+      SELECT m.mst_brg_kode, m.mst_ukuran, SUM(m.mst_stok_in - m.mst_stok_out) AS stok
       FROM (
-        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_tanggal, mst_aktif FROM tmasterstok
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_aktif FROM tmasterstok
         UNION ALL
-        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_tanggal, mst_aktif FROM tmasterstokso
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_aktif FROM tmasterstokso
       ) m
-      WHERE m.mst_aktif = 'Y' ${branchFilter}
-      GROUP BY mst_brg_kode, mst_ukuran, mst_cab
+      WHERE m.mst_aktif = 'Y' 
+        ${branchFilter}
+        AND m.mst_brg_kode NOT LIKE 'JASA%' -- Exclude Jasa
+        AND m.mst_brg_kode NOT REGEXP ?     -- Exclude Custom Order (SO DTF)
+      GROUP BY m.mst_brg_kode, m.mst_ukuran, m.mst_cab
     ) s;
   `;
 
-  // 2. Query Stok In/Out HARI INI (Khusus Store)
+  // --- 2. Query Stok In/Out HARI INI (Khusus Store) ---
   let todayIn = 0;
   let todayOut = 0;
 
   if (user.cabang !== "KDC") {
     const today = format(new Date(), "yyyy-MM-dd");
+    
     const dailyQuery = `
         SELECT 
-            SUM(mst_stok_in) as stokIn,
-            SUM(mst_stok_out) as stokOut
+            SUM(m.mst_stok_in) as stokIn,
+            SUM(m.mst_stok_out) as stokOut
         FROM tmasterstok m
         WHERE m.mst_aktif = 'Y' 
           AND m.mst_cab = ? 
           AND m.mst_tanggal = ?
+          AND m.mst_brg_kode NOT LIKE 'JASA%' 
+          AND m.mst_brg_kode NOT REGEXP ?
     `;
-    // Gunakan params[0] karena params sudah berisi user.cabang
-    const [dailyRows] = await pool.query(dailyQuery, [user.cabang, today]);
+    
+    // Params: Cabang, Tanggal, Regex Pattern
+    const [dailyRows] = await pool.query(dailyQuery, [user.cabang, today, excludePattern]);
 
     if (dailyRows.length > 0) {
       todayIn = Number(dailyRows[0].stokIn || 0);
@@ -593,12 +635,14 @@ const getTotalStock = async (user) => {
     }
   }
 
-  const [rows] = await pool.query(totalQuery, params);
+  // Params untuk Total Query: [Cabang (jika ada), Regex Pattern]
+  const totalQueryParams = [...params, excludePattern];
+  const [rows] = await pool.query(totalQuery, totalQueryParams);
 
   return {
     totalStock: Number(rows[0]?.totalStock || 0),
-    todayStokIn: todayIn, // Tambahan data
-    todayStokOut: todayOut, // Tambahan data
+    todayStokIn: todayIn,
+    todayStokOut: todayOut,
   };
 };
 

@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const controller = require('../controllers/healthController');
+const healthController = require('../controllers/healthController');
 
-// Rute ini tidak perlu token, bisa diakses siapa saja
-router.get('/', controller.check);
+// Route GET / (nanti akan dipasang di prefix /health-check)
+router.get('/', healthController.checkHealth);
 
 module.exports = router;

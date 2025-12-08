@@ -1,12 +1,13 @@
-const service = require("../services/healthService");
+// backend/src/controllers/healthController.js
 
-const check = async (req, res) => {
-  try {
-    const result = await service.checkHealth();
-    res.status(200).json(result);
-  } catch (error) {
-    res.status(503).json({ status: "error", message: "Service unavailable" });
-  }
+const checkHealth = async (req, res) => {
+    // Tidak perlu query DB, cukup return 200 OK
+    // Ini membuat respon sangat cepat (< 10ms) untuk mengukur latency jaringan
+    res.status(200).json({ 
+        status: 'ok', 
+        message: 'Server is running', 
+        timestamp: new Date() 
+    });
 };
 
-module.exports = { check };
+module.exports = { checkHealth };
