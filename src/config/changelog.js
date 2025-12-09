@@ -1,6 +1,9 @@
 // Format: "Nomor Versi": ["List Perubahan"]
 const changelogs = {
   "1.0.7": [
+    "UI: Penambahan Selisih Qty pada Proses Stok Opname",
+  ],
+  "1.0.7": [
     "Perbaikan: Total pada Proses Stok Opname",
   ],
   "1.0.6": [

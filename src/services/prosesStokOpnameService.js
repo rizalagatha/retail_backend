@@ -12,6 +12,10 @@ const getList = async (filters) => {
       h.sop_nomor AS nomor,
       h.sop_tanggal AS tanggal,
       h.sop_transfer AS transfer,
+      (SELECT SUM(d.sopd_selisih) 
+        FROM tsop_dtl2 d 
+      WHERE d.sopd_nomor = h.sop_nomor
+      ) AS selisih_qty,
       (SELECT SUM(d.sopd_selisih * d.sopd_hpp) FROM tsop_dtl2 d WHERE d.sopd_nomor = h.sop_nomor) AS nominal,
       h.sop_ket AS keterangan 
     FROM tsop_hdr h
@@ -25,17 +29,17 @@ const getList = async (filters) => {
 };
 
 const validateTransferPin = async (code, pin) => {
-    const numericCode = parseFloat(code);
-    const numericPin = parseFloat(pin);
-    if (isNaN(numericCode) || isNaN(numericPin)) {
-        throw new Error('Kode atau PIN harus berupa angka.');
-    }
-    // Contoh formula, bisa disesuaikan
-    const expectedPin = (numericCode * 15) + (40 * 2); 
-    if (numericPin !== expectedPin) {
-        throw new Error('Otorisasi salah.');
-    }
-    return { success: true };
+  const numericCode = parseFloat(code);
+  const numericPin = parseFloat(pin);
+  if (isNaN(numericCode) || isNaN(numericPin)) {
+    throw new Error("Kode atau PIN harus berupa angka.");
+  }
+  // Contoh formula, bisa disesuaikan
+  const expectedPin = numericCode * 15 + 40 * 2;
+  if (numericPin !== expectedPin) {
+    throw new Error("Otorisasi salah.");
+  }
+  return { success: true };
 };
 
 /**
@@ -164,10 +168,10 @@ const getDetails = async (nomor) => {
  * Mengambil detail item stok opname untuk keperluan export.
  */
 const getExportDetails = async (filters) => {
-    const { startDate, endDate, cabang } = filters;
-    
-    // Query ini adalah terjemahan dari SQLDetail di Delphi
-    const query = `
+  const { startDate, endDate, cabang } = filters;
+
+  // Query ini adalah terjemahan dari SQLDetail di Delphi
+  const query = `
       SELECT 
         d.sopd_nomor AS 'Nomor SOP',
         h.sop_tanggal AS 'Tanggal',
@@ -187,8 +191,8 @@ const getExportDetails = async (filters) => {
         AND h.sop_cab = ?
       ORDER BY d.sopd_nomor, a.brg_nama, d.sopd_ukuran
     `;
-    const [rows] = await pool.query(query, [startDate, endDate, cabang]);
-    return rows;
+  const [rows] = await pool.query(query, [startDate, endDate, cabang]);
+  return rows;
 };
 
 module.exports = {
