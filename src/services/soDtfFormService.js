@@ -113,19 +113,27 @@ const create = async (data, user) => {
     // Dapatkan nomor baru
     const newNomor = await generateNewSoNumber(connection, data, user);
 
+    // 2. Generate IDREC Header (Penting untuk sistem legacy/trigger)
+    // Format: CAB + 'SD' + Timestamp (yyyyMMddHHmmssSSS)
+    const headerIdRec = `${user.cabang}SD${format(
+      new Date(),
+      "yyyyMMddHHmmssSSS"
+    )}`;
+
     const header = data.header;
 
     // Insert header
     const headerQuery = `
       INSERT INTO tsodtf_hdr (
-        sd_nomor, sd_tanggal, sd_datekerja, sd_dateline,
+        sd_idrec, sd_nomor, sd_tanggal, sd_datekerja, sd_dateline,
         sd_cus_kode, sd_customer, sd_sal_kode, sd_jo_kode,
         sd_so_nomor, sd_nama, sd_kain, sd_finishing,
         sd_desain, sd_workshop, sd_ket, sd_cab, user_create, date_create
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
     `;
     await connection.query(headerQuery, [
+      headerIdRec,
       newNomor,
       header.tanggal,
       header.tglPengerjaan,
@@ -145,13 +153,19 @@ const create = async (data, user) => {
       user.kode,
     ]);
 
+    // 4. Insert Detail Ukuran (Tambahkan sdd_idrec)
+    // Format IDREC Detail: CAB + 'DT' + Timestamp + Index (agar unik per baris)
+    const timestamp = format(new Date(), "yyyyMMddHHmmssSSS");
+
     // Insert detail ukuran
     for (const [index, detail] of data.detailsUkuran.entries()) {
+      const detailIdRec = `${user.cabang}DT${timestamp}${index}`;
       await connection.query(
         `INSERT INTO tsodtf_dtl 
-          (sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut, sdd_nama_barang)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+          (sdd_idrec, sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut, sdd_nama_barang)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
+          detailIdRec,
           newNomor,
           detail.ukuran,
           detail.jumlah ?? 0,
@@ -164,11 +178,13 @@ const create = async (data, user) => {
 
     // Insert detail titik
     for (const [index, detail] of data.detailsTitik.entries()) {
+      const detailTitikIdRec = `${user.cabang}DT2${timestamp}${index}`;
       await connection.query(
         `INSERT INTO tsodtf_dtl2
-          (sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+          (sdd2_idrec, sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
+          detailTitikIdRec,
           newNomor,
           detail.keterangan,
           detail.sizeCetak,
@@ -231,10 +247,10 @@ const update = async (nomor, data, user) => {
   try {
     const header = data.header;
     const userKode = user ? user.kode : null; // Handle jika user tidak terdeteksi
-    
+
     // sebelum apapun, baca data lama
     const existing = await findById(nomor);
-    
+
     // 1️⃣ Ambil nomor SO lama
     const [oldRows] = await connection.query(
       "SELECT sd_so_nomor FROM tsodtf_hdr WHERE sd_nomor = ?",
@@ -288,11 +304,13 @@ const update = async (nomor, data, user) => {
 
     // Insert ukuran baru/lama
     for (const [i, det] of detailsUkuran.entries()) {
+      const detailIdRec = `${user.cabang}DT${timestamp}${i}`;
       await connection.query(
         `INSERT INTO tsodtf_dtl 
-     (sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut, sdd_nama_barang)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+     (sdd_idrec, sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut, sdd_nama_barang)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
+          detailIdRec,
           nomor,
           det.ukuran || "",
           det.jumlah ?? 0,
@@ -310,11 +328,13 @@ const update = async (nomor, data, user) => {
 
     // Insert titik baru/lama
     for (const [i, det] of detailsTitik.entries()) {
+      const detailTitikIdRec = `${user.cabang}DT2${timestamp}${i}`;
       await connection.query(
         `INSERT INTO tsodtf_dtl2
-     (sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut)
+     (sdd2_idrec, sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut)
      VALUES (?, ?, ?, ?, ?, ?)`,
         [
+          detailTitikIdRec,
           nomor,
           det.keterangan || "",
           det.sizeCetak || "",

@@ -1,9 +1,19 @@
 const changelogs = {
-  "1.1.2": {
+  "1.1.3": {
     date: "2025-12-11",
     changes: [
-      "Perbaikan: Penambahan Kolom Stok Pesanan pada Invoice",
+      {
+        title: "Perbaikan:",
+        items: [
+          "Fix Changelog dialog",
+          "Fix Bug Detail Titik dan Ukuran SO DTF hilang (bismillah work ya Allah plissss)",
+        ],
+      },
     ],
+  },
+  "1.1.2": {
+    date: "2025-12-11",
+    changes: ["Perbaikan: Penambahan Kolom Stok Pesanan pada Invoice"],
   },
   "1.1.1": {
     date: "2025-12-11",

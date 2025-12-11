@@ -1,18 +1,26 @@
 const packageJson = require('../../package.json');
-const changelogs = require('../config/changelog'); // Import file tadi
+// Pastikan path ini benar mengarah ke file changelog.js Anda
+const changelogs = require('../config/changelog'); 
 
 const checkHealth = async (req, res) => {
     const currentVer = packageJson.version;
     
-    // Ambil deskripsi perubahan untuk versi yang sedang aktif di server
-    const currentChangelog = changelogs[currentVer] || ["Perbaikan sistem dan peningkatan performa."];
+    // [FIX] Ambil property .changes karena struktur data sekarang { date: '...', changes: [...] }
+    // Gunakan optional chaining (?.) untuk keamanan jika versi tidak ditemukan
+    const versionData = changelogs[currentVer];
+    const currentChangelog = versionData?.changes || ["Perbaikan sistem dan peningkatan performa."];
 
     res.status(200).json({ 
         status: 'ok', 
         message: 'Server is running', 
         version: currentVer,
-        // Kirim data changelog ke frontend
+        
+        // Kirim array changes ke frontend
         changes: currentChangelog, 
+        
+        // Opsional: Kirim tanggal update juga jika mau ditampilkan
+        date: versionData?.date || '-',
+        
         timestamp: new Date() 
     });
 };
