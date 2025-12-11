@@ -82,4 +82,6 @@ router.get('/item-sales-trend', verifyToken, dashboardController.getItemSalesTre
 
 router.get('/changelog', verifyToken, dashboardController.getAppChangelog);
 
+router.get("/stock-alerts", verifyToken, dashboardController.getStockAlerts);
+
 module.exports = router;

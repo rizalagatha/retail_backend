@@ -555,8 +555,7 @@ const getKartuDetails = async (filters) => {
           ELSE 'Lain-lain'
       END AS transaksi
     FROM tmasterstok m
-    WHERE m.mst_aktif = 'Y'
-      AND MID(m.mst_noreferensi,5,3) <> 'SOP'
+    WHERE MID(m.mst_noreferensi,5,3) <> 'SOP'
       AND m.mst_cab = ?
       AND m.mst_tanggal BETWEEN ? AND ?
       AND CONCAT(m.mst_brg_kode, m.mst_ukuran) = ?

@@ -1,10 +1,30 @@
 const changelogs = {
+  "1.1.1": {
+    date: "2025-12-11",
+    changes: [
+      "UI: Penambahan Varian Grafik Penjualan pada Dashboard",
+      {
+        title: "Fitur Baru:",
+        items: [
+          "Alert pengingat SJ belum diterima dan Mutasi Antar Store belum diterima",
+          "Laporan Kontribusi Omset untuk user KDC",
+        ],
+      },
+      {
+        title: "Perbaikan:",
+        items: [
+          "Laporan Kartu Stok: Perbaikan ketidaksesuaian saldo akhir dengan detail",
+          "Changelog : Perbaikan pada dialog changelog yang tidak muncul",
+        ],
+      },
+    ],
+  },
   "1.1.0": {
     date: "2025-12-11",
     changes: [
       "Modul Baru: Store Online untuk integrasi dengan toko online",
       "Fitur Baru: Changelog aplikasi (dapat diklik pada footer versi aplikasi)",
-      
+
       // [MODIFIKASI] Gunakan Object untuk List Bersarang
       {
         title: "Perbaikan:",
@@ -14,8 +34,8 @@ const changelogs = {
           "Laporan Stok Real-time: Penambahan filter untuk menampilkan hanya ukuran dengan stok (tidak nol)",
           "Laporan Kartu Stok: Penambahan kolom 'No. Pesanan' pada semua transaksi dari SO",
           "Laporan Kartu Stok: Penambahan tipe transaksi Mutasi In dari Pesanan yang sempat menghilang",
-        ]
-      }
+        ],
+      },
     ],
   },
   "1.0.9": {

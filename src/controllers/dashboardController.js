@@ -180,6 +180,16 @@ const getAppChangelog = async (req, res) => {
   }
 };
 
+const getStockAlerts = async (req, res) => {
+  try {
+    const data = await dashboardService.getStockAlerts(req.user);
+    res.json(data);
+  } catch (error) {
+    console.error("Error getting stock alerts:", error);
+    res.status(500).json({ message: "Gagal mengambil data notifikasi stok." });
+  }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -197,4 +207,5 @@ module.exports = {
   getTotalStokPerCabang,
   getItemSalesTrend,
   getAppChangelog,
+  getStockAlerts,
 };

@@ -714,6 +714,45 @@ const getItemSalesTrend = async (user) => {
   return rows;
 };
 
+const getStockAlerts = async (user) => {
+  const cabang = user.cabang;
+
+  // 1. Cek Surat Jalan (SJ) dari DC yang belum diterima
+  // Tabel: tdc_sj_hdr
+  // Logika: Tujuan = Cabang User, Kolom Terima Kosong
+  const querySj = `
+    SELECT COUNT(*) AS total 
+    FROM tdc_sj_hdr 
+    WHERE sj_kecab = ? 
+      AND (sj_noterima IS NULL OR sj_noterima = '') 
+      -- Filter data 3 bulan terakhir agar performa cepat & data relevan
+      AND sj_tanggal >= DATE_SUB(NOW(), INTERVAL 3 MONTH)
+  `;
+
+  // 2. Cek Mutasi Kiriman dari Store Lain yang belum diterima
+  // Tabel: tmsk_hdr (Mutasi Keluar Header - bagi penerima ini adalah Incoming)
+  // Logika: Tujuan (msk_kecab) = Cabang User, Kolom Terima (msk_noterima) Kosong
+  const queryMutasi = `
+    SELECT COUNT(*) AS total 
+    FROM tmsk_hdr 
+    WHERE msk_kecab = ? 
+      AND (msk_noterima IS NULL OR msk_noterima = '')
+      -- Filter data 3 bulan terakhir
+      AND msk_tanggal >= DATE_SUB(NOW(), INTERVAL 3 MONTH)
+  `;
+
+  // Jalankan Query secara paralel (Promise.all) agar lebih cepat
+  const [rowsSj, rowsMutasi] = await Promise.all([
+    pool.query(querySj, [cabang]),
+    pool.query(queryMutasi, [cabang])
+  ]);
+
+  return {
+    sj_pending: rowsSj[0][0].total || 0,       // Jumlah SJ Pending
+    mutasi_pending: rowsMutasi[0][0].total || 0 // Jumlah Mutasi Pending
+  };
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -730,4 +769,5 @@ module.exports = {
   getTotalStock,
   getStockPerCabang,
   getItemSalesTrend,
+  getStockAlerts
 };
