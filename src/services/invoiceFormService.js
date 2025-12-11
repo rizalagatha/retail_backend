@@ -218,24 +218,38 @@ const getSoDetailsForGrid = async (soNomor, user) => {
     a.brg_ktgp AS kategori,
     b.brgd_hpp AS hpp,
     a.brg_logstok AS logstok,
-    IFNULL(
-        (SELECT SUM(m.mst_stok_in - m.mst_stok_out)
-         FROM tmasterstokso m
-         WHERE m.mst_aktif = 'Y'
-           AND m.mst_cab = ?
-           AND m.mst_brg_kode = d.sod_kode
-           AND m.mst_ukuran = d.sod_ukuran),
-        0
-    ) AS stok,
-    (d.sod_jumlah - IFNULL(
-        (SELECT SUM(id.invd_jumlah)
-         FROM tinv_dtl id
-         JOIN tinv_hdr ih ON id.invd_inv_nomor = ih.inv_nomor
-         WHERE ih.inv_nomor_so = d.sod_so_nomor
-           AND id.invd_kode = d.sod_kode
-           AND id.invd_ukuran = d.sod_ukuran),
-        0
-    )) AS qtyso
+    -- [FIX 1] AMBIL STOK PESANAN (tmasterstokso)
+        IFNULL(
+          (SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+           FROM tmasterstokso m
+           WHERE m.mst_aktif = 'Y'
+             AND m.mst_cab = ?
+             AND m.mst_brg_kode = d.sod_kode
+             AND m.mst_ukuran = d.sod_ukuran
+             AND m.mst_nomor_so = d.sod_so_nomor),
+          0
+        ) AS stokPesanan,
+
+        -- [FIX 2] AMBIL STOK FISIK (tmasterstok) - Untuk referensi
+        IFNULL(
+          (SELECT SUM(f.mst_stok_in - f.mst_stok_out)
+           FROM tmasterstok f
+           WHERE f.mst_aktif = 'Y'
+             AND f.mst_cab = ?
+             AND f.mst_brg_kode = d.sod_kode
+             AND f.mst_ukuran = d.sod_ukuran),
+          0
+        ) AS stokFisik,
+
+        (d.sod_jumlah - IFNULL(
+            (SELECT SUM(id.invd_jumlah)
+             FROM tinv_dtl id
+             JOIN tinv_hdr ih ON id.invd_inv_nomor = ih.inv_nomor
+             WHERE ih.inv_nomor_so = d.sod_so_nomor
+               AND id.invd_kode = d.sod_kode
+               AND id.invd_ukuran = d.sod_ukuran),
+            0
+        )) AS qtyso
 FROM tso_dtl d
     LEFT JOIN tbarangdc a 
         ON a.brg_kode = d.sod_kode
@@ -251,7 +265,7 @@ FROM tso_dtl d
 
     WHERE d.sod_so_nomor = ?;
 `;
-    itemsParams = [user.cabang, soNomor];
+    itemsParams = [user.cabang, user.cabang, soNomor];
   }
 
   const [headerRows] = await pool.query(headerQuery, headerParams);
@@ -273,9 +287,9 @@ FROM tso_dtl d
   };
 
   // 2. [FIX] Masukkan data Marketplace ke ROOT headerData
-  headerData.mpNomorPesanan = headerRows[0].mpNomorPesanan || '';
-  headerData.mpResi = headerRows[0].mpResi || '';
-  headerData.isMarketplace = headerRows[0].isMarketplace === 'Y';
+  headerData.mpNomorPesanan = headerRows[0].mpNomorPesanan || "";
+  headerData.mpResi = headerRows[0].mpResi || "";
+  headerData.isMarketplace = headerRows[0].isMarketplace === "Y";
 
   // 3. Data lain
   headerData.jenisOrderKode = headerRows[0].jenisOrderKode || null;
@@ -1691,62 +1705,122 @@ const findByBarcode = async (barcode, gudang) => {
 
 const searchProducts = async (filters, user) => {
   const { term, page, itemsPerPage, promoNomor } = filters;
-  const offset = (Number(page) - 1) * Number(itemsPerPage);
+  
+  // Hitung Limit & Offset di JS
+  const limitVal = parseInt(itemsPerPage) || 25;
+  const offsetVal = (parseInt(page) - 1) * limitVal;
+  
   const searchTerm = `%${term || ""}%`;
 
   let params = [];
-  let baseFrom = `
-    FROM tbarangdc_dtl b
-    INNER JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
-  `;
-  let baseWhere = `WHERE a.brg_aktif = 0`;
+  
+  // [FIX] Tambahkan spasi di awal string untuk keamanan penggabungan
+  let baseFrom = ` FROM tbarangdc_dtl b INNER JOIN tbarangdc a ON a.brg_kode = b.brgd_kode `;
+  let baseWhere = ` WHERE a.brg_aktif = 0 `;
 
   let promoFilterJoin = "";
-  let hargaSelect = "b.brgd_harga AS harga"; // 1. Harga default
+  let hargaSelect = "b.brgd_harga AS harga";
 
   if (promoNomor === "PRO-2025-005") {
     promoFilterJoin = `
-    INNER JOIN tpromo_barang pb ON pb.pb_brg_kode = a.brg_kode 
+      INNER JOIN tpromo_barang pb ON pb.pb_brg_kode = a.brg_kode 
       AND pb.pb_ukuran = b.brgd_ukuran
-      AND pb.pb_nomor = ?
+      AND pb.pb_nomor = ? 
     `;
     params.push(promoNomor);
-    hargaSelect = "33333 AS harga"; // 2. Timpa harga jika promo aktif
+    hargaSelect = "33333 AS harga";
   }
 
-  // Logika filter cabang dari Delphi
   if (user.cabang === "K04") {
-    baseWhere += ' AND a.brg_ktg <> ""';
+    baseWhere += ' AND a.brg_ktg <> "" ';
   } else if (user.cabang === "K05") {
-    baseWhere += ' AND a.brg_ktg = ""';
+    baseWhere += ' AND a.brg_ktg = "" ';
   }
 
-  // Filter pencarian
-  const searchWhere = `AND (b.brgd_kode LIKE ? OR b.brgd_barcode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) LIKE ?)`;
+  // [FIX] Ganti Double Quote (" ") menjadi Single Quote (' ') dalam CONCAT
+  // Ini mencegah error jika server database menggunakan mode ANSI_QUOTES
+  const searchWhere = ` AND (b.brgd_kode LIKE ? OR b.brgd_barcode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) LIKE ?) `;
+  
   params.push(searchTerm, searchTerm, searchTerm);
 
-  const countQuery = `SELECT COUNT(*) AS total ${baseFrom} ${baseWhere} ${searchWhere}`;
+  // --- QUERY TOTAL ROW ---
+  const countQuery = `SELECT COUNT(*) AS total ${baseFrom} ${promoFilterJoin} ${baseWhere} ${searchWhere}`;
   const [countRows] = await pool.query(countQuery, params);
 
+  // --- SUBQUERY STOK TERPISAH (Agar parameter ? terbaca dengan benar) ---
+  const stokFisik = `
+    (SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+     FROM tmasterstok m 
+     WHERE m.mst_aktif = 'Y' 
+       AND m.mst_cab = ? 
+       AND m.mst_brg_kode = b.brgd_kode 
+       AND m.mst_ukuran = b.brgd_ukuran)
+  `;
+
+  const stokPesanan = `
+    (SELECT SUM(s.mst_stok_in - s.mst_stok_out)
+     FROM tmasterstokso s
+     WHERE s.mst_aktif = 'Y' 
+       AND s.mst_cab = ? 
+       AND s.mst_brg_kode = b.brgd_kode 
+       AND s.mst_ukuran = b.brgd_ukuran)
+  `;
+
+  // Gabungkan stok fisik + pesanan
+  const stokSubQuery = `(IFNULL(${stokFisik}, 0) + IFNULL(${stokPesanan}, 0))`;
+
+  // --- QUERY DATA ---
+  // [FIX] Masukkan Limit & Offset langsung ke string (interpolation)
+  // [FIX] Pastikan ada spasi antar variabel template literal
   const dataQuery = `
     SELECT
       b.brgd_kode AS kode,
       b.brgd_barcode AS barcode,
-      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+      TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) AS nama,
       b.brgd_ukuran AS ukuran,
       b.brgd_hrg3 AS harga3,
       b.brgd_hrg1 AS harga1,
       ${hargaSelect},
       a.brg_ktgp AS kategori,
-      IFNULL((
-        SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m 
-        WHERE m.mst_aktif = 'Y' AND m.mst_cab = ? AND m.mst_brg_kode = b.brgd_kode AND m.mst_ukuran = b.brgd_ukuran
-      ), 0) AS stok
-    ${baseFrom} ${promoFilterJoin} ${baseWhere} ${searchWhere}
+      
+      COALESCE(${stokFisik}, 0) AS stokFisik,
+      COALESCE(${stokPesanan}, 0) AS stokPesanan,
+      ${stokSubQuery} AS stok
+
+    ${baseFrom} 
+    ${promoFilterJoin} 
+    ${baseWhere} 
+    ${searchWhere}
+    
     ORDER BY nama, b.brgd_ukuran
-    LIMIT ? OFFSET ?;
+    LIMIT ${limitVal} OFFSET ${offsetVal}
   `;
-  const dataParams = [user.cabang, ...params, Number(itemsPerPage), offset];
+
+  // Urutan Parameter:
+  // 1. Cabang (untuk stok fisik)
+  // 2. Cabang (untuk stok pesanan)
+  // 3. Cabang (untuk stok fisik kolom terpisah)
+  // 4. Cabang (untuk stok pesanan kolom terpisah)
+  // 5. ...params (Promo?, Search1, Search2, Search3)
+  
+  // Perhatikan: Karena kita memanggil subquery stokFisik dan stokPesanan DUA KALI (sekali di dalam penjumlahan 'stok', sekali sebagai kolom sendiri 'stokFisik'/'stokPesanan'),
+  // Kita perlu menyuplai parameternya berulang kali.
+  // Urutan di SELECT: stokFisik (1), stokPesanan (1), stokTotal(stokFisik(1)+stokPesanan(1))
+  
+  const dataParams = [
+    // Untuk kolom 'stokFisik'
+    user.cabang, 
+    // Untuk kolom 'stokPesanan'
+    user.cabang,
+    // Untuk kolom 'stok' (penjumlahan) -> stokFisik
+    user.cabang,
+    // Untuk kolom 'stok' (penjumlahan) -> stokPesanan
+    user.cabang,
+    
+    // Sisa parameter (filter)
+    ...params
+  ];
+
   const [items] = await pool.query(dataQuery, dataParams);
 
   return { items, total: countRows[0].total };

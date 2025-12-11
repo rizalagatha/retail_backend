@@ -1,4 +1,10 @@
 const changelogs = {
+  "1.1.2": {
+    date: "2025-12-11",
+    changes: [
+      "Perbaikan: Penambahan Kolom Stok Pesanan pada Invoice",
+    ],
+  },
   "1.1.1": {
     date: "2025-12-11",
     changes: [
