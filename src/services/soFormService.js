@@ -47,33 +47,41 @@ const save = async (data, user) => {
           INSERT INTO tso_hdr (
             so_idrec, so_nomor, so_tanggal, so_dateline, so_pen_nomor, so_top, so_ppn,
             so_disc, so_disc1, so_disc2, so_bkrm, so_dp, so_cus_kode, so_cus_level,
+            so_is_marketplace, so_mp_nomor_pesanan, so_mp_resi,
             so_accdp, so_ket, so_aktif, so_sc, so_jenisorder, so_namadtf, so_cab, user_create, date_create
            )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?,
+          ?, NOW())
         `;
       await connection.query(insertHeaderQuery, [
-        idrec,
-        soNomor,
-        header.tanggal,
-        header.dateline,
-        header.penawaran,
-        header.top || 0,
-        header.ppnPersen || 0,
-        footer.diskonRp,
-        footer.diskonPersen1,
-        footer.diskonPersen2,
-        footer.biayaKirim,
-        footer.totalDp,
-        header.customer.kode,
-        header.level,
-        footer.pinTanpaDp,
-        header.keterangan,
-        aktifStatus,
-        header.salesCounter,
-        header.jenisOrderKode ? String(header.jenisOrderKode) : null,
-        header.namaDtf ? String(header.namaDtf) : null,
-        header.gudang.kode,
-        user.kode,
+        idrec, // 1. so_idrec
+        soNomor, // 2. so_nomor
+        header.tanggal, // 3. so_tanggal
+        header.dateline, // 4. so_dateline
+        header.isMarketplace ? "" : header.penawaran || "", // 5. so_pen_nomor
+        header.isMarketplace ? 0 : header.top || 0, // 6. so_top
+        header.ppnPersen || 0, // 7. so_ppn
+        footer.diskonRp || 0, // 8. so_disc
+        footer.diskonPersen1 || 0, // 9. so_disc1
+        footer.diskonPersen2 || 0, // 10. so_disc2
+        footer.biayaKirim || 0, // 11. so_bkrm
+        header.isMarketplace ? 0 : footer.totalDp || 0, // 12. so_dp
+        header.customer.kode, // 13. so_cus_kode
+        header.level, // 14. so_cus_level
+
+        // --- [FIX ORDER] Mulai dari sini yang sebelumnya tertukar ---
+        header.isMarketplace ? "Y" : "N", // 15. so_is_marketplace
+        header.mpNomorPesanan || "", // 16. so_mp_nomor_pesanan
+        header.mpResi || "", // 17. so_mp_resi
+        footer.pinTanpaDp || "", // 18. so_accdp
+        header.keterangan || "", // 19. so_ket
+        header.isMarketplace ? "Y" : aktifStatus, // 20. so_aktif
+        header.salesCounter, // 21. so_sc
+        header.jenisOrderKode ? String(header.jenisOrderKode) : null, // 22. so_jenisorder
+        header.namaDtf ? String(header.namaDtf) : null, // 23. so_namadtf
+        header.gudang.kode, // 24. so_cab
+        user.kode, // 25. user_create
       ]);
     } else {
       const [idrecRows] = await connection.query(
@@ -88,29 +96,33 @@ const save = async (data, user) => {
         UPDATE tso_hdr SET
           so_cus_kode = ?, so_pen_nomor = ?, so_cus_level = ?, so_tanggal = ?, 
           so_dateline = ?, so_top = ?, so_ppn = ?, so_accdp = ?, so_ket = ?,
-          so_jenisorder = ?, so_namadtf = ?,
+          so_jenisorder = ?, so_namadtf = ?, 
+          so_is_marketplace = ?, so_mp_nomor_pesanan = ?, so_mp_resi = ?,
           so_disc = ?, so_disc1 = ?, so_disc2 = ?, so_bkrm = ?, so_dp = ?, 
           so_aktif = ?, so_sc = ?, user_modified = ?, date_modified = NOW()
         WHERE so_nomor = ?
       `;
       await connection.query(updateHeaderQuery, [
         header.customer.kode,
-        header.penawaran,
+        header.isMarketplace ? "" : header.penawaran || "",
         header.level,
         header.tanggal,
         header.dateline,
-        header.top || 0,
+        header.isMarketplace ? 0 : header.top || 0,
         header.ppnPersen || 0,
-        footer.pinTanpaDp,
-        header.keterangan,
+        footer.pinTanpaDp || "",
+        header.keterangan || "",
         header.jenisOrderKode || header.jenisOrder || null,
         header.namaDtf || null,
-        footer.diskonRp,
-        footer.diskonPersen1,
-        footer.diskonPersen2,
-        footer.biayaKirim,
-        footer.totalDp,
-        aktifStatus,
+        header.isMarketplace ? "Y" : "N",
+        header.mpNomorPesanan || "",
+        header.mpResi || "",
+        footer.diskonRp || 0,
+        footer.diskonPersen1 || 0,
+        footer.diskonPersen2 || 0,
+        footer.biayaKirim || 0,
+        header.isMarketplace ? 0 : footer.totalDp || 0,
+        header.isMarketplace ? "Y" : aktifStatus,
         header.salesCounter,
         user.kode,
         soNomor,
@@ -342,6 +354,9 @@ const getSoForEdit = async (nomor) => {
       ppnPersen: Number(firstRow.so_ppn || 0),
       statusSo: firstRow.so_aktif === "Y" ? "AKTIF" : "PASIF",
       canEdit: !isInvoiced,
+      so_is_marketplace: firstRow.so_is_marketplace === "Y",
+      so_mp_nomor_pesanan: firstRow.so_mp_nomor_pesanan || "",
+      so_mp_resi: firstRow.so_mp_resi || "",
     };
 
     const itemsData = mainRows.map((row, index) => {
@@ -980,6 +995,7 @@ const findByBarcode = async (barcode, gudang) => {
             TRIM(CONCAT(h.brg_jeniskaos, " ", h.brg_tipe, " ", h.brg_lengan, " ", h.brg_jeniskain, " ", h.brg_warna)) AS nama,
             d.brgd_ukuran AS ukuran,
             d.brgd_harga AS harga,
+            d.brgd_hrg3 AS harga3,
             
             IFNULL((
                 SELECT SUM(m.mst_stok_in - m.mst_stok_out) 

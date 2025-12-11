@@ -26,6 +26,8 @@ const getList = async (filters) => {
         y.kdcus, y.Nama, y.Alamat, y.Kota, y.Level, y.Keterangan, y.Aktif, y.SC,
         y.DipakaiDTF,
 
+        y.MpPesanan, y.MpResi,
+
         (CASE
             WHEN y.DipakaiDTF = 'Y' AND y.Belum = 0 THEN 'CLOSE'
             WHEN y.sts = 2 THEN "DICLOSE"
@@ -73,6 +75,8 @@ const getList = async (filters) => {
                 h.so_dp AS Dp,
                 h.user_modified AS UserModified,
                 h.date_modified AS DateModified,
+                h.so_mp_nomor_pesanan AS MpPesanan,
+                h.so_mp_resi AS MpResi,
 
                 (SELECT ROUND(
                     SUM(dd.sod_jumlah * (dd.sod_harga - dd.sod_diskon))

@@ -1,5 +1,6 @@
 const { get } = require("../routes/invoiceFormRoutes");
 const dashboardService = require("../services/dashboardService");
+const changelogs = require("../config/changelog");
 
 const getTodayStats = async (req, res) => {
   try {
@@ -148,6 +149,37 @@ const getItemSalesTrend = async (req, res) => {
   }
 };
 
+const getAppChangelog = async (req, res) => {
+  try {
+    const formattedLog = Object.entries(changelogs).map(([version, data]) => {
+      // Cek Format: Apakah 'data' itu Array (format lama) atau Object (format baru)?
+      const isNewFormat = !Array.isArray(data);
+
+      return {
+        version: version,
+        // Jika format baru, ambil .date. Jika lama, set strip '-'
+        date: isNewFormat ? data.date : "-",
+
+        // Jika format baru, ambil .changes. Jika lama, ambil data langsung
+        changes: isNewFormat ? data.changes : data,
+
+        // Logika pewarnaan tipe update
+        type: version.endsWith(".0") ? "major" : "patch",
+      };
+    });
+
+    // Urutkan dari versi terbaru ke terlama
+    formattedLog.sort((a, b) =>
+      b.version.localeCompare(a.version, undefined, { numeric: true })
+    );
+
+    res.json(formattedLog);
+  } catch (error) {
+    console.error("Error in getAppChangelog controller:", error);
+    res.status(500).json({ message: "Gagal memuat riwayat update." });
+  }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -164,4 +196,5 @@ module.exports = {
   getTotalStok,
   getTotalStokPerCabang,
   getItemSalesTrend,
+  getAppChangelog,
 };

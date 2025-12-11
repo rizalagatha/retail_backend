@@ -376,8 +376,24 @@ LEFT JOIN (
   }
 
   // ORDER & GROUP persis
+  // === [FIX UTAMA] FILTER HANYA YANG PUNYA RECORD ===
   query += `
     GROUP BY b.brgd_kode, b.brgd_ukuran
+    
+    HAVING (
+         stokAwal <> 0 
+      OR selisihSop <> 0 
+      OR koreksi <> 0 
+      OR returJual <> 0 
+      OR terimaSJ <> 0 
+      OR mutStoreTerima <> 0 
+      OR mutInPesan <> 0 
+      OR invoice <> 0 
+      OR returKeDC <> 0 
+      OR mutStoreKirim <> 0 
+      OR mutOutPesan <> 0
+    )
+
     ORDER BY b.brgd_kode, b.brgd_ukuran
   `;
 
@@ -477,6 +493,7 @@ const getKartuDetails = async (filters) => {
         ? AS id,
         m.mst_tanggal AS tanggal,
         'STOK AWAL' AS nomor,
+        '' AS no_pesanan,
         IFNULL(SUM(m.mst_stok_in), 0) AS \`In\`,
         0 AS \`Out\`,
         'Stok Awal' AS transaksi
@@ -495,6 +512,7 @@ const getKartuDetails = async (filters) => {
         ? AS id,
         ? AS tanggal,
         'STOK AWAL' AS nomor,
+        '' AS no_pesanan,
         IFNULL(SUM(m.mst_stok_in - m.mst_stok_out), 0) AS \`In\`,
         0 AS \`Out\`,
         'Stok Awal' AS transaksi
@@ -513,19 +531,27 @@ const getKartuDetails = async (filters) => {
       CONCAT(m.mst_brg_kode, m.mst_ukuran) AS id,
       m.mst_tanggal AS tanggal,
       m.mst_noreferensi AS nomor,
+      '-' AS no_pesanan,
       COALESCE(SUM(m.mst_stok_in), 0) AS \`In\`,
       COALESCE(SUM(m.mst_stok_out), 0) AS \`Out\`,
       CASE
           WHEN m.mst_noreferensi LIKE '%KOR%' THEN 'Koreksi'
           WHEN m.mst_noreferensi LIKE '%RJ%'  THEN 'Retur Jual'
           WHEN m.mst_noreferensi LIKE '%TJ%'  THEN 'Terima SJ'
-          WHEN m.mst_noreferensi LIKE '%MST%' THEN 'Mutasi Store Terima'
-          WHEN m.mst_noreferensi LIKE '%MSI%' THEN 'Mutasi in Pesanan'
+          
+          WHEN m.mst_noreferensi LIKE '%MST%' THEN 'Mutasi Store Terima' 
+          
+          -- [FIX] Tambahkan ini agar Mutasi In muncul
+          WHEN m.mst_noreferensi LIKE '%MTS%' AND m.mst_stok_in > 0 THEN 'Mutasi Masuk' 
+          WHEN m.mst_noreferensi LIKE '%MTS%' AND m.mst_stok_out > 0 THEN 'Mutasi Keluar'
+          
+          WHEN m.mst_noreferensi LIKE '%MSI%' THEN 'Mutasi Stok dari Pesanan'
           WHEN m.mst_noreferensi LIKE '%INV%' THEN 'Invoice'
           WHEN m.mst_noreferensi LIKE '%RB%'  THEN 'Retur Barang ke DC'
           WHEN m.mst_noreferensi LIKE '%MSK%' THEN 'Mutasi Store Kirim'
           WHEN m.mst_noreferensi LIKE '%MO%'  THEN 'Mutasi Out ke Produksi'
           WHEN m.mst_noreferensi LIKE '%MSO%' THEN 'Mutasi Stok ke Pesanan'
+          WHEN m.mst_noreferensi LIKE '%MI%'  THEN 'Mutasi In from Produksi'
           ELSE 'Lain-lain'
       END AS transaksi
     FROM tmasterstok m
@@ -538,12 +564,37 @@ const getKartuDetails = async (filters) => {
   `;
   const mutasiParams = [gudang, startDateStr, endDateStr, id];
 
+  // === QUERY 3: MUTASI PESANAN (tmasterstokso) ===
+  // [BARU] Ini diambil dari referensi Delphi bagian UNION kedua
+  const mutasiPesananQuery = `
+    SELECT 
+      CONCAT(m.mst_brg_kode, m.mst_ukuran) AS id,
+      m.mst_tanggal AS tanggal,
+      m.mst_noreferensi AS nomor,
+      m.mst_nomor_so AS no_pesanan, -- [FIX] Ambil No SO dari sini
+      COALESCE(SUM(m.mst_stok_in), 0) AS \`In\`,
+      COALESCE(SUM(m.mst_stok_out), 0) AS \`Out\`,
+      CASE
+          WHEN m.mst_noreferensi LIKE '%MSO%' THEN 'Mutasi Stok ke Pesanan'
+          WHEN m.mst_noreferensi LIKE '%MSI%' THEN 'Mutasi Stok dari Pesanan'
+          WHEN m.mst_noreferensi LIKE '%INV%' THEN 'Invoice'
+          ELSE 'Transaksi Pesanan'
+      END AS transaksi
+    FROM tmasterstokso m
+    WHERE m.mst_cab = ?
+      AND m.mst_tanggal BETWEEN ? AND ?
+      AND CONCAT(m.mst_brg_kode, m.mst_ukuran) = ?
+    GROUP BY m.mst_brg_kode, m.mst_ukuran, m.mst_noreferensi, m.mst_tanggal, m.mst_nomor_so
+  `;
+  const mutasiPesananParams = [gudang, startDateStr, endDateStr, id];
+
   // === SELISIH SOP SELAMA PERIODE (startDate+1 s/d endDate) ===
   const sopQuery = `
     SELECT
       CONCAT(d.sopd_kode, d.sopd_ukuran) AS id,
       h.sop_tanggal AS tanggal,
       d.sopd_nomor AS nomor,
+      '' AS no_pesanan,
       COALESCE(d.sopd_selisih, 0) AS \`In\`,
       0 AS \`Out\`,
       'Selisih Stok Opname' AS transaksi
@@ -562,11 +613,13 @@ const getKartuDetails = async (filters) => {
     UNION ALL
     (${mutasiQuery})
     UNION ALL
+    (${mutasiPesananQuery})
+    UNION ALL
     (${sopQuery})
     ORDER BY tanggal, nomor
   `;
 
-  const params = [...stokAwalParams, ...mutasiParams, ...sopParams];
+  const params = [...stokAwalParams, ...mutasiParams, ...mutasiPesananParams, ...sopParams];
 
   const [rows] = await pool.query(fullQuery, params);
 
@@ -576,7 +629,12 @@ const getKartuDetails = async (filters) => {
     const masuk = row.In || row.in || 0;
     const keluar = row.Out || row.out || 0;
     saldo += masuk - keluar;
-    return { ...row, saldo };
+    return {
+      ...row,
+      // Pastikan properti konsisten huruf kecil/besar untuk frontend
+      no_pesanan: row.no_pesanan || "-",
+      saldo,
+    };
   });
 
   return resultWithSaldo;

@@ -80,4 +80,6 @@ router.get(
 
 router.get('/item-sales-trend', verifyToken, dashboardController.getItemSalesTrend);
 
+router.get('/changelog', verifyToken, dashboardController.getAppChangelog);
+
 module.exports = router;

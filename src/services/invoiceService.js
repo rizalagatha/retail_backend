@@ -101,17 +101,45 @@ const getList = async (filters) => {
         h.inv_disc AS Diskon,
         h.inv_dp AS Dp,
         h.inv_bkrm AS Biayakirim,
-        COALESCE(SN.NominalPiutang,0) AS Nominal,
-        COALESCE(SN.NominalPiutang,0) AS Piutang,
+        (
+          COALESCE(SN.NominalPiutang,0) 
+          + h.inv_ppn 
+          + h.inv_bkrm 
+          - COALESCE(h.inv_mp_biaya_platform, 0) -- KURANGI BIAYA PLATFORM
+        ) AS Nominal,
+        (
+          COALESCE(SN.NominalPiutang,0) 
+          + h.inv_ppn 
+          + h.inv_bkrm 
+          - COALESCE(h.inv_mp_biaya_platform, 0)
+        ) AS Piutang,
+
+        h.inv_mp_nama AS Marketplace,        
+        h.inv_mp_nomor_pesanan AS NoPesanan, 
+        h.inv_mp_resi AS NoResi,             
+        h.inv_mp_biaya_platform AS BiayaPlatform, 
         
         -- Display Bayar (Hanya kosmetik di tabel)
-        (h.inv_bayar - h.inv_pundiamal - h.inv_kembali) AS Bayar,
+        (
+           (COALESCE(SN.NominalPiutang,0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0))
+           -
+           GREATEST(
+              (COALESCE(SN.NominalPiutang,0) + h.inv_ppn + h.inv_bkrm) 
+              - (h.inv_bayar + IFNULL(h.inv_pundiamal,0) - h.inv_kembali), 
+              0
+           )
+        ) AS Bayar,
 
         -- Display Sisa (Hanya kosmetik di tabel, filter asli pakai EXISTS di bawah)
         GREATEST(
-           (COALESCE(SN.NominalPiutang,0) + h.inv_ppn + h.inv_bkrm) - 
-           (h.inv_bayar - h.inv_pundiamal - h.inv_kembali), 
-           0
+          (
+             COALESCE(SN.NominalPiutang,0) + h.inv_ppn + h.inv_bkrm 
+          ) 
+          - 
+          (
+             h.inv_bayar + IFNULL(h.inv_pundiamal,0) - h.inv_kembali
+          ), 
+          0
         ) AS SisaPiutang,
 
         h.inv_cus_kode AS Kdcus,

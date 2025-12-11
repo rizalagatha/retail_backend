@@ -188,7 +188,11 @@ const getSoDetailsForGrid = async (soNomor, user) => {
                 CONCAT(h.so_cus_level, " - ", l.level_nama) AS level,
                 h.so_jenisorder AS jenisOrderKode,
                 jo.jo_nama AS jenisOrderNama,
-                h.so_namadtf AS namaDtf
+                h.so_namadtf AS namaDtf,
+
+                h.so_mp_nomor_pesanan AS mpNomorPesanan,
+                h.so_mp_resi AS mpResi,
+                h.so_is_marketplace AS isMarketplace
             FROM tso_hdr h
             LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
             LEFT JOIN tcustomer_level l ON l.level_kode = h.so_cus_level
@@ -254,7 +258,10 @@ FROM tso_dtl d
   if (headerRows.length === 0)
     throw new Error("Data Header SO/SJ tidak ditemukan.");
 
+  // Inisialisasi headerData dengan spread row pertama
   const headerData = { customer: {}, ...headerRows[0] };
+
+  // 1. Masukkan data spesifik customer ke objek customer
   headerData.customer = {
     kode: headerRows[0].kode,
     nama: headerRows[0].nama,
@@ -262,8 +269,15 @@ FROM tso_dtl d
     kota: headerRows[0].kota,
     telp: headerRows[0].telp,
     level: headerRows[0].level,
+    // JANGAN taruh data MP di sini
   };
 
+  // 2. [FIX] Masukkan data Marketplace ke ROOT headerData
+  headerData.mpNomorPesanan = headerRows[0].mpNomorPesanan || '';
+  headerData.mpResi = headerRows[0].mpResi || '';
+  headerData.isMarketplace = headerRows[0].isMarketplace === 'Y';
+
+  // 3. Data lain
   headerData.jenisOrderKode = headerRows[0].jenisOrderKode || null;
   headerData.jenisOrderNama = headerRows[0].jenisOrderNama || null;
   headerData.namaDtf = headerRows[0].namaDtf || null;
@@ -470,8 +484,8 @@ const loadForEdit = async (nomor, user) => {
 
       total: applyRoundingPolicy(hargaSetelah * qty),
       nourut: row.invd_nourut,
-      
-      terhitungPromo: (diskRp > 0 || discPersen > 0) && !!header.inv_pro_nomor
+
+      terhitungPromo: (diskRp > 0 || discPersen > 0) && !!header.inv_pro_nomor,
     };
   });
 
@@ -632,6 +646,16 @@ const saveData = async (payload, user) => {
     }
     const piutangNomor = `${header.customer.kode}${invNomor}`;
 
+    // [BARU] Persiapan Data Marketplace
+    // Pastikan header di payload memiliki properti ini
+    const isMp = header.isMarketplace ? "Y" : "N";
+    const mpNama = header.isMarketplace ? header.mpNama || "" : "";
+    const mpNoPesanan = header.isMarketplace ? header.mpNomorPesanan || "" : "";
+    const mpResi = header.isMarketplace ? header.mpResi || "" : "";
+    const mpBiaya = header.isMarketplace
+      ? Number(header.mpBiayaPlatform) || 0
+      : 0;
+
     // 1. INSERT/UPDATE tinv_hdr
     if (isNew) {
       const invTanggal = toSqlDate(header.tanggal);
@@ -643,8 +667,11 @@ const saveData = async (payload, user) => {
           inv_disc, inv_bkrm, inv_dp, inv_bayar, inv_pundiamal,
           inv_rptunai, inv_novoucher, inv_rpvoucher, inv_rpcard, inv_nosetor,
           inv_kembali,
+          inv_is_marketplace, inv_mp_nama, inv_mp_nomor_pesanan, inv_mp_resi, inv_mp_biaya_platform,
           user_create, date_create
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, 
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
       `;
 
       await connection.query(headerSql, [
@@ -677,6 +704,13 @@ const saveData = async (payload, user) => {
         nomorSetoran,
         kembalianFinal,
 
+        // [BARU] Values Marketplace
+        isMp,
+        mpNama,
+        mpNoPesanan,
+        mpResi,
+        mpBiaya,
+
         user.kode,
       ]);
     } else {
@@ -687,6 +721,9 @@ const saveData = async (payload, user) => {
           inv_disc = ?, inv_bkrm = ?, inv_dp = ?, inv_bayar = ?, inv_pundiamal = ?,
           inv_rptunai = ?, inv_novoucher = ?, inv_rpvoucher = ?, inv_rpcard = ?, inv_nosetor = ?,
           inv_kembali = ?,
+          -- [BARU] Update Marketplace
+          inv_is_marketplace = ?, inv_mp_nama = ?, inv_mp_nomor_pesanan = ?, 
+          inv_mp_resi = ?, inv_mp_biaya_platform = ?,
           user_modified = ?, date_modified = NOW()
         WHERE inv_nomor = ?
       `;
@@ -712,6 +749,13 @@ const saveData = async (payload, user) => {
         Number(payment.transfer?.nominal || 0),
         nomorSetoran,
         kembalianFinal,
+
+        // [BARU] Values Marketplace
+        isMp,
+        mpNama,
+        mpNoPesanan,
+        mpResi,
+        mpBiaya,
 
         user.kode,
         invNomor,
@@ -1614,6 +1658,8 @@ const findByBarcode = async (barcode, gudang) => {
       d.brgd_kode AS kode,
       TRIM(CONCAT(h.brg_jeniskaos, " ", h.brg_tipe, " ", h.brg_lengan, " ", h.brg_jeniskain, " ", h.brg_warna)) AS nama,
       d.brgd_ukuran AS ukuran,
+      d.brgd_hrg3 AS harga3,
+      d.brgd_hrg1 AS harga1,
       d.brgd_harga AS harga,
       h.brg_ktgp AS kategori,
             
@@ -1688,6 +1734,8 @@ const searchProducts = async (filters, user) => {
       b.brgd_barcode AS barcode,
       TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
       b.brgd_ukuran AS ukuran,
+      b.brgd_hrg3 AS harga3,
+      b.brgd_hrg1 AS harga1,
       ${hargaSelect},
       a.brg_ktgp AS kategori,
       IFNULL((
