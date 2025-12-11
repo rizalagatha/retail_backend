@@ -1,4 +1,16 @@
 const changelogs = {
+  "1.1.4": {
+    date: "2025-12-11",
+    changes: [
+      {
+        title: "URGENT:",
+        items: [
+          "Perbaikan Logika Pengecekan Promo Grand Opening K11:",
+          "Promo tetap dihitung meskipun ada item baru yang ditambahkan setelah lanjut ke pembayaran.",
+        ],
+      },
+    ],
+  },
   "1.1.3": {
     date: "2025-12-11",
     changes: [
