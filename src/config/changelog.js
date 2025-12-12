@@ -1,4 +1,8 @@
 const changelogs = {
+  "1.1.5": {
+    date: "2025-12-12",
+    changes: ["Perbaikan: Update SO DTF"],
+  },
   "1.1.4": {
     date: "2025-12-11",
     changes: [

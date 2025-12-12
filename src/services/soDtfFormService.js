@@ -248,6 +248,9 @@ const update = async (nomor, data, user) => {
     const header = data.header;
     const userKode = user ? user.kode : null; // Handle jika user tidak terdeteksi
 
+    // 0. Generate Timestamp UNTUK SEMUA IDREC DI SINI (Paling Aman)
+    const timestamp = format(new Date(), "yyyyMMddHHmmssSSS");
+
     // sebelum apapun, baca data lama
     const existing = await findById(nomor);
 
