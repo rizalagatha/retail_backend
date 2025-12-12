@@ -335,7 +335,7 @@ const update = async (nomor, data, user) => {
       await connection.query(
         `INSERT INTO tsodtf_dtl2
      (sdd2_idrec, sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           detailTitikIdRec,
           nomor,
