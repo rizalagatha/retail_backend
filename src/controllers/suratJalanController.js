@@ -60,19 +60,23 @@ const getPrintData = async (req, res) => {
   }
 };
 
+// Contoh Controller
 const exportDetails = async (req, res) => {
   try {
-    // Ambil filter dari query params (dikirim frontend via params: filters)
+    console.log("👉 Controller exportDetails HIT!"); // [DEBUG 1]
+    console.log("👉 Query Params:", req.query); // [DEBUG 2]
+
     const filters = {
       startDate: req.query.startDate,
       endDate: req.query.endDate,
       cabang: req.query.cabang,
-      kodeBarang: req.query.kodeBarang || null,
+      kodeBarang: req.query.kodeBarang || "",
     };
 
     const data = await suratJalanService.exportDetails(filters);
     res.json(data);
   } catch (error) {
+    console.error("❌ Export Error:", error);
     res.status(500).json({ message: error.message });
   }
 };

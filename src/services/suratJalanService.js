@@ -280,25 +280,36 @@ const getCabangList = async (user) => {
 const exportDetails = async (filters) => {
   const { startDate, endDate, kodeBarang, cabang } = filters;
 
-  let params = [startDate, endDate, cabang];
+  console.log("🚀 Service exportDetails called with:", {
+    startDate,
+    endDate,
+    cabang,
+    kodeBarang,
+  });
+
+  // 1. Force Time Range (00:00:00 to 23:59:59)
+  // This handles DATETIME columns correctly without relying on DATE() function
+  const startDateTime = startDate ? `${startDate} 00:00:00` : null;
+  const endDateTime = endDate ? `${endDate} 23:59:59` : null;
+
+  let params = [startDateTime, endDateTime, cabang];
   let itemFilter = "";
 
-  // Filter Kode Barang (Opsional)
   if (kodeBarang) {
     itemFilter = "AND d.sjd_kode = ?";
     params.push(kodeBarang);
   }
 
+  // 2. Query Construction
   const query = `
     SELECT 
       h.sj_nomor AS "Nomor SJ",
-      h.sj_tanggal AS "Tanggal",
+      DATE_FORMAT(h.sj_tanggal, "%Y-%m-%d") AS "Tanggal",
       h.sj_kecab AS "Kode Store",
       g.gdg_nama AS "Nama Store",
       h.sj_mt_nomor AS "No. Minta Barang",
       h.sj_ket AS "Keterangan",
       
-      -- Data Detail Item
       d.sjd_kode AS "Kode Barang",
       TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS "Nama Barang",
       d.sjd_ukuran AS "Ukuran",
@@ -309,15 +320,22 @@ const exportDetails = async (filters) => {
     LEFT JOIN retail.tgudang g ON g.gdg_kode = h.sj_kecab
     LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.sjd_kode
     
-    WHERE h.sj_peminta = "" 
-      AND h.sj_tanggal BETWEEN ? AND ?
+    WHERE 
+      (h.sj_peminta = "" OR h.sj_peminta IS NULL)
+      AND h.sj_tanggal >= ? AND h.sj_tanggal <= ?
       AND h.sj_kecab = ?
       ${itemFilter}
       
     ORDER BY h.sj_tanggal DESC, h.sj_nomor DESC, d.sjd_kode ASC
   `;
 
+  console.log("📝 Executing Query:", query.replace(/\s+/g, " "));
+  console.log("📝 With Params:", params);
+
   const [rows] = await pool.query(query, params);
+
+  console.log(`✅ Query Result: ${rows.length} rows found`);
+
   return rows;
 };
 
