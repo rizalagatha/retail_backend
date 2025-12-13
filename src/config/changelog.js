@@ -1,4 +1,8 @@
 const changelogs = {
+  "1.1.6": {
+    date: "2025-12-13",
+    changes: ["Perbaikan: Export Detail Surat Jalan dengan Filter Tanggal dan Cabang"],
+  },
   "1.1.5": {
     date: "2025-12-12",
     changes: ["Perbaikan: Update SO DTF"],

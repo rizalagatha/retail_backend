@@ -273,6 +273,54 @@ const getCabangList = async (user) => {
   return rows;
 };
 
+/**
+ * Mengambil data detail lengkap (Header + Detail) untuk export Excel.
+ * Filter sama persis dengan getList (Tanggal, Cabang, Kode Barang).
+ */
+const exportDetails = async (filters) => {
+  const { startDate, endDate, kodeBarang, cabang } = filters;
+
+  let params = [startDate, endDate, cabang];
+  let itemFilter = "";
+
+  // Filter Kode Barang (Opsional)
+  if (kodeBarang) {
+    itemFilter = "AND d.sjd_kode = ?";
+    params.push(kodeBarang);
+  }
+
+  const query = `
+    SELECT 
+      h.sj_nomor AS "Nomor SJ",
+      h.sj_tanggal AS "Tanggal",
+      h.sj_kecab AS "Kode Store",
+      g.gdg_nama AS "Nama Store",
+      h.sj_mt_nomor AS "No. Minta Barang",
+      h.sj_ket AS "Keterangan",
+      
+      -- Data Detail Item
+      d.sjd_kode AS "Kode Barang",
+      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS "Nama Barang",
+      d.sjd_ukuran AS "Ukuran",
+      d.sjd_jumlah AS "Jumlah"
+
+    FROM tdc_sj_hdr h
+    INNER JOIN tdc_sj_dtl d ON d.sjd_nomor = h.sj_nomor
+    LEFT JOIN retail.tgudang g ON g.gdg_kode = h.sj_kecab
+    LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.sjd_kode
+    
+    WHERE h.sj_peminta = "" 
+      AND h.sj_tanggal BETWEEN ? AND ?
+      AND h.sj_kecab = ?
+      ${itemFilter}
+      
+    ORDER BY h.sj_tanggal DESC, h.sj_nomor DESC, d.sjd_kode ASC
+  `;
+
+  const [rows] = await pool.query(query, params);
+  return rows;
+};
+
 module.exports = {
   getList,
   getDetails,
@@ -281,4 +329,5 @@ module.exports = {
   submitRequest,
   getPrintData,
   getCabangList,
+  exportDetails,
 };

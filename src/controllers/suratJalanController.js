@@ -62,7 +62,15 @@ const getPrintData = async (req, res) => {
 
 const exportDetails = async (req, res) => {
   try {
-    const data = await suratJalanService.getExportDetails(req.query);
+    // Ambil filter dari query params (dikirim frontend via params: filters)
+    const filters = {
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      cabang: req.query.cabang,
+      kodeBarang: req.query.kodeBarang || null,
+    };
+
+    const data = await suratJalanService.exportDetails(filters);
     res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });
