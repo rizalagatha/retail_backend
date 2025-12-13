@@ -98,22 +98,35 @@ const findByBarcode = async (barcode, gudang) => {
 const save = async (payload, user) => {
   const { header, items, isNew } = payload;
   const connection = await pool.getConnection();
+
   try {
     await connection.beginTransaction();
     let nomorDokumen = header.nomor;
 
+    // --- LOGIC INSERT BARU ---
     if (isNew) {
       const yearMonth = new Date(header.tanggal)
         .toISOString()
-        .slice(2, 7)
-        .replace("-", "");
-      const prefix = `${user.cabang}.RB.${yearMonth}.`;
-      const nomorQuery = `SELECT IFNULL(MAX(RIGHT(rb_nomor, 4)), 0) + 1 AS next_num FROM trbdc_hdr WHERE LEFT(rb_nomor, 11) = ?;`;
-      const [nomorRows] = await connection.query(nomorQuery, [prefix]);
-      nomorDokumen = `${prefix}${nomorRows[0].next_num
-        .toString()
-        .padStart(4, "0")}`;
+        .slice(2, 7) // "23-10"
+        .replace("-", ""); // "2310"
 
+      const prefix = `${user.cabang}.RB.${yearMonth}.`; // Format: K01.RB.2310.
+
+      // [FIX] Gunakan FOR UPDATE untuk mengunci pembacaan nomor terakhir
+      // Ini mencegah dua user/request mendapatkan nomor yang sama secara bersamaan
+      const nomorQuery = `
+        SELECT IFNULL(MAX(CAST(RIGHT(rb_nomor, 4) AS UNSIGNED)), 0) + 1 AS next_num 
+        FROM trbdc_hdr 
+        WHERE rb_nomor LIKE ? 
+        FOR UPDATE;
+      `;
+
+      const [nomorRows] = await connection.query(nomorQuery, [`${prefix}%`]);
+      const nextNum = nomorRows[0].next_num;
+
+      nomorDokumen = `${prefix}${nextNum.toString().padStart(4, "0")}`;
+
+      // Insert Header
       await connection.query(
         `INSERT INTO trbdc_hdr 
           (rb_nomor, rb_tanggal, rb_cab, rb_kecab, rb_ket, user_create, date_create) 
@@ -127,7 +140,21 @@ const save = async (payload, user) => {
           user.kode,
         ]
       );
+
+      // --- LOGIC UPDATE (EDIT) ---
     } else {
+      // Cek apakah data masih ada sebelum update
+      const [checkRows] = await connection.query(
+        "SELECT rb_nomor FROM trbdc_hdr WHERE rb_nomor = ? FOR UPDATE",
+        [nomorDokumen]
+      );
+
+      if (checkRows.length === 0) {
+        throw new Error(
+          `Dokumen ${nomorDokumen} tidak ditemukan atau sudah dihapus.`
+        );
+      }
+
       await connection.query(
         `UPDATE trbdc_hdr 
           SET rb_tanggal = ?, rb_cab = ?, rb_kecab = ?, rb_ket = ?, 
@@ -135,19 +162,21 @@ const save = async (payload, user) => {
           WHERE rb_nomor = ?`,
         [
           header.tanggal,
-          user.cabang, // ← wajib isi cabang pembuat retur
+          user.cabang,
           header.gudangDc.kode,
           header.keterangan,
           user.kode,
           nomorDokumen,
         ]
       );
+
+      // Hapus detail lama sebelum insert ulang
+      await connection.query("DELETE FROM trbdc_dtl WHERE rbd_nomor = ?", [
+        nomorDokumen,
+      ]);
     }
 
-    await connection.query("DELETE FROM trbdc_dtl WHERE rbd_nomor = ?", [
-      nomorDokumen,
-    ]);
-
+    // --- INSERT DETAIL ITEMS ---
     if (items.length > 0) {
       const itemValues = items.map((item) => [
         nomorDokumen,
@@ -155,6 +184,7 @@ const save = async (payload, user) => {
         item.ukuran,
         item.jumlah,
       ]);
+
       await connection.query(
         "INSERT INTO trbdc_dtl (rbd_nomor, rbd_kode, rbd_ukuran, rbd_jumlah) VALUES ?",
         [itemValues]
@@ -162,12 +192,21 @@ const save = async (payload, user) => {
     }
 
     await connection.commit();
+
     return {
       message: `Retur Barang ke DC berhasil disimpan dengan nomor ${nomorDokumen}`,
       nomor: nomorDokumen,
     };
   } catch (error) {
     await connection.rollback();
+
+    // Handle error duplicate entry MySQL (Error Code 1062)
+    if (error.code === "ER_DUP_ENTRY") {
+      throw new Error(
+        "Terjadi duplikasi nomor dokumen. Silakan coba simpan kembali."
+      );
+    }
+
     throw error;
   } finally {
     connection.release();

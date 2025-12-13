@@ -5,12 +5,13 @@ const pool = require("../config/database");
  * Query ini adalah optimasi dari alur multi-langkah di Delphi.
  */
 const getList = async (filters) => {
-  const { startDate, endDate, cabang, kategori, limit } = filters;
+  const { startDate, endDate, cabang, kategori, limit, search } = filters;
 
   let params = [endDate, startDate, endDate];
 
   let branchFilter = "";
   let categoryFilter = "";
+  let searchFilter = "";
 
   if (cabang !== "ALL") {
     branchFilter = "AND LEFT(h.inv_nomor, 3) = ?";
@@ -19,6 +20,18 @@ const getList = async (filters) => {
   if (kategori !== "ALL") {
     categoryFilter = "AND a.brg_ktgp = ?";
     params.push(kategori);
+  }
+  // 2. Logika Pencarian
+  if (search) {
+    const searchTerm = `%${search}%`;
+    // Filter berdasarkan Kode OR Nama Barang (gabungan kolom)
+    searchFilter = `
+      AND (
+        a.brg_kode LIKE ? 
+        OR CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna) LIKE ?
+      )
+    `;
+    params.push(searchTerm, searchTerm);
   }
   params.push(parseInt(limit, 10) || 20);
 
@@ -72,6 +85,7 @@ const getList = async (filters) => {
           AND a.brg_logstok = "Y"
           ${branchFilter}
           ${categoryFilter}
+          ${searchFilter}
         GROUP BY a.brg_kode, NAMA, KTGPRODUK, KTGBRG, LEFT(h.inv_nomor, 3)
         ORDER BY TOTAL DESC
         LIMIT ?
