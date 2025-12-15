@@ -66,6 +66,8 @@ const loadFromInvoice = async (nomorInvoice) => {
 };
 
 // Fungsi untuk menyimpan data Retur Jual
+// src/services/returJualFormService.js (atau file service yang relevan)
+
 const save = async (payload, user) => {
   const { header, items, footer, isNew } = payload;
   const connection = await pool.getConnection();
@@ -74,6 +76,8 @@ const save = async (payload, user) => {
 
     let nomorDokumen = header.nomor;
     let currentIdRec = "";
+    
+    // --- 1. PROSES HEADER (INSERT / UPDATE) ---
     if (isNew) {
       const d = new Date(header.tanggal);
       const year = String(d.getFullYear()).slice(2);
@@ -90,23 +94,21 @@ const save = async (payload, user) => {
       const nextNum = nomorRows[0].next_num || 1;
       nomorDokumen = `${prefix}${String(nextNum).padStart(4, "0")}`;
 
-      // 1. Generate IDREC Baru
-      currentIdRec = generateIdRec(header.cabangKode);
+      // Generate IDREC Baru
+      // Pastikan fungsi generateIdRec sudah diimport atau didefinisikan
+      currentIdRec = generateIdRec(header.cabangKode); 
 
-      console.log("Generate nomorDokumen =>", nomorDokumen, {
-        prefix,
-        nextNum,
-      });
+      console.log("Generate nomorDokumen =>", nomorDokumen);
 
       const headerInsertQuery = `
         INSERT INTO trj_hdr (
             rj_nomor, rj_inv, rj_jenis, rj_tanggal, 
             rj_ppn, rj_disc, rj_cus_kode, rj_ket, 
-            rj_cab, rj_idrec,  -- Tambahkan rj_idrec
+            rj_cab, rj_idrec, 
             user_create, date_create
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-        `;
+      `;
 
       await connection.query(headerInsertQuery, [
         nomorDokumen,
@@ -118,11 +120,11 @@ const save = async (payload, user) => {
         header.customer.kode,
         header.keterangan,
         header.cabangKode,
-        currentIdRec, // Masukkan value IDREC
+        currentIdRec, 
         user.kode,
       ]);
     } else {
-      // 2. Ambil IDREC lama jika Edit
+      // Ambil IDREC lama jika Edit
       const [existingHeader] = await connection.query(
         "SELECT rj_idrec FROM trj_hdr WHERE rj_nomor = ?",
         [nomorDokumen]
@@ -133,6 +135,7 @@ const save = async (payload, user) => {
       } else {
         currentIdRec = generateIdRec(header.cabangKode); // Fallback
       }
+      
       const headerUpdateQuery = `
         UPDATE trj_hdr SET 
             rj_tanggal = ?, rj_ppn = ?, rj_disc = ?, rj_ket = ?, 
@@ -149,6 +152,7 @@ const save = async (payload, user) => {
       ]);
     }
 
+    // --- 2. PROSES DETAIL (DELETE & INSERT) ---
     // Hapus detail lama
     await connection.query("DELETE FROM trj_dtl WHERE rjd_nomor = ?", [
       nomorDokumen,
@@ -156,31 +160,26 @@ const save = async (payload, user) => {
 
     // Insert detail baru
     if (items.length > 0) {
-      // 3. Mapping item dengan IDREC & IDDREC
       const itemValues = items.map((item, index) => {
         const nourut = index + 1;
-        // IDDREC Unik per baris
-        const iddrec = `${currentIdRec}${nourut}`;
-
+        
         return [
-          currentIdRec, // rjd_idrec (Link ke Header)
-          iddrec, // rjd_iddrec (ID Unik Detail)
-          nomorDokumen,
-          item.kode,
-          item.ukuran,
-          item.jumlah,
-          item.harga,
-          item.disc,
-          item.diskon,
-          nourut,
+          currentIdRec,  // rjd_idrec (Foreign Key ke Header)
+          nomorDokumen,  // rjd_nomor
+          item.kode,     // rjd_kode
+          item.ukuran,   // rjd_ukuran
+          item.jumlah,   // rjd_jumlah
+          item.harga,    // rjd_harga
+          item.disc,     // rjd_disc
+          item.diskon,   // rjd_diskon
+          nourut,        // rjd_nourut
         ];
       });
 
-      // Pastikan kolom rjd_idrec dan rjd_iddrec ada di tabel trj_dtl
+      // [PERBAIKAN] Menghapus kolom rjd_iddrec dari query
       await connection.query(
         `INSERT INTO trj_dtl (
           rjd_idrec,
-          rjd_iddrec,
           rjd_nomor,
           rjd_kode,
           rjd_ukuran,
@@ -194,9 +193,9 @@ const save = async (payload, user) => {
       );
     }
 
-    // Link ke piutang jika jenis retur 'Salah Qty'
+    // --- 3. PROSES PIUTANG (Jika Jenis = Y / Salah Qty) ---
     if (header.jenis === "Y") {
-      // --- 1. Ambil ph_nomor PIUTANG untuk invoice ini ---
+      // Ambil ph_nomor PIUTANG untuk invoice ini
       const [piutangRows] = await connection.query(
         `SELECT ph_nomor 
          FROM tpiutang_hdr 
@@ -213,18 +212,20 @@ const save = async (payload, user) => {
 
       const piutangHeaderNomor = piutangRows[0].ph_nomor;
 
-      // --- 2. Insert ke tpiutang_dtl sebagai Pembayaran Retur ---
+      // Insert ke tpiutang_dtl sebagai Pembayaran Retur
+      // Menggunakan ON DUPLICATE KEY UPDATE agar aman jika dijalankan ulang (misal edit)
+      // Asumsi pd_uraian + pd_ph_nomor unik atau logika bisnis mengizinkan tumpuk
       await connection.query(
         `INSERT INTO tpiutang_dtl (
-         pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket
+          pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket
          ) VALUES (?, ?, 'Pembayaran Retur', ?, ?)
          ON DUPLICATE KEY UPDATE 
          pd_kredit = VALUES(pd_kredit)`,
         [
-          piutangHeaderNomor, // ← ph_nomor valid
+          piutangHeaderNomor, 
           header.tanggal,
-          payload.footer.grandTotal, // jumlah retur
-          nomorDokumen, // nomor retur sebagai ket
+          payload.footer.grandTotal, // Nilai retur mengurangi piutang (Kredit)
+          nomorDokumen, 
         ]
       );
     }
