@@ -48,11 +48,12 @@ const save = async (data, user) => {
             so_idrec, so_nomor, so_tanggal, so_dateline, so_pen_nomor, so_top, so_ppn,
             so_disc, so_disc1, so_disc2, so_bkrm, so_dp, so_cus_kode, so_cus_level,
             so_is_marketplace, so_mp_nomor_pesanan, so_mp_resi,
+            so_pro_nomor, so_pro_nama,
             so_accdp, so_ket, so_aktif, so_sc, so_jenisorder, so_namadtf, so_cab, user_create, date_create
            )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-          ?, ?, ?,
-          ?, NOW())
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
+          ?, ?,
+          ?, ?, NOW())
         `;
       await connection.query(insertHeaderQuery, [
         idrec, // 1. so_idrec
@@ -80,6 +81,8 @@ const save = async (data, user) => {
         header.salesCounter, // 21. so_sc
         header.jenisOrderKode ? String(header.jenisOrderKode) : null, // 22. so_jenisorder
         header.namaDtf ? String(header.namaDtf) : null, // 23. so_namadtf
+        header.nomorPromo || "",
+        header.namaPromo || "",
         header.gudang.kode, // 24. so_cab
         user.kode, // 25. user_create
       ]);
@@ -99,7 +102,8 @@ const save = async (data, user) => {
           so_jenisorder = ?, so_namadtf = ?, 
           so_is_marketplace = ?, so_mp_nomor_pesanan = ?, so_mp_resi = ?,
           so_disc = ?, so_disc1 = ?, so_disc2 = ?, so_bkrm = ?, so_dp = ?, 
-          so_aktif = ?, so_sc = ?, user_modified = ?, date_modified = NOW()
+          so_aktif = ?, so_sc = ?,
+          so_pro_nomor = ?, so_pro_nama = ?, user_modified = ?, date_modified = NOW()
         WHERE so_nomor = ?
       `;
       await connection.query(updateHeaderQuery, [
@@ -124,6 +128,8 @@ const save = async (data, user) => {
         header.isMarketplace ? 0 : footer.totalDp || 0,
         header.isMarketplace ? "Y" : aktifStatus,
         header.salesCounter,
+        header.nomorPromo || "",
+        header.namaPromo || "",
         user.kode,
         soNomor,
       ]);
@@ -255,6 +261,8 @@ const getSoForEdit = async (nomor) => {
     const mainQuery = `
   SELECT 
       h.*, d.*, 
+      h.so_pro_nomor, 
+      h.so_pro_nama,
       c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
       DATE_FORMAT(c.cus_tgllahir, '%d-%m-%Y') AS tgllahir,
       b.brgd_barcode,
@@ -332,6 +340,8 @@ const getSoForEdit = async (nomor) => {
     const headerData = {
       nomor: firstRow.so_nomor,
       tanggal: formatDate(firstRow.so_tanggal),
+      nomorPromo: firstRow.so_pro_nomor || "",
+      namaPromo: firstRow.so_pro_nama || "",
       dateline: formatDate(firstRow.so_dateline),
       penawaran: firstRow.so_pen_nomor || "",
       keterangan: firstRow.so_ket || "",
