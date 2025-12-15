@@ -1,4 +1,22 @@
 const changelogs = {
+  "1.2.1": {
+    date: "2025-12-15",
+    changes: [
+      {
+        title: "Perbaikan:",
+        items: [
+          "Barang Promo masih terhitung diskon faktur",
+        ],
+      },
+      {
+        title: "Fitur Baru:",
+        items: [
+          "Filter Cabang pada Produk Top Penjualan untuk user KDC/HO",
+          "Penambahan Stok Kosong Reguler",
+        ],
+      },
+    ],
+  },
   "1.2.0": {
     date: "2025-12-15",
     changes: [
@@ -17,7 +35,7 @@ const changelogs = {
         items: [
           "FAQ (Frequently Asked Questions) pada footer aplikasi untuk membantu pengguna terkait kebingungan yang dialami",
           "Button Input Target Bulanan untuk Manajemen",
-          "Promo pada SO"
+          "Promo pada SO",
         ],
       },
     ],

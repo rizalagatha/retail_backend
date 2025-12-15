@@ -9,7 +9,7 @@ const getTodayStats = async (user) => {
   let params = [today, today, user.cabang];
 
   if (user.cabang === "KDC") {
-    branchFilter = ""; 
+    branchFilter = "";
     params = [today, today];
   }
 
@@ -50,24 +50,24 @@ const getTodayStats = async (user) => {
       ${branchFilter};
   `;
 
-  // Masukkan excludePattern ke dalam params. 
+  // Masukkan excludePattern ke dalam params.
   // Urutan params query: [RegexPattern, DateStart, DateEnd, (BranchCode)]
   // Kita perlu memodifikasi array params agar Regex Pattern masuk di posisi yang benar (sebelum branch filter)
-  
-  // Karena struktur query di atas kompleks (subquery di dalam select), 
+
+  // Karena struktur query di atas kompleks (subquery di dalam select),
   // lebih aman kita masukkan parameter secara eksplisit:
-  
+
   let finalParams;
   if (user.cabang === "KDC") {
-      // Params: [RegexPattern, Today, Today]
-      finalParams = [excludePattern, today, today];
+    // Params: [RegexPattern, Today, Today]
+    finalParams = [excludePattern, today, today];
   } else {
-      // Params: [RegexPattern, Today, Today, Cabang]
-      finalParams = [excludePattern, today, today, user.cabang];
+    // Params: [RegexPattern, Today, Today, Cabang]
+    finalParams = [excludePattern, today, today, user.cabang];
   }
 
   const [rows] = await pool.query(query, finalParams);
-  return rows[0]; 
+  return rows[0];
 };
 
 // Fungsi untuk mengambil data grafik penjualan
@@ -279,23 +279,30 @@ const getPendingActions = async (user) => {
   };
 };
 
-const getTopSellingProducts = async (user) => {
+const getTopSellingProducts = async (user, branchFilter = "") => {
   const startDate = format(startOfMonth(new Date()), "yyyy-MM-dd");
   const endDate = format(endOfMonth(new Date()), "yyyy-MM-dd");
 
-  let branchFilter = "AND LEFT(h.inv_nomor, 3) = ?";
-  let params = [startDate, endDate, user.cabang];
+  let targetCabang = null;
 
+  // LOGIKA PENENTUAN CABANG
   if (user.cabang === "KDC") {
-    branchFilter = "";
-    params = [startDate, endDate];
+    // Jika KDC, cek apakah ada filter dari frontend?
+    if (branchFilter && branchFilter !== "ALL") {
+      targetCabang = branchFilter;
+    }
+    // Jika filter kosong atau 'ALL', targetCabang tetap null (ambil semua)
+  } else {
+    // Jika bukan KDC, paksa pakai cabang user sendiri
+    targetCabang = user.cabang;
   }
 
-  // Query ini mengambil 10 produk terlaris berdasarkan kuantitas
-  const query = `
+  // QUERY UTAMA
+  let query = `
         SELECT 
             d.invd_kode AS KODE,
             TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS NAMA,
+            d.invd_ukuran AS UKURAN, -- Tambahkan Ukuran agar lebih spesifik (opsional, tapi bagus untuk display)
             SUM(d.invd_jumlah) AS TOTAL
         FROM tinv_hdr h
         INNER JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
@@ -303,8 +310,19 @@ const getTopSellingProducts = async (user) => {
         WHERE h.inv_sts_pro = 0 
           AND h.inv_tanggal BETWEEN ? AND ?
           AND a.brg_logstok = "Y"
-          ${branchFilter}
-        GROUP BY d.invd_kode, NAMA
+    `;
+
+  const params = [startDate, endDate];
+
+  // TERAPKAN FILTER CABANG JIKA ADA
+  if (targetCabang) {
+    query += ` AND LEFT(h.inv_nomor, 3) = ? `;
+    params.push(targetCabang);
+  }
+
+  // GROUPING & SORTING
+  query += `
+        GROUP BY d.invd_kode, NAMA, d.invd_ukuran
         ORDER BY TOTAL DESC
         LIMIT 10;
     `;
@@ -613,7 +631,7 @@ const getTotalStock = async (user) => {
 
   if (user.cabang !== "KDC") {
     const today = format(new Date(), "yyyy-MM-dd");
-    
+
     const dailyQuery = `
         SELECT 
             SUM(m.mst_stok_in) as stokIn,
@@ -625,9 +643,13 @@ const getTotalStock = async (user) => {
           AND m.mst_brg_kode NOT LIKE 'JASA%' 
           AND m.mst_brg_kode NOT REGEXP ?
     `;
-    
+
     // Params: Cabang, Tanggal, Regex Pattern
-    const [dailyRows] = await pool.query(dailyQuery, [user.cabang, today, excludePattern]);
+    const [dailyRows] = await pool.query(dailyQuery, [
+      user.cabang,
+      today,
+      excludePattern,
+    ]);
 
     if (dailyRows.length > 0) {
       todayIn = Number(dailyRows[0].stokIn || 0);
@@ -744,13 +766,65 @@ const getStockAlerts = async (user) => {
   // Jalankan Query secara paralel (Promise.all) agar lebih cepat
   const [rowsSj, rowsMutasi] = await Promise.all([
     pool.query(querySj, [cabang]),
-    pool.query(queryMutasi, [cabang])
+    pool.query(queryMutasi, [cabang]),
   ]);
 
   return {
-    sj_pending: rowsSj[0][0].total || 0,       // Jumlah SJ Pending
-    mutasi_pending: rowsMutasi[0][0].total || 0 // Jumlah Mutasi Pending
+    sj_pending: rowsSj[0][0].total || 0, // Jumlah SJ Pending
+    mutasi_pending: rowsMutasi[0][0].total || 0, // Jumlah Mutasi Pending
   };
+};
+
+const getStokKosongReguler = async (user, searchTerm = "") => {
+  const cabang = user.cabang; // Otomatis ambil 'KDC' atau cabang lain dari user login
+  const searchPattern = `%${searchTerm}%`;
+
+  const query = `
+    SELECT 
+        b.brgd_kode AS kode,
+        b.brgd_barcode AS barcode,
+        TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) AS nama_barang,
+        b.brgd_ukuran AS ukuran,
+        a.brg_ktgp AS kategori,
+        
+        -- Subquery hitung stok real-time
+        IFNULL((
+            SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
+            FROM tmasterstok m 
+            WHERE m.mst_aktif = 'Y' 
+              AND m.mst_cab = ? 
+              AND m.mst_brg_kode = b.brgd_kode 
+              AND m.mst_ukuran = b.brgd_ukuran
+        ), 0) AS stok_akhir
+
+    FROM tbarangdc_dtl b
+    INNER JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
+    WHERE a.brg_aktif = 0 
+      AND a.brg_ktgp = 'REGULER'
+      
+      -- Fitur Pencarian (Kode / Barcode / Nama)
+      AND (
+          b.brgd_kode LIKE ? 
+          OR b.brgd_barcode LIKE ? 
+          OR TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) LIKE ?
+      )
+
+    -- Hanya tampilkan yang stoknya 0 (atau minus jika ada error sistem)
+    HAVING stok_akhir <= 0
+
+    ORDER BY nama_barang, b.brgd_ukuran
+    LIMIT 100; -- Limit agar dashboard tidak berat loadingnya
+  `;
+
+  // Urutan parameter:
+  // 1. Cabang (untuk subquery stok)
+  // 2. Search Kode
+  // 3. Search Barcode
+  // 4. Search Nama
+  const params = [cabang, searchPattern, searchPattern, searchPattern];
+
+  const [rows] = await pool.query(query, params);
+  return rows;
 };
 
 module.exports = {
@@ -769,5 +843,6 @@ module.exports = {
   getTotalStock,
   getStockPerCabang,
   getItemSalesTrend,
-  getStockAlerts
+  getStockAlerts,
+  getStokKosongReguler,
 };

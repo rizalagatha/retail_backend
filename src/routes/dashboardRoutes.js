@@ -84,4 +84,6 @@ router.get('/changelog', verifyToken, dashboardController.getAppChangelog);
 
 router.get("/stock-alerts", verifyToken, dashboardController.getStockAlerts);
 
+router.get("/stok-kosong", verifyToken, dashboardController.getStokKosong);
+
 module.exports = router;

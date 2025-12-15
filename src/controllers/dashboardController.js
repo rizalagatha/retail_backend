@@ -53,9 +53,18 @@ const getPendingActions = async (req, res) => {
 
 const getTopSellingProducts = async (req, res) => {
   try {
-    const data = await dashboardService.getTopSellingProducts(req.user);
+    // Ambil parameter cabang dari URL (misal: /dashboard/top-products?cabang=K01)
+    const branchFilter = req.query.cabang || "";
+
+    // Kirim user dan filter cabang ke service
+    const data = await dashboardService.getTopSellingProducts(
+      req.user,
+      branchFilter
+    );
+
     res.json(data);
   } catch (error) {
+    console.error("Error getTopSellingProducts:", error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -190,6 +199,27 @@ const getStockAlerts = async (req, res) => {
   }
 };
 
+const getStokKosong = async (req, res) => {
+  try {
+    // Ambil keyword pencarian dari query params (misal: ?q=kaos)
+    const searchTerm = req.query.q || "";
+
+    const items = await dashboardService.getStokKosongReguler(
+      req.user,
+      searchTerm
+    );
+
+    res.json({
+      success: true,
+      data: items,
+      total: items.length,
+    });
+  } catch (error) {
+    console.error("Error getStokKosong:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -208,4 +238,5 @@ module.exports = {
   getItemSalesTrend,
   getAppChangelog,
   getStockAlerts,
+  getStokKosong,
 };
