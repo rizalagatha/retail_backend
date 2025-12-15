@@ -217,13 +217,13 @@ const save = async (data, user) => {
       );
     }
 
-    await connection.query(
-      `UPDATE tsetor_hdr
-       SET sh_so_nomor = ?
-       WHERE sh_cus_kode = ?
-        AND (sh_so_nomor = '' OR sh_so_nomor IS NULL)`,
-      [soNomor, header.customer.kode]
-    );
+    // await connection.query(
+    //   `UPDATE tsetor_hdr
+    //    SET sh_so_nomor = ?
+    //    WHERE sh_cus_kode = ?
+    //     AND (sh_so_nomor = '' OR sh_so_nomor IS NULL)`,
+    //   [soNomor, header.customer.kode]
+    // );
 
     await connection.commit();
     return {

@@ -1,5 +1,20 @@
 const pool = require("../config/database");
 
+// --- [TAMBAHAN] Helper untuk generate IDREC ---
+const generateIdRec = (cabang) => {
+  const date = new Date();
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  const ss = String(date.getSeconds()).padStart(2, "0");
+  const ms = String(date.getMilliseconds()).padStart(3, "0"); // 3 digit ms
+
+  // Format: K08MSK20251204155447.134
+  return `${cabang}MSK${yyyy}${mm}${dd}${hh}${min}${ss}.${ms}`;
+};
+
 // Fungsi untuk mengambil data saat form dalam mode Ubah
 const getForEdit = async (nomor) => {
   const headerQuery = `
@@ -60,16 +75,21 @@ const save = async (payload, user) => {
     await connection.beginTransaction();
 
     let nomorDokumen = header.nomor;
+    let currentIdRec = "";
+
     if (isNew) {
       nomorDokumen = await generateNewNomor(user.cabang, header.tanggal);
+      // 1. Generate IDREC baru untuk Transaksi Baru
+      currentIdRec = generateIdRec(user.cabang);
       const headerInsertQuery = `
         INSERT INTO tmsk_hdr (
-          msk_nomor, msk_tanggal, msk_kecab, msk_ket, 
+          msk_idrec, msk_nomor, msk_tanggal, msk_kecab, msk_ket, 
           msk_cab, user_create, date_create
         )
-        VALUES (?, ?, ?, ?, ?, ?, NOW());
+        VALUES (?, ?, ?, ?, ?, ?, ?, NOW());
       `;
       await connection.query(headerInsertQuery, [
+        currentIdRec,
         nomorDokumen,
         header.tanggal,
         header.storeTujuanKode,
@@ -78,6 +98,20 @@ const save = async (payload, user) => {
         user.kode,
       ]);
     } else {
+      // 2. Jika Edit, kita harus ambil IDREC yang sudah ada di database
+      // agar IDDREC detail tetap konsisten dengan Header-nya
+      const [existingHeader] = await connection.query(
+        "SELECT msk_idrec FROM tmsk_hdr WHERE msk_nomor = ? AND msk_cab = ?",
+        [nomorDokumen, user.cabang]
+      );
+
+      if (existingHeader.length > 0) {
+        currentIdRec = existingHeader[0].msk_idrec;
+      } else {
+        // Fallback jika data lama tidak punya idrec (jarang terjadi)
+        currentIdRec = generateIdRec(user.cabang);
+      }
+
       const headerUpdateQuery = `
         UPDATE tmsk_hdr SET msk_tanggal = ?, msk_kecab = ?, msk_ket = ?, user_modified = ?, date_modified = NOW()
         WHERE msk_nomor = ? AND msk_cab = ?
@@ -92,20 +126,40 @@ const save = async (payload, user) => {
       ]);
     }
 
+    // Hapus detail lama
     await connection.query("DELETE FROM tmsk_dtl WHERE mskd_nomor = ?", [
       nomorDokumen,
     ]);
 
+    // Insert detail baru
     if (items.length > 0) {
       const itemInsertQuery = `
-        INSERT INTO tmsk_dtl (mskd_nomor, mskd_kode, mskd_ukuran, mskd_jumlah) VALUES ?;
+        INSERT INTO tmsk_dtl (
+            mskd_idrec,    -- Menghubungkan ke Header IDREC
+            mskd_iddrec,   -- ID Unik Baris Detail
+            mskd_nomor, 
+            mskd_kode, 
+            mskd_ukuran, 
+            mskd_jumlah
+        ) VALUES ?;
       `;
-      const itemValues = items.map((item) => [
-        nomorDokumen,
-        item.kode,
-        item.ukuran,
-        item.jumlah,
-      ]);
+
+      // 3. Mapping data detail dengan IDDREC
+      const itemValues = items.map((item, index) => {
+        // Format IDDREC: IDREC_HEADER + Index (1, 2, 3...)
+        // Contoh: K08MSK20251204155447.1341
+        const iddrec = `${currentIdRec}${index + 1}`;
+
+        return [
+          currentIdRec, // Isi mskd_idrec dengan ID Header
+          iddrec, // Isi mskd_iddrec dengan ID Detail Unik
+          nomorDokumen,
+          item.kode,
+          item.ukuran,
+          item.jumlah,
+        ];
+      });
+
       await connection.query(itemInsertQuery, [itemValues]);
     }
 

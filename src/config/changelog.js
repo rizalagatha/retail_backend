@@ -1,4 +1,27 @@
 const changelogs = {
+  "1.2.0": {
+    date: "2025-12-15",
+    changes: [
+      "Modul Baru: Packing List atau Pra-SJ untuk Gudang DC sebelum mengirimkan Surat Jalan ke Store",
+      {
+        title: "Perbaikan:",
+        items: [
+          "Fix Detail Hilang pada Mutasi Antar Store Kirim",
+          "Fix Generate IDREC dan IDDREC pada Mutasi Antar Store Terima",
+          "Fix Export Detail Proses Stok Opname",
+          "Fix Setoran Lama SO Baru (Nyangkut) pada beberapa kasus",
+        ],
+      },
+      {
+        title: "Fitur Baru:",
+        items: [
+          "FAQ (Frequently Asked Questions) pada footer aplikasi untuk membantu pengguna terkait kebingungan yang dialami",
+          "Button Input Target Bulanan untuk Manajemen",
+          "Promo pada SO"
+        ],
+      },
+    ],
+  },
   "1.1.7": {
     date: "2025-12-13",
     changes: [

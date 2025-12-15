@@ -94,6 +94,22 @@ const getByBarcode = async (req, res) => {
   }
 };
 
+// [BARU] Load item dari Packing List
+const loadItemsFromPackingList = async (req, res) => {
+  try {
+    const { nomor } = req.query; // Mengambil ?nomor=KDC.PL...
+    
+    if (!nomor) {
+      return res.status(400).json({ message: "Nomor Packing List wajib dikirim." });
+    }
+
+    const data = await sjFormService.loadItemsFromPackingList(nomor);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getItemsForLoad,
   save,
@@ -102,4 +118,5 @@ module.exports = {
   searchPermintaan,
   searchTerimaRb,
   getByBarcode,
+  loadItemsFromPackingList,
 };

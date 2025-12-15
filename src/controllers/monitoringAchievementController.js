@@ -36,7 +36,17 @@ const getCabangOptions = async (req, res) => {
   }
 };
 
+const saveTarget = async (req, res) => {
+  try {
+    const result = await service.saveTarget(req.body, req.user);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getData,
   getCabangOptions,
+  saveTarget,
 };

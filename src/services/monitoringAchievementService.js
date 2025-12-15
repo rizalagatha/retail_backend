@@ -424,10 +424,98 @@ const getCabangOptions = async (user) => {
   return rows;
 };
 
+// Fungsi untuk menyimpan target
+const saveTarget = async (payload, user) => {
+  const { tahun, bulan, kode_gudang, targets } = payload;
+
+  // Validasi User
+  if (user.cabang !== "KDC" || user.kode !== "HARIS") {
+    throw new Error("Akses ditolak. Hanya PAK HARIS yang boleh input target.");
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    // 1. Ambil Nama Gudang
+    const [gudangRows] = await connection.query(
+      "SELECT gdg_nama FROM tgudang WHERE gdg_kode = ?",
+      [kode_gudang]
+    );
+    const nama_gudang = gudangRows.length > 0 ? gudangRows[0].gdg_nama : "";
+
+    // 2. Hapus target lama
+    await connection.query(
+      `DELETE FROM kpi.ttarget_kaosan 
+       WHERE tahun = ? AND bulan = ? AND kode_gudang = ?`,
+      [tahun, bulan, kode_gudang]
+    );
+
+    // 3. Insert Target Baru (LOGIKA 4 MINGGU)
+    const lastDayOfMonth = new Date(tahun, bulan, 0).getDate(); // misal 30, 31, atau 28
+
+    for (const item of targets) {
+      const nominal = parseFloat(item.nominal) || 0;
+      if (nominal === 0) continue;
+
+      let startDay, endDay;
+
+      // --- LOGIKA PEMBAGIAN TANGGAL 4 MINGGU ---
+      if (item.minggu === 1) {
+        startDay = 1;
+        endDay = 7;
+      } else if (item.minggu === 2) {
+        startDay = 8;
+        endDay = 14;
+      } else if (item.minggu === 3) {
+        startDay = 15;
+        endDay = 21;
+      } else if (item.minggu === 4) {
+        startDay = 22;
+        endDay = lastDayOfMonth; // Sisa hari masuk ke Minggu 4
+      } else {
+        continue; // Abaikan jika ada data minggu ke-5 dst
+      }
+
+      const startDate = `${tahun}-${String(bulan).padStart(2, "0")}-${String(
+        startDay
+      ).padStart(2, "0")}`;
+      const endDate = `${tahun}-${String(bulan).padStart(2, "0")}-${String(
+        endDay
+      ).padStart(2, "0")}`;
+
+      await connection.query(
+        `INSERT INTO kpi.ttarget_kaosan 
+            (tahun, bulan, minggu, kode_gudang, nama_gudang, target_omset, start_date, end_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          tahun,
+          bulan,
+          item.minggu,
+          kode_gudang,
+          nama_gudang,
+          nominal,
+          startDate,
+          endDate,
+        ]
+      );
+    }
+
+    await connection.commit();
+    return { message: "Target berhasil disimpan." };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   getDailyData,
   getWeeklyData,
   getMonthlyData,
   getYtdData,
   getCabangOptions,
+  saveTarget,
 };

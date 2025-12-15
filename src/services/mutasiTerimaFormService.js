@@ -1,5 +1,21 @@
 const pool = require("../config/database");
 
+// --- [TAMBAHAN] Helper untuk generate IDREC ---
+const generateIdRec = (cabang) => {
+  const date = new Date();
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  const ss = String(date.getSeconds()).padStart(2, "0");
+  const ms = String(date.getMilliseconds()).padStart(3, "0");
+
+  // Gunakan 'MST' untuk Mutasi Terima (agar beda dengan MSK)
+  // Format: K08MST20251204155447.134
+  return `${cabang}MST${yyyy}${mm}${dd}${hh}${min}${ss}.${ms}`;
+};
+
 // Fungsi untuk memuat data dari dokumen pengiriman
 const loadFromKirim = async (nomorKirim) => {
   const query = `
@@ -43,9 +59,11 @@ const loadFromKirim = async (nomorKirim) => {
 const save = async (payload, user) => {
   const { header, items } = payload;
   const connection = await pool.getConnection();
+
   try {
     await connection.beginTransaction();
 
+    // Generate Nomor Transaksi
     const year = new Date(header.tanggalTerima)
       .getFullYear()
       .toString()
@@ -56,29 +74,55 @@ const save = async (payload, user) => {
     const nextNum = nomorRows[0].next_num.toString().padStart(5, "0");
     const nomorTerima = `${prefix}${nextNum}`;
 
+    // [TAMBAHAN] Generate IDREC Header
+    const currentIdRec = generateIdRec(user.cabang);
+
+    // [PERBAIKAN] Insert Header: Tambah mst_cab dan mst_idrec
     const headerInsertQuery = `
-        INSERT INTO tmst_hdr (mst_nomor, mst_tanggal, user_create, date_create)
-        VALUES (?, ?, ?, NOW());
-        `;
+        INSERT INTO tmst_hdr (
+            mst_nomor, mst_tanggal, 
+            mst_cab, mst_idrec, 
+            user_create, date_create
+        )
+        VALUES (?, ?, ?, ?, ?, NOW());
+    `;
     await connection.query(headerInsertQuery, [
       nomorTerima,
       header.tanggalTerima,
+      user.cabang, // Penting: Cabang Penerima
+      currentIdRec, // Penting: IDREC Header
       user.kode,
     ]);
 
+    // Update Status Dokumen Pengiriman (MSK)
     await connection.query(
       "UPDATE tmsk_hdr SET msk_noterima = ? WHERE msk_nomor = ?",
       [nomorTerima, header.nomorKirim]
     );
 
-    const itemValues = items.map((item) => [
-      nomorTerima,
-      item.kode,
-      item.ukuran,
-      item.jumlahTerima,
-    ]);
-    if (itemValues.length > 0) {
-      const itemInsertQuery = `INSERT INTO tmst_dtl (mstd_nomor, mstd_kode, mstd_ukuran, mstd_jumlah) VALUES ?;`;
+    // [PERBAIKAN] Insert Detail: Tambah mstd_idrec dan mstd_iddrec
+    if (items.length > 0) {
+      const itemInsertQuery = `
+        INSERT INTO tmst_dtl (
+            mstd_idrec, mstd_iddrec, 
+            mstd_nomor, mstd_kode, mstd_ukuran, mstd_jumlah
+        ) VALUES ?;
+      `;
+
+      const itemValues = items.map((item, index) => {
+        // Generate IDDREC Detail (IDREC Header + Index)
+        const iddrec = `${currentIdRec}${index + 1}`;
+
+        return [
+          currentIdRec, // IDREC Header
+          iddrec, // IDDREC Detail
+          nomorTerima,
+          item.kode,
+          item.ukuran,
+          item.jumlahTerima,
+        ];
+      });
+
       await connection.query(itemInsertQuery, [itemValues]);
     }
 

@@ -1,5 +1,20 @@
 const pool = require("../config/database");
 
+// --- [TAMBAHAN] Helper Generate IDREC ---
+const generateIdRec = (cabang) => {
+  const date = new Date();
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  const ss = String(date.getSeconds()).padStart(2, "0");
+  const ms = String(date.getMilliseconds()).padStart(3, "0");
+
+  // Format: K01RJ20251215103000.123
+  return `${cabang}RJ${yyyy}${mm}${dd}${hh}${min}${ss}.${ms}`;
+};
+
 // Fungsi untuk memuat data dari invoice yang dipilih (meniru edtinvExit)
 const loadFromInvoice = async (nomorInvoice) => {
   const query = `
@@ -58,6 +73,7 @@ const save = async (payload, user) => {
     await connection.beginTransaction();
 
     let nomorDokumen = header.nomor;
+    let currentIdRec = "";
     if (isNew) {
       const d = new Date(header.tanggal);
       const year = String(d.getFullYear()).slice(2);
@@ -74,6 +90,9 @@ const save = async (payload, user) => {
       const nextNum = nomorRows[0].next_num || 1;
       nomorDokumen = `${prefix}${String(nextNum).padStart(4, "0")}`;
 
+      // 1. Generate IDREC Baru
+      currentIdRec = generateIdRec(header.cabangKode);
+
       console.log("Generate nomorDokumen =>", nomorDokumen, {
         prefix,
         nextNum,
@@ -81,14 +100,14 @@ const save = async (payload, user) => {
 
       const headerInsertQuery = `
         INSERT INTO trj_hdr (
-        rj_nomor, rj_inv, rj_jenis, rj_tanggal, 
-        rj_ppn, rj_disc, rj_cus_kode, rj_ket, 
-        rj_cab,
-        user_create, date_create
+            rj_nomor, rj_inv, rj_jenis, rj_tanggal, 
+            rj_ppn, rj_disc, rj_cus_kode, rj_ket, 
+            rj_cab, rj_idrec,  -- Tambahkan rj_idrec
+            user_create, date_create
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         `;
-      // Gunakan footer.diskonRp untuk kolom rj_disc
+
       await connection.query(headerInsertQuery, [
         nomorDokumen,
         header.invoice,
@@ -99,9 +118,21 @@ const save = async (payload, user) => {
         header.customer.kode,
         header.keterangan,
         header.cabangKode,
+        currentIdRec, // Masukkan value IDREC
         user.kode,
       ]);
     } else {
+      // 2. Ambil IDREC lama jika Edit
+      const [existingHeader] = await connection.query(
+        "SELECT rj_idrec FROM trj_hdr WHERE rj_nomor = ?",
+        [nomorDokumen]
+      );
+
+      if (existingHeader.length > 0) {
+        currentIdRec = existingHeader[0].rj_idrec;
+      } else {
+        currentIdRec = generateIdRec(header.cabangKode); // Fallback
+      }
       const headerUpdateQuery = `
         UPDATE trj_hdr SET 
             rj_tanggal = ?, rj_ppn = ?, rj_disc = ?, rj_ket = ?, 
@@ -118,18 +149,22 @@ const save = async (payload, user) => {
       ]);
     }
 
+    // Hapus detail lama
     await connection.query("DELETE FROM trj_dtl WHERE rjd_nomor = ?", [
       nomorDokumen,
     ]);
 
+    // Insert detail baru
     if (items.length > 0) {
+      // 3. Mapping item dengan IDREC & IDDREC
       const itemValues = items.map((item, index) => {
         const nourut = index + 1;
-        const idrec = `${header.cabangKode}.RJD.${Date.now()}${nourut}`;
-        // atau: const idrec = `${nomorDokumen}-${nourut}`;
+        // IDDREC Unik per baris
+        const iddrec = `${currentIdRec}${nourut}`;
 
         return [
-          idrec,
+          currentIdRec, // rjd_idrec (Link ke Header)
+          iddrec, // rjd_iddrec (ID Unik Detail)
           nomorDokumen,
           item.kode,
           item.ukuran,
@@ -141,9 +176,11 @@ const save = async (payload, user) => {
         ];
       });
 
+      // Pastikan kolom rjd_idrec dan rjd_iddrec ada di tabel trj_dtl
       await connection.query(
         `INSERT INTO trj_dtl (
           rjd_idrec,
+          rjd_iddrec,
           rjd_nomor,
           rjd_kode,
           rjd_ukuran,

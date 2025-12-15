@@ -167,10 +167,14 @@ const getDetails = async (nomor) => {
 /**
  * Mengambil detail item stok opname untuk keperluan export.
  */
+/**
+ * Mengambil detail item stok opname untuk keperluan export.
+ */
 const getExportDetails = async (filters) => {
   const { startDate, endDate, cabang } = filters;
 
   // Query ini adalah terjemahan dari SQLDetail di Delphi
+  // PERBAIKAN: Mengganti ORDER BY a.brg_nama menjadi urutan kolom komponen nama
   const query = `
       SELECT 
         d.sopd_nomor AS 'Nomor SOP',
@@ -189,7 +193,14 @@ const getExportDetails = async (filters) => {
       LEFT JOIN tbarangdc a ON a.brg_kode = d.sopd_kode
       WHERE h.sop_tanggal BETWEEN ? AND ?
         AND h.sop_cab = ?
-      ORDER BY d.sopd_nomor, a.brg_nama, d.sopd_ukuran
+      ORDER BY 
+        d.sopd_nomor, 
+        a.brg_jeniskaos, 
+        a.brg_tipe, 
+        a.brg_lengan, 
+        a.brg_jeniskain, 
+        a.brg_warna, 
+        d.sopd_ukuran
     `;
   const [rows] = await pool.query(query, [startDate, endDate, cabang]);
   return rows;

@@ -157,6 +157,15 @@ const saveData = async (payload, user) => {
       await connection.query(detailSql, [detailValues]);
     }
 
+    if (header.permintaan) {
+      await connection.query(
+        `UPDATE tpacking_list_hdr 
+         SET pl_status = 'C', pl_sj_nomor = ? 
+         WHERE pl_nomor = ?`,
+        [sjNomor, header.permintaan]
+      );
+    }
+
     await connection.commit();
     return {
       message: `Surat Jalan ${sjNomor} berhasil disimpan.`,
@@ -387,6 +396,46 @@ const getExportDetails = async (filters) => {
   return rows;
 };
 
+/**
+ * Load Items dari Packing List
+ */
+const loadItemsFromPackingList = async (nomorPL) => {
+  const query = `
+    SELECT 
+      d.pld_kode AS kode,
+      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+      d.pld_ukuran AS ukuran,
+      
+      -- Jumlah SJ default diambil dari Jumlah di Packing List
+      d.pld_jumlah AS jumlah, 
+      d.pld_jumlah AS minta, -- PL dianggap sebagai target/permintaan
+      
+      b.brgd_barcode AS barcode,
+
+      -- [TAMBAHAN] Data Buffer Stok & Sudah
+      IFNULL(b.brgd_min, 0) AS stokmin,
+      IFNULL(b.brgd_max, 0) AS stokmax,
+      0 AS sudah, -- Default 0 karena ini SJ pertama untuk PL tersebut
+      
+      -- Stok Aktual Gudang DC
+      IFNULL((
+         SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
+         FROM tmasterstok m 
+         WHERE m.mst_aktif='Y' AND m.mst_cab='KDC' 
+           AND m.mst_brg_kode=d.pld_kode AND m.mst_ukuran=d.pld_ukuran
+      ), 0) AS stok
+
+    FROM tpacking_list_dtl d
+    LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.pld_kode
+    LEFT JOIN retail.tbarangdc_dtl b ON b.brgd_kode = d.pld_kode AND b.brgd_ukuran = d.pld_ukuran
+    WHERE d.pld_nomor = ?
+    ORDER BY d.pld_kode, d.pld_ukuran
+  `;
+
+  const [rows] = await pool.query(query, [nomorPL]);
+  return rows;
+};
+
 module.exports = {
   getItemsForLoad,
   saveData,
@@ -396,4 +445,5 @@ module.exports = {
   searchTerimaRb,
   findByBarcode,
   getExportDetails,
+  loadItemsFromPackingList,
 };
