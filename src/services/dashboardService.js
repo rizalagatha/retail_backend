@@ -775,8 +775,20 @@ const getStockAlerts = async (user) => {
   };
 };
 
-const getStokKosongReguler = async (user, searchTerm = "") => {
-  const cabang = user.cabang; // Otomatis ambil 'KDC' atau cabang lain dari user login
+const getStokKosongReguler = async (
+  user,
+  searchTerm = "",
+  targetCabang = ""
+) => {
+  // 1. Determine which branch to check
+  // Default to the user's own branch
+  let branchToCheck = user.cabang;
+
+  // If user is KDC and they selected a specific branch (and it's not empty), use that
+  if (user.cabang === "KDC" && targetCabang) {
+    branchToCheck = targetCabang;
+  }
+
   const searchPattern = `%${searchTerm}%`;
 
   const query = `
@@ -787,12 +799,12 @@ const getStokKosongReguler = async (user, searchTerm = "") => {
         b.brgd_ukuran AS ukuran,
         a.brg_ktgp AS kategori,
         
-        -- Subquery hitung stok real-time
+        -- Subquery: Calculate real-time stock for the SPECIFIC branch
         IFNULL((
             SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
             FROM tmasterstok m 
             WHERE m.mst_aktif = 'Y' 
-              AND m.mst_cab = ? 
+              AND m.mst_cab = ?  -- Use dynamic branch variable
               AND m.mst_brg_kode = b.brgd_kode 
               AND m.mst_ukuran = b.brgd_ukuran
         ), 0) AS stok_akhir
@@ -802,26 +814,24 @@ const getStokKosongReguler = async (user, searchTerm = "") => {
     WHERE a.brg_aktif = 0 
       AND a.brg_ktgp = 'REGULER'
       
-      -- Fitur Pencarian (Kode / Barcode / Nama)
+      -- Search Filter
       AND (
           b.brgd_kode LIKE ? 
           OR b.brgd_barcode LIKE ? 
           OR TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) LIKE ?
       )
 
-    -- Hanya tampilkan yang stoknya 0 (atau minus jika ada error sistem)
+    -- Filter: Only show items with 0 or less stock
     HAVING stok_akhir <= 0
 
     ORDER BY nama_barang, b.brgd_ukuran
-    LIMIT 100; -- Limit agar dashboard tidak berat loadingnya
+    LIMIT 100;
   `;
 
-  // Urutan parameter:
-  // 1. Cabang (untuk subquery stok)
-  // 2. Search Kode
-  // 3. Search Barcode
-  // 4. Search Nama
-  const params = [cabang, searchPattern, searchPattern, searchPattern];
+  // Params order:
+  // 1. Branch for subquery
+  // 2-4. Search patterns
+  const params = [branchToCheck, searchPattern, searchPattern, searchPattern];
 
   const [rows] = await pool.query(query, params);
   return rows;

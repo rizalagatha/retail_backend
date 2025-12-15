@@ -201,12 +201,14 @@ const getStockAlerts = async (req, res) => {
 
 const getStokKosong = async (req, res) => {
   try {
-    // Ambil keyword pencarian dari query params (misal: ?q=kaos)
     const searchTerm = req.query.q || "";
+    // Get the 'cabang' parameter from the URL query string (e.g., ?q=kaos&cabang=K01)
+    const targetCabang = req.query.cabang || "";
 
     const items = await dashboardService.getStokKosongReguler(
       req.user,
-      searchTerm
+      searchTerm,
+      targetCabang
     );
 
     res.json({
