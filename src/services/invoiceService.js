@@ -127,16 +127,12 @@ const getList = async (filters) => {
           WHERE ph.ph_inv_nomor = h.inv_nomor
         ) AS Bayar,
 
-        -- Display Sisa (Hanya kosmetik di tabel, filter asli pakai EXISTS di bawah)
-        GREATEST(
-          (
-             COALESCE(SN.NominalPiutang,0) + h.inv_ppn + h.inv_bkrm 
-          ) 
-          - 
-          (
-             h.inv_bayar + IFNULL(h.inv_pundiamal,0) - h.inv_kembali
-          ), 
-          0
+        -- [PERBAIKAN] Display Sisa (Ambil Real-time dari Piutang: Debet - Kredit)
+        (
+          SELECT COALESCE(SUM(d.pd_debet), 0) - COALESCE(SUM(d.pd_kredit), 0)
+          FROM tpiutang_dtl d
+          INNER JOIN tpiutang_hdr ph ON ph.ph_nomor = d.pd_ph_nomor
+          WHERE ph.ph_inv_nomor = h.inv_nomor
         ) AS SisaPiutang,
 
         h.inv_cus_kode AS Kdcus,

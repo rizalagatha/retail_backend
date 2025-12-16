@@ -1,9 +1,19 @@
 const changelogs = {
-  "1.2.2": {
+  "1.2.3": {
     date: "2025-12-16",
     changes: [
-      "Perbaikan: Kolom Bayar Invoice menyesuaikan Program Lama",
+      {
+        title: "Perbaikan:",
+        items: [
+          "Fix Kolom Sisa Piutang Menyesuaikan Program Lama",
+          "Fix Perhitungan Promo pada Halaman Surat Pesanan",
+        ],
+      },
     ],
+  },
+  "1.2.2": {
+    date: "2025-12-16",
+    changes: ["Perbaikan: Kolom Bayar Invoice menyesuaikan Program Lama"],
   },
   "1.2.1": {
     date: "2025-12-15",
