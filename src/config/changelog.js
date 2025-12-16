@@ -1,12 +1,16 @@
 const changelogs = {
+  "1.2.2": {
+    date: "2025-12-16",
+    changes: [
+      "Perbaikan: Kolom Bayar Invoice menyesuaikan Program Lama",
+    ],
+  },
   "1.2.1": {
     date: "2025-12-15",
     changes: [
       {
         title: "Perbaikan:",
-        items: [
-          "Barang Promo masih terhitung diskon faktur",
-        ],
+        items: ["Barang Promo masih terhitung diskon faktur"],
       },
       {
         title: "Fitur Baru:",

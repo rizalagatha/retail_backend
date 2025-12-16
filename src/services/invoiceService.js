@@ -121,13 +121,10 @@ const getList = async (filters) => {
         
         -- Display Bayar (Hanya kosmetik di tabel)
         (
-           (COALESCE(SN.NominalPiutang,0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0))
-           -
-           GREATEST(
-              (COALESCE(SN.NominalPiutang,0) + h.inv_ppn + h.inv_bkrm) 
-              - (h.inv_bayar + IFNULL(h.inv_pundiamal,0) - h.inv_kembali), 
-              0
-           )
+          SELECT COALESCE(SUM(d.pd_kredit), 0)
+          FROM tpiutang_dtl d
+          INNER JOIN tpiutang_hdr ph ON ph.ph_nomor = d.pd_ph_nomor
+          WHERE ph.ph_inv_nomor = h.inv_nomor
         ) AS Bayar,
 
         -- Display Sisa (Hanya kosmetik di tabel, filter asli pakai EXISTS di bawah)
