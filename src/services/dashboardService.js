@@ -169,40 +169,49 @@ const getRecentTransactions = async (user) => {
 };
 
 const getPendingActions = async (user) => {
-  // 1. Ubah rentang waktu menjadi "Seluruh Waktu" (misal mulai tahun 2000)
   const allTimeDate = "2020-01-01";
 
-  let branchFilterClause = "AND LEFT(h.inv_nomor, 3) = ?";
-  let params = [user.cabang];
+  // Siapkan parameter: Jika KDC kosong, Jika Cabang isi kode cabang
+  const params =
+    user.cabang === "KDC" ? [allTimeDate] : [allTimeDate, user.cabang];
 
-  if (user.cabang === "KDC") {
-    branchFilterClause = "";
-    params = [];
-  }
+  // Helper function untuk membuat WHERE clause
+  // Jika user KDC, return string kosong.
+  // Jika user Cabang, return syntax SQL sesuai metode yang diminta.
+  const getFilter = (type, colName) => {
+    if (user.cabang === "KDC") return "";
 
-  // Parameter tanggal (allTimeDate) + Parameter cabang (jika ada)
-  const dateParams = [allTimeDate, ...params];
+    // OPSI 1: Metode Lama (Potong 3 digit awal nomor) -> Untuk Penawaran, SO, DTF, Pengajuan
+    if (type === "legacy") {
+      return `AND LEFT(${colName}, 3) = ?`;
+    }
 
-  // --- QUERY 1: Penawaran Open ---
+    // OPSI 2: Metode Baru (Pakai kolom Cabang) -> Khusus Invoice/Piutang
+    if (type === "column") {
+      return `AND ${colName} = ?`;
+    }
+  };
+
+  // --- QUERY 1: Penawaran Open (Metode Legacy: Cek 3 digit pen_nomor) ---
   const penawaranQuery = `
         SELECT COUNT(*) as count 
         FROM tpenawaran_hdr h
         WHERE h.pen_tanggal >= ? 
           AND NOT EXISTS (SELECT 1 FROM tso_hdr so WHERE so.so_pen_nomor = h.pen_nomor)
           AND (h.pen_alasan IS NULL OR h.pen_alasan = '')
-          ${branchFilterClause.replace("nomor", "h.pen_nomor")};
+          ${getFilter("legacy", "h.pen_nomor")}; 
     `;
 
-  // --- QUERY 2: Pengajuan Harga Pending ---
+  // --- QUERY 2: Pengajuan Harga Pending (Metode Legacy: Cek 3 digit ph_nomor) ---
   const pengajuanQuery = `
         SELECT COUNT(*) as count 
         FROM tpengajuanharga h
         WHERE h.ph_tanggal >= ?
           AND (h.ph_apv IS NULL OR h.ph_apv = '')
-        ${branchFilterClause.replace("nomor", "h.ph_nomor")};
+          ${getFilter("legacy", "h.ph_nomor")};
     `;
 
-  // --- QUERY 3: SO Open ---
+  // --- QUERY 3: SO Open (Metode Legacy: Cek 3 digit so_nomor) ---
   const soOpenQuery = `
         SELECT COUNT(*) as count FROM (
             SELECT 
@@ -225,15 +234,17 @@ const getPendingActions = async (user) => {
                         IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0) AS QtyInv
                     FROM tso_hdr h
                     WHERE h.so_tanggal >= ? AND h.so_aktif = 'Y' 
-                    ${branchFilterClause.replace("nomor", "h.so_nomor")}
+                    ${getFilter("legacy", "h.so_nomor")}
                 ) x
             ) y
         ) z
         WHERE z.StatusFinal = 'OPEN';
     `;
 
-  // --- QUERY 4: Invoice Sisa Piutang (UPDATED) ---
-  // Menggunakan logika saldo debet - kredit > 0
+  // --- QUERY 4: Invoice/Piutang (Metode Baru: Pakai Kolom Cabang) ---
+  // Note: Tabel tpiutang_hdr alias 'u'.
+  // Biasanya kolom cabang di tpiutang_hdr namanya 'ph_cab'.
+  // Jika error 'Unknown column', ganti 'u.ph_cab' menjadi 'u.ph_kecab' atau 'u.ph_cabang'.
   const invoiceQuery = `
         SELECT COUNT(*) AS count
         FROM tpiutang_hdr u
@@ -242,41 +253,45 @@ const getPendingActions = async (user) => {
             FROM tpiutang_dtl GROUP BY pd_ph_nomor
         ) v ON v.pd_ph_nomor = u.ph_nomor
         WHERE u.ph_tanggal >= ? 
-          AND (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) > 100 -- Toleransi pembulatan
-          ${branchFilterClause.replace("nomor", "u.ph_inv_nomor")}; 
+          AND (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) > 100 
+          ${getFilter("column", "u.ph_cab")}; 
     `;
 
-  // --- QUERY 5: SO DTF Open ---
+  // --- QUERY 5: SO DTF Open (Metode Legacy: Cek 3 digit sd_nomor) ---
   const soDtfOpenQuery = `
         SELECT COUNT(*) as count 
         FROM tsodtf_hdr h
         WHERE h.sd_stok = "" AND h.sd_tanggal >= ? 
           AND NOT EXISTS (SELECT 1 FROM tinv_dtl dd WHERE dd.invd_sd_nomor = h.sd_nomor)
-          ${branchFilterClause.replace("nomor", "h.sd_nomor")};
+          ${getFilter("legacy", "h.sd_nomor")};
     `;
 
-  // Jalankan semua query secara paralel
-  const [
-    [penawaranResult],
-    [pengajuanResult],
-    [soOpenResult],
-    [invoiceResult],
-    [soDtfOpenResult],
-  ] = await Promise.all([
-    pool.query(penawaranQuery, dateParams),
-    pool.query(pengajuanQuery, dateParams),
-    pool.query(soOpenQuery, dateParams),
-    pool.query(invoiceQuery, dateParams),
-    pool.query(soDtfOpenQuery, dateParams),
-  ]);
+  try {
+    const [
+      [penawaranResult],
+      [pengajuanResult],
+      [soOpenResult],
+      [invoiceResult],
+      [soDtfOpenResult],
+    ] = await Promise.all([
+      pool.query(penawaranQuery, params),
+      pool.query(pengajuanQuery, params),
+      pool.query(soOpenQuery, params),
+      pool.query(invoiceQuery, params),
+      pool.query(soDtfOpenQuery, params),
+    ]);
 
-  return {
-    penawaran_open: penawaranResult[0].count,
-    pengajuan_harga_pending: pengajuanResult[0].count,
-    so_open: soOpenResult[0].count,
-    invoice_belum_lunas: invoiceResult[0].count,
-    so_dtf_open: soDtfOpenResult[0].count,
-  };
+    return {
+      penawaran_open: penawaranResult ? penawaranResult.count : 0,
+      pengajuan_harga_pending: pengajuanResult ? pengajuanResult.count : 0,
+      so_open: soOpenResult ? soOpenResult.count : 0,
+      invoice_belum_lunas: invoiceResult ? invoiceResult.count : 0,
+      so_dtf_open: soDtfOpenResult ? soDtfOpenResult.count : 0,
+    };
+  } catch (error) {
+    console.error("Error getPendingActions:", error);
+    throw error;
+  }
 };
 
 const getTopSellingProducts = async (user, branchFilter = "") => {
