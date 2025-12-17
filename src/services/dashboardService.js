@@ -409,30 +409,53 @@ const getBranchPerformance = async (user) => {
             JOIN trj_dtl rd ON rd.rjd_nomor = rh.rj_nomor
             WHERE YEAR(rh.rj_tanggal) = ? AND MONTH(rh.rj_tanggal) = ?
             GROUP BY rh.rj_cab
+        ),
+        -- [BARU] Hitung Biaya Platform (Marketplace Fee)
+        MonthlyFees AS (
+            SELECT 
+                inv_cab AS cabang,
+                SUM(COALESCE(inv_mp_biaya_platform, 0)) AS total_fee
+            FROM tinv_hdr
+            WHERE YEAR(inv_tanggal) = ? AND MONTH(inv_tanggal) = ?
+            GROUP BY inv_cab
         )
         SELECT 
             g.gdg_kode AS kode_cabang,
             g.gdg_nama AS nama_cabang,
-            -- Hitung Netto: Omset Kotor - Retur
-            (COALESCE(ms.nominal, 0) - COALESCE(mr.total_retur, 0)) AS nominal,
+            
+            -- Hitung Netto: Omset Kotor - Retur - Biaya Platform
+            (
+                COALESCE(ms.nominal, 0) 
+                - COALESCE(mr.total_retur, 0)
+                - COALESCE(mf.total_fee, 0) -- [BARU] Kurangi Fee
+            ) AS nominal,
+            
             COALESCE(mt.target, 0) AS target,
+            
+            -- Hitung Achievement (Update rumus dengan nominal netto)
             CASE 
                 WHEN COALESCE(mt.target, 0) > 0 THEN 
-                    ((COALESCE(ms.nominal, 0) - COALESCE(mr.total_retur, 0)) / mt.target) * 100 
+                    (
+                        (COALESCE(ms.nominal, 0) - COALESCE(mr.total_retur, 0) - COALESCE(mf.total_fee, 0)) 
+                        / mt.target
+                    ) * 100 
                 ELSE 0 
             END AS ach
+            
         FROM tgudang g
         LEFT JOIN MonthlySales ms ON g.gdg_kode = ms.cabang
         LEFT JOIN MonthlyTargets mt ON g.gdg_kode = mt.cabang
         LEFT JOIN MonthlyReturns mr ON g.gdg_kode = mr.cabang
+        LEFT JOIN MonthlyFees mf ON g.gdg_kode = mf.cabang -- [BARU] Join Fee
         WHERE 
-            (g.gdg_dc = 0 OR g.gdg_kode = 'KPR') -- Tambahkan KPR secara eksplisit
-            AND g.gdg_kode <> 'KDC' -- Pastikan KDC tetap tidak ikut
+            (g.gdg_dc = 0 OR g.gdg_kode = 'KPR' OR g.gdg_kode = 'KON') 
+            AND g.gdg_kode <> 'KDC'
         ORDER BY ach DESC;
     `;
 
-  // Urutan parameter: Sales(2) -> Target(2) -> Returns(2)
-  const params = [tahun, bulan, tahun, bulan, tahun, bulan];
+  // [PENTING] Tambahkan parameter tahun & bulan untuk CTE MonthlyFees (Total 8 parameter)
+  // Urutan: Sales(2) -> Target(2) -> Returns(2) -> Fees(2)
+  const params = [tahun, bulan, tahun, bulan, tahun, bulan, tahun, bulan];
 
   try {
     const [rows] = await pool.query(query, params);
