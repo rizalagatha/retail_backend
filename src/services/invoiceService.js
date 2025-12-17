@@ -67,7 +67,20 @@ const getList = async (filters) => {
     SumNominal AS (
       SELECT
         dc.invd_inv_nomor,
-        ROUND(SUM(dc.invd_jumlah * (dc.invd_harga - dc.invd_diskon)) - COALESCE(h.inv_disc, 0), 0) AS NominalPiutang
+        ROUND(
+          (
+            -- 1. Total Harga per Item (Setelah diskon item)
+            SUM(dc.invd_jumlah * (dc.invd_harga - dc.invd_diskon)) 
+            
+            -- 2. Kurangi Diskon Faktur 1 (%)
+            * (1 - (COALESCE(h.inv_disc1, 0) / 100)) 
+            
+            -- 3. Kurangi Diskon Faktur 2 (%)
+            * (1 - (COALESCE(h.inv_disc2, 0) / 100))
+          )
+          -- 4. Kurangi Diskon Faktur (Rupiah Manual)
+          - COALESCE(h.inv_disc, 0)
+        , 0) AS NominalPiutang
       FROM DetailCalc dc
       LEFT JOIN tinv_hdr h ON h.inv_nomor = dc.invd_inv_nomor
       GROUP BY dc.invd_inv_nomor
@@ -119,7 +132,9 @@ const getList = async (filters) => {
         h.inv_mp_resi AS NoResi,             
         h.inv_mp_biaya_platform AS BiayaPlatform, 
         
-        -- Display Bayar (Hanya kosmetik di tabel)
+        -- 1. Display Bayar
+        -- Ambil total semua pembayaran (Kredit) dari tabel piutang
+        -- Karena tidak ada baris diskon di sini, maka semua kredit adalah pembayaran valid.
         (
           SELECT COALESCE(SUM(d.pd_kredit), 0)
           FROM tpiutang_dtl d
@@ -127,12 +142,24 @@ const getList = async (filters) => {
           WHERE ph.ph_inv_nomor = h.inv_nomor
         ) AS Bayar,
 
-        -- [PERBAIKAN] Display Sisa (Ambil Real-time dari Piutang: Debet - Kredit)
+        -- 2. Display Sisa Piutang (FIXED)
+        -- Rumus: (Nominal Invoice Netto) - (Total Kredit Piutang)
+        -- Kita pakai nominal dari perhitungan 'SumNominal' (tinv) agar akurat,
+        -- lalu dikurangi total kredit dari tpiutang.
         (
-          SELECT COALESCE(SUM(d.pd_debet), 0) - COALESCE(SUM(d.pd_kredit), 0)
-          FROM tpiutang_dtl d
-          INNER JOIN tpiutang_hdr ph ON ph.ph_nomor = d.pd_ph_nomor
-          WHERE ph.ph_inv_nomor = h.inv_nomor
+          (
+            COALESCE(SN.NominalPiutang,0) 
+            + h.inv_ppn 
+            + h.inv_bkrm 
+            - COALESCE(h.inv_mp_biaya_platform, 0)
+          ) 
+          - 
+          (
+            SELECT COALESCE(SUM(d.pd_kredit), 0)
+            FROM tpiutang_dtl d
+            INNER JOIN tpiutang_hdr ph ON ph.ph_nomor = d.pd_ph_nomor
+            WHERE ph.ph_inv_nomor = h.inv_nomor
+          )
         ) AS SisaPiutang,
 
         h.inv_cus_kode AS Kdcus,

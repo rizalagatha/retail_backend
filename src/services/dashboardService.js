@@ -5,7 +5,7 @@ const { startOfMonth, endOfMonth, format, subDays } = require("date-fns");
 // Fungsi untuk mengambil statistik penjualan, transaksi, DAN QTY hari ini
 const getTodayStats = async (user) => {
   const today = format(new Date(), "yyyy-MM-dd");
-  let branchFilter = "AND LEFT(h.inv_nomor, 3) = ?";
+  let branchFilter = "AND h.inv_cab = ?";
   let params = [today, today, user.cabang];
 
   if (user.cabang === "KDC") {
@@ -79,10 +79,10 @@ const getSalesChartData = async (filters, user) => {
 
   // Logika filter cabang tidak berubah
   if (user.cabang === "KDC" && cabang && cabang !== "ALL") {
-    branchFilter = "AND LEFT(h.inv_nomor, 3) = ?";
+    branchFilter = "AND h.inv_cab = ?";
     params.push(cabang);
   } else if (user.cabang !== "KDC") {
-    branchFilter = "AND LEFT(h.inv_nomor, 3) = ?";
+    branchFilter = "AND h.inv_cab = ?";
     params.push(user.cabang);
   }
 
@@ -139,7 +139,7 @@ const getCabangOptions = async (user) => {
 };
 
 const getRecentTransactions = async (user) => {
-  let branchFilter = "AND LEFT(h.inv_nomor, 3) = ?";
+  let branchFilter = "AND h.inv_cab = ?";
   let params = [user.cabang];
 
   if (user.cabang === "KDC") {
@@ -172,7 +172,7 @@ const getPendingActions = async (user) => {
   // 1. Ubah rentang waktu menjadi "Seluruh Waktu" (misal mulai tahun 2000)
   const allTimeDate = "2020-01-01";
 
-  let branchFilterClause = "AND LEFT(nomor, 3) = ?";
+  let branchFilterClause = "AND h.inv_cab = ?";
   let params = [user.cabang];
 
   if (user.cabang === "KDC") {
@@ -316,7 +316,7 @@ const getTopSellingProducts = async (user, branchFilter = "") => {
 
   // TERAPKAN FILTER CABANG JIKA ADA
   if (targetCabang) {
-    query += ` AND LEFT(h.inv_nomor, 3) = ? `;
+    query += ` AND h.inv_cab = ? `;
     params.push(targetCabang);
   }
 
@@ -335,7 +335,7 @@ const getSalesTargetSummary = async (user) => {
   const tahun = new Date().getFullYear();
   const bulan = new Date().getMonth() + 1;
 
-  let branchFilter = "AND LEFT(h.inv_nomor, 3) = ?";
+  let branchFilter = "AND h.inv_cab = ?";
   let params = [tahun, bulan, user.cabang];
 
   if (user.cabang === "KDC") {
@@ -403,12 +403,12 @@ const getBranchPerformance = async (user) => {
         ),
         MonthlyReturns AS (
             SELECT 
-                LEFT(rh.rj_nomor, 3) AS cabang,
+                rh.rj_cab AS cabang,
                 SUM(rd.rjd_jumlah * (rd.rjd_harga - rd.rjd_diskon)) AS total_retur
             FROM trj_hdr rh
             JOIN trj_dtl rd ON rd.rjd_nomor = rh.rj_nomor
             WHERE YEAR(rh.rj_tanggal) = ? AND MONTH(rh.rj_tanggal) = ?
-            GROUP BY LEFT(rh.rj_nomor, 3)
+            GROUP BY rh.rj_cab
         )
         SELECT 
             g.gdg_kode AS kode_cabang,
@@ -447,7 +447,7 @@ const getStagnantStockSummary = async (user) => {
   const thirtyDaysAgo = format(subDays(new Date(), 30), "yyyy-MM-dd");
 
   let branchFilter = "AND m.mst_cab = ?";
-  let salesBranchFilter = "AND LEFT(h.inv_nomor, 3) = ?";
+  let salesBranchFilter = "AND h.inv_cab = ?";
   let params = [thirtyDaysAgo];
 
   if (user.cabang === "KDC") {
@@ -500,7 +500,7 @@ const getStagnantStockSummary = async (user) => {
  * @description Menghitung total sisa piutang.
  */
 const getTotalSisaPiutang = async (user) => {
-  let branchFilter = "AND LEFT(u.ph_inv_nomor, 3) = ?";
+  let branchFilter = "AND u.ph_cab = ?";
   let params = [user.cabang];
 
   if (user.cabang === "KDC") {
@@ -540,7 +540,7 @@ const getPiutangPerCabang = async (user) => {
   // Query ini mengambil total sisa piutang > 0, dikelompokkan per cabang
   const query = `
     SELECT 
-      LEFT(u.ph_inv_nomor, 3) AS cabang_kode,
+      u.ph_cab AS cabang_kode,
       g.gdg_nama AS cabang_nama,
       SUM(v.debet - v.kredit) AS sisa_piutang
     FROM tpiutang_hdr u
@@ -551,9 +551,9 @@ const getPiutangPerCabang = async (user) => {
         FROM tpiutang_dtl 
         GROUP BY pd_ph_nomor
     ) v ON v.pd_ph_nomor = u.ph_nomor
-    LEFT JOIN tgudang g ON g.gdg_kode = LEFT(u.ph_inv_nomor, 3)
+    LEFT JOIN tgudang g ON g.gdg_kode = u.ph_cab
     WHERE (v.debet - v.kredit) > 0  -- Hanya ambil yang masih ada sisa
-    GROUP BY LEFT(u.ph_inv_nomor, 3), g.gdg_nama
+    GROUP BY u.ph_cab, g.gdg_nama
     ORDER BY sisa_piutang DESC;
   `;
 
@@ -582,7 +582,7 @@ const getPiutangPerInvoice = async (user) => {
             GROUP BY pd_ph_nomor
         ) v ON v.pd_ph_nomor = u.ph_nomor
         LEFT JOIN tinv_hdr h ON h.inv_nomor = u.ph_inv_nomor
-        WHERE LEFT(u.ph_inv_nomor, 3) = ?
+        WHERE u.ph_cab = ?
           AND (v.debet - v.kredit) > 0
         ORDER BY sisa_piutang DESC;
     `;
