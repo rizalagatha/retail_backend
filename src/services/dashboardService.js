@@ -172,16 +172,19 @@ const getPendingActions = async (user) => {
   // 1. Ubah rentang waktu menjadi "Seluruh Waktu" (misal mulai tahun 2000)
   const allTimeDate = "2020-01-01";
 
-  let branchFilterClause = "AND h.inv_cab = ?";
-  let params = [user.cabang];
+  // Helper untuk membuat clause cabang dinamis sesuai nama kolom di tabel
+  const getBranchClause = (colName) => {
+    if (user.cabang === "KDC") return ""; // Pusat lihat semua
+    return `AND ${colName} = ?`;
+  };
 
-  if (user.cabang === "KDC") {
-    branchFilterClause = "";
-    params = [];
-  }
+  // Helper params
+  const getParams = () => {
+    if (user.cabang === "KDC") return [allTimeDate];
+    return [allTimeDate, user.cabang];
+  };
 
-  // Parameter tanggal (allTimeDate) + Parameter cabang (jika ada)
-  const dateParams = [allTimeDate, ...params];
+  const params = getParams();
 
   // --- QUERY 1: Penawaran Open ---
   const penawaranQuery = `
@@ -190,7 +193,7 @@ const getPendingActions = async (user) => {
         WHERE h.pen_tanggal >= ? 
           AND NOT EXISTS (SELECT 1 FROM tso_hdr so WHERE so.so_pen_nomor = h.pen_nomor)
           AND (h.pen_alasan IS NULL OR h.pen_alasan = '')
-          ${branchFilterClause.replace("nomor", "h.pen_nomor")};
+          ${getBranchClause("h.pen_cab")};
     `;
 
   // --- QUERY 2: Pengajuan Harga Pending ---
@@ -199,7 +202,7 @@ const getPendingActions = async (user) => {
         FROM tpengajuanharga h
         WHERE h.ph_tanggal >= ?
           AND (h.ph_apv IS NULL OR h.ph_apv = '')
-        ${branchFilterClause.replace("nomor", "h.ph_nomor")};
+        ${getBranchClause("h.ph_cab")};
     `;
 
   // --- QUERY 3: SO Open ---
@@ -225,7 +228,7 @@ const getPendingActions = async (user) => {
                         IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0) AS QtyInv
                     FROM tso_hdr h
                     WHERE h.so_tanggal >= ? AND h.so_aktif = 'Y' 
-                    ${branchFilterClause.replace("nomor", "h.so_nomor")}
+                    ${getBranchClause("h.so_cab")}
                 ) x
             ) y
         ) z
@@ -243,7 +246,7 @@ const getPendingActions = async (user) => {
         ) v ON v.pd_ph_nomor = u.ph_nomor
         WHERE u.ph_tanggal >= ? 
           AND (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) > 100 -- Toleransi pembulatan
-          ${branchFilterClause.replace("nomor", "u.ph_inv_nomor")}; 
+          ${getBranchClause("u.ph_cab")};
     `;
 
   // --- QUERY 5: SO DTF Open ---
@@ -252,31 +255,36 @@ const getPendingActions = async (user) => {
         FROM tsodtf_hdr h
         WHERE h.sd_stok = "" AND h.sd_tanggal >= ? 
           AND NOT EXISTS (SELECT 1 FROM tinv_dtl dd WHERE dd.invd_sd_nomor = h.sd_nomor)
-          ${branchFilterClause.replace("nomor", "h.sd_nomor")};
+          ${getBranchClause("h.sd_cab")};
     `;
 
   // Jalankan semua query secara paralel
-  const [
-    [penawaranResult],
-    [pengajuanResult],
-    [soOpenResult],
-    [invoiceResult],
-    [soDtfOpenResult],
-  ] = await Promise.all([
-    pool.query(penawaranQuery, dateParams),
-    pool.query(pengajuanQuery, dateParams),
-    pool.query(soOpenQuery, dateParams),
-    pool.query(invoiceQuery, dateParams),
-    pool.query(soDtfOpenQuery, dateParams),
-  ]);
+  try {
+    const [
+      [penawaranResult],
+      [pengajuanResult],
+      [soOpenResult],
+      [invoiceResult],
+      [soDtfOpenResult],
+    ] = await Promise.all([
+      pool.query(penawaranQuery, params),
+      pool.query(pengajuanQuery, params),
+      pool.query(soOpenQuery, params),
+      pool.query(invoiceQuery, params),
+      pool.query(soDtfOpenQuery, params),
+    ]);
 
-  return {
-    penawaran_open: penawaranResult[0].count,
-    pengajuan_harga_pending: pengajuanResult[0].count,
-    so_open: soOpenResult[0].count,
-    invoice_belum_lunas: invoiceResult[0].count,
-    so_dtf_open: soDtfOpenResult[0].count,
-  };
+    return {
+      penawaran_open: penawaranResult ? penawaranResult.count : 0,
+      pengajuan_harga_pending: pengajuanResult ? pengajuanResult.count : 0,
+      so_open: soOpenResult ? soOpenResult.count : 0,
+      invoice_belum_lunas: invoiceResult ? invoiceResult.count : 0,
+      so_dtf_open: soDtfOpenResult ? soDtfOpenResult.count : 0,
+    };
+  } catch (error) {
+    console.error("Error getPendingActions:", error);
+    throw error;
+  }
 };
 
 const getTopSellingProducts = async (user, branchFilter = "") => {
