@@ -169,41 +169,39 @@ const getRecentTransactions = async (user) => {
 };
 
 const getPendingActions = async (user) => {
-  // 1. Setup Parameter
   const allTimeDate = "2020-01-01";
 
-  // Jika User = KDC, parameter hanya tanggal.
-  // Jika User = Cabang, parameter tanggal + kode cabang (untuk dicocokkan dengan LEFT).
+  // Helper: Jika user KDC (Pusat), abaikan filter. Jika Cabang, pasang filter.
+  // params akan diisi [tanggal, cabang] atau [tanggal] saja.
   const params =
     user.cabang === "KDC" ? [allTimeDate] : [allTimeDate, user.cabang];
 
-  // 2. Helper Function: Membuat Clause WHERE secara dinamis
-  const getFilter = (colName) => {
+  // Helper untuk membuat WHERE clause dinamis berdasarkan kolom cabang tabel terkait
+  const getBranchFilter = (colName) => {
     if (user.cabang === "KDC") return "";
-    // LOGIKA LAMA: Ambil 3 karakter pertama nomor transaksi
-    return `AND LEFT(${colName}, 3) = ?`;
+    return `AND ${colName} = ?`;
   };
 
-  // --- QUERY 1: Penawaran Open ---
+  // --- 1. PENAWARAN (tpenawaran_hdr -> pen_cab) ---
   const penawaranQuery = `
         SELECT COUNT(*) as count 
         FROM tpenawaran_hdr h
         WHERE h.pen_tanggal >= ? 
           AND NOT EXISTS (SELECT 1 FROM tso_hdr so WHERE so.so_pen_nomor = h.pen_nomor)
           AND (h.pen_alasan IS NULL OR h.pen_alasan = '')
-          ${getFilter("h.pen_nomor")}; 
+          ${getBranchFilter("h.pen_cab")}; 
     `;
 
-  // --- QUERY 2: Pengajuan Harga Pending ---
+  // --- 2. PENGAJUAN HARGA (tpengajuanharga -> ph_cab) ---
   const pengajuanQuery = `
         SELECT COUNT(*) as count 
         FROM tpengajuanharga h
         WHERE h.ph_tanggal >= ?
           AND (h.ph_apv IS NULL OR h.ph_apv = '')
-          ${getFilter("h.ph_nomor")};
+          ${getBranchFilter("h.ph_cab")};
     `;
 
-  // --- QUERY 3: SO Open ---
+  // --- 3. SO OPEN (tso_hdr -> so_cab) ---
   const soOpenQuery = `
         SELECT COUNT(*) as count FROM (
             SELECT 
@@ -226,15 +224,15 @@ const getPendingActions = async (user) => {
                         IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0) AS QtyInv
                     FROM tso_hdr h
                     WHERE h.so_tanggal >= ? AND h.so_aktif = 'Y' 
-                    ${getFilter("h.so_nomor")}
+                    ${getBranchFilter("h.so_cab")} -- Menggunakan kolom so_cab
                 ) x
             ) y
         ) z
         WHERE z.StatusFinal = 'OPEN';
     `;
 
-  // --- QUERY 4: Invoice Sisa Piutang ---
-  // Kembali menggunakan LEFT pada 'u.ph_inv_nomor'
+  // --- 4. SISA PIUTANG (tpiutang_hdr -> ph_cab / ph_kecab) ---
+  // PENTING: Cek tabel tpiutang_hdr. Jika error, ganti 'u.ph_cab' jadi 'u.ph_kecab'
   const invoiceQuery = `
         SELECT COUNT(*) AS count
         FROM tpiutang_hdr u
@@ -244,16 +242,16 @@ const getPendingActions = async (user) => {
         ) v ON v.pd_ph_nomor = u.ph_nomor
         WHERE u.ph_tanggal >= ? 
           AND (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) > 100 
-          ${getFilter("u.ph_inv_nomor")}; 
+          ${getBranchFilter("u.ph_cab")}; 
     `;
 
-  // --- QUERY 5: SO DTF Open ---
+  // --- 5. SO DTF (tsodtf_hdr -> sd_cab) ---
   const soDtfOpenQuery = `
         SELECT COUNT(*) as count 
         FROM tsodtf_hdr h
         WHERE h.sd_stok = "" AND h.sd_tanggal >= ? 
           AND NOT EXISTS (SELECT 1 FROM tinv_dtl dd WHERE dd.invd_sd_nomor = h.sd_nomor)
-          ${getFilter("h.sd_nomor")};
+          ${getBranchFilter("h.sd_cab")};
     `;
 
   try {
