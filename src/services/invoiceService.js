@@ -132,22 +132,24 @@ const getList = async (filters) => {
         h.inv_mp_resi AS NoResi,             
         h.inv_mp_biaya_platform AS BiayaPlatform, 
         
-        -- 1. Display Bayar
-        -- Ambil total semua pembayaran (Kredit) dari tabel piutang
-        -- Karena tidak ada baris diskon di sini, maka semua kredit adalah pembayaran valid.
-        (
-          SELECT COALESCE(SUM(d.pd_kredit), 0)
-          FROM tpiutang_dtl d
-          INNER JOIN tpiutang_hdr ph ON ph.ph_nomor = d.pd_ph_nomor
-          WHERE ph.ph_inv_nomor = h.inv_nomor
-        ) AS Bayar,
-
-        -- 2. Display Sisa Piutang (FIXED)
-        -- Rumus: (Nominal Invoice Netto) - (Total Kredit Piutang)
-        -- Kita pakai nominal dari perhitungan 'SumNominal' (tinv) agar akurat,
-        -- lalu dikurangi total kredit dari tpiutang.
+        -- 1. Display Bayar (Uang Masuk Real / Netto)
+        -- Rumus: Total Kredit di Piutang (Termasuk Fee) - Biaya Platform
         (
           (
+            SELECT COALESCE(SUM(d.pd_kredit), 0)
+            FROM tpiutang_dtl d
+            INNER JOIN tpiutang_hdr ph ON ph.ph_nomor = d.pd_ph_nomor
+            WHERE ph.ph_inv_nomor = h.inv_nomor
+          ) 
+          - COALESCE(h.inv_mp_biaya_platform, 0)
+        ) AS Bayar,
+
+        -- 2. Display Sisa Piutang (Balance)
+        -- Rumus: (Tagihan Netto) - (Bayar Netto)
+        -- Agar balance 0 (Lunas), kedua sisi harus dikurangi Fee.
+        (
+          (
+            -- A. Sisi Tagihan (Netto)
             COALESCE(SN.NominalPiutang,0) 
             + h.inv_ppn 
             + h.inv_bkrm 
@@ -155,10 +157,14 @@ const getList = async (filters) => {
           ) 
           - 
           (
-            SELECT COALESCE(SUM(d.pd_kredit), 0)
-            FROM tpiutang_dtl d
-            INNER JOIN tpiutang_hdr ph ON ph.ph_nomor = d.pd_ph_nomor
-            WHERE ph.ph_inv_nomor = h.inv_nomor
+            -- B. Sisi Pembayaran (Netto) -> Sama seperti kolom Bayar diatas
+            (
+                SELECT COALESCE(SUM(d.pd_kredit), 0)
+                FROM tpiutang_dtl d
+                INNER JOIN tpiutang_hdr ph ON ph.ph_nomor = d.pd_ph_nomor
+                WHERE ph.ph_inv_nomor = h.inv_nomor
+            )
+            - COALESCE(h.inv_mp_biaya_platform, 0)
           )
         ) AS SisaPiutang,
 
