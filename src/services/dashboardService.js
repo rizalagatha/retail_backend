@@ -169,49 +169,41 @@ const getRecentTransactions = async (user) => {
 };
 
 const getPendingActions = async (user) => {
+  // 1. Setup Parameter
   const allTimeDate = "2020-01-01";
 
-  // Siapkan parameter: Jika KDC kosong, Jika Cabang isi kode cabang
+  // Jika User = KDC, parameter hanya tanggal.
+  // Jika User = Cabang, parameter tanggal + kode cabang (untuk dicocokkan dengan LEFT).
   const params =
     user.cabang === "KDC" ? [allTimeDate] : [allTimeDate, user.cabang];
 
-  // Helper function untuk membuat WHERE clause
-  // Jika user KDC, return string kosong.
-  // Jika user Cabang, return syntax SQL sesuai metode yang diminta.
-  const getFilter = (type, colName) => {
+  // 2. Helper Function: Membuat Clause WHERE secara dinamis
+  const getFilter = (colName) => {
     if (user.cabang === "KDC") return "";
-
-    // OPSI 1: Metode Lama (Potong 3 digit awal nomor) -> Untuk Penawaran, SO, DTF, Pengajuan
-    if (type === "legacy") {
-      return `AND LEFT(${colName}, 3) = ?`;
-    }
-
-    // OPSI 2: Metode Baru (Pakai kolom Cabang) -> Khusus Invoice/Piutang
-    if (type === "column") {
-      return `AND ${colName} = ?`;
-    }
+    // LOGIKA LAMA: Ambil 3 karakter pertama nomor transaksi
+    return `AND LEFT(${colName}, 3) = ?`;
   };
 
-  // --- QUERY 1: Penawaran Open (Metode Legacy: Cek 3 digit pen_nomor) ---
+  // --- QUERY 1: Penawaran Open ---
   const penawaranQuery = `
         SELECT COUNT(*) as count 
         FROM tpenawaran_hdr h
         WHERE h.pen_tanggal >= ? 
           AND NOT EXISTS (SELECT 1 FROM tso_hdr so WHERE so.so_pen_nomor = h.pen_nomor)
           AND (h.pen_alasan IS NULL OR h.pen_alasan = '')
-          ${getFilter("legacy", "h.pen_nomor")}; 
+          ${getFilter("h.pen_nomor")}; 
     `;
 
-  // --- QUERY 2: Pengajuan Harga Pending (Metode Legacy: Cek 3 digit ph_nomor) ---
+  // --- QUERY 2: Pengajuan Harga Pending ---
   const pengajuanQuery = `
         SELECT COUNT(*) as count 
         FROM tpengajuanharga h
         WHERE h.ph_tanggal >= ?
           AND (h.ph_apv IS NULL OR h.ph_apv = '')
-          ${getFilter("legacy", "h.ph_nomor")};
+          ${getFilter("h.ph_nomor")};
     `;
 
-  // --- QUERY 3: SO Open (Metode Legacy: Cek 3 digit so_nomor) ---
+  // --- QUERY 3: SO Open ---
   const soOpenQuery = `
         SELECT COUNT(*) as count FROM (
             SELECT 
@@ -234,17 +226,15 @@ const getPendingActions = async (user) => {
                         IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0) AS QtyInv
                     FROM tso_hdr h
                     WHERE h.so_tanggal >= ? AND h.so_aktif = 'Y' 
-                    ${getFilter("legacy", "h.so_nomor")}
+                    ${getFilter("h.so_nomor")}
                 ) x
             ) y
         ) z
         WHERE z.StatusFinal = 'OPEN';
     `;
 
-  // --- QUERY 4: Invoice/Piutang (Metode Baru: Pakai Kolom Cabang) ---
-  // Note: Tabel tpiutang_hdr alias 'u'.
-  // Biasanya kolom cabang di tpiutang_hdr namanya 'ph_cab'.
-  // Jika error 'Unknown column', ganti 'u.ph_cab' menjadi 'u.ph_kecab' atau 'u.ph_cabang'.
+  // --- QUERY 4: Invoice Sisa Piutang ---
+  // Kembali menggunakan LEFT pada 'u.ph_inv_nomor'
   const invoiceQuery = `
         SELECT COUNT(*) AS count
         FROM tpiutang_hdr u
@@ -254,16 +244,16 @@ const getPendingActions = async (user) => {
         ) v ON v.pd_ph_nomor = u.ph_nomor
         WHERE u.ph_tanggal >= ? 
           AND (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) > 100 
-          ${getFilter("column", "u.ph_cab")}; 
+          ${getFilter("u.ph_inv_nomor")}; 
     `;
 
-  // --- QUERY 5: SO DTF Open (Metode Legacy: Cek 3 digit sd_nomor) ---
+  // --- QUERY 5: SO DTF Open ---
   const soDtfOpenQuery = `
         SELECT COUNT(*) as count 
         FROM tsodtf_hdr h
         WHERE h.sd_stok = "" AND h.sd_tanggal >= ? 
           AND NOT EXISTS (SELECT 1 FROM tinv_dtl dd WHERE dd.invd_sd_nomor = h.sd_nomor)
-          ${getFilter("legacy", "h.sd_nomor")};
+          ${getFilter("h.sd_nomor")};
     `;
 
   try {
