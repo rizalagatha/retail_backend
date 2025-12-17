@@ -270,11 +270,13 @@ const getPendingActions = async (user) => {
     ]);
 
     return {
-      penawaran_open: penawaranResult ? penawaranResult.count : 0,
-      pengajuan_harga_pending: pengajuanResult ? pengajuanResult.count : 0,
-      so_open: soOpenResult ? soOpenResult.count : 0,
-      invoice_belum_lunas: invoiceResult ? invoiceResult.count : 0,
-      so_dtf_open: soDtfOpenResult ? soDtfOpenResult.count : 0,
+      penawaran_open: penawaranResult[0] ? penawaranResult[0].count : 0,
+      pengajuan_harga_pending: pengajuanResult[0]
+        ? pengajuanResult[0].count
+        : 0,
+      so_open: soOpenResult[0] ? soOpenResult[0].count : 0,
+      invoice_belum_lunas: invoiceResult[0] ? invoiceResult[0].count : 0,
+      so_dtf_open: soDtfOpenResult[0] ? soDtfOpenResult[0].count : 0,
     };
   } catch (error) {
     console.error("Error getPendingActions:", error);
