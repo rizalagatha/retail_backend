@@ -7,21 +7,34 @@ const { format } = require("date-fns");
 const getList = async (filters) => {
   const { startDate, endDate, cabang } = filters;
 
+  // [PERBAIKAN] Gunakan CASE WHEN untuk memilih tabel sumber (dtl vs dtl2)
   const query = `
     SELECT 
       h.sop_nomor AS nomor,
       h.sop_tanggal AS tanggal,
       h.sop_transfer AS transfer,
-      (SELECT SUM(d.sopd_selisih) 
-        FROM tsop_dtl2 d 
-      WHERE d.sopd_nomor = h.sop_nomor
-      ) AS selisih_qty,
-      (SELECT SUM(d.sopd_selisih * d.sopd_hpp) FROM tsop_dtl2 d WHERE d.sopd_nomor = h.sop_nomor) AS nominal,
+      
+      -- Hitung Selisih Qty
+      CASE 
+        WHEN h.sop_transfer = 'Y' THEN 
+          (SELECT COALESCE(SUM(d.sopd_selisih), 0) FROM tsop_dtl d WHERE d.sopd_nomor = h.sop_nomor)
+        ELSE 
+          (SELECT COALESCE(SUM(d2.sopd_selisih), 0) FROM tsop_dtl2 d2 WHERE d2.sopd_nomor = h.sop_nomor)
+      END AS selisih_qty,
+
+      -- Hitung Nominal
+      CASE 
+        WHEN h.sop_transfer = 'Y' THEN 
+          (SELECT COALESCE(SUM(d.sopd_selisih * d.sopd_hpp), 0) FROM tsop_dtl d WHERE d.sopd_nomor = h.sop_nomor)
+        ELSE 
+          (SELECT COALESCE(SUM(d2.sopd_selisih * d2.sopd_hpp), 0) FROM tsop_dtl2 d2 WHERE d2.sopd_nomor = h.sop_nomor)
+      END AS nominal,
+
       h.sop_ket AS keterangan 
     FROM tsop_hdr h
     WHERE h.sop_tanggal BETWEEN ? AND ?
       AND sop_cab = ?
-    ORDER BY h.sop_nomor
+    ORDER BY h.sop_nomor DESC -- Sebaiknya DESC agar yang terbaru diatas
   `;
 
   const [rows] = await pool.query(query, [startDate, endDate, cabang]);
@@ -143,7 +156,7 @@ const getCabangOptions = async (user) => {
  * Mengambil detail item stok opname.
  */
 const getDetails = async (nomor) => {
-  // Query ini adalah terjemahan dari SQLDetail di Delphi
+  // PERBAIKAN: Ubah tsop_dtl2 menjadi tsop_dtl sesuai screenshot database Anda
   const query = `
     SELECT 
       d.sopd_kode AS Kode,
@@ -155,7 +168,7 @@ const getDetails = async (nomor) => {
       d.sopd_hpp AS Hpp,
       (d.sopd_selisih * d.sopd_hpp) AS Nominal,
       d.sopd_ket AS Lokasi
-    FROM tsop_dtl2 d
+    FROM tsop_dtl d  -- <-- Ganti ini dari tsop_dtl2 menjadi tsop_dtl
     LEFT JOIN tbarangdc a ON a.brg_kode = d.sopd_kode
     WHERE d.sopd_nomor = ?
     ORDER BY d.sopd_nomor

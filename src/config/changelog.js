@@ -1,4 +1,18 @@
 const changelogs = {
+  "1.2.4": {
+    date: "2025-12-17",
+    changes: [
+      "UI: Perbaikan UI halaman Proses Stok Opname",
+      {
+        title: "Perbaikan:",
+        items: [
+          "Fix Detail Proses Stok Opname tidak muncul",
+          "Perbaikan Perhitungan Invoice Browse",
+          "Pengecualian Diskon Default untuk RETAIL",
+        ],
+      },
+    ],
+  },
   "1.2.3": {
     date: "2025-12-16",
     changes: [
