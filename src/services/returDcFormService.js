@@ -1,4 +1,5 @@
 const pool = require("../config/database");
+const { format } = require("date-fns");
 
 const loadAllStock = async (cabang) => {
   const query = `
