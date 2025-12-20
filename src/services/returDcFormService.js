@@ -103,6 +103,17 @@ const save = async (payload, user) => {
     await connection.beginTransaction();
     let nomorDokumen = header.nomor;
 
+    // Generate IDREC Header (Format: K01RB + Timestamp)
+    // Gunakan format timestamp presisi milidetik agar unik
+    const idrecHeader = isNew
+      ? `${user.cabang}RB${format(new Date(), "yyyyMMddHHmmssSSS")}`
+      : (
+          await connection.query(
+            "SELECT rb_idrec FROM trbdc_hdr WHERE rb_nomor = ?",
+            [nomorDokumen]
+          )
+        )[0][0]?.rb_idrec;
+
     // --- LOGIC INSERT BARU ---
     if (isNew) {
       const yearMonth = new Date(header.tanggal)
@@ -110,10 +121,9 @@ const save = async (payload, user) => {
         .slice(2, 7) // "23-10"
         .replace("-", ""); // "2310"
 
-      const prefix = `${user.cabang}.RB.${yearMonth}.`; // Format: K01.RB.2310.
+      const prefix = `${user.cabang}.RB.${yearMonth}.`;
 
-      // [FIX] Gunakan FOR UPDATE untuk mengunci pembacaan nomor terakhir
-      // Ini mencegah dua user/request mendapatkan nomor yang sama secara bersamaan
+      // [FIX] Gunakan FOR UPDATE untuk locking
       const nomorQuery = `
         SELECT IFNULL(MAX(CAST(RIGHT(rb_nomor, 4) AS UNSIGNED)), 0) + 1 AS next_num 
         FROM trbdc_hdr 
@@ -126,12 +136,13 @@ const save = async (payload, user) => {
 
       nomorDokumen = `${prefix}${nextNum.toString().padStart(4, "0")}`;
 
-      // Insert Header
+      // Insert Header dengan IDREC
       await connection.query(
         `INSERT INTO trbdc_hdr 
-          (rb_nomor, rb_tanggal, rb_cab, rb_kecab, rb_ket, user_create, date_create) 
-         VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+          (rb_idrec, rb_nomor, rb_tanggal, rb_cab, rb_kecab, rb_ket, user_create, date_create) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
+          idrecHeader, // [BARU] Masukkan IDREC Header
           nomorDokumen,
           header.tanggal,
           user.cabang,
@@ -143,7 +154,6 @@ const save = async (payload, user) => {
 
       // --- LOGIC UPDATE (EDIT) ---
     } else {
-      // Cek apakah data masih ada sebelum update
       const [checkRows] = await connection.query(
         "SELECT rb_nomor FROM trbdc_hdr WHERE rb_nomor = ? FOR UPDATE",
         [nomorDokumen]
@@ -170,7 +180,7 @@ const save = async (payload, user) => {
         ]
       );
 
-      // Hapus detail lama sebelum insert ulang
+      // Hapus detail lama
       await connection.query("DELETE FROM trbdc_dtl WHERE rbd_nomor = ?", [
         nomorDokumen,
       ]);
@@ -178,15 +188,32 @@ const save = async (payload, user) => {
 
     // --- INSERT DETAIL ITEMS ---
     if (items.length > 0) {
-      const itemValues = items.map((item) => [
-        nomorDokumen,
-        item.kode,
-        item.ukuran,
-        item.jumlah,
-      ]);
+      // Siapkan array values dengan IDREC
+      const itemValues = items.map((item, index) => {
+        // Generate IDREC Detail (Unik per baris)
+        // Format: IDREC_HEADER + Urutan (3 digit)
+        // Contoh: K01RB2023102500001.001
+        const idrecDetail = `${idrecHeader}.${String(index + 1).padStart(
+          3,
+          "0"
+        )}`;
 
+        return [
+          idrecHeader, // rbd_idrec (Ref ke Header)
+          idrecDetail, // rbd_iddrec (ID Unik Detail)
+          nomorDokumen,
+          item.kode,
+          item.ukuran,
+          item.jumlah,
+        ];
+      });
+
+      // Insert ke trbdc_dtl
+      // Pastikan urutan kolom sesuai dengan tabel database Anda
       await connection.query(
-        "INSERT INTO trbdc_dtl (rbd_nomor, rbd_kode, rbd_ukuran, rbd_jumlah) VALUES ?",
+        `INSERT INTO trbdc_dtl 
+          (rbd_idrec, rbd_iddrec, rbd_nomor, rbd_kode, rbd_ukuran, rbd_jumlah) 
+         VALUES ?`,
         [itemValues]
       );
     }
@@ -199,14 +226,11 @@ const save = async (payload, user) => {
     };
   } catch (error) {
     await connection.rollback();
-
-    // Handle error duplicate entry MySQL (Error Code 1062)
     if (error.code === "ER_DUP_ENTRY") {
       throw new Error(
         "Terjadi duplikasi nomor dokumen. Silakan coba simpan kembali."
       );
     }
-
     throw error;
   } finally {
     connection.release();
