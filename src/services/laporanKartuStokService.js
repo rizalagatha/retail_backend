@@ -110,10 +110,12 @@ const getProductList = async (filters) => {
       COALESCE(tj.stok,0)         AS terimaSJ,
       COALESCE(mst.stok,0)        AS mutStoreTerima,
       COALESCE(msi.stok,0)        AS mutInPesan,
+      COALESCE(mip.stok,0)        AS mutInProduksi,
       (COALESCE(inv.stok,0) + COALESCE(invso.stok,0)) AS invoice,
       COALESCE(rb.stok,0)         AS returKeDC,
       COALESCE(msk.stok,0)        AS mutStoreKirim,
       COALESCE(mso.stok,0)        AS mutOutPesan,
+      COALESCE(mop.stok,0)        AS mutOutProduksi,
 
       (
         (COALESCE(awal.stok,0) + COALESCE(sop.stok,0) + COALESCE(kor.stok,0) +
@@ -236,6 +238,19 @@ LEFT JOIN (
 ) msi ON msi.mst_brg_kode = b.brgd_kode
      AND msi.mst_ukuran   = b.brgd_ukuran
 
+-- [ADDED] Mutasi In Produksi (MI)
+LEFT JOIN (
+  SELECT m.mst_brg_kode, m.mst_ukuran,
+         IFNULL(SUM(m.mst_stok_in),0) AS stok
+  FROM tmasterstokso m
+  WHERE m.mst_cab = ?
+    AND m.mst_brg_kode = ?
+    AND MID(m.mst_noreferensi,4,2) = 'MI'
+    AND m.mst_tanggal BETWEEN ? AND ?
+  GROUP BY m.mst_brg_kode, m.mst_ukuran
+) mip ON mip.mst_brg_kode = b.brgd_kode
+     AND mip.mst_ukuran   = b.brgd_ukuran
+
 LEFT JOIN (
   SELECT m.mst_brg_kode, m.mst_ukuran,
          IFNULL(SUM(m.mst_stok_out),0) AS stok
@@ -295,6 +310,19 @@ LEFT JOIN (
   GROUP BY m.mst_brg_kode, m.mst_ukuran
 ) mso ON mso.mst_brg_kode = b.brgd_kode
      AND mso.mst_ukuran   = b.brgd_ukuran
+
+-- [ADDED] Mutasi Out Produksi (MO)
+LEFT JOIN (
+  SELECT m.mst_brg_kode, m.mst_ukuran,
+         IFNULL(SUM(m.mst_stok_out),0) AS stok
+  FROM tmasterstok m
+  WHERE m.mst_cab = ?
+    AND m.mst_brg_kode = ?
+    AND MID(m.mst_noreferensi,4,2) = 'MO'
+    AND m.mst_tanggal BETWEEN ? AND ?
+  GROUP BY m.mst_brg_kode, m.mst_ukuran
+) mop ON mop.mst_brg_kode = b.brgd_kode
+     AND mop.mst_ukuran   = b.brgd_ukuran
   `;
 
   params.push(
@@ -333,6 +361,12 @@ LEFT JOIN (
     startDateEff,
     endDate,
 
+    // [ADDED] MIP
+    gudang,
+    kodeBarang,
+    startDateEff,
+    endDate,
+
     // INV TOKO
     gudang,
     kodeBarang,
@@ -358,6 +392,12 @@ LEFT JOIN (
     endDate,
 
     // MSO
+    gudang,
+    kodeBarang,
+    startDateEff,
+    endDate,
+
+    // [ADDED] MOP
     gudang,
     kodeBarang,
     startDateEff,
@@ -388,10 +428,12 @@ LEFT JOIN (
       OR terimaSJ <> 0 
       OR mutStoreTerima <> 0 
       OR mutInPesan <> 0 
+      OR mutInProduksi <> 0
       OR invoice <> 0 
       OR returKeDC <> 0 
       OR mutStoreKirim <> 0 
       OR mutOutPesan <> 0
+      OR mutOutProduksi <> 0
     )
 
     ORDER BY b.brgd_kode, b.brgd_ukuran
@@ -409,11 +451,13 @@ LEFT JOIN (
     const terimaSJ = Number(row.terimaSJ || 0);
     const mutStoreTerima = Number(row.mutStoreTerima || 0);
     const mutInPesan = Number(row.mutInPesan || 0);
+    const mutInProduksi = Number(row.mutInProduksi || 0);
 
     const invoice = Number(row.invoice || 0);
     const returKeDC = Number(row.returKeDC || 0);
     const mutStoreKirim = Number(row.mutStoreKirim || 0);
     const mutOutPesan = Number(row.mutOutPesan || 0);
+    const mutOutProduksi = Number(row.mutOutProduksi || 0);
 
     const saldoAkhir =
       stokAwal +
@@ -423,7 +467,8 @@ LEFT JOIN (
       terimaSJ +
       mutStoreTerima +
       mutInPesan -
-      (invoice + returKeDC + mutStoreKirim + mutOutPesan);
+      mutInProduksi -
+      (invoice + returKeDC + mutStoreKirim + mutOutPesan + mutOutProduksi);
 
     // DEBUG per baris
     console.log("==== DEBUG SALDO HEADER ====");
@@ -435,10 +480,12 @@ LEFT JOIN (
     console.log("TJ      :", terimaSJ);
     console.log("MST IN  :", mutStoreTerima);
     console.log("MSI IN  :", mutInPesan);
+    console.log("MIP IN  :", mutInProduksi);
     console.log("INV     :", invoice);
     console.log("RB OUT  :", returKeDC);
     console.log("MSK OUT :", mutStoreKirim);
     console.log("MSO OUT :", mutOutPesan);
+    console.log("MOP OUT :", mutOutProduksi);
     console.log("SALDO   :", saldoAkhir);
 
     return {
@@ -577,6 +624,7 @@ const getKartuDetails = async (filters) => {
           WHEN m.mst_noreferensi LIKE '%MSO%' THEN 'Mutasi Stok ke Pesanan'
           WHEN m.mst_noreferensi LIKE '%MSI%' THEN 'Mutasi Stok dari Pesanan'
           WHEN m.mst_noreferensi LIKE '%INV%' THEN 'Invoice'
+          WHEN m.mst_noreferensi LIKE '%MI%'  THEN 'Mutasi In from Produksi'
           ELSE 'Transaksi Pesanan'
       END AS transaksi
     FROM tmasterstokso m

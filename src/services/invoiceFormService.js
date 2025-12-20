@@ -706,7 +706,7 @@ const saveData = async (payload, user) => {
 
         // biaya kirim, dp, pundi
         biayaKirim, // inv_bkrm
-        Number(header.dp || 0), // inv_dp
+        dpDipakai, // inv_dp
         invBayar,
         pundiAmal,
 
@@ -753,7 +753,7 @@ const saveData = async (payload, user) => {
         header.salesCounter,
         totalDiskon,
         biayaKirim,
-        Number(header.dp || 0),
+        dpDipakai,
         invBayar,
         pundiAmal,
 
@@ -1412,6 +1412,36 @@ function terbilang(n) {
 const capitalize = (s) =>
   s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : "";
 
+// Helper function untuk memberi nilai bobot pada ukuran
+const getSizeRank = (size) => {
+  if (!size) return 999;
+  
+  const s = size.toString().toUpperCase().trim();
+  
+  // Mapping ukuran standar
+  const ranks = {
+    'XS': 1, 'SS': 1,
+    'S': 2,
+    'M': 3,
+    'L': 4,
+    'XL': 5,
+    'XXL': 6, '2XL': 6,
+    '3XL': 7, 'XXXL': 7,
+    '4XL': 8, 'XXXXL': 8,
+    '5XL': 9, 'XXXXXL': 9
+  };
+
+  // Jika ukuran ada di map, kembalikan nilainya
+  if (ranks[s]) return ranks[s];
+
+  // Jika ukuran adalah angka (misal celana: 28, 29, 30), gunakan angkanya
+  const numericSize = parseInt(s);
+  if (!isNaN(numericSize)) return numericSize + 10; // Tambah offset biar ga tabrakan sama S/M/L
+
+  // Jika tidak dikenal, taruh paling belakang
+  return 999;
+};
+
 const getPrintData = async (nomor) => {
   const query = `
     SELECT 
@@ -1454,7 +1484,8 @@ const getPrintData = async (nomor) => {
 
   const header = { ...rows[0] };
 
-  const details = rows.map((row) => ({
+  // 2. Map Rows ke Object
+  let details = rows.map((row) => ({
     invd_kode: row.invd_kode,
     nama_barang: row.nama_barang,
     invd_ukuran: row.invd_ukuran,
@@ -1463,6 +1494,21 @@ const getPrintData = async (nomor) => {
     invd_diskon: row.invd_diskon,
     total: row.total,
   }));
+
+  // 3. LOGIKA SORTING JAVASCRIPT (Nama Barang ASC -> Ukuran ASC)
+  details.sort((a, b) => {
+    // A. Prioritas Utama: Kelompokkan berdasarkan Nama Barang dulu
+    const nameA = a.nama_barang.toUpperCase();
+    const nameB = b.nama_barang.toUpperCase();
+    if (nameA < nameB) return -1;
+    if (nameA > nameB) return 1;
+
+    // B. Prioritas Kedua: Jika nama barang sama, urutkan berdasarkan Ukuran (S < M < L)
+    const rankA = getSizeRank(a.invd_ukuran);
+    const rankB = getSizeRank(b.invd_ukuran);
+
+    return rankA - rankB;
+  });
 
   // =============== FIX DP (AMBIL DARI TSETOR_DTL) ===============
   const [dpRows] = await pool.query(

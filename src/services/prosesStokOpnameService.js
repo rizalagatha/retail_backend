@@ -154,69 +154,130 @@ const getCabangOptions = async (user) => {
 
 /**
  * Mengambil detail item stok opname.
+ * [PERBAIKAN] Cek status transfer untuk menentukan tabel sumber (dtl vs dtl2)
  */
 const getDetails = async (nomor) => {
-  // PERBAIKAN: Ubah tsop_dtl2 menjadi tsop_dtl sesuai screenshot database Anda
-  const query = `
-    SELECT 
-      d.sopd_kode AS Kode,
-      CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna) AS Nama,
-      d.sopd_ukuran AS Ukuran,
-      d.sopd_Stok AS Stok,
-      d.sopd_jumlah AS Jumlah,
-      d.sopd_selisih AS Selisih,
-      d.sopd_hpp AS Hpp,
-      (d.sopd_selisih * d.sopd_hpp) AS Nominal,
-      d.sopd_ket AS Lokasi
-    FROM tsop_dtl d  -- <-- Ganti ini dari tsop_dtl2 menjadi tsop_dtl
-    LEFT JOIN tbarangdc a ON a.brg_kode = d.sopd_kode
-    WHERE d.sopd_nomor = ?
-    ORDER BY d.sopd_nomor
-  `;
-  const [rows] = await pool.query(query, [nomor]);
-  return rows;
+  const connection = await pool.getConnection();
+  try {
+    // 1. Cek status transfer di header dulu
+    const [headers] = await connection.query(
+      "SELECT sop_transfer FROM tsop_hdr WHERE sop_nomor = ?",
+      [nomor]
+    );
+
+    if (headers.length === 0) return []; // Header tidak ditemukan
+
+    const isTransferred = headers[0].sop_transfer === 'Y';
+    
+    // 2. Tentukan tabel sumber berdasarkan status transfer
+    // Jika 'Y' (Sudah Transfer) -> pakai tsop_dtl
+    // Jika 'N' (Belum Transfer) -> pakai tsop_dtl2
+    const tableName = isTransferred ? 'tsop_dtl' : 'tsop_dtl2';
+
+    const query = `
+      SELECT 
+        d.sopd_kode AS Kode,
+        COALESCE(b.brgd_barcode, '') AS Barcode,
+        CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna) AS Nama,
+        d.sopd_ukuran AS Ukuran,
+        d.sopd_stok AS Stok,    -- Perhatikan kapitalisasi kolom di DB biasanya lowercase (sopd_stok)
+        d.sopd_jumlah AS Jumlah,
+        d.sopd_selisih AS Selisih,
+        d.sopd_hpp AS Hpp,
+        (d.sopd_selisih * d.sopd_hpp) AS Nominal,
+        d.sopd_ket AS Lokasi
+      FROM ${tableName} d
+      LEFT JOIN tbarangdc a ON a.brg_kode = d.sopd_kode
+      LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sopd_kode AND b.brgd_ukuran = d.sopd_ukuran
+      WHERE d.sopd_nomor = ?
+      ORDER BY d.sopd_nomor, a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna, d.sopd_ukuran
+    `;
+
+    const [rows] = await connection.query(query, [nomor]);
+    return rows;
+
+  } finally {
+    connection.release();
+  }
 };
 
 /**
  * Mengambil detail item stok opname untuk keperluan export.
- */
-/**
- * Mengambil detail item stok opname untuk keperluan export.
+ * [PERBAIKAN] Menggunakan UNION untuk mengakomodasi data yang sudah transfer (dtl) dan belum (dtl2)
  */
 const getExportDetails = async (filters) => {
   const { startDate, endDate, cabang } = filters;
 
-  // Query ini adalah terjemahan dari SQLDetail di Delphi
-  // PERBAIKAN: Mengganti ORDER BY a.brg_nama menjadi urutan kolom komponen nama
   const query = `
-      SELECT 
-        d.sopd_nomor AS 'Nomor SOP',
-        h.sop_tanggal AS 'Tanggal',
-        d.sopd_kode AS 'Kode Barang',
-        CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna) AS 'Nama Barang',
-        d.sopd_ukuran AS 'Ukuran',
-        d.sopd_stok AS 'Stok Sistem',
-        d.sopd_jumlah AS 'Jumlah Fisik',
-        d.sopd_selisih AS 'Selisih',
-        d.sopd_hpp AS 'HPP',
-        (d.sopd_selisih * d.sopd_hpp) AS 'Nominal Selisih',
-        d.sopd_ket AS 'Lokasi'
-      FROM tsop_dtl2 d
-      INNER JOIN tsop_hdr h ON h.sop_nomor = d.sopd_nomor
-      LEFT JOIN tbarangdc a ON a.brg_kode = d.sopd_kode
-      WHERE h.sop_tanggal BETWEEN ? AND ?
-        AND h.sop_cab = ?
+      SELECT * FROM (
+        -- BAGIAN 1: SUDAH TRANSFER (Ambil dari tsop_dtl)
+        SELECT 
+          d.sopd_nomor AS 'Nomor SOP',
+          h.sop_tanggal AS 'Tanggal',
+          d.sopd_kode AS 'Kode Barang',
+          COALESCE(b.brgd_barcode, '') AS 'Barcode',
+          CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna) AS 'Nama Barang',
+          d.sopd_ukuran AS 'Ukuran',
+          d.sopd_stok AS 'Stok Sistem',
+          d.sopd_jumlah AS 'Jumlah Fisik',
+          d.sopd_selisih AS 'Selisih',
+          d.sopd_hpp AS 'HPP',
+          (d.sopd_selisih * d.sopd_hpp) AS 'Nominal Selisih',
+          d.sopd_ket AS 'Lokasi',
+          1 AS urutan_prioritas -- Penanda
+        FROM tsop_dtl d
+        INNER JOIN tsop_hdr h ON h.sop_nomor = d.sopd_nomor
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.sopd_kode
+        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sopd_kode AND b.brgd_ukuran = d.sopd_ukuran -- [BARU]
+        WHERE h.sop_tanggal BETWEEN ? AND ?
+          AND h.sop_cab = ?
+          AND h.sop_transfer = 'Y'
+
+        UNION ALL
+
+        -- BAGIAN 2: BELUM TRANSFER (Ambil dari tsop_dtl2)
+        SELECT 
+          d.sopd_nomor AS 'Nomor SOP',
+          h.sop_tanggal AS 'Tanggal',
+          d.sopd_kode AS 'Kode Barang',
+          COALESCE(b.brgd_barcode, '') AS 'Barcode',
+          CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna) AS 'Nama Barang',
+          d.sopd_ukuran AS 'Ukuran',
+          d.sopd_stok AS 'Stok Sistem',
+          d.sopd_jumlah AS 'Jumlah Fisik',
+          d.sopd_selisih AS 'Selisih',
+          d.sopd_hpp AS 'HPP',
+          (d.sopd_selisih * d.sopd_hpp) AS 'Nominal Selisih',
+          d.sopd_ket AS 'Lokasi',
+          2 AS urutan_prioritas
+        FROM tsop_dtl2 d
+        INNER JOIN tsop_hdr h ON h.sop_nomor = d.sopd_nomor
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.sopd_kode
+        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sopd_kode AND b.brgd_ukuran = d.sopd_ukuran
+        WHERE h.sop_tanggal BETWEEN ? AND ?
+          AND h.sop_cab = ?
+          AND (h.sop_transfer = 'N' OR h.sop_transfer = '' OR h.sop_transfer IS NULL)
+      ) AS gabungan
+      
       ORDER BY 
-        d.sopd_nomor, 
-        a.brg_jeniskaos, 
-        a.brg_tipe, 
-        a.brg_lengan, 
-        a.brg_jeniskain, 
-        a.brg_warna, 
-        d.sopd_ukuran
+        gabungan.\`Nomor SOP\`, 
+        gabungan.\`Nama Barang\`, 
+        gabungan.\`Ukuran\`
     `;
-  const [rows] = await pool.query(query, [startDate, endDate, cabang]);
-  return rows;
+
+  // Perhatikan parameter harus diduplikasi karena ada 2 blok SELECT (UNION)
+  // Params urutan: [start, end, cab, start, end, cab]
+  const params = [startDate, endDate, cabang, startDate, endDate, cabang];
+  
+  const [rows] = await pool.query(query, params);
+  
+  // Hapus kolom helper 'urutan_prioritas' sebelum return agar tidak muncul di Excel
+  const cleanRows = rows.map(row => {
+    const { urutan_prioritas, ...rest } = row;
+    return rest;
+  });
+
+  return cleanRows;
 };
 
 module.exports = {

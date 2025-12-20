@@ -58,6 +58,11 @@ const loadFromKirim = async (nomorKirim) => {
 // Fungsi untuk menyimpan data penerimaan
 const save = async (payload, user) => {
   const { header, items } = payload;
+
+  if (!items || items.length === 0) {
+    throw new Error("Tidak dapat menyimpan: Daftar barang kosong!");
+  }
+  
   const connection = await pool.getConnection();
 
   try {

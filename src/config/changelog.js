@@ -1,4 +1,26 @@
 const changelogs = {
+  "1.2.5": {
+    date: "2025-12-19",
+    changes: [
+      {
+        title: "Perbaikan:",
+        items: [
+          "Print Invoice A4 diurutkan sesuai ukuran",
+          "DP dari SO tidak masuk ke kolom DP setelah di-invoice",
+          "Sisa Piutang pada Payment Invoice sudah mengurangi Retur Jual",
+          "Laporan Kartu Stok sudah menampilkan Mutasi In Out Produksi",
+        ],
+      },
+      {
+        title: "UI:",
+        items: [
+          "Tampilan Dashboard sudah bisa refresh data secara dinamis",
+          "Dark Mode atau Mode Gelap sudah bisa dipakai sepenuhnya",
+          "Penambahan kolom Barcode pada Proses Stok Opname",
+        ],
+      },
+    ],
+  },
   "1.2.4": {
     date: "2025-12-17",
     changes: [
