@@ -107,16 +107,22 @@ const saveData = async (nomor, data, user) => {
         currentNomor,
       ]);
     } else {
-      // INSERT HEADER
+      // --- GENERATE IDREC HEADER ---
+      // Format: K01SOD20251127142859.582
+      const now = new Date();
+      const sd_idrec = `${user.cabang}SOD${format(now, "yyyyMMddHHmmss.SSS")}`;
+
+      // INSERT HEADER (Tambahkan sd_idrec di kolom pertama)
       const insertQuery = `
         INSERT INTO tsodtf_hdr 
-        (sd_nomor, sd_tanggal, sd_datekerja, sd_sal_kode, sd_jo_kode, 
+        (sd_idrec, sd_nomor, sd_tanggal, sd_datekerja, sd_sal_kode, sd_jo_kode, 
          sd_nama, sd_desain, sd_workshop, sd_ket, sd_stok,
          sd_cab,
          user_create, date_create)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, "Y", ?, ?, NOW())
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "Y", ?, ?, NOW())
       `;
       await connection.query(insertQuery, [
+        sd_idrec, // [BARU] IDREC Header
         currentNomor,
         header.tanggal,
         header.tglPengerjaan,
@@ -137,13 +143,25 @@ const saveData = async (nomor, data, user) => {
     ]);
 
     for (const [index, item] of details.entries()) {
+      // 1. Generate Timestamp unik dengan milidetik
+      // Format: yyyyMMddHHmmss.SSS (sesuai request)
+      const now = new Date();
+      // Tambahkan sedikit ms dummy (index) agar jika loop sangat cepat, ID tetap unik
+      const uniqueTime = new Date(now.getTime() + index);
+      const timestamp = format(uniqueTime, "yyyyMMddHHmmss.SSS");
+
+      // 2. Susun IDREC: Cabang + 'SOD' + Timestamp
+      // Format Output: K01SOD20251127142859.582
+      const sds_idrec = `${user.cabang}SOD${timestamp}`;
+
       const detailQuery = `
         INSERT INTO tsodtf_stok 
-        (sds_nomor, sds_kode, sds_ukuran, sds_panjang, sds_lebar, 
+        (sds_idrec, sds_nomor, sds_kode, sds_ukuran, sds_panjang, sds_lebar, 
          sds_jumlah, sds_nourut)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `;
       await connection.query(detailQuery, [
+        sds_idrec, // [BARU] IDREC Detail
         currentNomor,
         item.kode,
         item.ukuran,

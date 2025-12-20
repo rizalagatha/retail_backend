@@ -67,61 +67,93 @@ const save = async (payload, user) => {
     await connection.beginTransaction();
 
     let nomorDokumen = header.nomor;
+
+    // --- GENERATE IDREC HEADER ---
+    // Format: K02KOR20251211132650.833
+    let kor_idrec;
+    if (isNew) {
+      const now = new Date();
+      kor_idrec = `${user.cabang}KOR${format(now, "yyyyMMddHHmmss.SSS")}`;
+    } else {
+      // Ambil IDREC lama jika edit (opsional, tergantung kebutuhan integritas)
+    }
+
     if (isNew) {
       const yearMonth = new Date(header.tanggal)
         .toISOString()
         .slice(2, 7)
         .replace("-", "");
       const prefix = `${user.cabang}.KOR.${yearMonth}.`;
-      const nomorQuery = `SELECT IFNULL(MAX(RIGHT(kor_nomor, 4)), 0) + 1 AS next_num FROM tkor_hdr WHERE LEFT(kor_nomor, 12) = ?;`;
-      const [nomorRows] = await connection.query(nomorQuery, [prefix]);
+
+      const nomorQuery = `
+        SELECT IFNULL(MAX(CAST(RIGHT(kor_nomor, 4) AS UNSIGNED)), 0) + 1 AS next_num 
+        FROM tkor_hdr 
+        WHERE kor_nomor LIKE ? FOR UPDATE;
+      `;
+      const [nomorRows] = await connection.query(nomorQuery, [`${prefix}%`]);
       const nextNum = nomorRows[0].next_num.toString().padStart(4, "0");
       nomorDokumen = `${prefix}${nextNum}`;
 
       await connection.query(
         `INSERT INTO tkor_hdr 
-          (kor_nomor, kor_tanggal, kor_cab, kor_ket, user_create, date_create)
-        VALUES (?, ?, ?, ?, ?, NOW())`,
+          (kor_idrec, kor_nomor, kor_tanggal, kor_cab, kor_ket, user_create, date_create)
+        VALUES (?, ?, ?, ?, ?, ?, NOW())`,
         [
+          kor_idrec,
           nomorDokumen,
           header.tanggal,
-          user.cabang, // ← WAJIB
+          user.cabang,
           header.keterangan,
           user.kode,
         ]
       );
     } else {
       await connection.query(
-        `INSERT INTO tkor_hdr 
-        (kor_nomor, kor_tanggal, kor_cab, kor_ket, user_create, date_create)
-        VALUES (?, ?, ?, ?, ?, NOW())`,
+        `UPDATE tkor_hdr 
+         SET kor_tanggal = ?, kor_cab = ?, kor_ket = ?, user_modified = ?, date_modified = NOW()
+         WHERE kor_nomor = ?`,
         [
-          nomorDokumen,
           header.tanggal,
-          user.cabang, // ← WAJIB
+          user.cabang,
           header.keterangan,
           user.kode,
+          nomorDokumen,
         ]
       );
     }
 
+    // Hapus detail lama
     await connection.query("DELETE FROM tkor_dtl WHERE kord_kor_nomor = ?", [
       nomorDokumen,
     ]);
 
+    // --- INSERT DETAIL BARU ---
     if (items.length > 0) {
-      const itemValues = items.map((i) => [
-        nomorDokumen,
-        i.kode,
-        i.ukuran,
-        i.stok,
-        i.jumlah,
-        i.jumlah - i.stok,
-        i.hpp,
-        i.keterangan,
-      ]);
+      const itemValues = items.map((i, index) => {
+        // GENERATE IDREC DETAIL
+        // Karena tidak ada kord_iddrec, maka kord_idrec menjadi UNIQUE ID per baris.
+        // Format: NomorDokumen + Index (agar unik per item)
+        // Contoh: K01.KOR.2512.00011, K01.KOR.2512.00012, dst.
+        const kord_idrec = `${nomorDokumen}${index + 1}`;
+
+        return [
+          kord_idrec, // ID Unik Baris
+          nomorDokumen, // Nomor Referensi Header
+          i.kode,
+          i.ukuran,
+          i.stok,
+          i.jumlah,
+          i.jumlah - i.stok,
+          i.hpp,
+          i.keterangan,
+        ];
+      });
+
+      // Hapus kord_iddrec dari query
       await connection.query(
-        "INSERT INTO tkor_dtl (kord_kor_nomor, kord_kode, kord_ukuran, kord_stok, kord_jumlah, kord_selisih, kord_hpp, kord_ket) VALUES ?",
+        `INSERT INTO tkor_dtl 
+         (kord_idrec, kord_kor_nomor, kord_kode, kord_ukuran, kord_stok, kord_jumlah, kord_selisih, kord_hpp, kord_ket) 
+         VALUES ?`,
         [itemValues]
       );
     }

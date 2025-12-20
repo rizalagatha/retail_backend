@@ -48,44 +48,90 @@ const save = async (data, user) => {
   const { header, items, isNew } = data;
   const connection = await pool.getConnection();
   await connection.beginTransaction();
+  
   try {
     let lhkNomor = header.nomor;
+    
+    // --- GENERATE IDREC HEADER ---
+    // Format: K01DS20251127142859.582
+    // Gunakan timestamp saat ini
+    const now = new Date();
+    const timestampHeader = format(now, "yyyyMMddHHmmss.SSS");
+    
+    // Jika Edit, ambil IDREC lama. Jika Baru, buat baru.
+    let ds_idrec;
+    if (isNew) {
+        ds_idrec = `${user.cabang}DS${timestampHeader}`;
+    } else {
+        const [existing] = await connection.query("SELECT ds_idrec FROM tdtfstok_hdr WHERE ds_nomor = ?", [lhkNomor]);
+        ds_idrec = existing[0]?.ds_idrec || `${user.cabang}DS${timestampHeader}`; // Fallback jika null
+    }
+
     if (isNew) {
       const prefix = `${user.cabang}DS${format(
         new Date(header.tanggal),
         "yyMM"
       )}`;
+      
+      // Locking row untuk penomoran
       const [maxRows] = await connection.query(
         `SELECT IFNULL(MAX(CAST(RIGHT(ds_nomor, 5) AS UNSIGNED)), 0) AS maxNum
          FROM tdtfstok_hdr
          WHERE ds_cab = ?
-         AND ds_nomor LIKE CONCAT(?, '%')`,
+         AND ds_nomor LIKE CONCAT(?, '%')
+         FOR UPDATE`, // Tambahkan FOR UPDATE agar aman concurrency
         [user.cabang, prefix]
       );
+      
       const nextNum = parseInt(maxRows[0].maxNum, 10) + 1;
       lhkNomor = `${prefix}${String(100000 + nextNum).slice(1)}`;
-    }
 
-    if (isNew) {
       await connection.query(
-        "INSERT INTO tdtfstok_hdr (ds_nomor, ds_tanggal, ds_sd_nomor, ds_cab, user_create, date_create) VALUES (?, ?, ?, ?, ?, NOW())",
-        [lhkNomor, header.tanggal, header.soNomor, user.cabang, user.kode]
+        `INSERT INTO tdtfstok_hdr 
+         (ds_idrec, ds_nomor, ds_tanggal, ds_sd_nomor, ds_cab, user_create, date_create) 
+         VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+        [ds_idrec, lhkNomor, header.tanggal, header.soNomor, user.cabang, user.kode]
       );
     } else {
       await connection.query(
-        "UPDATE tdtfstok_hdr SET ds_tanggal = ?, user_modified = ?, date_modified = NOW() WHERE ds_nomor = ?",
+        `UPDATE tdtfstok_hdr 
+         SET ds_tanggal = ?, user_modified = ?, date_modified = NOW() 
+         WHERE ds_nomor = ?`,
         [header.tanggal, user.kode, lhkNomor]
       );
     }
 
+    // Hapus detail lama
     await connection.query("DELETE FROM tdtfstok_dtl WHERE dsd_nomor = ?", [
       lhkNomor,
     ]);
+
     const validItems = items.filter((item) => item.jumlah > 0);
-    for (const item of validItems) {
+    
+    // Insert Detail Baru
+    for (const [index, item] of validItems.entries()) {
+      // Generate IDREC Detail
+      // Format dsd_idrec: sama dengan header (ds_idrec)
+      // Format dsd_iddrec: ID Header + Index/Timestamp unik
+      
+      // Opsi 1: dsd_iddrec = ID Header + index (agar mudah ditrace)
+      // Contoh: K01DS...582.001
+      const dsd_idrec = ds_idrec;
+      // Gunakan timestamp + index agar benar-benar unik dan mengikuti pola request sebelumnya
+      const detailTime = new Date(now.getTime() + index);
+      const detailTs = format(detailTime, "yyyyMMddHHmmss.SSS");
+      
+      // Jika format dsd_iddrec harus benar-benar beda timestampnya:
+      const dsd_iddrec = `${user.cabang}DS${detailTs}`; 
+      
+      // ATAU jika format dsd_iddrec adalah turunan dari Header:
+      // const dsd_iddrec = `${ds_idrec}.${String(index+1).padStart(3, '0')}`;
+
       await connection.query(
-        "INSERT INTO tdtfstok_dtl (dsd_nomor, dsd_kode, dsd_ukuran, dsd_jumlah) VALUES (?, ?, ?, ?)",
-        [lhkNomor, item.kode, item.ukuran, item.jumlah]
+        `INSERT INTO tdtfstok_dtl 
+         (dsd_idrec, dsd_iddrec, dsd_nomor, dsd_kode, dsd_ukuran, dsd_jumlah) 
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [dsd_idrec, dsd_iddrec, lhkNomor, item.kode, item.ukuran, item.jumlah]
       );
     }
 

@@ -130,7 +130,7 @@ const prosesKlerek = async (items, cabang, user) => {
         const cidrec = `${cabang}INV${format(new Date(), "yyyyMMddHHmmssSSS")}`;
         await connection.query(
           `INSERT INTO retail.tinv_hdr (inv_idrec, inv_nomor, inv_nomor_so, inv_klerek, inv_tanggal, inv_cus_level, Inv_top, inv_ppn, inv_disc, inv_disc1, inv_disc2, inv_bkrm, inv_dp, inv_nodp, Inv_cus_kode, inv_pro_nomor, Inv_ket, inv_rptunai, inv_novoucher, inv_rpvoucher, inv_nocard, inv_rpcard, inv_nosetor, inv_mem_hp, inv_mem_nama, inv_mem_alamat, inv_mem_gender, inv_mem_usia, inv_mem_referensi, inv_print, inv_puas, inv_closing, user_create, date_create, user_modified, date_modified) 
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
           [
             cidrec,
             cklerek,

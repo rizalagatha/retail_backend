@@ -66,20 +66,37 @@ const save = async (payload, user) => {
     await connection.beginTransaction();
     let nomorDokumen = header.nomor;
 
+    // --- GENERATE IDREC HEADER ---
+    // Format: K03PC20250922153351.608
+    const now = new Date();
+    // Jika isNew, buat baru. Jika edit, ambil yang lama (opsional, di sini kita buat baru jika belum ada di payload)
+    const pc_idrec = isNew
+      ? `${user.cabang}PC${format(now, "yyyyMMddHHmmss.SSS")}`
+      : (
+          await connection.query(
+            "SELECT pc_idrec FROM tpengajuanbarcode_hdr WHERE pc_nomor = ?",
+            [nomorDokumen]
+          )
+        )[0][0]?.pc_idrec;
+
     if (isNew) {
       const yearMonth = new Date(header.tanggal)
         .toISOString()
         .slice(2, 7)
         .replace("-", "");
       const prefix = `${user.cabang}.RJT.${yearMonth}`;
-      const nomorQuery = `SELECT IFNULL(MAX(RIGHT(pc_nomor, 5)), 0) + 1 AS next_num FROM tpengajuanbarcode_hdr WHERE LEFT(pc_nomor, 12) = ?;`;
+
+      const nomorQuery = `SELECT IFNULL(MAX(RIGHT(pc_nomor, 5)), 0) + 1 AS next_num FROM tpengajuanbarcode_hdr WHERE LEFT(pc_nomor, 12) = ? FOR UPDATE;`;
       const [nomorRows] = await connection.query(nomorQuery, [prefix]);
       nomorDokumen = `${prefix}${nomorRows[0].next_num
         .toString()
         .padStart(5, "0")}`;
+
       await connection.query(
-        "INSERT INTO tpengajuanbarcode_hdr (pc_nomor, pc_tanggal, pc_cab, user_create, date_create) VALUES (?, ?, ?, ?, NOW())",
-        [nomorDokumen, header.tanggal, user.cabang, user.kode]
+        `INSERT INTO tpengajuanbarcode_hdr 
+         (pc_idrec, pc_nomor, pc_tanggal, pc_cab, user_create, date_create) 
+         VALUES (?, ?, ?, ?, ?, NOW())`,
+        [pc_idrec, nomorDokumen, header.tanggal, user.cabang, user.kode]
       );
     }
 
@@ -91,20 +108,18 @@ const save = async (payload, user) => {
         [user.kode, nomorDokumen]
       );
 
-      // 2. Loop item yang disetujui untuk dibuat produk baru
-      for (const item of items) {
+      for (const [index, item] of items.entries()) {
         if (item.hargabaru > 0) {
           const newProductCode =
             item.kodebaru || (await generateNewProductCode(connection));
           const newProductName = `${item.nama} #${item.jenis.substring(0, 1)}`;
 
-          // Insert/Update ke tbarangdc (master produk)
+          // Insert/Update Master Produk
           await connection.query(
             'INSERT INTO tbarangdc (brg_kode, brg_ktgp, brg_aktif, brg_logstok, brg_kelompok, brg_warna, user_create, date_create) VALUES (?, ?, 0, "Y", "C", ?, ?, NOW()) ON DUPLICATE KEY UPDATE brg_ktgp=VALUES(brg_ktgp), brg_warna=VALUES(brg_warna)',
             [newProductCode, item.jenis, newProductName, user.kode]
           );
 
-          // Insert/Update ke tbarangdc_dtl (varian produk)
           await connection.query(
             "INSERT INTO tbarangdc_dtl (brgd_kode, brgd_barcode, brgd_ukuran, brgd_hpp, brgd_harga) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE brgd_hpp=VALUES(brgd_hpp), brgd_harga=VALUES(brgd_harga)",
             [
@@ -116,10 +131,24 @@ const save = async (payload, user) => {
             ]
           );
 
-          // Simpan ke tabel log approval _dtl2
+          // --- GENERATE IDREC DETAIL 2 ---
+          // Format: K06PC20250908194748.697
+          const detailTime = new Date(now.getTime() + index);
+          const timestampDetail = format(detailTime, "yyyyMMddHHmmss.SSS");
+          const pcd2_idrec = `${user.cabang}PC${timestampDetail}`;
+
+          // Format: K06PC20250908194748.6971 (tambah digit index)
+          // Catatan: index dimulai dari 0, tambah 1 agar digit belakang min 1
+          const pcd2_iddrec = `${pcd2_idrec}${index + 1}`;
+
           await connection.query(
-            "INSERT INTO tpengajuanbarcode_dtl2 (pcd2_nomor, pcd2_kode, pcd2_kodein, pcd2_ukuran, pcd2_diskon, pcd2_harga) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE pcd2_diskon=VALUES(pcd2_diskon), pcd2_harga=VALUES(pcd2_harga)",
+            `INSERT INTO tpengajuanbarcode_dtl2 
+             (pcd2_idrec, pcd2_iddrec, pcd2_nomor, pcd2_kode, pcd2_kodein, pcd2_ukuran, pcd2_diskon, pcd2_harga) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?) 
+             ON DUPLICATE KEY UPDATE pcd2_diskon=VALUES(pcd2_diskon), pcd2_harga=VALUES(pcd2_harga)`,
             [
+              pcd2_idrec,
+              pcd2_iddrec,
               nomorDokumen,
               item.kode,
               newProductCode,
@@ -130,37 +159,50 @@ const save = async (payload, user) => {
           );
         }
       }
-      // (Tambahkan logika untuk tpengajuanbarcode_sticker2 jika ada)
     } else {
-      // == ALUR SIMPAN DRAF / PENGAJUAN BIASA ==
+      // == ALUR SIMPAN BIASA ==
       await connection.query(
         "UPDATE tpengajuanbarcode_hdr SET pc_tanggal = ?, user_modified = ?, date_modified = NOW() WHERE pc_nomor = ?",
         [header.tanggal, user.kode, nomorDokumen]
       );
 
-      // Pola Delete-then-Insert untuk detail
+      // Hapus detail lama
       await connection.query(
         "DELETE FROM tpengajuanbarcode_dtl WHERE pcd_nomor = ?",
         [nomorDokumen]
       );
+
+      // Insert Detail Baru dengan IDREC
       if (items.length > 0) {
-        const itemValues = items.map((item, i) => [
-          nomorDokumen,
-          item.kode,
-          item.ukuran,
-          item.jumlah,
-          item.jenis,
-          item.ket,
-          i + 1,
-        ]);
+        const itemValues = items.map((item, i) => {
+          // --- GENERATE IDREC DETAIL ---
+          // Format: K03PC20250922154411.488
+          const detailTime = new Date(now.getTime() + i); // timestamp unik per baris
+          const timestampDetail = format(detailTime, "yyyyMMddHHmmss.SSS");
+          const pcd_idrec = `${user.cabang}PC${timestampDetail}`;
+
+          return [
+            pcd_idrec, // [BARU] pcd_idrec
+            nomorDokumen,
+            item.kode,
+            item.ukuran,
+            item.jumlah,
+            item.jenis,
+            item.ket,
+            i + 1,
+          ];
+        });
+
         await connection.query(
-          "INSERT INTO tpengajuanbarcode_dtl (pcd_nomor, pcd_kode, pcd_ukuran, pcd_jumlah, pcd_jenis, pcd_ket, pcd_nourut) VALUES ?",
+          `INSERT INTO tpengajuanbarcode_dtl 
+           (pcd_idrec, pcd_nomor, pcd_kode, pcd_ukuran, pcd_jumlah, pcd_jenis, pcd_ket, pcd_nourut) 
+           VALUES ?`,
           [itemValues]
         );
       }
-      // (Tambahkan logika delete-then-insert untuk tpengajuanbarcode_sticker)
+
+      // (Opsional: Tambahkan logika serupa untuk tpengajuanbarcode_sticker jika tabelnya punya kolom idrec)
     }
-    // --- AKHIR LOGIKA UTAMA ---
 
     await connection.commit();
     return {

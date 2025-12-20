@@ -135,23 +135,42 @@ const save = async (data, user) => {
   await connection.beginTransaction();
   try {
     let moNomor = header.nomor;
+    // --- GENERATE IDREC HEADER ---
+    // Format: K01MO20251008151934.268 (CAB + MO + TIMESTAMP)
+    // Jika Edit, ambil IDREC lama agar tidak berubah. Jika Baru, generate.
+    let mo_idrec;
+    if (isNew) {
+      const now = new Date();
+      mo_idrec = `${user.cabang}MO${format(now, "yyyyMMddHHmmss.SSS")}`;
+    } else {
+      // Ambil IDREC lama (opsional, untuk konsistensi update)
+      // const [existing] = await connection.query("SELECT mo_idrec FROM tmutasiout_hdr WHERE mo_nomor = ?", [moNomor]);
+      // mo_idrec = existing[0]?.mo_idrec;
+    }
+
     if (isNew) {
       const prefix = `${user.cabang}MO${format(
         new Date(header.tanggal),
         "yyMM"
       )}`;
+
+      // Locking row untuk penomoran
       const [maxRows] = await connection.query(
-        `SELECT IFNULL(MAX(RIGHT(mo_nomor, 5)), 0) as maxNum FROM tmutasiout_hdr WHERE LEFT(mo_nomor, 9) = ?`,
+        `SELECT IFNULL(MAX(RIGHT(mo_nomor, 5)), 0) as maxNum 
+         FROM tmutasiout_hdr 
+         WHERE LEFT(mo_nomor, 9) = ? FOR UPDATE`,
         [prefix]
       );
+
       const nextNum = parseInt(maxRows[0].maxNum, 10) + 1;
       moNomor = `${prefix}${String(100000 + nextNum).slice(1)}`;
-    }
 
-    if (isNew) {
       await connection.query(
-        "INSERT INTO tmutasiout_hdr (mo_nomor, mo_tanggal, mo_so_nomor, mo_cab, mo_kecab, mo_ket, user_create, date_create) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())",
+        `INSERT INTO tmutasiout_hdr 
+         (mo_idrec, mo_nomor, mo_tanggal, mo_so_nomor, mo_cab, mo_kecab, mo_ket, user_create, date_create) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
+          mo_idrec, // [BARU]
           moNomor,
           header.tanggal,
           header.soNomor,
@@ -163,19 +182,53 @@ const save = async (data, user) => {
       );
     } else {
       await connection.query(
-        "UPDATE tmutasiout_hdr SET mo_tanggal = ?, mo_kecab = ?, mo_ket = ?, user_modified = ?, date_modified = NOW() WHERE mo_nomor = ?",
+        `UPDATE tmutasiout_hdr 
+         SET mo_tanggal = ?, mo_kecab = ?, mo_ket = ?, user_modified = ?, date_modified = NOW() 
+         WHERE mo_nomor = ?`,
         [header.tanggal, header.keCabang, header.keterangan, user.kode, moNomor]
       );
     }
 
+    // Hapus detail lama
     await connection.query("DELETE FROM tmutasiout_dtl WHERE mod_nomor = ?", [
       moNomor,
     ]);
+
     const validItems = items.filter((item) => (item.jumlah || 0) > 0);
-    for (const item of validItems) {
+
+    // Insert Detail Baru
+    if (validItems.length > 0) {
+      const itemValues = validItems.map((item, index) => {
+        // --- GENERATE IDREC DETAIL ---
+        // 1. mod_idrec: Sesuai request, formatnya "Nomor Mutasi" (sama dengan mod_nomor)
+        // Contoh: K01MO250700047
+        const mod_idrec = moNomor;
+
+        // 2. mod_iddrec: Sesuai request, formatnya "Nomor Mutasi" + "Digit Unik"
+        // Contoh: K01MO250700047620
+        // Kita bisa gunakan kombinasi Index atau Timestamp kecil agar unik per baris
+        // Di sini saya gunakan suffix index agar mudah dibaca & pasti unik dalam satu transaksi
+        // Atau bisa random string 3 digit jika ingin lebih acak seperti contoh "620"
+        const uniqueSuffix = String(index + 1).padStart(3, "0"); // 001, 002...
+        // ATAU pakai milidetik random: String(Math.floor(Math.random() * 900) + 100);
+
+        const mod_iddrec = `${moNomor}${uniqueSuffix}`;
+
+        return [
+          mod_idrec, // ID Ref
+          mod_iddrec, // ID Unik Detail
+          moNomor,
+          item.kode,
+          item.ukuran,
+          item.jumlah,
+        ];
+      });
+
       await connection.query(
-        "INSERT INTO tmutasiout_dtl (mod_nomor, mod_kode, mod_ukuran, mod_jumlah) VALUES (?, ?, ?, ?)",
-        [moNomor, item.kode, item.ukuran, item.jumlah]
+        `INSERT INTO tmutasiout_dtl 
+             (mod_idrec, mod_iddrec, mod_nomor, mod_kode, mod_ukuran, mod_jumlah) 
+             VALUES ?`,
+        [itemValues]
       );
     }
 

@@ -2,21 +2,21 @@ const pool = require("../config/database");
 
 const loadData = async (tanggal, cabang) => {
   const query = `
-        SELECT 
-            d.sodtf AS kode,
-            h.sd_nama AS nama,
-            d.depan,
-            d.belakang,
-            d.lengan,
-            d.variasi,
-            d.saku,
-            d.panjang,
-            d.buangan,
-            d.keterangan AS ket
-        FROM retail.tdtf d
-        LEFT JOIN retail.tsodtf_hdr h ON h.sd_nomor = d.sodtf
-        WHERE d.tanggal = ? AND d.cab = ?;
-    `;
+    SELECT 
+      d.sodtf AS kode,
+      h.sd_nama AS nama,
+      d.depan,
+      d.belakang,
+      d.lengan,
+      d.variasi,
+      d.saku,
+      d.panjang,
+      d.buangan,
+      d.keterangan AS ket
+    FROM retail.tdtf d
+    LEFT JOIN retail.tsodtf_hdr h ON h.sd_nomor = d.sodtf
+    WHERE d.tanggal = ? AND d.cab = ?;
+  `;
   const [rows] = await pool.query(query, [tanggal, cabang]);
   return rows;
 };
