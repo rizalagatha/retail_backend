@@ -70,7 +70,7 @@ const getList = async (filters) => {
         ROUND(
           (
             -- 1. Total Harga per Item (Setelah diskon item)
-            SUM(dc.invd_jumlah * (dc.invd_harga - dc.invd_diskon)) 
+            SUM( (dc.invd_jumlah * dc.invd_harga) - (dc.invd_jumlah * dc.invd_diskon) )
             
             -- 2. Kurangi Diskon Faktur 1 (%)
             * (1 - (COALESCE(h.inv_disc1, 0) / 100)) 
@@ -100,6 +100,14 @@ const getList = async (filters) => {
         LEFT JOIN tmasterstok m ON m.mst_brg_kode = d.invd_kode AND m.mst_ukuran = d.invd_ukuran AND m.mst_aktif = 'Y'
         WHERE b.brg_logstok = 'Y'
         GROUP BY d.invd_inv_nomor
+    ),
+    PiutangReal AS (
+        SELECT 
+            ph.ph_inv_nomor,
+            (SUM(pd.pd_debet) - SUM(pd.pd_kredit)) AS SaldoAkhir
+        FROM tpiutang_hdr ph
+        JOIN tpiutang_dtl pd ON pd.pd_ph_nomor = ph.ph_nomor
+        GROUP BY ph.ph_inv_nomor
     ),
     FinalList AS (
       SELECT 
@@ -132,40 +140,40 @@ const getList = async (filters) => {
         h.inv_mp_resi AS NoResi,             
         h.inv_mp_biaya_platform AS BiayaPlatform, 
         
-        -- 1. Display Bayar (Uang Masuk Real / Netto)
-        -- Rumus: Total Kredit di Piutang (Termasuk Fee) - Biaya Platform
+        -- BAYAR
+        -- Logika: Nominal - SisaPiutang
         (
-          (
-            SELECT COALESCE(SUM(d.pd_kredit), 0)
-            FROM tpiutang_dtl d
-            INNER JOIN tpiutang_hdr ph ON ph.ph_nomor = d.pd_ph_nomor
-            WHERE ph.ph_inv_nomor = h.inv_nomor
-          ) 
-          - COALESCE(h.inv_mp_biaya_platform, 0)
+           (
+             COALESCE(SN.NominalPiutang,0) 
+             + h.inv_ppn 
+             + h.inv_bkrm 
+             - COALESCE(h.inv_mp_biaya_platform, 0)
+           ) 
+           - 
+           IF(COALESCE(PR.SaldoAkhir, 0) < 0, 0, 
+             COALESCE(PR.SaldoAkhir, 
+              (
+                 COALESCE(SN.NominalPiutang,0) 
+                 + h.inv_ppn 
+                 + h.inv_bkrm 
+                 - COALESCE(h.inv_mp_biaya_platform, 0)
+              )
+             )
+           )
         ) AS Bayar,
 
-        -- 2. Display Sisa Piutang (Balance)
-        -- Rumus: (Tagihan Netto) - (Bayar Netto)
-        -- Agar balance 0 (Lunas), kedua sisi harus dikurangi Fee.
-        (
-          (
-            -- A. Sisi Tagihan (Netto)
-            COALESCE(SN.NominalPiutang,0) 
-            + h.inv_ppn 
-            + h.inv_bkrm 
-            - COALESCE(h.inv_mp_biaya_platform, 0)
-          ) 
-          - 
-          (
-            -- B. Sisi Pembayaran (Netto) -> Sama seperti kolom Bayar diatas
+        -- SISA PIUTANG
+        -- Logika: Ambil saldo real. Jika negatif (error desktop), anggap 0 (Lunas).
+        -- Jika null (belum masuk piutang), anggap sama dengan Nominal Netto.
+        IF(COALESCE(PR.SaldoAkhir, 0) < 0, 0, 
+           COALESCE(PR.SaldoAkhir, 
             (
-                SELECT COALESCE(SUM(d.pd_kredit), 0)
-                FROM tpiutang_dtl d
-                INNER JOIN tpiutang_hdr ph ON ph.ph_nomor = d.pd_ph_nomor
-                WHERE ph.ph_inv_nomor = h.inv_nomor
+               COALESCE(SN.NominalPiutang,0) 
+               + h.inv_ppn 
+               + h.inv_bkrm 
+               - COALESCE(h.inv_mp_biaya_platform, 0)
             )
-            - COALESCE(h.inv_mp_biaya_platform, 0)
-          )
+           )
         ) AS SisaPiutang,
 
         h.inv_cus_kode AS Kdcus,
@@ -201,6 +209,7 @@ const getList = async (filters) => {
       LEFT JOIN tsetor_hdr sh ON sh.sh_nomor = h.inv_nosetor
       LEFT JOIN finance.trekening rek ON rek.rek_kode = sh.sh_akun
       LEFT JOIN SumNominal SN ON SN.invd_inv_nomor = h.inv_nomor
+      LEFT JOIN PiutangReal PR ON PR.ph_inv_nomor = h.inv_nomor
       LEFT JOIN DPUsed DP ON DP.inv_nomor = h.inv_nomor
       WHERE h.inv_sts_pro = 0
         -- Filter Tanggal Invoice tetap berlaku
