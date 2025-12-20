@@ -69,16 +69,11 @@ const getList = async (filters) => {
         dc.invd_inv_nomor,
         ROUND(
           (
-            -- 1. Total Harga per Item (Setelah diskon item)
+            -- 1. Hitung Total per Item (Qty * Harga) - (Qty * DiskonItem)
             SUM( (dc.invd_jumlah * dc.invd_harga) - (dc.invd_jumlah * dc.invd_diskon) )
-            
-            -- 2. Kurangi Diskon Faktur 1 (%)
-            * (1 - (COALESCE(h.inv_disc1, 0) / 100)) 
-            
-            -- 3. Kurangi Diskon Faktur 2 (%)
-            * (1 - (COALESCE(h.inv_disc2, 0) / 100))
           )
-          -- 4. Kurangi Diskon Faktur (Rupiah Manual)
+          -- 2. PERBAIKAN: Hanya kurangi inv_disc (Rupiah Global)
+          -- Hapus perkalian (1 - disc%) karena inv_disc sudah berisi nilai rupiah dari persen tersebut.
           - COALESCE(h.inv_disc, 0)
         , 0) AS NominalPiutang
       FROM DetailCalc dc
