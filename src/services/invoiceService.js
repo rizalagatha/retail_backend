@@ -172,8 +172,8 @@ const getList = async (filters) => {
         ) AS SisaPiutang,
 
         h.inv_cus_kode AS Kdcus,
-        c.cus_nama AS Nama,
-        c.cus_alamat AS Alamat,
+        COALESCE(k.kar_nama, c.cus_nama, 'KARYAWAN (Cek NIK)') AS Customer,
+        COALESCE(k.kar_alamat, c.cus_alamat, '') AS Alamat,
         c.cus_kota AS Kota,
         c.cus_telp AS Telp,
         CONCAT(h.inv_cus_level, " - ", lvl.level_nama) AS xLevel,
@@ -200,6 +200,7 @@ const getList = async (filters) => {
       FROM tinv_hdr h
       LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
       LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+      LEFT JOIN hrd2.karyawan k ON k.kar_nik = h.inv_cus_kode
       LEFT JOIN tcustomer_level lvl ON lvl.level_kode = h.inv_cus_level
       LEFT JOIN tsetor_hdr sh ON sh.sh_nomor = h.inv_nosetor
       LEFT JOIN finance.trekening rek ON rek.rek_kode = sh.sh_akun

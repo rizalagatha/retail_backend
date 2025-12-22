@@ -8,8 +8,15 @@ const pool = require("../config/database");
 const getList = async (filters) => {
   const { startDate, endDate, kodeBarang, cabang } = filters;
 
-  let params = [startDate, endDate, cabang];
+  let params = [startDate, endDate];
+  let branchFilter = "";
   let itemFilter = "";
+
+  // Jika cabang diisi dan bukan kosong/ALL, tambahkan filter
+  if (cabang && cabang !== "") {
+    branchFilter = "AND h.sj_kecab = ?";
+    params.push(cabang);
+  }
 
   if (kodeBarang) {
     itemFilter = "AND d.sjd_kode = ?";
@@ -52,7 +59,7 @@ const getList = async (filters) => {
         LEFT JOIN retail.tmintabarang_hdr m ON m.mt_nomor = h.sj_mt_nomor
         WHERE h.sj_peminta = "" 
           AND h.sj_tanggal BETWEEN ? AND ?
-          AND h.sj_kecab = ?
+          ${branchFilter}
           ${itemFilter}
         GROUP BY h.sj_nomor 
         ORDER BY h.date_create DESC
@@ -280,27 +287,24 @@ const getCabangList = async (user) => {
 const exportDetails = async (filters) => {
   const { startDate, endDate, kodeBarang, cabang } = filters;
 
-  console.log("🚀 Service exportDetails called with:", {
-    startDate,
-    endDate,
-    cabang,
-    kodeBarang,
-  });
-
-  // 1. Force Time Range (00:00:00 to 23:59:59)
-  // This handles DATETIME columns correctly without relying on DATE() function
   const startDateTime = startDate ? `${startDate} 00:00:00` : null;
   const endDateTime = endDate ? `${endDate} 23:59:59` : null;
 
-  let params = [startDateTime, endDateTime, cabang];
+  // [UBAH] Logic params dinamis untuk cabang di export juga
+  let params = [startDateTime, endDateTime];
+  let branchFilter = "";
   let itemFilter = "";
+
+  if (cabang && cabang !== "") {
+    branchFilter = "AND h.sj_kecab = ?";
+    params.push(cabang);
+  }
 
   if (kodeBarang) {
     itemFilter = "AND d.sjd_kode = ?";
     params.push(kodeBarang);
   }
 
-  // 2. Query Construction
   const query = `
     SELECT 
       h.sj_nomor AS "Nomor SJ",
@@ -309,6 +313,8 @@ const exportDetails = async (filters) => {
       g.gdg_nama AS "Nama Store",
       h.sj_mt_nomor AS "No. Minta Barang",
       h.sj_ket AS "Keterangan",
+      h.sj_noterima AS "No. Terima",     -- Tambahan info
+      DATE_FORMAT(t.tj_tanggal, "%Y-%m-%d") AS "Tgl Terima", -- Tambahan info
       
       d.sjd_kode AS "Kode Barang",
       TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS "Nama Barang",
@@ -319,23 +325,18 @@ const exportDetails = async (filters) => {
     INNER JOIN tdc_sj_dtl d ON d.sjd_nomor = h.sj_nomor
     LEFT JOIN retail.tgudang g ON g.gdg_kode = h.sj_kecab
     LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.sjd_kode
+    LEFT JOIN retail.ttrm_sj_hdr t ON t.tj_nomor = h.sj_noterima
     
     WHERE 
       (h.sj_peminta = "" OR h.sj_peminta IS NULL)
       AND h.sj_tanggal >= ? AND h.sj_tanggal <= ?
-      AND h.sj_kecab = ?
+      ${branchFilter} -- [UBAH] Filter cabang dinamis
       ${itemFilter}
       
     ORDER BY h.sj_tanggal DESC, h.sj_nomor DESC, d.sjd_kode ASC
   `;
 
-  console.log("📝 Executing Query:", query.replace(/\s+/g, " "));
-  console.log("📝 With Params:", params);
-
   const [rows] = await pool.query(query, params);
-
-  console.log(`✅ Query Result: ${rows.length} rows found`);
-
   return rows;
 };
 

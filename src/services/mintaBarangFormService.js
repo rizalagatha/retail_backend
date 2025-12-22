@@ -303,6 +303,15 @@ const getBufferStokItems = async (user) => {
  */
 const save = async (data, user) => {
   const { header, items, isNew } = data;
+  const totalQty = items.reduce(
+    (sum, item) => sum + (Number(item.jumlah) || 0),
+    0
+  );
+  if (totalQty > 120) {
+    throw new Error(
+      `Gagal Simpan: Total permintaan (${totalQty}) melebihi batas maksimal 120 pcs.`
+    );
+  }
   const connection = await pool.getConnection();
   await connection.beginTransaction();
 

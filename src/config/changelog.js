@@ -1,4 +1,21 @@
 const changelogs = {
+  "1.2.6": {
+    date: "2025-12-22",
+    changes: [
+      "Fitur Baru: Inputan NIK pada Invoice untuk Pembelian Karyawan Potong Gaji, otomatis Memvalidasi NIK dan Nama Karyawan serta menghitung limitnya pada periode bulan penggajian berjalan",
+      {
+        title: "Perbaikan dan Pembaruan:",
+        items: [
+          "Pencegahan Double Simpan pada Invoice",
+          "Mekanisme dan Perhitungan Simpan Invoice sudah disesuaikan dengan program lama",
+          "Minta Barang ke DC dibatasi maksimal 120 pcs per satu Nomor Permintaan",
+          "Penambahan filter Semua Cabang dan kolom Tanggal Terima SJ pada Halaman Surat Jalan ke Store untuk DC",
+          "Penambahan Grand Total pada Koreksi Stok",
+          "Perbaikan default jenis Retur Jual menjadi Tukar Barang",
+        ],
+      },
+    ],
+  },
   "1.2.5": {
     date: "2025-12-19",
     changes: [

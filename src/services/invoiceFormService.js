@@ -532,6 +532,30 @@ const loadForEdit = async (nomor, user) => {
 const saveData = async (payload, user) => {
   const connection = await pool.getConnection();
   try {
+    // [BARU] 1. CEK IDEMPOTENCY (Mencegah Double Input)
+    // Ambil idrec dari payload header (yang digenerate frontend)
+    const frontendIdRec = payload.header.idrec;
+    if (payload.isNew && frontendIdRec) {
+      // Cek apakah idrec ini sudah ada di database?
+      const [dupCheck] = await connection.query(
+        "SELECT inv_nomor FROM tinv_hdr WHERE inv_idrec = ? LIMIT 1",
+        [frontendIdRec]
+      );
+
+      if (dupCheck.length > 0) {
+        // JIKA SUDAH ADA:
+        // Jangan error, tapi kembalikan sukses palsu atau info bahwa sudah tersimpan.
+        // Ini menangani kasus: Request 1 sukses tapi response lambat (timeout),
+        // User klik lagi (Request 2). Request 2 harus tau kalau data sudah masuk.
+
+        connection.release(); // Lepas koneksi karena kita return early
+        return {
+          message: `Invoice sudah tersimpan sebelumnya (Duplicate prevented).`,
+          nomor: dupCheck[0].inv_nomor,
+          isDuplicate: true, // Flag opsional buat frontend
+        };
+      }
+    }
     await connection.beginTransaction();
     const { header, items, dps, payment, isNew, pins, totals } = payload;
     const nomorInv = header.nomor;
@@ -586,48 +610,79 @@ const saveData = async (payload, user) => {
 
     const pundiAmal = Number(payment.pundiAmal || header.pundiAmal || 0);
 
-    // ===============================
-    //  PERHITUNGAN DP & PEMBAYARAN
-    // ===============================
-
-    // Ambil DP dari payload totals (frontend menghitung dp terpakai)
     const dpDipakai = applyRoundingPolicy(Number(totals.totalDp || 0));
 
-    // Total Bayar (UANG MASUK) = DP + tunai + transfer + voucher + retur
-    const bayarTotal = applyRoundingPolicy(
-      dpDipakai +
-        Number(payment.tunai || 0) +
-        Number(payment.transfer?.nominal || 0) +
-        Number(payment.voucher?.nominal || 0) +
-        Number(payment.retur?.nominal || 0)
-    );
+    // =========================================================
+    //  PERHITUNGAN LOGIC BAYAR (UPDATED UNTUK POTONG GAJI)
+    // =========================================================
 
-    // Untuk disimpan di inv_bayar
-    const invBayar = bayarTotal;
+    // Cek Flag Potong Gaji dari Frontend
+    const isPotongGaji = payment.jenis === "POTONG_GAJI";
 
-    // Hitung kembalian
-    const kembalianBeforePundi = applyRoundingPolicy(
-      Math.max(bayarTotal - grandTotal, 0)
-    );
-    const kembalianFinal = applyRoundingPolicy(
-      Math.max(kembalianBeforePundi - pundiAmal, 0)
-    );
-
-    // Mode SO → tunaiAfterChange adalah uang tunai yang benar-benar masuk
     let bayarTunaiBersih = 0;
+    let totalPaymentNonDp = 0;
+    let invBayar = 0;
+    let kembalianFinal = 0;
 
-    if (header.nomorSo && header.nomorSo !== "") {
-      // Mode dari SO → langsung ambil tunaiAfterChange
-      bayarTunaiBersih = applyRoundingPolicy(
-        Number(payment.tunaiAfterChange || 0)
-      );
+    if (isPotongGaji) {
+      // [BARU] LOGIKA KHUSUS KARYAWAN
+      // Tidak ada uang masuk real saat transaksi (selain DP SO jika ada)
+      bayarTunaiBersih = 0;
+      totalPaymentNonDp = 0;
+
+      // inv_bayar (Total Uang Masuk) = DP Saja (jika ada)
+      // Karena sisa tagihan masuk ke piutang karyawan
+      invBayar = dpDipakai;
+
+      // Kembalian pasti 0
+      kembalianFinal = 0;
+
+      // Pastikan Customer Code di Header menggunakan NIK agar piutang tercatat atas nama karyawan
+      if (payment.nikKaryawan) {
+        header.customer.kode = payment.nikKaryawan;
+      }
+
+      // Reset nilai pembayaran lain agar tidak masuk ke DB
+      payment.tunai = 0;
+      payment.voucher = { nominal: 0, nomor: "" };
+      payment.transfer = { nominal: 0 };
+      payment.retur = { nominal: 0 };
     } else {
-      // Normal invoice: tunai - kembalian
-      bayarTunaiBersih = applyRoundingPolicy(
-        Math.max(Number(payment.tunai || 0) - kembalianBeforePundi, 0)
+      // [LAMA] LOGIKA BAYAR NORMAL (UMUM)
+      const bayarTotal = applyRoundingPolicy(
+        dpDipakai +
+          Number(payment.tunai || 0) +
+          Number(payment.transfer?.nominal || 0) +
+          Number(payment.voucher?.nominal || 0) +
+          Number(payment.retur?.nominal || 0)
       );
+      invBayar = bayarTotal;
+
+      const kembalianBeforePundi = applyRoundingPolicy(
+        Math.max(bayarTotal - grandTotal, 0)
+      );
+      kembalianFinal = applyRoundingPolicy(
+        Math.max(kembalianBeforePundi - pundiAmal, 0)
+      );
+
+      if (header.nomorSo && header.nomorSo !== "") {
+        bayarTunaiBersih = applyRoundingPolicy(
+          Number(payment.tunaiAfterChange || 0)
+        );
+      } else {
+        bayarTunaiBersih = applyRoundingPolicy(
+          Math.max(Number(payment.tunai || 0) - kembalianBeforePundi, 0)
+        );
+      }
+
+      totalPaymentNonDp =
+        bayarTunaiBersih +
+        (payment.voucher?.nominal || 0) +
+        (payment.transfer?.nominal || 0) +
+        (payment.retur?.nominal || 0);
     }
 
+    // --- Generate Nomor Setoran (Tetap) ---
     let nomorSetoran = payment.transfer.nomorSetoran || "";
     if ((payment.transfer.nominal || 0) > 0 && !nomorSetoran) {
       nomorSetoran = await generateNewSetorNumber(
@@ -640,22 +695,34 @@ const saveData = async (payload, user) => {
     const invNomor = isNew
       ? await generateNewInvNumber(header.gudang.kode, header.tanggal)
       : header.nomor;
-    let idrec = isNew
-      ? `${header.gudang.kode}INV${format(new Date(), "yyyyMMddHHmmssSSS")}`
-      : header.idrec;
-    if (!isNew && (!idrec || String(idrec).trim() === "")) {
-      const [hdrRows] = await connection.query(
-        "SELECT inv_idrec FROM tinv_hdr WHERE inv_nomor = ? LIMIT 1",
-        [invNomor]
-      );
-      if (hdrRows && hdrRows.length > 0) {
-        idrec = hdrRows[0].inv_idrec;
-      } else {
-        // fallback: buat idrec baru
+
+    // [UPDATE] Logic Penentuan IDREC (Idempotency Support)
+    // 1. Coba ambil dari header (yang digenerate Frontend)
+    let idrec = header.idrec;
+
+    // 2. Jika kosong (Frontend lupa kirim/Legacy), baru generate di Backend
+    if (!idrec || String(idrec).trim() === "") {
+      if (isNew) {
+        // Fallback: Generate baru
         idrec = `${header.gudang.kode}INV${format(
           new Date(),
           "yyyyMMddHHmmssSSS"
         )}`;
+      } else {
+        // Edit Mode: Coba ambil dari Database dulu
+        const [hdrRows] = await connection.query(
+          "SELECT inv_idrec FROM tinv_hdr WHERE inv_nomor = ? LIMIT 1",
+          [invNomor]
+        );
+        if (hdrRows && hdrRows.length > 0) {
+          idrec = hdrRows[0].inv_idrec;
+        } else {
+          // Last Resort: Generate baru (Self-healing jika data lama korup)
+          idrec = `${header.gudang.kode}INV${format(
+            new Date(),
+            "yyyyMMddHHmmssSSS"
+          )}`;
+        }
       }
     }
     const piutangNomor = `${header.customer.kode}${invNomor}`;
@@ -852,66 +919,77 @@ const saveData = async (payload, user) => {
       await connection.query(detailSql, [detailValues]);
     }
 
-    // 3. DELETE/INSERT tpiutang_hdr & tpiutang_dtl
+    // =========================================================================
+    //  LOGIC PIUTANG (REVERT TO LEGACY DESKTOP STYLE)
+    // =========================================================================
+    // Konsep: Semua penjualan masuk buku piutang.
+    // Jika tunai, langsung dicatat pelunasannya (Kredit) di detik yang sama.
+
+    // 1. Bersihkan data lama (untuk mode edit)
     await connection.query("DELETE FROM tpiutang_hdr WHERE ph_inv_nomor = ?", [
       invNomor,
     ]);
-
     await connection.query("DELETE FROM tpiutang_hdr WHERE ph_nomor = ?", [
       piutangNomor,
     ]);
-
-    // ====================================
-    // PATCH: hapus piutang detail lama
-    // ====================================
     await connection.query("DELETE FROM tpiutang_dtl WHERE pd_ph_nomor = ?", [
       piutangNomor,
     ]);
 
-    // TOTAL TAGIHAN PENUH (sebelum DP) → harus sama dengan debet di tpiutang_dtl
-    const fullTagihan = applyRoundingPolicy(netto + biayaKirim);
-
-    // PEMBAYARAN NON-DP (yang terjadi saat invoice)
-    const totalPaymentNonDp =
-      bayarTunaiBersih +
-      (payment.voucher?.nominal || 0) +
-      (payment.transfer?.nominal || 0) +
-      (payment.retur?.nominal || 0);
-
-    // DP yang dipakai (dari SO)
+    const fullTagihan = applyRoundingPolicy(netto + biayaKirim); // Nilai Invoice
     const totalDpDipakai = dpDipakai;
-
-    // TOTAL Semua Pembayaran (DP + pembayaran di invoice)
     const totalBayarSemua = applyRoundingPolicy(
       totalPaymentNonDp + totalDpDipakai
     );
 
-    // PIUTANG FINAL (nominal di tpiutang_hdr)
-    // = fullTagihan - semua pembayaran
+    // Hitung Sisa Piutang (Saldo Akhir)
     const piutangFinal = applyRoundingPolicy(
       Math.max(fullTagihan - totalBayarSemua, 0)
     );
 
-    const piutangHdrSql = `INSERT INTO tpiutang_hdr (ph_nomor, ph_tanggal, ph_cus_kode, ph_inv_nomor, ph_top, ph_nominal) VALUES (?, ?, ?, ?, ?, ?);`;
+    // [RULE BARU] SELALU INSERT KE TPIUTANG_HDR
+    // Nominal di Header adalah Total Nilai Invoice (Awal), bukan Sisa.
+    // Ini agar history pencatatan konsisten "Pernah ada piutang sekian".
+
+    // NOTE: Cek apakah di desktop lama kolom ph_nominal isinya 'Sisa' atau 'Total Awal'.
+    // Berdasarkan contoh Anda: ph_nominal = 138000 (Padahal lunas).
+    // Berarti ph_nominal = Total Tagihan (Awal).
+
+    const nominalHeaderPiutang = fullTagihan; // Sesuai request: Insert sesuai nominal invoice
+
+    const piutangHdrSql = `
+        INSERT INTO tpiutang_hdr (
+            ph_nomor, ph_tanggal, ph_cus_kode, ph_inv_nomor, 
+            ph_top, ph_nominal, ph_cab
+        ) VALUES (?, ?, ?, ?, ?, ?, ?);
+    `;
+
     await connection.query(piutangHdrSql, [
       piutangNomor,
       toSqlDate(header.tanggal),
-      header.customer.kode,
+      header.customer.kode, // NIK atau Kode Customer
       invNomor,
-      header.top,
-      piutangFinal,
+      header.top || 0, // Jika tunai biasanya TOP 0
+      nominalHeaderPiutang, // Insert Nominal Invoice (misal 138000)
+      user.cabang, // Tambahan field cabang (biasanya ada di desktop lama)
     ]);
 
-    // --- piutang detail: use netto and biaya kirim ---
+    // [RULE BARU] SIAPKAN DETAIL PIUTANG (KARTU PIUTANG)
     const piutangDtlValues = [];
+
+    // --- A. POSISI DEBET (TAGIHAN) ---
+    // Baris 1: Penjualan
     piutangDtlValues.push([
-      `${user.cabang}INV${format(new Date(), "yyyyMMddHHmmssSSS")}`,
-      piutangNomor,
-      toSqlDateTime(header.tanggal),
-      "Penjualan",
-      Number(netto),
-      0,
+      `${user.cabang}INV${format(new Date(), "yyyyMMddHHmmssSSS")}`, // pd_sd_angsur (ID Unik)
+      piutangNomor, // pd_ph_nomor
+      toSqlDateTime(header.tanggal), // pd_tanggal
+      "Penjualan", // pd_uraian
+      Number(netto), // pd_debet
+      0, // pd_kredit
+      "", // pd_ket
     ]);
+
+    // Baris 2: Biaya Kirim (Jika ada)
     if (biayaKirim > 0) {
       piutangDtlValues.push([
         `${user.cabang}KRM${format(new Date(), "yyyyMMddHHmmssSSS")}`,
@@ -920,45 +998,67 @@ const saveData = async (payload, user) => {
         "Biaya Kirim",
         Number(biayaKirim),
         0,
+        "",
       ]);
     }
 
-    // Kredit: Semua jenis pembayaran
-    if (bayarTunaiBersih > 0) {
-      piutangDtlValues.push([
-        `${user.cabang}CASH${format(new Date(), "yyyyMMddHHmmssSSS")}`,
-        piutangNomor,
-        toSqlDateTime(header.tanggal),
-        "Bayar Tunai Langsung",
-        0,
-        bayarTunaiBersih,
-      ]);
-    }
-    if ((payment.voucher?.nominal || 0) > 0) {
-      piutangDtlValues.push([
-        `${user.cabang}VOU${format(new Date(), "yyyyMMddHHmmssSSS")}`,
-        piutangNomor,
-        toSqlDateTime(header.tanggal),
-        "Bayar Voucher",
-        0,
-        Number(payment.voucher.nominal || 0),
-        payment.voucher.nomor || "",
-      ]);
-    }
-    if ((payment.retur?.nominal || 0) > 0) {
-      piutangDtlValues.push([
-        `${user.cabang}RJ${format(new Date(), "yyyyMMddHHmmssSSS")}`,
-        piutangNomor,
-        toSqlDateTime(header.tanggal),
-        "Pembayaran Retur",
-        0,
-        Number(payment.retur.nominal || 0),
-        payment.retur.nomor || "",
-      ]);
+    // --- B. POSISI KREDIT (PEMBAYARAN) ---
+    // Di sini kita catat pelunasannya agar Saldo Akhir menjadi 0 (jika lunas)
+
+    // Khusus Potong Gaji: TIDAK ADA KREDIT (Karena memang ngutang)
+    if (!isPotongGaji) {
+      // 1. Bayar Tunai
+      if (bayarTunaiBersih > 0) {
+        piutangDtlValues.push([
+          `${user.cabang}CASH${format(new Date(), "yyyyMMddHHmmssSSS")}`,
+          piutangNomor,
+          toSqlDateTime(header.tanggal),
+          "Bayar Tunai Langsung",
+          0,
+          bayarTunaiBersih, // Masuk Kredit
+          "",
+        ]);
+      }
+
+      // 2. Bayar Voucher
+      if ((payment.voucher?.nominal || 0) > 0) {
+        piutangDtlValues.push([
+          `${user.cabang}VOU${format(new Date(), "yyyyMMddHHmmssSSS")}`,
+          piutangNomor,
+          toSqlDateTime(header.tanggal),
+          "Bayar Voucher",
+          0,
+          Number(payment.voucher.nominal || 0),
+          payment.voucher.nomor || "",
+        ]);
+      }
+
+      // 3. Bayar Retur
+      if ((payment.retur?.nominal || 0) > 0) {
+        piutangDtlValues.push([
+          `${user.cabang}RJ${format(new Date(), "yyyyMMddHHmmssSSS")}`,
+          piutangNomor,
+          toSqlDateTime(header.tanggal),
+          "Pembayaran Retur",
+          0,
+          Number(payment.retur.nominal || 0),
+          payment.retur.nomor || "",
+        ]);
+      }
+
+      // 4. Bayar Transfer/Card (Akan dihandle di blok khusus Transfer di bawah,
+      // tapi pastikan insert ke tpiutang_dtl nya jalan)
     }
 
+    // Eksekusi Insert Detail (Batch)
     if (piutangDtlValues.length > 0) {
-      const piutangDtlSql = `INSERT INTO tpiutang_dtl (pd_sd_angsur, pd_ph_nomor, pd_tanggal, pd_uraian, pd_debet, pd_kredit, pd_ket) VALUES ?;`;
+      const piutangDtlSql = `
+        INSERT INTO tpiutang_dtl (
+            pd_sd_angsur, pd_ph_nomor, pd_tanggal, pd_uraian, 
+            pd_debet, pd_kredit, pd_ket
+        ) VALUES ?;
+      `;
+      // Map ulang untuk memastikan urutan field benar
       const formattedValues = piutangDtlValues.map((v) => [
         v[0] || "MANUAL",
         v[1],
@@ -1194,8 +1294,10 @@ const saveData = async (payload, user) => {
 
     // Cek dan simpan PIN untuk Invoice Belum Lunas
     if (pinBelumLunas) {
+      // [FIX] Gunakan 'invBayar' (variable scope luar), BUKAN 'bayarTotal'
+      // invBayar berisi total uang yang sudah masuk (DP + Tunai + Transfer dll)
       const kurangBayar = applyRoundingPolicy(
-        Math.max(grandTotal - bayarTotal, 0)
+        Math.max(grandTotal - invBayar, 0)
       );
 
       const authLogSql = `
