@@ -47,8 +47,19 @@ const getLowStock = async (req, res) => {
   }
 };
 
+const getRealTimeStockExport = async (req, res) => {
+  try {
+    const data = await laporanStokService.getRealTimeStockExport(req.query);
+    res.json(data);
+  } catch (error) {
+    console.error("Error export real time stock:", error);
+    res.status(500).json({ message: "Gagal mengambil data export." });
+  }
+};
+
 module.exports = {
   getRealTimeStock,
   getGudangOptions,
   getLowStock,
+  getRealTimeStockExport,
 };

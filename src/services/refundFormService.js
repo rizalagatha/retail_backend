@@ -128,7 +128,6 @@ const getDepositLookup = async (cabang) => {
   return rows;
 };
 
-// Mengambil data untuk mode Ubah (loaddataall)
 const getDataForEdit = async (nomor) => {
   const query = `
         SELECT 
@@ -138,7 +137,7 @@ const getDataForEdit = async (nomor) => {
             c.cus_nama,
             IFNULL(DATE_FORMAT(i.inv_tanggal, "%d-%m-%Y"), DATE_FORMAT(s.sh_tanggal, "%d-%m-%Y")) AS tanggal
         FROM trefund_hdr h
-        INNER JOIN trefund_dtl d ON d.rfd_nomor = h.rf_nomor
+        LEFT JOIN trefund_dtl d ON d.rfd_nomor = h.rf_nomor -- [UBAH DARI INNER JOIN KE LEFT JOIN]
         LEFT JOIN tcustomer c ON c.cus_kode = d.rfd_cus_kode
         LEFT JOIN tinv_hdr i ON i.inv_nomor = d.rfd_notrs
         LEFT JOIN tsetor_hdr s ON s.sh_nomor = d.rfd_notrs
@@ -155,24 +154,27 @@ const getDataForEdit = async (nomor) => {
     userApv: rows[0].rf_acc,
     isProcessed: !!rows[0].rf_status,
     isApproved: rows[0].rf_status === "APPROVE",
-    keterangan: "", // Tidak ada di header Delphi
+    keterangan: "",
   };
 
-  const details = rows.map((d) => ({
-    id: Math.random(),
-    nomor: d.rfd_notrs,
-    tanggal: d.tanggal,
-    kdcus: d.rfd_cus_kode,
-    customer: d.cus_nama,
-    nominal: d.rfd_nominal,
-    refund: d.rfd_refund,
-    apv: d.rfd_refund > 0, // Logika Delphi
-    ket: d.rfd_ket,
-    iddrec: d.rfd_iddrec,
-    bank: d.rfd_bank,
-    norek: d.rfd_norek,
-    atasnama: d.rfd_atasnama,
-  }));
+  // Filter detail yang valid (karena LEFT JOIN bisa hasilkan row dengan detail null)
+  const details = rows
+    .filter((d) => d.rfd_notrs) // Hanya ambil yang punya nomor transaksi
+    .map((d) => ({
+      id: Math.random(),
+      nomor: d.rfd_notrs,
+      tanggal: d.tanggal,
+      kdcus: d.rfd_cus_kode,
+      customer: d.cus_nama,
+      nominal: d.rfd_nominal,
+      refund: d.rfd_refund,
+      apv: d.rfd_refund > 0,
+      ket: d.rfd_ket,
+      iddrec: d.rfd_iddrec,
+      bank: d.rfd_bank,
+      norek: d.rfd_norek,
+      atasnama: d.rfd_atasnama,
+    }));
 
   return { header, details };
 };
@@ -194,7 +196,14 @@ const saveData = async (data, user) => {
     }
 
     if (isNew) {
-      cidrec = `${user.cabang}RF${format(new Date(), "yyyyMMddHHmmssSSS")}`;
+      const randomSuffix = Math.floor(Math.random() * 1000)
+        .toString()
+        .padStart(3, "0");
+      cidrec = `${user.cabang}RF${format(
+        new Date(),
+        "yyyyMMddHHmmssSSS"
+      )}${randomSuffix}`;
+
       rfNomor = await generateNewNomor(connection, user.cabang, header.tanggal);
 
       await connection.query(
@@ -230,23 +239,25 @@ const saveData = async (data, user) => {
       await connection.query("DELETE FROM trefund_dtl WHERE rfd_nomor = ?", [
         rfNomor,
       ]);
-      for (const [index, item] of details.entries()) {
-        if (item.nomor) {
-          await connection.query(
-            "INSERT INTO trefund_dtl (rfd_idrec, rfd_iddrec, rfd_nomor, rfd_notrs, rfd_cus_kode, rfd_nominal, rfd_ket, rfd_nourut) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-              cidrec,
-              item.iddrec,
-              rfNomor,
-              item.nomor,
-              item.kdcus,
-              item.nominal,
-              item.ket,
-              index + 1,
-            ]
-          );
-        }
-      }
+     for (const [index, item] of details.entries()) {
+       if (item.nomor) {
+         // PERBAIKAN 2: Tambahkan kolom rfd_refund agar input user tersimpan
+         await connection.query(
+           "INSERT INTO trefund_dtl (rfd_idrec, rfd_iddrec, rfd_nomor, rfd_notrs, rfd_cus_kode, rfd_nominal, rfd_refund, rfd_ket, rfd_nourut) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+           [
+             cidrec,
+             item.iddrec,
+             rfNomor,
+             item.nomor,
+             item.kdcus,
+             item.nominal,
+             item.refund || 0, // [FIX] Simpan nilai refund inputan user
+             item.ket,
+             index + 1,
+           ]
+         );
+       }
+     }
     } else {
       // Jika APPROVER, update detail dan proses piutang/setoran
       for (const item of details) {

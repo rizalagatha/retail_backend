@@ -827,39 +827,52 @@ const getStokKosongReguler = async (
 
   const query = `
     SELECT 
-        b.brgd_kode AS kode,
-        b.brgd_barcode AS barcode,
-        TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) AS nama_barang,
-        b.brgd_ukuran AS ukuran,
-        a.brg_ktgp AS kategori,
-        
-        -- Subquery: Calculate real-time stock for the SPECIFIC branch
-        IFNULL((
-            SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
-            FROM tmasterstok m 
-            WHERE m.mst_aktif = 'Y' 
-              AND m.mst_cab = ?  -- Use dynamic branch variable
-              AND m.mst_brg_kode = b.brgd_kode 
-              AND m.mst_ukuran = b.brgd_ukuran
-        ), 0) AS stok_akhir
-
-    FROM tbarangdc_dtl b
-    INNER JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
-    WHERE a.brg_aktif = 0 
-      AND a.brg_ktgp = 'REGULER'
-      
-      -- Search Filter
-      AND (
-          b.brgd_kode LIKE ? 
-          OR b.brgd_barcode LIKE ? 
-          OR TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) LIKE ?
-      )
-
-    -- Filter: Only show items with 0 or less stock
-    HAVING stok_akhir <= 0
-
-    ORDER BY nama_barang, b.brgd_ukuran
-    LIMIT 100;
+    b.brgd_kode AS kode,
+    b.brgd_barcode AS barcode,
+    TRIM(CONCAT(
+        a.brg_jeniskaos, ' ',
+        a.brg_tipe, ' ',
+        a.brg_lengan, ' ',
+        a.brg_jeniskain, ' ',
+        a.brg_warna
+    )) AS nama_barang,
+    b.brgd_ukuran AS ukuran,
+    a.brg_ktgp AS kategori,
+    IFNULL(SUM(m.mst_stok_in - m.mst_stok_out), 0) AS stok_akhir
+FROM tbarangdc_dtl b
+JOIN tbarangdc a 
+    ON a.brg_kode = b.brgd_kode
+LEFT JOIN tmasterstok m
+    ON m.mst_brg_kode = b.brgd_kode
+   AND m.mst_ukuran   = b.brgd_ukuran
+   AND m.mst_cab      = ?
+   AND m.mst_aktif    = 'Y'
+WHERE a.brg_aktif = 0
+  AND a.brg_ktgp = 'REGULER'
+  AND (
+      b.brgd_kode LIKE ?
+      OR b.brgd_barcode LIKE ?
+      OR CONCAT(
+          a.brg_jeniskaos, ' ',
+          a.brg_tipe, ' ',
+          a.brg_lengan, ' ',
+          a.brg_jeniskain, ' ',
+          a.brg_warna
+      ) LIKE ?
+  )
+GROUP BY
+    b.brgd_kode,
+    b.brgd_barcode,
+    b.brgd_ukuran,
+    a.brg_jeniskaos,
+    a.brg_tipe,
+    a.brg_lengan,
+    a.brg_jeniskain,
+    a.brg_warna,
+    a.brg_ktgp
+HAVING stok_akhir <= 0
+ORDER BY nama_barang, ukuran
+LIMIT 100;
   `;
 
   // Params order:

@@ -8,5 +8,6 @@ const MENU_ID = 501; // Pastikan ID ini sesuai dengan di database Anda
 router.get('/real-time', verifyToken, checkPermission(MENU_ID, 'view'), laporanStokController.getRealTimeStock);
 router.get('/lookup/gudang-options', verifyToken, checkPermission(MENU_ID, 'view'), laporanStokController.getGudangOptions);
 router.get('/low-stock', verifyToken, laporanStokController.getLowStock);
+router.get("/real-time/export", verifyToken, laporanStokController.getRealTimeStockExport);
 
 module.exports = router;

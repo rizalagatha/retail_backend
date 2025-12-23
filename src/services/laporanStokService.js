@@ -210,8 +210,86 @@ const getLowStock = async (filters) => {
   }
 };
 
+const getRealTimeStockExport = async (filters) => {
+  const { gudang, kodeBarang, jenisStok, tampilkanKosong, tanggal } = filters;
+  const connection = await pool.getConnection();
+
+  try {
+    // --- [FIX 1] KONVERSI STRING KE BOOLEAN ---
+    // Karena query params via HTTP selalu string, "false" dianggap true object.
+    const isShowZero = String(tampilkanKosong) === "true";
+
+    // 1. Tentukan Sumber Tabel
+    let stockSourceTable = "";
+    if (jenisStok === "showroom") {
+      stockSourceTable = "tmasterstok";
+    } else if (jenisStok === "pesanan") {
+      stockSourceTable = "tmasterstokso";
+    } else {
+      stockSourceTable = `(
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_tanggal, mst_aktif 
+        FROM tmasterstok
+        UNION ALL
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_tanggal, mst_aktif 
+        FROM tmasterstokso
+      )`;
+    }
+
+    // 2. Siapkan Parameter
+    let params = [tanggal];
+
+    let gudangFilter = "1 = 1";
+    if (gudang !== "ALL") {
+      gudangFilter = `m.mst_cab = ?`;
+      params.push(gudang);
+    }
+
+    let kodeBarangFilter = "";
+    if (kodeBarang) {
+      kodeBarangFilter = "AND a.brg_kode = ?";
+      params.push(kodeBarang);
+    }
+
+    // 3. Query Utama
+    // Gunakan variabel 'isShowZero' yang sudah dikonversi
+    const query = `
+        SELECT
+            a.brg_kode AS KODE,
+            b.brgd_barcode AS BARCODE,
+            TRIM(CONCAT_WS(' ', a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna)) AS NAMA,
+            b.brgd_ukuran AS UKURAN,
+            b.brgd_hpp AS HPP,
+            COALESCE(s.stok, 0) AS TOTAL,
+            COALESCE(b.brgd_min, 0) AS BUFFER
+        FROM tbarangdc a
+        JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
+        LEFT JOIN (
+            SELECT 
+                m.mst_brg_kode, 
+                m.mst_ukuran, 
+                SUM(m.mst_stok_in - m.mst_stok_out) as stok
+            FROM ${stockSourceTable} m
+            WHERE m.mst_aktif = 'Y' AND m.mst_tanggal <= ? AND ${gudangFilter}
+            GROUP BY m.mst_brg_kode, m.mst_ukuran
+        ) s ON b.brgd_kode = s.mst_brg_kode AND b.brgd_ukuran = s.mst_ukuran
+        WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y' ${kodeBarangFilter}
+        
+        -- [FIX 2] Gunakan isShowZero di sini
+        ${!isShowZero ? "HAVING TOTAL > 0" : ""}
+        
+        ORDER BY NAMA, b.brgd_ukuran;
+    `;
+
+    const [rows] = await connection.query(query, params);
+    return rows;
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   getRealTimeStock,
   getGudangOptions,
   getLowStock,
+  getRealTimeStockExport,
 };

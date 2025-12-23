@@ -1266,50 +1266,55 @@ const saveData = async (payload, user) => {
     const { pinDiskon1, pinDiskon2 } = payload.pins || {};
     const { pinBelumLunas } = payload.payment || {};
 
-    // Cek dan simpan PIN untuk Diskon Faktur 1
+    // --- [UPDATE] LOGIC PENYIMPANAN LOG OTORISASI ---
+    // Sekarang variabel pinDiskon1, pinDiskon2, pinBelumLunas berisi NAMA APPROVER
+
+    // 1. Simpan Log untuk Diskon Faktur 1
     if (pinDiskon1) {
+      // Kita simpan Nama Approver ke kolom 'o_approver' (jika ada) atau 'o_ket'
+      // Kosongkan 'o_pin' atau isi strip '-'
       const authLogSql = `
-        INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_pin, o_nominal, o_created) 
-        VALUES (?, 'INVOICE', 'DISKON FAKTUR', ?, ?, NOW());
+        INSERT INTO totorisasi 
+        (o_nomor, o_transaksi, o_jenis, o_pin, o_approver, o_nominal, o_created, o_status) 
+        VALUES (?, 'INVOICE', 'DISKON FAKTUR', '-', ?, ?, NOW(), 1);
       `;
       await connection.query(authLogSql, [
         invNomor,
-        pinDiskon1,
+        pinDiskon1, // Ini berisi Nama Manager
         header.diskonPersen1,
       ]);
     }
 
-    // Cek dan simpan PIN untuk Diskon Faktur 2
+    // 2. Simpan Log untuk Diskon Faktur 2
     if (pinDiskon2) {
       const authLogSql = `
-        INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_pin, o_nominal, o_created) 
-        VALUES (?, 'INVOICE', 'DISKON FAKTUR 2', ?, ?, NOW());
+        INSERT INTO totorisasi 
+        (o_nomor, o_transaksi, o_jenis, o_pin, o_approver, o_nominal, o_created, o_status) 
+        VALUES (?, 'INVOICE', 'DISKON FAKTUR 2', '-', ?, ?, NOW(), 1);
       `;
       await connection.query(authLogSql, [
         invNomor,
-        pinDiskon2,
+        pinDiskon2, // Ini berisi Nama Manager
         header.diskonPersen2,
       ]);
     }
 
-    // Cek dan simpan PIN untuk Invoice Belum Lunas
+    // 3. Simpan Log untuk Invoice Belum Lunas (Piutang)
     if (pinBelumLunas) {
-      // [FIX] Gunakan 'invBayar' (variable scope luar), BUKAN 'bayarTotal'
-      // invBayar berisi total uang yang sudah masuk (DP + Tunai + Transfer dll)
       const kurangBayar = applyRoundingPolicy(
         Math.max(grandTotal - invBayar, 0)
       );
 
       const authLogSql = `
         INSERT INTO totorisasi (
-          o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_nominal
+          o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_approver, o_nominal, o_status
         )
-        VALUES (?, 'INVOICE', 'BELUM LUNAS', '', NOW(), ?, ?);
+        VALUES (?, 'INVOICE', 'BELUM LUNAS', '', NOW(), '-', ?, ?, 1);
       `;
 
       await connection.query(authLogSql, [
         invNomor,
-        pinBelumLunas,
+        pinBelumLunas, // Ini berisi Nama Manager
         kurangBayar,
       ]);
     }

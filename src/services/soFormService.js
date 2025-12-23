@@ -1005,6 +1005,7 @@ const findByBarcode = async (barcode, gudang) => {
             d.brgd_ukuran AS ukuran,
             d.brgd_harga AS harga,
             d.brgd_hrg3 AS harga3,
+            h.brg_ktgp AS kategori,
             
             IFNULL((
                 SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
