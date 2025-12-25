@@ -1,4 +1,16 @@
 const changelogs = {
+  "1.2.8": {
+    date: "2025-12-25",
+    changes: [
+      "Penambahan: Refund dapat memanggil no SO",
+      {
+        title: "Perbaikan:",
+        items: [
+          "Perbaikan auto approve pada halaman Refund",
+        ],
+      },
+    ],
+  },
   "1.2.7": {
     date: "2025-12-25",
     changes: [
@@ -11,7 +23,7 @@ const changelogs = {
           "Penambahan Kolom Kategori Barang pada halaman Surat Pesanan",
           "Perbaikan Halaman Pengambilan Barang",
           "Perbaikan Diskon Halaman Penawaran",
-          "Perbaikan Pencarian Barang F1/F2 agar lebih smooth"
+          "Perbaikan Pencarian Barang F1/F2 agar lebih smooth",
         ],
       },
     ],

@@ -46,24 +46,25 @@ const generateFinalPayload = async (user, selectedCabang) => {
   );
   const cabangNama = gudangRows.length > 0 ? gudangRows[0].gdg_nama : "";
 
-  let canApproveCorrection = false;
-  let canApprovePrice = false;
+  // [LOGIC BARU] Daftar User Finance
+  const financeUsers = ["DARUL", "LIA", "HANI", "DEVI"];
+  const userKodeUpper = user.user_kode.toUpperCase();
 
-  const approverUsers = ["DARUL", "LIA", "HANI"];
-
-  if (approverUsers.includes(user.user_kode)) {
-    canApproveCorrection = true;
-    canApprovePrice = true;
-  }
+  // Cek apakah user termasuk Finance
+  const isFinance = financeUsers.includes(userKodeUpper);
 
   const userForToken = {
     kode: user.user_kode,
     nama: user.user_nama,
     cabang: selectedCabang,
     cabangNama: cabangNama,
-    canApproveCorrection: canApproveCorrection,
-    canApprovePrice: canApprovePrice,
+    // Flag khusus Refund
+    canApproveRefund: isFinance,
+    // Flag existing Anda
+    canApproveCorrection: isFinance,
+    canApprovePrice: isFinance,
   };
+
   const token = jwt.sign(userForToken, process.env.JWT_SECRET, {
     expiresIn: "8h",
   });

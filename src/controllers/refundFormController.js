@@ -16,6 +16,21 @@ const getDepositLookup = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+const getSoDetailsForRefund = async (req, res) => {
+  try {
+    const { soNomor } = req.params;
+    // Panggil Service (Logic Database)
+    const data = await service.getSoDetailsForRefund(soNomor);
+    res.json(data);
+  } catch (error) {
+    console.error("Error getSoDetailsForRefund:", error);
+    // Handle error spesifik dari service
+    if (error.message === "Nomor SO tidak ditemukan.") {
+      return res.status(404).json({ message: error.message });
+    }
+    res.status(500).json({ message: error.message });
+  }
+};
 const getDataForEdit = async (req, res) => {
   try {
     const data = await service.getDataForEdit(req.params.nomor);
@@ -45,6 +60,7 @@ const getPrintData = async (req, res) => {
 module.exports = {
   getInvoiceLookup,
   getDepositLookup,
+  getSoDetailsForRefund,
   getDataForEdit,
   saveData,
   getPrintData,

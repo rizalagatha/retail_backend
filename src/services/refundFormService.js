@@ -128,6 +128,50 @@ const getDepositLookup = async (cabang) => {
   return rows;
 };
 
+// Tambahkan fungsi ini
+const getSoDetailsForRefund = async (soNomor) => {
+  // 1. Ambil Data Header SO
+  const headerQuery = `
+      SELECT 
+        h.so_nomor, h.so_tanggal, h.so_cus_kode, c.cus_nama
+      FROM tso_hdr h
+      LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
+      WHERE h.so_nomor = ?
+    `;
+  const [headerRows] = await pool.query(headerQuery, [soNomor]);
+
+  if (headerRows.length === 0) {
+    throw new Error("Nomor SO tidak ditemukan.");
+  }
+
+  const header = headerRows[0];
+
+  // 2. Ambil Data DP (Uang Muka)
+  const dpQuery = `
+        SELECT 
+            h.sh_nomor AS nomor, 
+            h.sh_tanggal AS tanggal,
+            IF(h.sh_jenis=0, "TUNAI", IF(h.sh_jenis=1, "TRANSFER", "GIRO")) AS jenis,
+            (h.sh_nominal - IFNULL((SELECT SUM(d.sd_bayar) FROM tsetor_dtl d WHERE d.sd_sh_nomor = h.sh_nomor), 0)) AS nominal,
+            h.sh_ket AS ket
+        FROM tsetor_hdr h
+        WHERE h.sh_otomatis = "N" 
+          AND h.sh_so_nomor = ? 
+        HAVING nominal > 0;
+    `;
+  const [dps] = await pool.query(dpQuery, [soNomor]);
+
+  return {
+    header: {
+      nomor: header.so_nomor,
+      tanggal: header.so_tanggal,
+      kdcus: header.so_cus_kode,
+      customer: header.cus_nama,
+    },
+    dps: dps,
+  };
+};
+
 const getDataForEdit = async (nomor) => {
   const query = `
         SELECT 
@@ -387,6 +431,7 @@ const getPrintData = async (nomor, user) => {
 module.exports = {
   getInvoiceLookup,
   getDepositLookup,
+  getSoDetailsForRefund,
   getDataForEdit,
   saveData,
   getPrintData,
