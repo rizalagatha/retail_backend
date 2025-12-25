@@ -11,6 +11,11 @@ const sendNotification = async (token, title, body, dataPayload) => {
         priority: "high", // Prioritas kirim jaringan
         notification: {
           channelId: "otorisasi_urgent", // <--- HARUS SAMA dengan ID di App.js
+          // Nama file icon tetap sama
+          icon: "ic_notification",
+
+          // [GANTI JADI MERAH]
+          color: "#D32F2F",
           sound: "default",
           priority: "high", // Prioritas tampilan Android
           defaultSound: true,
