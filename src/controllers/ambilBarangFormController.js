@@ -12,22 +12,44 @@ const getById = async (req, res) => {
 
 const saveNew = async (req, res) => {
   try {
-    const result = await service.saveData(req.body, req.user);
+    const payload = req.body;
+
+    // [FIX UTAMA] Logika Prioritas User:
+    // 1. req.user       -> Dari Token (Paling aman)
+    // 2. payload.user   -> Dari Frontend (Fix yang kita buat tadi)
+    // 3. Default Object -> Agar tidak pernah NULL / Error di Database
+    const user = req.user ||
+      payload.user || { kode: "SYSTEM", nama: "System", id: "SYSTEM" };
+
+    // Kirim 'user' yang sudah pasti ada isinya ke service
+    const result = await service.saveData(payload, user);
+
     res.status(201).json(result);
   } catch (error) {
+    console.error("Error saveNew:", error);
     res.status(500).json({ message: error.message });
   }
 };
 
 const updateExisting = async (req, res) => {
   try {
-    const payload = {
-      header: { ...req.body.header, nomor: req.params.id },
-      items: req.body.items,
-    };
-    const result = await service.saveData(payload, req.user);
-    res.json(result);
+    const { id } = req.params;
+    const payload = req.body;
+
+    // Terapkan logika yang sama untuk Update
+    const user = req.user ||
+      payload.user || { kode: "SYSTEM", nama: "System", id: "SYSTEM" };
+
+    // Pastikan ID di payload sinkron dengan params (opsional tapi baik)
+    if (payload.header) {
+      payload.header.nomor = id;
+    }
+
+    const result = await service.saveData(payload, user);
+
+    res.status(200).json(result);
   } catch (error) {
+    console.error("Error updateData:", error);
     res.status(500).json({ message: error.message });
   }
 };

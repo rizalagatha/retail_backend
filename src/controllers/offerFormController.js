@@ -75,14 +75,23 @@ const saveOffer = async (req, res) => {
 const getDefaultDiscount = async (req, res) => {
   try {
     const { level, total, gudang } = req.query;
+
+    // Panggil Service
+    // parseFloat(total) digunakan untuk memastikan input string "10000" jadi number 10000
     const result = await offerFormService.getDefaultDiscount(
       level,
       parseFloat(total),
       gudang
     );
-    res.json(result);
+
+    // Kirim response { discount: ... }
+    res.status(200).json(result);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error("Error di Controller getDefaultDiscount:", error);
+    res.status(500).json({
+      message: "Gagal mengambil data diskon default",
+      error: error.message,
+    });
   }
 };
 

@@ -7,7 +7,7 @@ const getKaryawanInfo = async (nik) => {
   // 1. Ambil Data Karyawan dari DB hrd2 (Query lintas database)
   const queryKaryawan = `
     SELECT kar_nik, kar_nama, kar_alamat, kar_status_aktif
-    FROM hrd2.tkaryawan 
+    FROM hrd2.karyawan 
     WHERE kar_nik = ?
   `;
   
@@ -73,7 +73,7 @@ const searchKaryawan = async (term) => {
   // Mencari di NIK atau Nama, hanya yang statusnya Aktif
   const query = `
     SELECT kar_nik, kar_nama, kar_alamat
-    FROM hrd2.tkaryawan
+    FROM hrd2.karyawan
     WHERE (kar_status_aktif = '1' OR kar_status_aktif = 'Y')
       AND (kar_nik LIKE ? OR kar_nama LIKE ?)
     LIMIT 20; -- Batasi hasil maksimal 20 agar UI tidak lag

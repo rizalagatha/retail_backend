@@ -61,9 +61,11 @@ const getDataForEdit = async (nomor) => {
 };
 
 const saveData = async (payload, user) => {
-  const { header, items } = payload;
+  const { header, items, approvalInfo, approver } = payload;
   const isEdit = !!header.nomor;
   const connection = await pool.getConnection();
+
+  const userId = user?.kode || user?.id || "SYSTEM";
 
   try {
     await connection.beginTransaction();
@@ -75,7 +77,7 @@ const saveData = async (payload, user) => {
       // UPDATE HEADER
       await connection.query(
         `UPDATE tdc_sj_hdr SET sj_tanggal = ?, sj_peminta = ?, user_modified = ?, date_modified = NOW() WHERE sj_nomor = ?`,
-        [header.tanggal, header.peminta, user.id, nomorSJ]
+        [header.tanggal, header.peminta, userId, nomorSJ] // Gunakan userId
       );
       // HAPUS DETAIL LAMA
       await connection.query(`DELETE FROM tdc_sj_dtl WHERE sjd_nomor = ?`, [
@@ -108,12 +110,12 @@ const saveData = async (payload, user) => {
           nomorTerima,
           header.storeKode,
           header.peminta,
-          user.id,
+          userId, // <--- INI YANG MEMPERBAIKI ERROR
         ]
       );
       await connection.query(
         `INSERT INTO retail.ttrm_sj_hdr (tj_nomor, tj_tanggal, user_create, date_create) VALUES (?, ?, ?, NOW())`,
-        [nomorTerima, header.tanggal, user.id]
+        [nomorTerima, header.tanggal, userId]
       );
     }
 
@@ -131,10 +133,16 @@ const saveData = async (payload, user) => {
       }
     }
 
+    if (approver) {
+      // Opsional: Simpan ke tabel log otorisasi atau update kolom di header jika ada
+      // console.log("Transaksi di-approve oleh:", approver);
+    }
+
+    // Update Status PIN (Jika pakai sistem lama)
     if (isEdit && approvalInfo && approvalInfo.status === "ACC") {
       await connection.query(
         `UPDATE kencanaprint.tspk_pin5 SET pin_dipakai = 'Y' 
-                 WHERE pin_trs = 'PENGAMBILAN BARANG' AND pin_nomor = ? AND pin_urut = ?`,
+         WHERE pin_trs = 'PENGAMBILAN BARANG' AND pin_nomor = ? AND pin_urut = ?`,
         [header.nomor, approvalInfo.urut]
       );
     }

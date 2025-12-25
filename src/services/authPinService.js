@@ -1,5 +1,6 @@
 const pool = require("../config/database");
 const { format } = require("date-fns");
+const fcmService = require("../services/fcmService");
 
 // Helper untuk generate Nomor Urut: CAB.AUTH.YYMM.0001
 const generateAuthNumber = async (cabang) => {
@@ -41,15 +42,17 @@ const generateAuthNumber = async (cabang) => {
 
 const authPinService = {
   async createRequest(payload) {
-    const { transaksi, jenis, keterangan, nominal, cabang, user } = payload;
+    // [UPDATE] Tambahkan barcode dari payload
+    const { transaksi, jenis, keterangan, nominal, cabang, user, barcode } =
+      payload;
 
-    // 1. Generate Nomor Urut Baru
     const authNomor = await generateAuthNumber(cabang);
 
+    // [UPDATE] Tambahkan o_barcode pada INSERT
     const query = `
             INSERT INTO totorisasi 
-            (o_nomor, o_transaksi, o_jenis, o_ket, o_nominal, o_cab, o_status, o_requester, o_created)
-            VALUES (?, ?, ?, ?, ?, ?, 0, ?, NOW())
+            (o_nomor, o_transaksi, o_jenis, o_ket, o_nominal, o_cab, o_status, o_requester, o_created, o_pin, o_barcode)
+            VALUES (?, ?, ?, ?, ?, ?, 'P', ?, NOW(), '-', ?)
         `;
 
     await pool.query(query, [
@@ -60,7 +63,62 @@ const authPinService = {
       nominal || 0,
       cabang,
       user,
+      barcode || "", // Simpan barcode (default string kosong)
     ]);
+
+    // ------------------------------------------------------------------
+    // [BARU] LOGIKA KIRIM NOTIFIKASI KE MANAGER (FIREBASE)
+    // ------------------------------------------------------------------
+    try {
+      // A. Cari Token HP Manager dari tabel tuser
+      // Logic: Ambil user dengan level MANAGER.
+      // Jika ingin spesifik cabang, tambahkan: AND user_cabang = ? (isi dengan cabang)
+      // Disini saya buat agar semua MANAGER menerima notif (atau sesuaikan kebutuhan)
+      const [managers] = await pool.query(
+        `SELECT DISTINCT user_fcm_token FROM tuser 
+          WHERE user_kode IN ('HARIS', 'DARUL') 
+          AND user_fcm_token IS NOT NULL 
+          AND user_fcm_token != ''`
+      );
+
+      if (managers.length > 0) {
+        console.log(
+          `[FCM] Mengirim notif ke ${managers.length} orang (HARIS/DARUL).`
+        );
+
+        const title = `Permintaan Otorisasi: ${jenis.replace(/_/g, " ")}`;
+        const body = `Req: ${user} (Cab: ${cabang})\nNominal: Rp ${Number(
+          nominal
+        ).toLocaleString("id-ID")}\n${keterangan.split("\n")[0]}`;
+
+        // Payload Data (untuk dibuka di HP)
+        const dataPayload = {
+          jenis: String(jenis),
+          nominal: String(nominal),
+          transaksi: String(transaksi || ""),
+          keterangan: String(keterangan || ""),
+        };
+
+        // B. Loop & Kirim
+        // Kita gunakan Promise.all agar tidak memblokir response terlalu lama
+        const sendPromises = managers.map((mgr) =>
+          fcmService.sendNotification(
+            mgr.user_fcm_token,
+            title,
+            body,
+            dataPayload
+          )
+        );
+
+        // Jalankan background (jangan await jika ingin response API cepat,
+        // tapi await lebih aman untuk debugging awal)
+        await Promise.all(sendPromises);
+      }
+    } catch (fcmError) {
+      // Jangan biarkan error notifikasi menggagalkan transaksi utama
+      console.error("[FCM] Gagal mengirim notifikasi (Ignored):", fcmError);
+    }
+    // ------------------------------------------------------------------
 
     return {
       success: true,
@@ -69,34 +127,41 @@ const authPinService = {
     };
   },
 
-  // ... function checkStatus, getPendingRequests, processRequest tetap sama ...
-  // (Pastikan function lainnya tetap ada di sini)
-
   async checkStatus(authNomor) {
     const query = `SELECT o_status, o_approver FROM totorisasi WHERE o_nomor = ?`;
     const [rows] = await pool.query(query, [authNomor]);
 
     if (rows.length === 0) {
-      throw new Error("Data otorisasi tidak ditemukan.");
+      // Opsional: return status NOT_FOUND atau error
+      return { status: "NOT_FOUND", isApproved: false };
     }
 
     const data = rows[0];
+
     let statusText = "PENDING";
-    if (data.o_status === 1) statusText = "APPROVED";
-    if (data.o_status === 2) statusText = "REJECTED";
+    let isApproved = false;
+
+    // [FIX] Cek menggunakan String 'Y' dan 'N' (bukan angka 1 atau 2)
+    if (data.o_status === "Y") {
+      statusText = "APPROVED";
+      isApproved = true;
+    } else if (data.o_status === "N") {
+      statusText = "REJECTED";
+      isApproved = false;
+    }
 
     return {
       status: statusText,
-      isApproved: data.o_status === 1,
+      isApproved: isApproved,
       approver: data.o_approver,
     };
   },
 
   async getPendingRequests(cabang) {
-    let query = `SELECT * FROM totorisasi WHERE o_status = 0 `;
+    // [UBAH] Filter WHERE o_status = 'P'
+    let query = `SELECT * FROM totorisasi WHERE o_status = 'P' `;
     const params = [];
 
-    // Jika manager cabang (bukan pusat/KDC), filter per cabang
     if (cabang !== "KDC") {
       query += `AND o_cab = ? `;
       params.push(cabang);
@@ -109,24 +174,20 @@ const authPinService = {
   },
 
   async processRequest(authNomor, managerUser, action) {
-    // action: 'APPROVE' atau 'REJECT'
-    const newStatus = action === "APPROVE" ? 1 : 2;
+    // [UBAH] Mapping Action ke Huruf
+    // APPROVE -> 'Y'
+    // REJECT  -> 'N'
+    const newStatus = action === "APPROVE" ? "Y" : "N";
 
-    // [FIX] Jangan update kolom 'o_pin'.
-    // Cukup update status, approver, dan waktu approve.
     const query = `
             UPDATE totorisasi 
             SET 
                 o_status = ?, 
                 o_approver = ?, 
                 o_approved_at = NOW()
-            WHERE o_nomor = ? AND o_status = 0
+            WHERE o_nomor = ? AND o_status = 'P'  -- Pastikan hanya update yang masih 'P'
         `;
 
-    // Parameter array harus urut sesuai tanda tanya (?) di atas
-    // 1. newStatus -> o_status
-    // 2. managerUser -> o_approver
-    // 3. authNomor -> o_nomor
     const [result] = await pool.query(query, [
       newStatus,
       managerUser,

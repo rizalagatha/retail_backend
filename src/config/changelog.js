@@ -1,4 +1,21 @@
 const changelogs = {
+  "1.2.7": {
+    date: "2025-12-25",
+    changes: [
+      "Fitur Baru: Model Baru Otorisasi, sekarang tanpa pin. Mekanismenya adalah dengan mengisi keterangan untuk diajukan ke Manager, kemudian Manager menyetujui lewat approval melalui aplikasi di Android.",
+      {
+        title: "Perbaikan dan Pembaruan:",
+        items: [
+          "Perbaikan Halaman Refund",
+          "Perbaikan Format Export Laporan Stok Real Time",
+          "Penambahan Kolom Kategori Barang pada halaman Surat Pesanan",
+          "Perbaikan Halaman Pengambilan Barang",
+          "Perbaikan Diskon Halaman Penawaran",
+          "Perbaikan Pencarian Barang F1/F2 agar lebih smooth"
+        ],
+      },
+    ],
+  },
   "1.2.6": {
     date: "2025-12-22",
     changes: [

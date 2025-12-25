@@ -322,23 +322,46 @@ const saveOffer = async (data) => {
 
 const getDefaultDiscount = async (level, total, gudang) => {
   let discount = 0;
+  const numericTotal = Number(total) || 0;
 
-  // Meniru logika if edtgdgkode.Text='KPR'
+  // 1. [PENTING] Jika Total 0 atau minus, diskon PASTI 0.
+  // Ini mencegah logic db berjalan jika belum belanja.
+  if (numericTotal <= 0) {
+    return { discount: 0 };
+  }
+
+  // 2. Cek Gudang Khusus (KPR)
   if (gudang === "KPR") {
-    discount = 15;
-  } else {
-    const query = "SELECT * FROM tcustomer_level WHERE level_kode = ?";
-    const [levelRows] = await pool.query(query, [level]);
+    return { discount: 15 };
+  }
 
-    if (levelRows.length > 0) {
-      const levelData = levelRows[0];
-      if (total >= levelData.level_nominal) {
-        discount = levelData.level_diskon;
-      } else {
-        discount = levelData.level_diskon2;
-      }
+  // 3. Ambil Rule dari Database
+  const query =
+    "SELECT * FROM tcustomer_level WHERE level_kode = ? OR level_nama = ?";
+  const [levelRows] = await pool.query(query, [level, level]);
+
+  if (levelRows.length > 0) {
+    const levelData = levelRows[0];
+
+    // Pastikan dikonversi ke Number
+    const nominal1 = Number(levelData.level_nominal) || 0; // High Tier (5 Juta)
+    const nominal2 = Number(levelData.level_nominal2) || 0; // Low Tier (500 Ribu)
+
+    // --- LOGIKA TIERING (BERTINGKAT) ---
+
+    if (numericTotal >= nominal1) {
+      // TIER 1: Lolos batas atas (misal >= 5jt) -> 10%
+      discount = levelData.level_diskon;
+    } else if (numericTotal >= nominal2) {
+      // TIER 2: Gagal batas atas, tapi lolos batas bawah (misal >= 500rb) -> 5%
+      discount = levelData.level_diskon2;
+    } else {
+      // TIER 3: Tidak lolos keduanya (misal < 500rb) -> 0%
+      // [FIX] Ini yang sebelumnya terlewat, sehingga retailer dapet 5%
+      discount = 0;
     }
   }
+
   return { discount };
 };
 
