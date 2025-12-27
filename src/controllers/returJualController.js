@@ -47,7 +47,9 @@ const getCabangOptions = async (req, res) => {
 
 const exportDetails = async (req, res) => {
   try {
-    const data = await service.getExportDetails(req.user);
+    // [FIX] Kirim req.query sebagai parameter pertama (filters)
+    // dan req.user sebagai parameter kedua (user)
+    const data = await service.getExportDetails(req.query, req.user);
     res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });

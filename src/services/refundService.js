@@ -109,9 +109,44 @@ const deleteRefund = async (nomor, user) => {
   }
 };
 
-/**
- * Mengambil data detail untuk export.
- */
+// [BARU] Export Header dari Server
+const getExportHeaders = async (filters, user) => {
+  const { startDate, endDate, cabang } = filters;
+
+  let query = `
+    SELECT 
+        h.rf_nomor AS 'Nomor',
+        h.rf_tanggal AS 'Tanggal',
+        h.user_create AS 'User',
+        h.rf_status AS 'Status',
+        
+        -- [FIX] Sesuaikan dengan nama kolom di database
+        h.rf_acc AS 'ApprovedBy',
+        h.date_acc AS 'TglApprove',
+        
+        h.rf_closing AS 'Closing'
+    FROM trefund_hdr h
+    WHERE DATE(h.rf_tanggal) BETWEEN ? AND ?
+  `;
+
+  const params = [startDate, endDate];
+
+  // Filter Cabang
+  if (user.cabang !== "KDC") {
+    query += " AND LEFT(h.rf_nomor, 3) = ?";
+    params.push(user.cabang);
+  } else if (cabang && cabang !== "ALL") {
+    query += " AND LEFT(h.rf_nomor, 3) = ?";
+    params.push(cabang);
+  }
+
+  query += " ORDER BY h.rf_tanggal DESC, h.rf_nomor DESC";
+
+  const [rows] = await pool.query(query, params);
+  return rows;
+};
+
+// [UPDATE] Export Detail dengan Date Fix
 const getExportDetails = async (filters, user) => {
   const { startDate, endDate, cabang } = filters;
 
@@ -136,7 +171,9 @@ const getExportDetails = async (filters, user) => {
         FROM trefund_dtl d
         INNER JOIN trefund_hdr h ON d.rfd_nomor = h.rf_nomor
         LEFT JOIN tcustomer c ON c.cus_kode = d.rfd_cus_kode
-        WHERE h.rf_tanggal BETWEEN ? AND ?
+        WHERE 
+            -- [FIX] Gunakan DATE()
+            DATE(h.rf_tanggal) BETWEEN ? AND ?
     `;
   const params = [startDate, endDate];
 
@@ -176,6 +213,7 @@ module.exports = {
   getList,
   getDetails,
   deleteRefund,
+  getExportHeaders,
   getExportDetails,
   getCabangOptions,
 };

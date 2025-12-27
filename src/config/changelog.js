@@ -1,13 +1,33 @@
 const changelogs = {
+  "1.2.9": {
+    date: "2025-12-27",
+    changes: [
+      {
+        title: "Penambahan:",
+        items: [
+          "Kolom Stok pada pencarian Minta Barang",
+          "Kolom Open SO dan Sisa Piutang pada Monitoring Achievement, dapat diklik untuk melihat detail 30 hari terakhir serta Akumulasi",
+          "Pembaruan halaman Laporan List Otorisasi mengikuti model otorisasi terbaru",
+          "Keterangan pada Retur Jual dan Retur Barang ke DC wajib diisi",
+        ],
+      },
+      {
+        title: "Perbaikan:",
+        items: [
+          "Tampilan dan Bug pada halaman Price List",
+          "Perbaikan Invoice Karyawan Potong Gaji tidak bisa ditarik di Potongan oleh Finance",
+          "Perbaikan seluruh Export Data terutama bagian format tanggal",
+        ],
+      },
+    ],
+  },
   "1.2.8": {
     date: "2025-12-25",
     changes: [
       "Penambahan: Refund dapat memanggil no SO",
       {
         title: "Perbaikan:",
-        items: [
-          "Perbaikan auto approve pada halaman Refund",
-        ],
+        items: ["Perbaikan auto approve pada halaman Refund"],
       },
     ],
   },

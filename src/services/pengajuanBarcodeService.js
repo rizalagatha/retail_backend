@@ -105,22 +105,33 @@ const getCabangOptions = async (user) => {
 };
 
 const getExportDetails = async (filters, user) => {
-    const { startDate, endDate, cabang } = filters;
-    let whereClauses = ["h.pc_tanggal BETWEEN ? AND ?"];
-    let params = [startDate, endDate, cabang]; // 'cabang' ditambahkan untuk join stok
+  const { startDate, endDate, cabang } = filters;
 
-    if (user.cabang === 'KDC') {
-        whereClauses.push('h.pc_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_kode NOT IN ("KBS", "KPS"))');
+  // Pastikan parameter params diinisialisasi dengan benar
+  let params = [startDate, endDate];
+  let whereClauses = ["DATE(h.pc_tanggal) BETWEEN ? AND ?"];
+
+  if (user.cabang === "KDC") {
+    if (cabang && cabang !== "ALL") {
+      whereClauses.push("h.pc_cab = ?");
+      params.push(cabang);
     } else {
-        whereClauses.push('h.pc_cab = ?');
-        params.push(cabang);
+      whereClauses.push(
+        'h.pc_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_kode NOT IN ("KBS", "KPS"))'
+      );
     }
+  } else {
+    whereClauses.push("h.pc_cab = ?");
+    params.push(user.cabang);
+  }
 
-    const query = `
+  const query = `
       SELECT 
-        h.pc_nomor AS 'Nomor Pengajuan', h.pc_tanggal AS 'Tanggal', h.user_create AS 'User',
+        h.pc_nomor AS 'Nomor Pengajuan', 
+        h.pc_tanggal AS 'Tanggal', 
+        h.user_create AS 'User',
         d.pcd_kode AS 'Kode Kaos',
-        TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS 'Nama Barang',
+        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS 'Nama Barang',
         d.pcd_ukuran AS 'Ukuran',
         d.pcd_jumlah AS 'Jumlah',
         d.pcd_jenis AS 'Jenis',
@@ -130,12 +141,25 @@ const getExportDetails = async (filters, user) => {
       FROM tpengajuanbarcode_hdr h
       INNER JOIN tpengajuanbarcode_dtl d ON h.pc_nomor = d.pcd_nomor
       LEFT JOIN tbarangdc a ON a.brg_kode = d.pcd_kode
-      LEFT JOIN tpengajuanbarcode_dtl2 d2 ON d2.pcd_nomor = d.pcd_nomor AND d2.pcd_kode = d.pcd_kode AND d2.pcd_ukuran = d.pcd_ukuran
-      WHERE ${whereClauses.join(' AND ')}
+      
+      -- [PERBAIKAN] Sesuaikan nama kolom JOIN dengan tabel dtl2 (prefix pcd2_)
+      LEFT JOIN tpengajuanbarcode_dtl2 d2 ON 
+          d2.pcd2_nomor = d.pcd_nomor AND 
+          d2.pcd2_kode = d.pcd_kode AND 
+          d2.pcd2_ukuran = d.pcd_ukuran
+
+      WHERE ${whereClauses.join(" AND ")}
       ORDER BY h.pc_nomor, d.pcd_nourut;
     `;
-    const [rows] = await pool.query(query, params);
-    return rows;
+
+  const [rows] = await pool.query(query, params);
+  return rows;
 };
 
-module.exports = { getList, getDetails, remove, getCabangOptions, getExportDetails };
+module.exports = {
+  getList,
+  getDetails,
+  remove,
+  getCabangOptions,
+  getExportDetails,
+};

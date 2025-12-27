@@ -52,128 +52,167 @@ const getTargetData = async (filters) => {
 const getDailyData = async (filters) => {
   const { tahun, bulan, cabang } = filters;
 
-  // DEBUG: Cek DateRange dulu
-  const debugDateRange = `
-    SELECT tg2 AS tanggal, COUNT(*) as jumlah
-    FROM kpi.tanggal 
-    WHERE th = ? AND bl = ? AND tg2 <= CURDATE()
-    GROUP BY tg2
-    HAVING COUNT(*) > 1
+  const query = `
+    WITH DateRange AS (
+        SELECT DISTINCT tg2 AS tanggal
+        FROM kpi.tanggal 
+        WHERE th = ? AND bl = ? AND tg2 <= CURDATE()
+    ),
+    DailySales AS (
+        SELECT tanggal, SUM(nominal) AS omset 
+        FROM v_sales_harian 
+        WHERE YEAR(tanggal) = ? AND MONTH(tanggal) = ?
+        ${cabang !== "ALL" ? "AND cabang = ?" : ""}
+        GROUP BY tanggal
+    ),
+    TargetAggregated AS (
+        SELECT 
+            tahun, bulan, start_date, end_date,
+            SUM(target_omset) AS target_total,
+            1 + DATEDIFF(end_date, start_date) AS jhari,
+            SUM(target_omset) / (1 + DATEDIFF(end_date, start_date)) AS target_harian
+        FROM kpi.ttarget_kaosan
+        WHERE tahun = ? AND bulan = ?
+        ${cabang !== "ALL" ? "AND kode_gudang = ?" : ""}
+        GROUP BY tahun, bulan, start_date, end_date
+    ),
+    MonthlyTarget AS (
+        SELECT SUM(target_total) AS bulan_total FROM TargetAggregated
+    ),
+    DailyTargets AS (
+        SELECT t.tanggal, SUM(ta.target_harian) AS target
+        FROM DateRange t
+        INNER JOIN TargetAggregated ta 
+            ON YEAR(t.tanggal) = ta.tahun 
+            AND MONTH(t.tanggal) = ta.bulan 
+            AND t.tanggal BETWEEN ta.start_date AND ta.end_date
+        GROUP BY t.tanggal
+    ),
+    -- [BARU] CTE CleanPiutang: Hitung saldo per invoice, jika minus dianggap 0
+    CleanPiutang AS (
+        SELECT 
+            h.inv_tanggal,
+            h.inv_cab,
+            -- Logika: Max(0, Debet - Kredit)
+            GREATEST(SUM(pd.pd_debet - pd.pd_kredit), 0) AS sisa
+        FROM tinv_hdr h
+        JOIN tpiutang_hdr ph ON ph.ph_inv_nomor = h.inv_nomor
+        JOIN tpiutang_dtl pd ON pd.pd_ph_nomor = ph.ph_nomor
+        ${cabang !== "ALL" ? "WHERE h.inv_cab = ?" : ""}
+        GROUP BY h.inv_nomor
+        HAVING sisa > 0 -- Optimasi: Hanya ambil yang benar-benar ada piutang
+    )
+
+    SELECT 
+        ? AS kode_cabang,
+        ${
+          cabang === "ALL"
+            ? "'ALL TOKO' AS nama_cabang"
+            : "(SELECT gdg_nama FROM tgudang WHERE gdg_kode = ? LIMIT 1) AS nama_cabang"
+        },
+        LEFT(DAYNAME(dr.tanggal), 3) AS hari,
+        dr.tanggal,
+        IFNULL(ds.omset, 0) AS omset,
+        IFNULL(dt.target, 0) AS target,
+        (SELECT bulan_total FROM MonthlyTarget LIMIT 1) AS target_bulanan,
+        
+        -- Retur Jual
+        (
+          SELECT IFNULL(SUM(rd.rjd_jumlah * (rd.rjd_harga - rd.rjd_diskon)), 0)
+          FROM trj_hdr rh
+          JOIN trj_dtl rd ON rd.rjd_nomor = rh.rj_nomor
+          WHERE DATE(rh.rj_tanggal) = dr.tanggal
+          ${cabang !== "ALL" ? "AND LEFT(rh.rj_nomor, 3) = ?" : ""}
+        ) AS retur_jual,
+
+        -- 1. Open SO (Per Hari Ini)
+        (
+            SELECT IFNULL(SUM(d.sod_jumlah * d.sod_harga), 0)
+            FROM tso_hdr h
+            JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor
+            WHERE DATE(h.so_tanggal) = dr.tanggal
+              AND h.so_aktif = 'Y' AND h.so_close = 0
+              ${cabang !== "ALL" ? "AND h.so_cab = ?" : ""}
+        ) AS so_open_today,
+
+        -- 2. Open SO (30 Hari Terakhir)
+        (
+            SELECT IFNULL(SUM(d.sod_jumlah * d.sod_harga), 0)
+            FROM tso_hdr h
+            JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor
+            WHERE h.so_tanggal BETWEEN DATE_SUB(dr.tanggal, INTERVAL 29 DAY) AND dr.tanggal
+              AND h.so_aktif = 'Y' AND h.so_close = 0
+              ${cabang !== "ALL" ? "AND h.so_cab = ?" : ""}
+        ) AS so_open_30days,
+
+        -- 3. Open SO (Akumulasi)
+        (
+            SELECT IFNULL(SUM(d.sod_jumlah * d.sod_harga), 0)
+            FROM tso_hdr h
+            JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor
+            WHERE h.so_tanggal <= dr.tanggal
+              AND h.so_aktif = 'Y' AND h.so_close = 0
+              ${cabang !== "ALL" ? "AND h.so_cab = ?" : ""}
+        ) AS so_open_accum,
+
+        -- [UPDATE] 4. Sisa Piutang (Hari Ini) - Mengambil dari CTE CleanPiutang
+        (
+            SELECT IFNULL(SUM(cp.sisa), 0)
+            FROM CleanPiutang cp
+            WHERE DATE(cp.inv_tanggal) = dr.tanggal
+        ) AS piutang_today,
+
+        -- [UPDATE] 5. Sisa Piutang (30 Hari)
+        (
+            SELECT IFNULL(SUM(cp.sisa), 0)
+            FROM CleanPiutang cp
+            WHERE cp.inv_tanggal BETWEEN DATE_SUB(dr.tanggal, INTERVAL 29 DAY) AND dr.tanggal
+        ) AS piutang_30days,
+
+        -- [UPDATE] 6. Sisa Piutang (Akumulasi)
+        (
+            SELECT IFNULL(SUM(cp.sisa), 0)
+            FROM CleanPiutang cp
+            WHERE cp.inv_tanggal <= dr.tanggal
+        ) AS piutang_accum
+
+    FROM DateRange dr
+    LEFT JOIN DailySales ds ON dr.tanggal = ds.tanggal
+    LEFT JOIN DailyTargets dt ON dr.tanggal = dt.tanggal
+    ORDER BY dr.tanggal;
   `;
 
-  const [duplicates] = await pool.query(debugDateRange, [tahun, bulan]);
-
-  if (duplicates.length > 0) {
-    console.log("❌ DUPLIKASI DITEMUKAN DI kpi.tanggal:");
-    console.table(duplicates);
-  }
-
-  // Query utama dengan DISTINCT di DateRange
-  const query = `
-        WITH DateRange AS (
-    SELECT DISTINCT tg2 AS tanggal
-    FROM kpi.tanggal 
-    WHERE th = ? AND bl = ? AND tg2 <= CURDATE()
-),
-DailySales AS (
-    SELECT tanggal, SUM(nominal) AS omset 
-    FROM v_sales_harian 
-    WHERE YEAR(tanggal) = ? AND MONTH(tanggal) = ?
-    ${cabang !== "ALL" ? "AND cabang = ?" : ""}
-    GROUP BY tanggal
-),
-TargetAggregated AS (
-    SELECT 
-        tahun, bulan, start_date, end_date,
-        ${cabang !== "ALL" ? "kode_gudang," : ""}
-        SUM(target_omset) AS target_total,
-        1 + DATEDIFF(end_date, start_date) AS jhari,
-        SUM(target_omset) / (1 + DATEDIFF(end_date, start_date)) AS target_harian
-    FROM kpi.ttarget_kaosan
-    WHERE tahun = ? AND bulan = ?
-    ${cabang !== "ALL" ? "AND kode_gudang = ?" : ""}
-    GROUP BY tahun, bulan, start_date, end_date
-),
-MonthlyTarget AS (
-    SELECT SUM(target_total) AS bulan_total FROM TargetAggregated
-),
-DailyTargets AS (
-    SELECT t.tanggal, SUM(ta.target_harian) AS target
-    FROM DateRange t
-    INNER JOIN TargetAggregated ta 
-        ON YEAR(t.tanggal) = ta.tahun 
-        AND MONTH(t.tanggal) = ta.bulan 
-        AND t.tanggal BETWEEN ta.start_date AND ta.end_date
-    GROUP BY t.tanggal
-)
-SELECT 
-    ? AS kode_cabang,
-    ${
-      cabang === "ALL"
-        ? "'ALL TOKO' AS nama_cabang"
-        : "(SELECT gdg_nama FROM tgudang WHERE gdg_kode = ? LIMIT 1) AS nama_cabang"
-    },
-    LEFT(DAYNAME(dr.tanggal), 3) AS hari,
-    dr.tanggal,
-    IFNULL(ds.omset, 0) AS omset,
-    IFNULL(dt.target, 0) AS target,
-    (SELECT bulan_total FROM MonthlyTarget LIMIT 1) AS target_bulanan,
-    (
-      SELECT IFNULL(SUM(rd.rjd_jumlah * (rd.rjd_harga - rd.rjd_diskon)), 0)
-      FROM trj_hdr rh
-      JOIN trj_dtl rd ON rd.rjd_nomor = rh.rj_nomor
-      WHERE DATE(rh.rj_tanggal) = dr.tanggal
-      ${cabang !== "ALL" ? "AND LEFT(rh.rj_nomor, 3) = ?" : ""}
-    ) AS retur_jual
-FROM DateRange dr
-LEFT JOIN DailySales ds ON dr.tanggal = ds.tanggal
-LEFT JOIN DailyTargets dt ON dr.tanggal = dt.tanggal
-ORDER BY dr.tanggal;
-    `;
-
+  // Susunan Parameter
   const params = [
     tahun,
-    bulan,
+    bulan, // DateRange
     tahun,
-    bulan,
+    bulan, // DailySales
     ...(cabang !== "ALL" ? [cabang] : []),
     tahun,
-    bulan,
+    bulan, // TargetAggregated
     ...(cabang !== "ALL" ? [cabang] : []),
-    cabang,
-    ...(cabang !== "ALL" ? [cabang] : []),
-    ...(cabang !== "ALL" ? [cabang] : []),
-  ];
+    ...(cabang !== "ALL" ? [cabang] : []), // CleanPiutang
 
-  console.log("=== DEBUG: getDailyData ===");
-  console.log("Params:", params);
+    cabang, // SELECT kode_cabang
+    ...(cabang !== "ALL" ? [cabang] : []), // SELECT nama_cabang
+    ...(cabang !== "ALL" ? [cabang] : []), // Retur Jual
+
+    // Open SO Params (3x)
+    ...(cabang !== "ALL" ? [cabang] : []), // Today
+    ...(cabang !== "ALL" ? [cabang] : []), // 30 Days
+    ...(cabang !== "ALL" ? [cabang] : []), // Accum
+
+    // Piutang Params: TIDAK PERLU PARAM TAMBAHAN
+    // Karena CTE CleanPiutang sudah difilter cabang di awal,
+    // dan join tanggal menggunakan dr.tanggal
+  ];
 
   const [rows] = await pool.query(query, params);
 
-  console.log("Rows returned from MySQL:", rows.length);
-
-  // Cek duplikasi di hasil akhir
-  const groupedByDate = rows.reduce((acc, row) => {
-    const dateKey = row.tanggal.toISOString();
-    acc[dateKey] = (acc[dateKey] || 0) + 1;
-    return acc;
-  }, {});
-
-  const duplicateDates = Object.entries(groupedByDate)
-    .filter(([_, count]) => count > 1)
-    .map(([date, count]) => ({ date, count }));
-
-  if (duplicateDates.length > 0) {
-    console.log("❌ DUPLIKASI DI HASIL AKHIR:");
-    console.table(duplicateDates);
-  }
-
-  let cumulativeSales = 0;
-  let cumulativeTarget = 0;
-
-  // Deduplikasi manual di JavaScript sebagai safety net
   const uniqueRows = [];
   const seenDates = new Set();
+  let cumulativeSales = 0;
 
   for (const row of rows) {
     const dateKey = row.tanggal.toISOString();
@@ -181,19 +220,26 @@ ORDER BY dr.tanggal;
       seenDates.add(dateKey);
       const nettoHariIni = row.omset - (row.retur_jual || 0);
       cumulativeSales += nettoHariIni;
-      cumulativeTarget += row.target;
-      const targetBulanan = row.target_bulanan || 0;
+
       uniqueRows.push({
         ...row,
         nama_cabang: cabang === "ALL" ? "ALL TOKO" : row.nama_cabang,
         total_omset: cumulativeSales,
-        target_bulanan: targetBulanan,
-        ach: targetBulanan > 0 ? (cumulativeSales / targetBulanan) * 100 : 0,
+        ach:
+          row.target_bulanan > 0
+            ? (cumulativeSales / row.target_bulanan) * 100
+            : 0,
+
+        // Casting ke Number untuk keamanan
+        so_open_today: Number(row.so_open_today),
+        so_open_30days: Number(row.so_open_30days),
+        so_open_accum: Number(row.so_open_accum),
+        piutang_today: Number(row.piutang_today),
+        piutang_30days: Number(row.piutang_30days),
+        piutang_accum: Number(row.piutang_accum),
       });
     }
   }
-
-  console.log("Unique rows after deduplication:", uniqueRows.length);
 
   return uniqueRows;
 };

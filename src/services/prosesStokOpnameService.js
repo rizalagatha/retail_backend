@@ -224,14 +224,16 @@ const getExportDetails = async (filters) => {
           d.sopd_hpp AS 'HPP',
           (d.sopd_selisih * d.sopd_hpp) AS 'Nominal Selisih',
           d.sopd_ket AS 'Lokasi',
-          1 AS urutan_prioritas -- Penanda
+          1 AS urutan_prioritas
         FROM tsop_dtl d
         INNER JOIN tsop_hdr h ON h.sop_nomor = d.sopd_nomor
         LEFT JOIN tbarangdc a ON a.brg_kode = d.sopd_kode
-        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sopd_kode AND b.brgd_ukuran = d.sopd_ukuran -- [BARU]
-        WHERE h.sop_tanggal BETWEEN ? AND ?
-          AND h.sop_cab = ?
-          AND h.sop_transfer = 'Y'
+        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sopd_kode AND b.brgd_ukuran = d.sopd_ukuran
+        WHERE 
+            -- [FIX 1] Gunakan DATE()
+            DATE(h.sop_tanggal) BETWEEN ? AND ?
+            AND h.sop_cab = ?
+            AND h.sop_transfer = 'Y'
 
         UNION ALL
 
@@ -254,9 +256,11 @@ const getExportDetails = async (filters) => {
         INNER JOIN tsop_hdr h ON h.sop_nomor = d.sopd_nomor
         LEFT JOIN tbarangdc a ON a.brg_kode = d.sopd_kode
         LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sopd_kode AND b.brgd_ukuran = d.sopd_ukuran
-        WHERE h.sop_tanggal BETWEEN ? AND ?
-          AND h.sop_cab = ?
-          AND (h.sop_transfer = 'N' OR h.sop_transfer = '' OR h.sop_transfer IS NULL)
+        WHERE 
+            -- [FIX 2] Gunakan DATE() juga di sini
+            DATE(h.sop_tanggal) BETWEEN ? AND ?
+            AND h.sop_cab = ?
+            AND (h.sop_transfer = 'N' OR h.sop_transfer = '' OR h.sop_transfer IS NULL)
       ) AS gabungan
       
       ORDER BY 
@@ -265,14 +269,12 @@ const getExportDetails = async (filters) => {
         gabungan.\`Ukuran\`
     `;
 
-  // Perhatikan parameter harus diduplikasi karena ada 2 blok SELECT (UNION)
-  // Params urutan: [start, end, cab, start, end, cab]
   const params = [startDate, endDate, cabang, startDate, endDate, cabang];
-  
+
   const [rows] = await pool.query(query, params);
-  
-  // Hapus kolom helper 'urutan_prioritas' sebelum return agar tidak muncul di Excel
-  const cleanRows = rows.map(row => {
+
+  // Hapus kolom helper
+  const cleanRows = rows.map((row) => {
     const { urutan_prioritas, ...rest } = row;
     return rest;
   });

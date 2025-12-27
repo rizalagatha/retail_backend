@@ -115,7 +115,8 @@ const getExportDetails = async (filters) => {
     LEFT JOIN tbarangdc a ON a.brg_kode = d.mskd_kode
     WHERE
       h.msk_kecab = ?
-      AND h.msk_tanggal BETWEEN ? AND ?
+      -- [FIX] Gunakan DATE() agar jam diabaikan
+      AND DATE(h.msk_tanggal) BETWEEN ? AND ?
       AND (? IS NULL OR d.mskd_kode = ?)
     ORDER BY h.msk_nomor, d.mskd_kode, d.mskd_ukuran;
   `;

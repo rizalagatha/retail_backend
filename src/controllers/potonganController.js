@@ -94,20 +94,21 @@ const deletePotongan = async (req, res) => {
 };
 
 // --- Export ---
+const exportPotonganHeaders = async (req, res) => {
+  try {
+    const data = await potonganService.getExportHeaders(req.query);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const exportPotonganDetails = async (req, res) => {
   try {
-    const filters = req.query;
-    // PERBAIKAN: Memanggil 'getExportDetails' (sesuai service)
-    const data = await potonganService.getExportDetails(filters); // contoh response excel
-
-    res.setHeader(
-      "Content-Disposition",
-      "attachment; filename=potongan_export.xlsx"
-    );
-    res.status(200).json(data);
+    const data = await potonganService.getExportDetails(req.query);
+    res.json(data);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Gagal mengekspor data potongan." });
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -118,5 +119,6 @@ module.exports = {
   getPotonganDetails,
   savePotongan,
   deletePotongan,
+  exportPotonganHeaders,
   exportPotonganDetails,
 };

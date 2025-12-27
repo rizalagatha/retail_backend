@@ -159,21 +159,27 @@ const remove = async (nomor, user) => {
 const getExportDetails = async (filters, user) => {
   const { startDate, endDate, belumAccSaja } = filters;
 
-  let whereClauses = ["h.kor_tanggal BETWEEN ? AND ?"];
+  // [FIX] Gunakan DATE() agar jam diabaikan
+  let whereClauses = ["DATE(h.kor_tanggal) BETWEEN ? AND ?"];
   let params = [startDate, endDate];
 
-  // Terapkan filter otorisasi yang sama dengan getList
+  // Logic Permission:
+  // 1. Cabang Store hanya bisa lihat data sendiri
   if (user.cabang !== "KDC") {
     whereClauses.push("h.kor_cab = ?");
     params.push(user.cabang);
-  } else if (user.cabang === "KDC" && !user.canApproveCorrection) {
+  }
+  // 2. KDC (Pusat) tapi tidak punya hak approve, hanya lihat data DC
+  else if (user.cabang === "KDC" && !user.canApproveCorrection) {
     whereClauses.push(
       "h.kor_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc=1)"
     );
   }
+  // 3. KDC dengan hak approve (Super Admin/Manager) bisa lihat semua (Tidak perlu filter tambahan)
 
+  // Filter Status ACC
   if (belumAccSaja === "true" || belumAccSaja === true) {
-    whereClauses.push('h.kor_acc = ""');
+    whereClauses.push('(h.kor_acc IS NULL OR h.kor_acc = "")');
   }
 
   const query = `
@@ -181,7 +187,7 @@ const getExportDetails = async (filters, user) => {
             h.kor_nomor AS 'Nomor Koreksi',
             h.kor_tanggal AS 'Tanggal',
             h.kor_ket AS 'Keterangan Header',
-            h.kor_acc AS 'DiAcc Oleh',
+            COALESCE(h.kor_acc, '-') AS 'DiAcc Oleh',
             d.kord_kode AS 'Kode Barang',
             TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS 'Nama Barang',
             d.kord_ukuran AS 'Ukuran',
@@ -197,6 +203,7 @@ const getExportDetails = async (filters, user) => {
         WHERE ${whereClauses.join(" AND ")}
         ORDER BY h.kor_tanggal, h.kor_nomor;
     `;
+
   const [rows] = await pool.query(query, params);
   return rows;
 };

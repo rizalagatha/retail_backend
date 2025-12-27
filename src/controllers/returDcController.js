@@ -1,4 +1,4 @@
-const service = require('../services/returDcService');
+const service = require("../services/returDcService");
 
 const getList = async (req, res) => {
   try {
@@ -28,12 +28,12 @@ const remove = async (req, res) => {
 };
 
 const exportDetails = async (req, res) => {
-    try {
-        const data = await service.getExportDetails(req.query, req.user);
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
+  try {
+    const data = await service.getExportDetails(req.query, req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
-module.exports = { getList, getDetails, remove, exportDetails, };
+module.exports = { getList, getDetails, remove, exportDetails };

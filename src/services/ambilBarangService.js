@@ -169,7 +169,7 @@ const getExportDetails = async (filters) => {
         LEFT JOIN retail.ttrm_sj_hdr t ON t.tj_nomor = h.sj_noterima
         LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.sjd_kode
         WHERE h.sj_peminta <> "" AND h.sj_kecab = "K01"
-            AND h.sj_tanggal BETWEEN ? AND ?
+            AND DATE(h.sj_tanggal) BETWEEN ? AND ?
     `;
   const params = [startDate, endDate];
 

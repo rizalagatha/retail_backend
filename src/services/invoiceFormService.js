@@ -625,25 +625,38 @@ const saveData = async (payload, user) => {
     let kembalianFinal = 0;
 
     if (isPotongGaji) {
-      // [BARU] LOGIKA KHUSUS KARYAWAN
-      // Tidak ada uang masuk real saat transaksi (selain DP SO jika ada)
-      bayarTunaiBersih = 0;
-      totalPaymentNonDp = 0;
+      // [REVISI FIX] LOGIKA KHUSUS KARYAWAN POTONG GAJI
 
-      // inv_bayar (Total Uang Masuk) = DP Saja (jika ada)
-      // Karena sisa tagihan masuk ke piutang karyawan
-      invBayar = dpDipakai;
-
-      // Kembalian pasti 0
-      kembalianFinal = 0;
-
-      // Pastikan Customer Code di Header menggunakan NIK agar piutang tercatat atas nama karyawan
-      if (payment.nikKaryawan) {
-        header.customer.kode = payment.nikKaryawan;
+      // 1. Validasi Wajib
+      if (!payment.nikKaryawan || !payment.namaKaryawan) {
+        throw new Error(
+          "NIK dan Nama Karyawan wajib diisi untuk transaksi Potong Gaji."
+        );
       }
 
-      // Reset nilai pembayaran lain agar tidak masuk ke DB
+      // 2. Mapping Data (Sesuai Request Revisi)
+      // FINANCE: Butuh kode tetap 'K-01126' agar bisa ditarik program lama
+      header.customer.kode = "K-01126";
+
+      // HRD: Butuh NIK & Nama (Disimpan di kolom Member)
+      header.memberHp = payment.nikKaryawan; // inv_mem_hp -> NIK
+      header.memberNama = payment.namaKaryawan; // inv_mem_nama -> Nama Karyawan
+      header.memberAlamat = "POTONG GAJI"; // inv_mem_alamat -> Marker
+
+      // Reset field member lain agar aman
+      header.memberGender = "";
+      header.memberUsia = 0;
+      header.memberReferensi = "INTERNAL";
+
+      // 3. Hitung Keuangan (Hanya DP yg dianggap uang masuk)
+      bayarTunaiBersih = 0;
+      totalPaymentNonDp = 0;
+      invBayar = dpDipakai; // Total uang masuk cuma DP (jika ada)
+      kembalianFinal = 0; // Tidak ada kembalian
+
+      // 4. Reset Pembayaran Lain (Mencegah data sampah masuk)
       payment.tunai = 0;
+      payment.tunaiAfterChange = 0;
       payment.voucher = { nominal: 0, nomor: "" };
       payment.transfer = { nominal: 0 };
       payment.retur = { nominal: 0 };
@@ -748,10 +761,12 @@ const saveData = async (payload, user) => {
           inv_disc, inv_bkrm, inv_dp, inv_bayar, inv_pundiamal,
           inv_rptunai, inv_novoucher, inv_rpvoucher, inv_rpcard, inv_nosetor,
           inv_kembali,
+          inv_mem_hp, inv_mem_nama, inv_mem_alamat, inv_mem_gender, inv_mem_usia, inv_mem_referensi,
           inv_is_marketplace, inv_mp_nama, inv_mp_nomor_pesanan, inv_mp_resi, inv_mp_biaya_platform,
           user_create, date_create
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?, 
+          ?, ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
       `;
 
@@ -785,6 +800,14 @@ const saveData = async (payload, user) => {
         nomorSetoran,
         kembalianFinal,
 
+        // [FIX] Masukkan Data Member / Karyawan di sini
+        header.memberHp || "", // NIK Karyawan masuk sini
+        header.memberNama || "", // Nama Karyawan masuk sini
+        header.memberAlamat || "", // 'POTONG GAJI' masuk sini
+        header.memberGender || "",
+        header.memberUsia || 0,
+        header.memberReferensi || "",
+
         // [BARU] Values Marketplace
         isMp,
         mpNama,
@@ -802,6 +825,8 @@ const saveData = async (payload, user) => {
           inv_disc = ?, inv_bkrm = ?, inv_dp = ?, inv_bayar = ?, inv_pundiamal = ?,
           inv_rptunai = ?, inv_novoucher = ?, inv_rpvoucher = ?, inv_rpcard = ?, inv_nosetor = ?,
           inv_kembali = ?,
+          inv_mem_hp = ?, inv_mem_nama = ?, inv_mem_alamat = ?, 
+          inv_mem_gender = ?, inv_mem_usia = ?, inv_mem_referensi = ?,
           -- [BARU] Update Marketplace
           inv_is_marketplace = ?, inv_mp_nama = ?, inv_mp_nomor_pesanan = ?, 
           inv_mp_resi = ?, inv_mp_biaya_platform = ?,
@@ -830,6 +855,14 @@ const saveData = async (payload, user) => {
         Number(payment.transfer?.nominal || 0),
         nomorSetoran,
         kembalianFinal,
+
+        // [FIX] Data Member / Karyawan
+        header.memberHp || "",
+        header.memberNama || "",
+        header.memberAlamat || "",
+        header.memberGender || "",
+        header.memberUsia || 0,
+        header.memberReferensi || "",
 
         // [BARU] Values Marketplace
         isMp,
@@ -1522,20 +1555,25 @@ const capitalize = (s) =>
 // Helper function untuk memberi nilai bobot pada ukuran
 const getSizeRank = (size) => {
   if (!size) return 999;
-  
+
   const s = size.toString().toUpperCase().trim();
-  
+
   // Mapping ukuran standar
   const ranks = {
-    'XS': 1, 'SS': 1,
-    'S': 2,
-    'M': 3,
-    'L': 4,
-    'XL': 5,
-    'XXL': 6, '2XL': 6,
-    '3XL': 7, 'XXXL': 7,
-    '4XL': 8, 'XXXXL': 8,
-    '5XL': 9, 'XXXXXL': 9
+    XS: 1,
+    SS: 1,
+    S: 2,
+    M: 3,
+    L: 4,
+    XL: 5,
+    XXL: 6,
+    "2XL": 6,
+    "3XL": 7,
+    XXXL: 7,
+    "4XL": 8,
+    XXXXL: 8,
+    "5XL": 9,
+    XXXXXL: 9,
   };
 
   // Jika ukuran ada di map, kembalikan nilainya
@@ -1858,15 +1896,15 @@ const findByBarcode = async (barcode, gudang) => {
 
 const searchProducts = async (filters, user) => {
   const { term, page, itemsPerPage, promoNomor } = filters;
-  
+
   // Hitung Limit & Offset di JS
   const limitVal = parseInt(itemsPerPage) || 25;
   const offsetVal = (parseInt(page) - 1) * limitVal;
-  
+
   const searchTerm = `%${term || ""}%`;
 
   let params = [];
-  
+
   // [FIX] Tambahkan spasi di awal string untuk keamanan penggabungan
   let baseFrom = ` FROM tbarangdc_dtl b INNER JOIN tbarangdc a ON a.brg_kode = b.brgd_kode `;
   let baseWhere = ` WHERE a.brg_aktif = 0 `;
@@ -1893,7 +1931,7 @@ const searchProducts = async (filters, user) => {
   // [FIX] Ganti Double Quote (" ") menjadi Single Quote (' ') dalam CONCAT
   // Ini mencegah error jika server database menggunakan mode ANSI_QUOTES
   const searchWhere = ` AND (b.brgd_kode LIKE ? OR b.brgd_barcode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) LIKE ?) `;
-  
+
   params.push(searchTerm, searchTerm, searchTerm);
 
   // --- QUERY TOTAL ROW ---
@@ -1955,23 +1993,23 @@ const searchProducts = async (filters, user) => {
   // 3. Cabang (untuk stok fisik kolom terpisah)
   // 4. Cabang (untuk stok pesanan kolom terpisah)
   // 5. ...params (Promo?, Search1, Search2, Search3)
-  
+
   // Perhatikan: Karena kita memanggil subquery stokFisik dan stokPesanan DUA KALI (sekali di dalam penjumlahan 'stok', sekali sebagai kolom sendiri 'stokFisik'/'stokPesanan'),
   // Kita perlu menyuplai parameternya berulang kali.
   // Urutan di SELECT: stokFisik (1), stokPesanan (1), stokTotal(stokFisik(1)+stokPesanan(1))
-  
+
   const dataParams = [
     // Untuk kolom 'stokFisik'
-    user.cabang, 
+    user.cabang,
     // Untuk kolom 'stokPesanan'
     user.cabang,
     // Untuk kolom 'stok' (penjumlahan) -> stokFisik
     user.cabang,
     // Untuk kolom 'stok' (penjumlahan) -> stokPesanan
     user.cabang,
-    
+
     // Sisa parameter (filter)
-    ...params
+    ...params,
   ];
 
   const [items] = await pool.query(dataQuery, dataParams);

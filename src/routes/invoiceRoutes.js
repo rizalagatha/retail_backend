@@ -10,6 +10,8 @@ router.get('/', verifyToken, checkPermission(MENU_ID, 'view'), controller.getLis
 
 router.get('/check-fsk/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), controller.checkIfInvoiceInFsk);
 
+router.post("/change-payment", verifyToken, checkPermission(MENU_ID, 'view'), controller.changePayment);
+
 // Endpoint untuk mendapatkan detail invoice (expanded row)
 router.get('/details/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), controller.getDetails);
 

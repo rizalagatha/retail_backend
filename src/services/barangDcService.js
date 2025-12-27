@@ -68,6 +68,32 @@ const getDetails = async (kode, user) => {
   return rows;
 };
 
+// [BARU] Export Header dari Server
+const getExportHeaders = async (filters) => {
+  const { startDate, endDate } = filters;
+  
+  // Query Header: Ambil data master barang sesuai range tanggal pembuatan
+  const query = `
+    SELECT 
+        a.brg_kode AS 'Kode',
+        TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS 'Nama Barang',
+        a.brg_ktg AS 'Kategori',
+        a.date_create AS 'DateCreate',
+        a.brg_otomatis AS 'Otomatis',
+        IF(a.brg_stok='Y', 'Y', 'N') AS 'AdaStok',
+        IF(a.brg_aktif=0, 'AKTIF', 'PASIF') AS 'Status'
+    FROM tbarangdc a
+    WHERE 
+        -- [FIX] Gunakan DATE() agar jam diabaikan
+        DATE(a.date_create) BETWEEN ? AND ?
+    ORDER BY a.date_create DESC, a.brg_kode ASC;
+  `;
+  
+  const [rows] = await pool.query(query, [startDate, endDate]);
+  return rows;
+};
+
+// [UPDATE] Export Detail
 const getExportDetails = async (filters) => {
   const { startDate, endDate, hargaNol, hppNol } = filters;
 
@@ -82,15 +108,19 @@ const getExportDetails = async (filters) => {
             IF(a.brg_aktif=0, "AKTIF", "PASIF") AS 'Status'
         FROM tbarangdc a
         INNER JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
-        WHERE a.brg_ktg = "" AND a.date_create BETWEEN ? AND DATE_ADD(?, INTERVAL 1 DAY)
+        WHERE 
+            -- [FIX] Gunakan DATE()
+            DATE(a.date_create) BETWEEN ? AND ?
     `;
 
   const whereConditions = [];
+  
+  // Filter Khusus
   if (hargaNol === "true" || hargaNol === true) {
     whereConditions.push("b.brgd_harga = 0");
   }
   if (hppNol === "true" || hppNol === true) {
-    whereConditions.push("b.brgd_hpp <= 50");
+    whereConditions.push("b.brgd_hpp <= 50"); // Asumsi logic <= 50 sesuai request sebelumnya
   }
 
   if (whereConditions.length > 0) {
@@ -118,4 +148,10 @@ const getTotalProducts = async () => {
   return rows[0];
 };
 
-module.exports = { getList, getDetails, getExportDetails, getTotalProducts };
+module.exports = {
+  getList,
+  getDetails,
+  getExportHeaders,
+  getExportDetails,
+  getTotalProducts,
+};

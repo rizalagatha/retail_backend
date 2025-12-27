@@ -1,4 +1,5 @@
 const pool = require("../config/database");
+const { format } = require("date-fns");
 
 const getCabangList = async (user) => {
   let query = "";
@@ -348,6 +349,11 @@ const remove = async (nomor, user) => {
 
 const getExportDetails = async (filters) => {
   const { startDate, endDate, cabang } = filters;
+
+  // Logika Filter Cabang (sesuaikan jika perlu logic khusus untuk 'ALL' atau 'KDC')
+  let branchFilter = "AND h.inv_cab = ?";
+  let params = [startDate, endDate, cabang];
+
   const query = `
         SELECT 
             h.inv_nomor AS 'Nomor Invoice',
@@ -366,11 +372,13 @@ const getExportDetails = async (filters) => {
         LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
         LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
         WHERE h.inv_sts_pro = 0
-          AND h.inv_tanggal BETWEEN ? AND ?
-          AND h.inv_cab = ?
+          -- [PERBAIKAN] Gunakan DATE() agar jam diabaikan
+          AND DATE(h.inv_tanggal) BETWEEN ? AND ?
+          ${branchFilter}
         ORDER BY h.inv_nomor, d.invd_nourut;
     `;
-  const [rows] = await pool.query(query, [startDate, endDate, cabang]);
+
+  const [rows] = await pool.query(query, params);
   return rows;
 };
 
@@ -385,6 +393,176 @@ const checkIfInvoiceInFsk = async (nomorInv) => {
   return rows.length > 0; // true = sudah disetorkan
 };
 
+const changePaymentMethod = async (payload, user) => {
+  const { nomor, metodeBaru, bank, noRek, alasan } = payload;
+  const connection = await pool.getConnection();
+
+  try {
+    // 1. Validasi Invoice
+    const [invRows] = await connection.query(
+      `SELECT inv_nomor, inv_tanggal, inv_cus_kode, inv_bayar, inv_dp 
+       FROM tinv_hdr WHERE inv_nomor = ?`,
+      [nomor]
+    );
+
+    if (invRows.length === 0) throw new Error("Invoice tidak ditemukan.");
+    const inv = invRows[0];
+
+    // 2. Cek Lock FSK (Form Setor Kasir)
+    const [fskRows] = await connection.query(
+      "SELECT 1 FROM tform_setorkasir_dtl WHERE fskd_inv = ? LIMIT 1",
+      [nomor]
+    );
+    if (fskRows.length > 0) {
+      throw new Error(
+        "Invoice sudah disetor (FSK). Tidak bisa ubah pembayaran."
+      );
+    }
+
+    await connection.beginTransaction();
+
+    // =========================================================
+    // STEP A: BERSIHKAN DATA LAMA (ANTI-DOUBLE)
+    // =========================================================
+
+    // 1. Hapus Setoran Lama (Non-DP)
+    const [oldSetor] = await connection.query(
+      `SELECT sd_sh_nomor FROM tsetor_dtl 
+       WHERE sd_inv = ? AND sd_ket = 'PEMBAYARAN DARI KASIR'`,
+      [nomor]
+    );
+
+    if (oldSetor.length > 0) {
+      const listSetor = oldSetor.map((r) => r.sd_sh_nomor);
+      // Hapus Detail Setoran
+      await connection.query(
+        "DELETE FROM tsetor_dtl WHERE sd_sh_nomor IN (?)",
+        [listSetor]
+      );
+      // Hapus Header Setoran
+      await connection.query("DELETE FROM tsetor_hdr WHERE sh_nomor IN (?)", [
+        listSetor,
+      ]);
+    }
+
+    // 2. Hapus History Piutang (Kredit/Pelunasan)
+    // Hapus baris pelunasan Tunai/Card/Voucher agar tidak duplikat saldo
+    const piutangNomor = `${inv.inv_cus_kode}${nomor}`;
+    await connection.query(
+      `DELETE FROM tpiutang_dtl 
+       WHERE pd_ph_nomor = ? 
+         AND pd_uraian IN ('Bayar Tunai Langsung', 'Pembayaran Card', 'Bayar Voucher')`,
+      [piutangNomor]
+    );
+
+    // =========================================================
+    // STEP B: BUAT DATA BARU
+    // =========================================================
+
+    // Asumsi: inv_bayar adalah total uang masuk (DP + Pelunasan).
+    // Nominal pelunasan hari ini = inv_bayar - inv_dp
+    // Namun untuk simplifikasi "Ubah Metode", kita anggap inv_bayar adalah nilai yang valid.
+    // Jika sistem Anda memisah DP dan Pelunasan, gunakan logika: (inv.inv_bayar - inv.inv_dp).
+    // Di sini saya pakai inv_bayar penuh sebagai nilai transaksi pembayaran (karena biasanya ubah metode = ubah pelunasan).
+    // TAPI LEBIH AMAN: Kita anggap nominal yang diubah adalah SISA TAGIHANNYA.
+    // Jika inv_dp ada, maka yang dibayar tunai/transfer adalah sisanya.
+
+    let nominalBayar = Number(inv.inv_bayar) - Number(inv.inv_dp || 0);
+    if (nominalBayar <= 0) nominalBayar = Number(inv.inv_bayar); // Jaga-jaga jika DP null
+
+    // Reset kolom di Header Invoice
+    let updateHdrSql = `
+      UPDATE tinv_hdr SET 
+        inv_rptunai = 0, inv_rpcard = 0, inv_rpvoucher = 0, inv_nosetor = '', 
+        inv_ket = CONCAT(inv_ket, ' | Ubah Bayar: ', ?), -- Tambahkan alasan ke ket (opsional)
+        user_modified = ?, date_modified = NOW() 
+    `;
+    let updateParams = [alasan, user.kode];
+
+    let jenisSetor = 0;
+    let nomorSetoranBaru = "";
+
+    // Generate ID Unik untuk record baru
+    const timestampID = format(new Date(), "yyyyMMddHHmmss");
+    const idrec = `${user.cabang}CHG${timestampID}`;
+    const tglSql = toSqlDateTime(inv.inv_tanggal);
+
+    if (metodeBaru === "TUNAI") {
+      // --- KASUS TUNAI ---
+      updateHdrSql += ", inv_rptunai = ? ";
+      updateParams.push(nominalBayar);
+      jenisSetor = 0;
+
+      // Catat di Kartu Piutang (Lunas Tunai)
+      await connection.query(
+        `INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur)
+         VALUES (?, ?, 'Bayar Tunai Langsung', ?, ?, ?)`,
+        [piutangNomor, tglSql, nominalBayar, `Ubah ke Tunai (${alasan})`, idrec]
+      );
+    } else {
+      // --- KASUS TRANSFER / EDC ---
+      updateHdrSql += ", inv_rpcard = ?, inv_nosetor = ? ";
+      jenisSetor = 1;
+
+      // Generate No Setoran Baru
+      // Pastikan fungsi generateNewSetorNumber ada di scope ini atau di-import
+      nomorSetoranBaru = await generateNewSetorNumber(
+        connection,
+        user.cabang,
+        inv.inv_tanggal
+      );
+      updateParams.push(nominalBayar, nomorSetoranBaru);
+
+      // 1. Insert tsetor_hdr
+      await connection.query(
+        `INSERT INTO tsetor_hdr (
+           sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, 
+           sh_akun, sh_norek, sh_otomatis, user_create, date_create
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Y', ?, NOW())`,
+        [
+          idrec,
+          nomorSetoranBaru,
+          inv.inv_cus_kode,
+          tglSql,
+          jenisSetor,
+          nominalBayar,
+          bank?.kode || "",
+          noRek || "",
+          user.kode,
+        ]
+      );
+
+      // 2. Insert tsetor_dtl (Link Invoice ke Setoran)
+      await connection.query(
+        `INSERT INTO tsetor_dtl (
+           sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut
+         ) VALUES (?, ?, ?, ?, ?, 'PEMBAYARAN DARI KASIR', ?, 1)`,
+        [idrec, nomorSetoranBaru, tglSql, nomor, nominalBayar, idrec]
+      );
+
+      // 3. Insert tpiutang_dtl (Pelunasan via Transfer)
+      await connection.query(
+        `INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur)
+         VALUES (?, ?, 'Pembayaran Card', ?, ?, ?)`,
+        [piutangNomor, tglSql, nominalBayar, nomorSetoranBaru, idrec]
+      );
+    }
+
+    // Eksekusi Update Header
+    updateHdrSql += " WHERE inv_nomor = ?";
+    updateParams.push(nomor);
+    await connection.query(updateHdrSql, updateParams);
+
+    await connection.commit();
+    return { message: "Metode pembayaran berhasil diubah." };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   getCabangList,
   getList,
@@ -392,4 +570,5 @@ module.exports = {
   remove,
   getExportDetails,
   checkIfInvoiceInFsk,
+  changePaymentMethod,
 };

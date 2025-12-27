@@ -145,13 +145,13 @@ const remove = async (nomor, user) => {
 const getExportDetails = async (filters) => {
   const { startDate, endDate, cabang } = filters;
   let params = [startDate, endDate];
+
   let branchFilter = "";
-  if (cabang !== "ALL") {
+  if (cabang && cabang !== "ALL") {
     branchFilter = "AND h.mt_cab = ?";
     params.push(cabang);
   }
 
-  // Query ini menggabungkan header dan detail
   const query = `
     SELECT 
         h.mt_nomor AS 'Nomor Minta',
@@ -159,16 +159,21 @@ const getExportDetails = async (filters) => {
         h.mt_so AS 'No SO',
         c.cus_nama AS 'Customer',
         d.mtd_kode AS 'Kode Barang',
-        IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe)), d.mtd_kode) AS 'Nama Barang',
+        -- Nama Barang
+        IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), d.mtd_kode) AS 'Nama Barang',
         d.mtd_ukuran AS 'Ukuran',
         d.mtd_jumlah AS 'Jumlah Minta'
     FROM tmintabarang_hdr h
     JOIN tmintabarang_dtl d ON h.mt_nomor = d.mtd_nomor
     LEFT JOIN tcustomer c ON c.cus_kode = h.mt_cus
     LEFT JOIN tbarangdc a ON a.brg_kode = d.mtd_kode
-    WHERE h.mt_tanggal BETWEEN ? AND ? ${branchFilter}
-    ORDER BY h.mt_nomor, d.mtd_nourut;
+    WHERE 
+        DATE(h.mt_tanggal) BETWEEN ? AND ? 
+        ${branchFilter}
+    -- [PERBAIKAN] Ganti d.mtd_nourut menjadi d.mtd_kode
+    ORDER BY h.mt_nomor, d.mtd_kode;
     `;
+
   const [rows] = await pool.query(query, params);
   return rows;
 };

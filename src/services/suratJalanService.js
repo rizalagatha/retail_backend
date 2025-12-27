@@ -287,19 +287,19 @@ const getCabangList = async (user) => {
 const exportDetails = async (filters) => {
   const { startDate, endDate, kodeBarang, cabang } = filters;
 
-  const startDateTime = startDate ? `${startDate} 00:00:00` : null;
-  const endDateTime = endDate ? `${endDate} 23:59:59` : null;
+  // [FIX] Gunakan parameter langsung, biarkan MySQL menangani tanggalnya
+  let params = [startDate, endDate];
 
-  // [UBAH] Logic params dinamis untuk cabang di export juga
-  let params = [startDateTime, endDateTime];
   let branchFilter = "";
   let itemFilter = "";
 
-  if (cabang && cabang !== "") {
+  // Logic Filter Cabang
+  if (cabang && cabang !== "ALL" && cabang !== "") {
     branchFilter = "AND h.sj_kecab = ?";
     params.push(cabang);
   }
 
+  // Logic Filter Barang
   if (kodeBarang) {
     itemFilter = "AND d.sjd_kode = ?";
     params.push(kodeBarang);
@@ -307,19 +307,19 @@ const exportDetails = async (filters) => {
 
   const query = `
     SELECT 
-      h.sj_nomor AS "Nomor SJ",
-      DATE_FORMAT(h.sj_tanggal, "%Y-%m-%d") AS "Tanggal",
-      h.sj_kecab AS "Kode Store",
-      g.gdg_nama AS "Nama Store",
-      h.sj_mt_nomor AS "No. Minta Barang",
-      h.sj_ket AS "Keterangan",
-      h.sj_noterima AS "No. Terima",     -- Tambahan info
-      DATE_FORMAT(t.tj_tanggal, "%Y-%m-%d") AS "Tgl Terima", -- Tambahan info
+      h.sj_nomor AS 'Nomor SJ',
+      h.sj_tanggal AS 'Tanggal',
+      h.sj_kecab AS 'Kode Store',
+      g.gdg_nama AS 'Nama Store',
+      h.sj_mt_nomor AS 'No Minta Barang',
+      h.sj_ket AS 'Keterangan',
+      h.sj_noterima AS 'No Terima',
+      t.tj_tanggal AS 'Tgl Terima',
       
-      d.sjd_kode AS "Kode Barang",
-      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS "Nama Barang",
-      d.sjd_ukuran AS "Ukuran",
-      d.sjd_jumlah AS "Jumlah"
+      d.sjd_kode AS 'Kode Barang',
+      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS 'Nama Barang',
+      d.sjd_ukuran AS 'Ukuran',
+      d.sjd_jumlah AS 'Jumlah'
 
     FROM tdc_sj_hdr h
     INNER JOIN tdc_sj_dtl d ON d.sjd_nomor = h.sj_nomor
@@ -329,8 +329,9 @@ const exportDetails = async (filters) => {
     
     WHERE 
       (h.sj_peminta = "" OR h.sj_peminta IS NULL)
-      AND h.sj_tanggal >= ? AND h.sj_tanggal <= ?
-      ${branchFilter} -- [UBAH] Filter cabang dinamis
+      -- [FIX] Gunakan DATE() agar aman
+      AND DATE(h.sj_tanggal) BETWEEN ? AND ?
+      ${branchFilter}
       ${itemFilter}
       
     ORDER BY h.sj_tanggal DESC, h.sj_nomor DESC, d.sjd_kode ASC

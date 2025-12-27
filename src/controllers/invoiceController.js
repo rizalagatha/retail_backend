@@ -57,6 +57,28 @@ const checkIfInvoiceInFsk = async (req, res) => {
   }
 };
 
+const changePayment = async (req, res) => {
+  try {
+    // req.user didapat dari middleware auth (token)
+    const user = req.user;
+    const payload = req.body;
+
+    // Panggil logic di service
+    const result = await service.changePaymentMethod(payload, user);
+
+    res.status(200).json({
+      success: true,
+      message: result.message,
+    });
+  } catch (error) {
+    console.error("Error changePayment:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Terjadi kesalahan internal server.",
+    });
+  }
+};
+
 module.exports = {
   getCabangList,
   getList,
@@ -64,4 +86,5 @@ module.exports = {
   remove,
   exportDetails,
   checkIfInvoiceInFsk,
+  changePayment,
 };

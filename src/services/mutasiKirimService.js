@@ -175,6 +175,7 @@ const getExportDetails = async (filters) => {
         h.msk_tanggal AS 'Tanggal',
         f.gdg_nama AS 'Dari Cabang',
         g.gdg_nama AS 'Ke Cabang',
+        h.msk_ket AS 'Keterangan', -- [Opsional] Tambah keterangan jika perlu
         d.mskd_kode AS 'Kode Barang',
         TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) AS 'Nama Barang',
         d.mskd_ukuran AS 'Ukuran',
@@ -185,11 +186,14 @@ const getExportDetails = async (filters) => {
     LEFT JOIN tgudang g ON g.gdg_kode = h.msk_kecab
     LEFT JOIN tbarangdc a ON a.brg_kode = d.mskd_kode
     WHERE
-        h.msk_tanggal BETWEEN ? AND ?
+        -- [FIX 1] Gunakan DATE()
+        DATE(h.msk_tanggal) BETWEEN ? AND ?
         AND f.gdg_kode = ?
         AND (? IS NULL OR d.mskd_kode = ?)
-    ORDER BY h.msk_tanggal, h.msk_nomor, d.mskd_urutan;
+    -- [FIX 2] Ganti mskd_urutan (error) menjadi mskd_kode (urut abjad barang)
+    ORDER BY h.msk_tanggal, h.msk_nomor, d.mskd_kode;
     `;
+
   const params = [startDate, endDate, cabang, itemCode || null, itemCode];
   const [rows] = await pool.query(query, params);
   return rows;

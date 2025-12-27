@@ -54,7 +54,7 @@ const getPrintData = async (req, res) => {
 
 const exportDetails = async (req, res) => {
   try {
-    const data = await service.getExportDetails(req.query);
+    const data = await mutasiOutFormService.getExportDetails(req.query);
     res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });

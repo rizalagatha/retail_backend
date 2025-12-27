@@ -1,18 +1,10 @@
 const pool = require("../config/database");
-const { format } = require("date-fns");
 
-/**
- * Ambil daftar otorisasi berdasarkan rentang tanggal
- * @param {object} filters - Filter dari frontend (req.query)
- * @param {string} filters.startDate - Tanggal mulai (format YYYY-MM-DD)
- * @param {string} filters.endDate - Tanggal akhir (format YYYY-MM-DD)
- */
 const getListOtorisasi = async (filters) => {
   const { startDate, endDate } = filters;
 
-  // Validasi input tanggal
   if (!startDate || !endDate) {
-    throw new Error("Tanggal mulai (startDate) dan tanggal akhir (endDate) harus diisi.");
+    throw new Error("Tanggal mulai dan akhir harus diisi.");
   }
 
   const query = `
@@ -21,10 +13,21 @@ const getListOtorisasi = async (filters) => {
       o.o_transaksi AS transaksi,
       o.o_jenis AS jenis,
       o.o_nominal AS nominal,
+      
+      -- LOGIKA APPROVER
       COALESCE(
+        NULLIF(o.o_approver, ''), 
+        NULLIF(o.o_approver, '-'),
         (SELECT t.nama FROM totoritator t WHERE t.kode = RIGHT(o.o_pin, 1)),
-        ''
-      ) AS otoritator,
+        '-'
+      ) AS approver,
+
+      -- REQUESTER (Pastikan kolom o_requester ada, jika error hapus baris ini)
+      COALESCE(o.o_requester, '-') AS requester,
+
+      -- KETERANGAN / ALASAN (Digabung di sini)
+     COALESCE(o.o_ket, '') AS keterangan,
+
       DATE_FORMAT(o.o_created, '%d-%m-%Y %H:%i:%s') AS tanggal,
       o.o_barcode AS barcode
     FROM totorisasi o
@@ -39,10 +42,9 @@ const getListOtorisasi = async (filters) => {
     return rows;
   } catch (error) {
     console.error("Error fetching otorisasi list:", error);
-    throw new Error("Gagal mengambil data daftar otorisasi dari database.");
+    // Tampilkan pesan error asli agar mudah debug jika ada kolom lain yang kurang
+    throw new Error(`Gagal mengambil data: ${error.message}`);
   }
 };
 
-module.exports = {
-  getListOtorisasi,
-};
+module.exports = { getListOtorisasi };

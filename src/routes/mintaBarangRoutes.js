@@ -8,6 +8,14 @@ const MENU_ID = '37';
 // GET: Mengambil daftar Minta Barang berdasarkan filter
 router.get('/', verifyToken, checkPermission(MENU_ID, 'view'), mintaBarangController.getAll);
 
+
+router.get(
+  "/export-details",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  mintaBarangController.getExportDetails
+);
+
 // GET: Mengambil detail untuk satu Minta Barang
 router.get('/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), mintaBarangController.getDetails);
 
@@ -16,7 +24,5 @@ router.get('/lookup/cabang', verifyToken, checkPermission(MENU_ID, 'view'), mint
 
 // DELETE: Menghapus satu entri Minta Barang
 router.delete('/:nomor', verifyToken, checkPermission(MENU_ID, 'delete'), mintaBarangController.remove);
-
-router.get('/export-details', verifyToken, checkPermission(MENU_ID, 'view'), mintaBarangController.getExportDetails);
 
 module.exports = router;

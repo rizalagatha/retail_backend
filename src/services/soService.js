@@ -474,15 +474,24 @@ const getExportDetails = async (filters) => {
   const { startDate, endDate, cabang } = filters;
   let params = [startDate, endDate];
   let branchFilter = "";
+
+  // Logika Filter Cabang
   if (cabang === "KDC") {
     branchFilter =
       "AND h.so_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)";
-  } else {
+  } else if (cabang && cabang !== "ALL") {
     branchFilter = "AND h.so_cab = ?";
     params.push(cabang);
   }
 
-  // Query ini menggabungkan header dan detail
+  // --- DEBUGGING (Opsional: Cek di terminal backend) ---
+  console.log("Export SO Params:", {
+    startDate,
+    endDate,
+    cabang,
+    branchFilter,
+  });
+
   const query = `
         SELECT 
             h.so_nomor AS 'Nomor SO',
@@ -500,9 +509,14 @@ const getExportDetails = async (filters) => {
         LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
         LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
         LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_kode
-        WHERE h.so_tanggal BETWEEN ? AND ? ${branchFilter}
+        
+        -- [PERBAIKAN] Gunakan DATE() agar jam diabaikan (mengcover full 24 jam)
+        WHERE DATE(h.so_tanggal) BETWEEN ? AND ? 
+        ${branchFilter}
+        
         ORDER BY h.so_nomor, d.sod_nourut;
     `;
+
   const [rows] = await pool.query(query, params);
   return rows;
 };

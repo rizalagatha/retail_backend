@@ -37,8 +37,19 @@ const remove = async (req, res) => {
   }
 };
 
+// [BARU]
+const exportHeaders = async (req, res) => {
+  try {
+    const data = await service.getExportHeaders(req.query);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const exportDetails = async (req, res) => {
   try {
+    // [FIX] Gunakan variabel service, bukan import terpisah
     const data = await service.getExportDetails(req.query);
     res.json(data);
   } catch (error) {
@@ -46,4 +57,11 @@ const exportDetails = async (req, res) => {
   }
 };
 
-module.exports = { getCabangList, getList, getDetails, remove, exportDetails };
+module.exports = {
+  getCabangList,
+  getList,
+  getDetails,
+  remove,
+  exportHeaders, // <--- Tambahkan
+  exportDetails,
+};

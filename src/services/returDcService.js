@@ -85,7 +85,27 @@ const remove = async (nomor, user) => {
 const getExportDetails = async (filters, user) => {
   const { startDate, endDate, cabang } = filters;
 
-  // Gunakan filter yang sama persis dengan fungsi getList
+  let whereClauses = [];
+  let params = [];
+
+  // 1. Filter Cabang
+  // Jika user adalah KDC, cek filter dari frontend
+  if (user.cabang === "KDC") {
+    if (cabang && cabang !== "ALL") {
+      whereClauses.push("h.rb_cab = ?");
+      params.push(cabang);
+    }
+    // Jika ALL, tidak perlu filter cabang (ambil semua)
+  } else {
+    // Jika user adalah Cabang (Store), paksa filter ke cabangnya sendiri
+    whereClauses.push("h.rb_cab = ?");
+    params.push(user.cabang);
+  }
+
+  // 2. Filter Tanggal (Gunakan DATE agar jam diabaikan)
+  whereClauses.push("DATE(h.rb_tanggal) BETWEEN ? AND ?");
+  params.push(startDate, endDate);
+
   const query = `
     SELECT 
       h.rb_nomor AS 'Nomor Retur',
@@ -103,12 +123,10 @@ const getExportDetails = async (filters, user) => {
     LEFT JOIN tgudang f ON f.gdg_kode = h.rb_cab
     LEFT JOIN tgudang g ON g.gdg_kode = h.rb_kecab
     LEFT JOIN tbarangdc a ON a.brg_kode = d.rbd_kode
-    WHERE 
-      h.rb_cab = ? 
-      AND h.rb_tanggal BETWEEN ? AND ?
+    WHERE ${whereClauses.join(" AND ")}
     ORDER BY h.rb_tanggal, h.rb_nomor;
   `;
-  const params = [cabang, startDate, endDate];
+
   const [rows] = await pool.query(query, params);
   return rows;
 };

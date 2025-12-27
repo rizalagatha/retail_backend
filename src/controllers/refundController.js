@@ -1,3 +1,4 @@
+const { getExportHeaders } = require("../services/formSetoranKasirService");
 const service = require("../services/refundService");
 
 const getList = async (req, res) => {
@@ -26,6 +27,15 @@ const deleteRefund = async (req, res) => {
     res.status(400).json({ message: error.message });
   }
 };
+const exportHeaders = async (req, res) => {
+  try {
+    const data = await service.getExportHeaders(req.query, req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const exportDetails = async (req, res) => {
   try {
     const data = await service.getExportDetails(req.query, req.user);
@@ -47,6 +57,7 @@ module.exports = {
   getList,
   getDetails,
   deleteRefund,
+  exportHeaders,
   exportDetails,
   getCabangOptions,
 };

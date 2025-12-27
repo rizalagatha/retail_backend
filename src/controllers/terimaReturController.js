@@ -36,4 +36,19 @@ const submitChangeRequest = async (req, res) => {
   }
 };
 
-module.exports = { getList, getDetails, cancelReceipt, submitChangeRequest };
+const exportDetails = async (req, res) => {
+  try {
+    const data = await service.getExportDetails(req.query, req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+module.exports = {
+  getList,
+  getDetails,
+  cancelReceipt,
+  submitChangeRequest,
+  exportDetails,
+};

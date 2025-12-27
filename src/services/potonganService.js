@@ -345,9 +345,46 @@ const remove = async (nomor, user) => {
   }
 };
 
-/**
- * [EXPORT] Mengambil detail untuk Export
- */
+// [FIX] Export Header (Sesuaikan dengan struktur tabel tpotongan_hdr)
+const getExportHeaders = async (filters) => {
+  const { startDate, endDate, cabang } = filters;
+  const query = `
+    SELECT 
+        h.pt_nomor AS 'Nomor',
+        h.pt_tanggal AS 'Tanggal',
+        h.pt_nominal AS 'Nominal',
+        h.pt_nominal AS 'Dibayarkan', -- Gunakan pt_nominal sebagai nilai dibayarkan
+        h.pt_akun AS 'Akun',
+        
+        -- Fallback: Gunakan kode akun sebagai Nama Akun sementara
+        h.pt_akun AS 'NamaAkun',
+        
+        -- [FIX] Kolom pt_norek TIDAK ADA di tabel, kita set kosong
+        '' AS 'NoRekening',
+        
+        h.pt_cus_kode AS 'Kdcus',
+        c.cus_nama AS 'Customer',
+        c.cus_alamat AS 'Alamat',
+        c.cus_kota AS 'Kota',
+        h.user_create AS 'Usr',
+        h.pt_cab AS 'Cab',
+        h.pt_closing AS 'Closing',
+        
+        -- [FIX] Kolom pt_ket (Keterangan) TIDAK ADA di tabel, kita set kosong
+        '' AS 'Keterangan'
+        
+    FROM tpotongan_hdr h
+    LEFT JOIN tcustomer c ON c.cus_kode = h.pt_cus_kode
+    WHERE LEFT(h.pt_nomor, 3) = ? 
+      AND DATE(h.pt_tanggal) BETWEEN ? AND ?
+    ORDER BY h.pt_tanggal DESC, h.pt_nomor DESC;
+  `;
+  
+  const [rows] = await pool.query(query, [cabang, startDate, endDate]);
+  return rows;
+};
+
+// [UPDATE] Export Detail
 const getExportDetails = async (filters) => {
   const { startDate, endDate, cabang } = filters;
   const query = `
@@ -364,7 +401,8 @@ const getExportDetails = async (filters) => {
         JOIN tpotongan_dtl d ON h.pt_nomor = d.ptd_nomor
         LEFT JOIN tcustomer c ON c.cus_kode = h.pt_cus_kode
         WHERE LEFT(h.pt_nomor, 3) = ? 
-            AND h.pt_tanggal BETWEEN ? AND ?
+            -- [FIX] Gunakan DATE()
+            AND DATE(h.pt_tanggal) BETWEEN ? AND ?
         ORDER BY h.pt_nomor, d.ptd_inv;
     `;
   const [rows] = await pool.query(query, [cabang, startDate, endDate]);
@@ -417,6 +455,7 @@ module.exports = {
   getDetails,
   save,
   remove,
+  getExportHeaders,
   getExportDetails,
   getNextPotonganNumber,
   getBrowseDetails,

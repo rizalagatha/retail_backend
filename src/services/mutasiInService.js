@@ -84,9 +84,12 @@ const getExportDetails = async (filters) => {
     LEFT JOIN tcustomer c ON c.cus_kode = o.so_cus_kode
     LEFT JOIN tbarangdc a ON a.brg_kode = d.mid_kode
     WHERE h.mi_cab = ? 
-        AND h.mi_tanggal BETWEEN ? AND ?
+        -- [PERBAIKAN] Gunakan DATE() agar jam diabaikan
+        AND DATE(h.mi_tanggal) BETWEEN ? AND ?
     ORDER BY h.mi_nomor;
     `;
+
+  // Pastikan urutan parameter sesuai dengan tanda tanya (?)
   const [rows] = await pool.query(query, [cabang, startDate, endDate]);
   return rows;
 };

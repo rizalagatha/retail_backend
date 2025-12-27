@@ -18,8 +18,24 @@ const getDetails = async (req, res) => {
   }
 };
 
+// [BARU]
+const exportHeaders = async (req, res) => {
+  try {
+    const data = await service.getExportHeaders(req.query);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// [UPDATE] Implementasi yang sebelumnya kosong
 const exportDetails = async (req, res) => {
-  /* panggil service.getExportDetails */
+  try {
+    const data = await service.getExportDetails(req.query);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
 const getTotalProducts = async (req, res) => {
@@ -34,6 +50,7 @@ const getTotalProducts = async (req, res) => {
 module.exports = {
   getList,
   getDetails,
+  exportHeaders, // <--- TAMBAHKAN
   exportDetails,
   getTotalProducts,
 };

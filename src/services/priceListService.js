@@ -1,18 +1,33 @@
 const pool = require("../config/database");
 
 const getList = async (filters) => {
-  const { kategori, hargaKosong } = filters;
+  // Tambahkan 'search' dalam destructuring
+  const { kategori, hargaKosong, search } = filters;
 
   let whereClause = 'WHERE a.brg_aktif = 0 AND a.brg_logstok = "Y"';
+  const queryParams = []; // Array untuk menampung parameter (agar aman dari SQL Injection)
+
+  // 1. Filter Kategori
   if (kategori === "Kaosan") {
     whereClause += ' AND a.brg_ktg = ""';
   } else if (kategori === "Rezso") {
     whereClause += ' AND a.brg_ktg <> ""';
   }
 
+  // 2. Filter Harga Kosong
   if (hargaKosong === "true" || hargaKosong === true) {
     whereClause +=
       " AND a.brg_kode IN (SELECT DISTINCT d.brgd_kode FROM tbarangdc_dtl d WHERE d.brgd_harga = 0)";
+  }
+
+  // 3. [BARU] Filter Search (Mencari di Kode atau Nama Gabungan)
+  if (search) {
+    const searchTerm = `%${search}%`;
+    whereClause += ` AND (
+      a.brg_kode LIKE ? 
+      OR TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) LIKE ?
+    )`;
+    queryParams.push(searchTerm, searchTerm);
   }
 
   const query = `
@@ -24,7 +39,9 @@ const getList = async (filters) => {
         ${whereClause}
         ORDER BY nama;
     `;
-  const [rows] = await pool.query(query);
+
+  // Gunakan queryParams saat eksekusi
+  const [rows] = await pool.query(query, queryParams);
   return rows;
 };
 

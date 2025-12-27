@@ -166,17 +166,29 @@ const remove = async (nomor, user) => {
 };
 
 const getExportDetails = async (filters, user) => {
+  // Filters berisi startDate, endDate, cabang dari Frontend
   const { startDate, endDate, cabang } = filters;
-  let whereClauses = ["h.rj_tanggal BETWEEN ? AND ?"];
+
+  // Gunakan DATE() agar filter mencakup seluruh jam dalam hari tersebut
+  let whereClauses = ["DATE(h.rj_tanggal) BETWEEN ? AND ?"];
   let params = [startDate, endDate];
 
   if (user.cabang === "KDC") {
-    whereClauses.push(
-      "h.rj_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)"
-    );
+    // Jika user KDC, dia bisa filter cabang tertentu ATAU defaultnya semua cabang DC
+    // Jika filters.cabang ada isinya (bukan ALL/kosong), pakai filter itu
+    if (cabang && cabang !== "ALL") {
+      whereClauses.push("h.rj_cab = ?");
+      params.push(cabang);
+    } else {
+      // Default KDC melihat semua data DC
+      whereClauses.push(
+        "h.rj_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)"
+      );
+    }
   } else {
+    // Jika user cabang biasa, paksa hanya lihat cabangnya sendiri
     whereClauses.push("h.rj_cab = ?");
-    params.push(cabang);
+    params.push(user.cabang);
   }
 
   const query = `
@@ -199,6 +211,7 @@ const getExportDetails = async (filters, user) => {
     WHERE ${whereClauses.join(" AND ")}
     ORDER BY h.rj_nomor, d.rjd_nourut;
     `;
+
   const [rows] = await pool.query(query, params);
   return rows;
 };

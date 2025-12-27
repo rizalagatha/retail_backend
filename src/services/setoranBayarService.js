@@ -158,6 +158,7 @@ const remove = async (nomor, user) => {
 
 const getExportDetails = async (filters) => {
   const { startDate, endDate, cabang } = filters;
+
   const query = `
     SELECT 
       h.sh_nomor AS 'Nomor Setoran',
@@ -173,11 +174,15 @@ const getExportDetails = async (filters) => {
     LEFT JOIN tcustomer c ON c.cus_kode = h.sh_cus_kode
     LEFT JOIN tpiutang_dtl pd ON pd.pd_sd_angsur = d.sd_angsur AND d.sd_angsur <> ""
     LEFT JOIN tpiutang_hdr ph ON ph.ph_nomor = pd.pd_ph_nomor
-    WHERE h.sh_cab = ?
-      AND h.sh_tanggal BETWEEN ? AND ?
+    WHERE 
+      h.sh_cab = ?
+      -- [FIX] Gunakan DATE() agar jam diabaikan
+      AND DATE(h.sh_tanggal) BETWEEN ? AND ?
     ORDER BY h.sh_nomor, d.sd_nourut;
   `;
-  const [rows] = await pool.query(query, [cabang, startDate, endDate]);
+
+  const params = [cabang, startDate, endDate];
+  const [rows] = await pool.query(query, params);
   return rows;
 };
 

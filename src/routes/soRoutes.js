@@ -8,6 +8,14 @@ const MENU_ID = '26'; // Sesuai permintaan Anda
 // GET: Mengambil daftar Surat Pesanan berdasarkan filter
 router.get('/', verifyToken, checkPermission(MENU_ID, 'view'), soController.getAll);
 
+// [BARU] Route Export Detail
+router.get(
+  "/export-details",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  soController.getExportDetails
+);
+
 // GET: Mengambil detail untuk satu SO
 router.get('/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), soController.getDetails);
 

@@ -369,9 +369,11 @@ const getExportDetails = async (filters) => {
     LEFT JOIN tcustomer c ON c.cus_kode = o.so_cus_kode
     LEFT JOIN tbarangdc a ON a.brg_kode = d.msod_kode
     WHERE h.mso_cab = ?
-      AND h.mso_tanggal BETWEEN ? AND ?
+      -- [FIX] Gunakan DATE() agar jam diabaikan
+      AND DATE(h.mso_tanggal) BETWEEN ? AND ?
     ORDER BY h.mso_nomor, d.msod_kode;
   `;
+
   const [rows] = await pool.query(query, [cabang, startDate, endDate]);
   return rows;
 };
