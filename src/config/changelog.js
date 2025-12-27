@@ -2,6 +2,7 @@ const changelogs = {
   "1.2.9": {
     date: "2025-12-27",
     changes: [
+      "Fitur Baru : Edit metode Pembayaran Invoice",
       {
         title: "Penambahan:",
         items: [
