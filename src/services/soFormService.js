@@ -34,18 +34,29 @@ const save = async (data, user) => {
 
     // --- 1. LOGIKA PENENTUAN STATUS (FIXED) ---
     // Pastikan status punya nilai default 'PASIF' jika undefined
-    const statusRaw = header.statusSo || 'PASIF';
-    
+    const statusRaw = header.statusSo || "PASIF";
+
     // Tentukan status akhir ('Y' atau 'N')
     // Jika Marketplace -> Selalu 'Y'
     // Jika statusRaw 'AKTIF' -> 'Y'
     // Selain itu -> 'N'
-    const finalAktifStatus = header.isMarketplace ? "Y" : (statusRaw === "AKTIF" ? "Y" : "N");
+    const finalAktifStatus = header.isMarketplace
+      ? "Y"
+      : statusRaw === "AKTIF"
+      ? "Y"
+      : "N";
 
     // --- 2. QUERY HEADER ---
     if (isNew) {
-      soNomor = await generateNewSoNumber(connection, header.gudang.kode, header.tanggal);
-      idrec = `${header.gudang.kode}SO${format(new Date(), "yyyyMMddHHmmssSSS")}`;
+      soNomor = await generateNewSoNumber(
+        connection,
+        header.gudang.kode,
+        header.tanggal
+      );
+      idrec = `${header.gudang.kode}SO${format(
+        new Date(),
+        "yyyyMMddHHmmssSSS"
+      )}`;
 
       const insertHeaderQuery = `
           INSERT INTO tso_hdr (
@@ -67,42 +78,43 @@ const save = async (data, user) => {
             ?, ?, NOW()
           )
         `;
-        
+
       await connection.query(insertHeaderQuery, [
-        idrec,                                // 1. so_idrec
-        soNomor,                              // 2. so_nomor
-        header.tanggal,                       // 3. so_tanggal
-        header.dateline,                      // 4. so_dateline
+        idrec, // 1. so_idrec
+        soNomor, // 2. so_nomor
+        header.tanggal, // 3. so_tanggal
+        header.dateline, // 4. so_dateline
         header.isMarketplace ? "" : header.penawaran || "", // 5. so_pen_nomor
-        header.isMarketplace ? 0 : header.top || 0,         // 6. so_top
-        header.ppnPersen || 0,                // 7. so_ppn
-        footer.diskonRp || 0,                 // 8. so_disc
-        footer.diskonPersen1 || 0,            // 9. so_disc1
-        footer.diskonPersen2 || 0,            // 10. so_disc2
-        footer.biayaKirim || 0,               // 11. so_bkrm
-        header.isMarketplace ? 0 : footer.totalDp || 0,     // 12. so_dp
-        header.customer.kode,                 // 13. so_cus_kode
-        header.level,                         // 14. so_cus_level
-        header.isMarketplace ? "Y" : "N",     // 15. so_is_marketplace
-        header.mpNomorPesanan || "",          // 16. so_mp_nomor_pesanan
-        header.mpResi || "",                  // 17. so_mp_resi
-        footer.pinTanpaDp || "",              // 18. so_accdp
-        header.keterangan || "",              // 19. so_ket
-        finalAktifStatus,                     // 20. so_aktif (FIXED)
-        header.salesCounter,                  // 21. so_sc
+        header.isMarketplace ? 0 : header.top || 0, // 6. so_top
+        header.ppnPersen || 0, // 7. so_ppn
+        footer.diskonRp || 0, // 8. so_disc
+        footer.diskonPersen1 || 0, // 9. so_disc1
+        footer.diskonPersen2 || 0, // 10. so_disc2
+        footer.biayaKirim || 0, // 11. so_bkrm
+        header.isMarketplace ? 0 : footer.totalDp || 0, // 12. so_dp
+        header.customer.kode, // 13. so_cus_kode
+        header.level, // 14. so_cus_level
+        header.isMarketplace ? "Y" : "N", // 15. so_is_marketplace
+        header.mpNomorPesanan || "", // 16. so_mp_nomor_pesanan
+        header.mpResi || "", // 17. so_mp_resi
+        footer.pinTanpaDp || "", // 18. so_accdp
+        header.keterangan || "", // 19. so_ket
+        finalAktifStatus, // 20. so_aktif (FIXED)
+        header.salesCounter, // 21. so_sc
         header.jenisOrderKode ? String(header.jenisOrderKode) : null, // 22. so_jenisorder
-        header.namaDtf ? String(header.namaDtf) : null,               // 23. so_namadtf
-        header.nomorPromo || "",              // 24. so_pro_nomor
-        header.namaPromo || "",               // 25. so_pro_nama
-        header.gudang.kode,                   // 26. so_cab
-        user.kode,                            // 27. user_create
+        header.namaDtf ? String(header.namaDtf) : null, // 23. so_namadtf
+        header.nomorPromo || "", // 24. so_pro_nomor
+        header.namaPromo || "", // 25. so_pro_nama
+        header.gudang.kode, // 26. so_cab
+        user.kode, // 27. user_create
       ]);
     } else {
       const [idrecRows] = await connection.query(
         "SELECT so_idrec FROM tso_hdr WHERE so_nomor = ?",
         [soNomor]
       );
-      if (idrecRows.length === 0) throw new Error("Nomor SO untuk diupdate tidak ditemukan.");
+      if (idrecRows.length === 0)
+        throw new Error("Nomor SO untuk diupdate tidak ditemukan.");
       idrec = idrecRows[0].so_idrec;
 
       const updateHeaderQuery = `
@@ -117,39 +129,41 @@ const save = async (data, user) => {
           user_modified = ?, date_modified = NOW()
         WHERE so_nomor = ?
       `;
-      
+
       await connection.query(updateHeaderQuery, [
         header.customer.kode,
         header.isMarketplace ? "" : header.penawaran || "",
-        header.level, 
-        header.tanggal, 
+        header.level,
+        header.tanggal,
         header.dateline,
         header.isMarketplace ? 0 : header.top || 0,
-        header.ppnPersen || 0, 
-        footer.pinTanpaDp || "", 
+        header.ppnPersen || 0,
+        footer.pinTanpaDp || "",
         header.keterangan || "",
-        header.jenisOrderKode || header.jenisOrder || null, 
+        header.jenisOrderKode || header.jenisOrder || null,
         header.namaDtf || null,
-        header.isMarketplace ? "Y" : "N", 
-        header.mpNomorPesanan || "", 
+        header.isMarketplace ? "Y" : "N",
+        header.mpNomorPesanan || "",
         header.mpResi || "",
-        footer.diskonRp || 0, 
-        footer.diskonPersen1 || 0, 
+        footer.diskonRp || 0,
+        footer.diskonPersen1 || 0,
         footer.diskonPersen2 || 0,
         footer.biayaKirim || 0,
         header.isMarketplace ? 0 : footer.totalDp || 0,
         finalAktifStatus, // (FIXED)
         header.salesCounter,
-        header.nomorPromo || "", 
+        header.nomorPromo || "",
         header.namaPromo || "",
-        user.kode, 
+        user.kode,
         soNomor,
       ]);
     }
 
     // --- 3. PROSES DETAIL (DELETE & INSERT) ---
-    await connection.query("DELETE FROM tso_dtl WHERE sod_so_nomor = ?", [soNomor]);
-    
+    await connection.query("DELETE FROM tso_dtl WHERE sod_so_nomor = ?", [
+      soNomor,
+    ]);
+
     for (const [index, item] of details.entries()) {
       const kodeBarang = item.kode || (item.isCustomOrder ? "CUSTOM" : "");
       const isCustom = item.isCustomOrder ? "Y" : "N";
@@ -157,9 +171,10 @@ const save = async (data, user) => {
       let customData = null;
       if (item.isCustomOrder) {
         if (item.sod_custom_data) {
-          customData = typeof item.sod_custom_data === "string"
-            ? item.sod_custom_data
-            : JSON.stringify(item.sod_custom_data);
+          customData =
+            typeof item.sod_custom_data === "string"
+              ? item.sod_custom_data
+              : JSON.stringify(item.sod_custom_data);
         } else {
           customData = JSON.stringify({
             ukuranKaos: item.ukuranKaos || [],
@@ -193,6 +208,12 @@ const save = async (data, user) => {
     }
 
     // --- 4. SIMPAN OTORISASI (PIN) ---
+    // [TAMBAHKAN INI] Hapus data otorisasi lama untuk nomor SO ini sebelum insert baru
+    await connection.query(
+      "DELETE FROM totorisasi WHERE o_nomor = ? AND o_transaksi = 'SO'",
+      [soNomor]
+    );
+    
     // Bersihkan otorisasi lama jika perlu, atau insert baru
     for (const item of details) {
       if (item.pin) {
