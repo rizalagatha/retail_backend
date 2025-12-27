@@ -1,6 +1,35 @@
 const pool = require("../config/database");
 const { format } = require("date-fns");
 
+const toSqlDateTime = (value) => {
+  if (!value) return null;
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return null;
+  return format(d, "yyyy-MM-dd HH:mm:ss");
+};
+
+// helper: format ke MySQL DATE (yyyy-MM-dd)
+const toSqlDate = (value) => {
+  if (!value) return null;
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return null;
+  return format(d, "yyyy-MM-dd");
+};
+
+const generateNewSetorNumber = async (connection, cabang, tanggal) => {
+  const date = new Date(tanggal);
+  const prefix = `${cabang}.STR.${format(date, "yyMM")}.`;
+  const query = `
+    SELECT IFNULL(MAX(RIGHT(sh_nomor, 4)), 0) + 1 AS next_num
+    FROM tsetor_hdr 
+    WHERE sh_nomor LIKE ?;
+  `;
+  // Gunakan koneksi dari transaksi agar konsisten
+  const [rows] = await connection.query(query, [`${prefix}%`]);
+  const nextNumber = rows[0].next_num.toString().padStart(4, "0");
+  return `${prefix}${nextNumber}`;
+};
+
 const getCabangList = async (user) => {
   let query = "";
   const params = [];
