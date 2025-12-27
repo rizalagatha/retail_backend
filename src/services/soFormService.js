@@ -208,38 +208,90 @@ const save = async (data, user) => {
     }
 
     // --- 4. SIMPAN OTORISASI (PIN) ---
-    // [TAMBAHKAN INI] Hapus data otorisasi lama untuk nomor SO ini sebelum insert baru
+    // [LANGKAH A] Ambil data otorisasi yang SUDAH ADA (Backup dulu sebelum dihapus)
+    const [existingAuths] = await connection.query(
+      "SELECT o_jenis, o_barcode, o_pin FROM totorisasi WHERE o_nomor = ? AND o_transaksi = 'SO'",
+      [soNomor]
+    );
+
+    // [LANGKAH B] Hapus data lama agar tidak duplicate primary key
     await connection.query(
       "DELETE FROM totorisasi WHERE o_nomor = ? AND o_transaksi = 'SO'",
       [soNomor]
     );
-    
-    // Bersihkan otorisasi lama jika perlu, atau insert baru
+
+    // [LANGKAH C] Insert ulang dengan logika MERGE (Baru vs Lama)
+
+    // 1. Otorisasi Per ITEM (Diskon Item)
     for (const item of details) {
-      if (item.pin) {
+      // Cek apakah ada diskon?
+      if (item.diskonPersen > 0 || item.diskonRp > 0) {
+        // Cari PIN lama untuk barang ini (jika ada)
+        const oldAuth = existingAuths.find(
+          (a) =>
+            a.o_jenis === "DISKON ITEM" &&
+            a.o_barcode === (item.barcode || item.kode)
+        );
+
+        // Prioritas: PIN baru dari input user > PIN lama dari DB
+        const pinToUse = item.pin || (oldAuth ? oldAuth.o_pin : null);
+
+        if (pinToUse) {
+          await connection.query(
+            'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_nominal) VALUES (?, "SO", "DISKON ITEM", ?, NOW(), ?, ?)',
+            [
+              soNomor,
+              item.barcode || item.kode || "",
+              pinToUse,
+              item.diskonPersen,
+            ]
+          );
+        }
+      }
+    }
+
+    // 2. Otorisasi DISKON FAKTUR 1
+    if (footer.diskonPersen1 > 0 || footer.diskonRp > 0) {
+      const oldAuth = existingAuths.find((a) => a.o_jenis === "DISKON FAKTUR");
+      // Gunakan pin baru jika ada, jika tidak gunakan pin lama
+      const pinToUse = footer.pinDiskon1 || (oldAuth ? oldAuth.o_pin : null);
+
+      if (pinToUse) {
         await connection.query(
-          'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_nominal) VALUES (?, "SO", "DISKON ITEM", ?, NOW(), ?, ?)',
-          [soNomor, item.barcode || "", item.pin, item.diskonPersen]
+          'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "SO", "DISKON FAKTUR", NOW(), ?, ?)',
+          [soNomor, pinToUse, footer.diskonPersen1]
         );
       }
     }
-    if (footer.pinDiskon1) {
-      await connection.query(
-        'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "SO", "DISKON FAKTUR", NOW(), ?, ?)',
-        [soNomor, footer.pinDiskon1, footer.diskonPersen1]
+
+    // 3. Otorisasi DISKON FAKTUR 2
+    if (footer.diskonPersen2 > 0) {
+      const oldAuth = existingAuths.find(
+        (a) => a.o_jenis === "DISKON FAKTUR 2"
       );
+      const pinToUse = footer.pinDiskon2 || (oldAuth ? oldAuth.o_pin : null);
+
+      if (pinToUse) {
+        await connection.query(
+          'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "SO", "DISKON FAKTUR 2", NOW(), ?, ?)',
+          [soNomor, pinToUse, footer.diskonPersen2]
+        );
+      }
     }
-    if (footer.pinDiskon2) {
-      await connection.query(
-        'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "SO", "DISKON FAKTUR 2", NOW(), ?, ?)',
-        [soNomor, footer.pinDiskon2, footer.diskonPersen2]
-      );
-    }
-    if (footer.pinTanpaDp) {
-      await connection.query(
-        'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "SO", "TANPA DP", NOW(), ?, ?)',
-        [soNomor, footer.pinTanpaDp, footer.belumDibayar]
-      );
+
+    // 4. Otorisasi TANPA DP
+    // Logic: Jika ada sisa belum dibayar DAN pinTanpaDp diisi ATAU sudah pernah di-acc sebelumnya
+    if (footer.belumDibayar > 0) {
+      const oldAuth = existingAuths.find((a) => a.o_jenis === "TANPA DP");
+      const pinToUse = footer.pinTanpaDp || (oldAuth ? oldAuth.o_pin : null);
+
+      // Hanya insert jika ada PIN yang valid
+      if (pinToUse) {
+        await connection.query(
+          'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "SO", "TANPA DP", NOW(), ?, ?)',
+          [soNomor, pinToUse, footer.belumDibayar]
+        );
+      }
     }
 
     // --- 5. UPDATE SETORAN DP (Hanya yang dikirim dari Frontend) ---
