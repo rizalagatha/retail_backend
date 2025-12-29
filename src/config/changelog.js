@@ -1,4 +1,27 @@
 const changelogs = {
+  "1.2.10": {
+    date: "2025-12-29",
+    changes: [
+      "Fitur Baru : Cari DP yang terkait ke Customer pada Surat Pesanan",
+      {
+        title: "Penambahan:",
+        items: [
+          "Dashboard untuk user Gudang DC",
+          "Feedback suara ketika scan barcode",
+          "Filter Semua Cabang pada Halaman Invoice untuk user KDC",
+        ],
+      },
+      {
+        title: "Perbaikan:",
+        items: [
+          "Optimalisasi Halaman Browse Invoice, sekarang dapat menampilkan data dari range tanggal lama dengan cepat",
+          "Kolom Kode Customer pada seluruh halaman Browse Transaksi dipindahkan ke sebelah kiri tanggal",
+          "Perbaikan Otorisasi untuk Ambil Barang K01",
+          "Perbaikan Perhitungan Laporan Sales vs Target",
+        ],
+      },
+    ],
+  },
   "1.2.9": {
     date: "2025-12-27",
     changes: [

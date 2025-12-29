@@ -763,11 +763,12 @@ const saveData = async (payload, user) => {
           inv_kembali,
           inv_mem_hp, inv_mem_nama, inv_mem_alamat, inv_mem_gender, inv_mem_usia, inv_mem_referensi,
           inv_is_marketplace, inv_mp_nama, inv_mp_nomor_pesanan, inv_mp_resi, inv_mp_biaya_platform,
+          inv_print,
           user_create, date_create
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?, 
           ?, ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
       `;
 
       await connection.query(headerSql, [
@@ -815,6 +816,7 @@ const saveData = async (payload, user) => {
         mpResi,
         mpBiaya,
 
+        1,
         user.kode,
       ]);
     } else {
@@ -829,7 +831,7 @@ const saveData = async (payload, user) => {
           inv_mem_gender = ?, inv_mem_usia = ?, inv_mem_referensi = ?,
           -- [BARU] Update Marketplace
           inv_is_marketplace = ?, inv_mp_nama = ?, inv_mp_nomor_pesanan = ?, 
-          inv_mp_resi = ?, inv_mp_biaya_platform = ?,
+          inv_mp_resi = ?, inv_mp_biaya_platform = ?, inv_print = ?,
           user_modified = ?, date_modified = NOW()
         WHERE inv_nomor = ?
       `;
@@ -871,6 +873,8 @@ const saveData = async (payload, user) => {
         mpResi,
         mpBiaya,
 
+        1,
+        
         user.kode,
         invNomor,
       ]);

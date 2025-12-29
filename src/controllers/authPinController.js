@@ -1,26 +1,27 @@
 const service = require("../services/authPinService");
 
 const authorizationController = {
-  // [SALES] Mengirim permintaan otorisasi baru
   createRequest: async (req, res) => {
     try {
-      const { transaksi, jenis, keterangan, nominal } = req.body;
+      // [UPDATE] Ambil target_cabang dari body
+      const { transaksi, jenis, keterangan, nominal, target_cabang, barcode } =
+        req.body;
 
-      // Validasi input dasar
       if (!jenis || !keterangan) {
         return res
           .status(400)
           .json({ message: "Jenis dan Keterangan wajib diisi." });
       }
 
-      // Ambil data user dari Token (req.user diset oleh middleware verifyToken)
       const payload = {
         transaksi,
         jenis,
         keterangan,
         nominal,
-        cabang: req.user.cabang, // Otomatis dari token login
-        user: req.user.kode, // Otomatis dari token login
+        barcode,
+        target_cabang, // <-- Teruskan ke service
+        cabang: req.user.cabang, // Cabang asal (Requester)
+        user: req.user.kode, // User asal (Requester)
       };
 
       const result = await service.createRequest(payload);
@@ -43,13 +44,11 @@ const authorizationController = {
     }
   },
 
-  // [MANAGER] Mengambil daftar request yang pending
   getPending: async (req, res) => {
     try {
-      // Manager hanya bisa melihat request di cabangnya sendiri
-      const cabang = req.user.cabang;
-      const rows = await service.getPendingRequests(cabang);
-      res.json(rows);
+      // req.user.cabang otomatis terisi dari token login
+      const rows = await service.getPendingRequests(req.user.cabang);
+      res.json({ success: true, data: rows }); // Format response konsisten
     } catch (error) {
       console.error("Error getPending:", error);
       res.status(500).json({ message: "Gagal memuat data otorisasi." });

@@ -33,88 +33,292 @@ const generateNewSetorNumber = async (connection, cabang, tanggal) => {
 const getCabangList = async (user) => {
   let query = "";
   const params = [];
+
   if (user.cabang === "KDC") {
+    // KDC: Ambil semua daftar toko
     query =
       "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang ORDER BY gdg_kode";
   } else {
+    // Cabang: Hanya ambil tokonya sendiri
     query =
       "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ? ORDER BY gdg_kode";
     params.push(user.cabang);
   }
+
   const [rows] = await pool.query(query, params);
+
+  // [BARU] Jika user adalah KDC, tambahkan opsi "Semua Cabang" di urutan pertama
+  if (user.cabang === "KDC") {
+    return [{ kode: "ALL", nama: "Semua Cabang" }, ...rows];
+  }
+
   return rows;
 };
 
 const getList = async (filters) => {
-  const { startDate, endDate, cabang, status } = filters;
+  const {
+    startDate,
+    endDate,
+    cabang,
+    status,
+    page = 1,
+    limit = 50,
+    search,
+    columnFilters, // Parameter filter custom dari frontend
+  } = filters;
 
-  // Params awal untuk Filter Tanggal di CTE Utama
-  const params = [startDate, endDate];
+  const offset = (page - 1) * limit;
+  const startDateTime = `${startDate} 00:00:00`;
+  const endDateTime = `${endDate} 23:59:59`;
+  const params = [startDateTime, endDateTime];
 
-  // 1. Filter Cabang (Disiapkan untuk disuntikkan ke CTE)
+  // 1. Filter Cabang
   let cabangFilter = "";
-  if (cabang && cabang !== "KDC") {
+
+  // Tambahkan pengecekan: cabang !== "ALL"
+  let cab = (cabang || "").toUpperCase().trim();
+
+  if (cab && cab !== "KDC" && cab !== "ALL") {
     cabangFilter = " AND h.inv_cab = ?";
-    params.push(cabang);
+    params.push(cab);
   }
 
-  // 2. Filter Status (Sisa Piutang / Belum Lunas)
-  // Kita pindahkan logika ini agar lebih efisien, tapi tetap di WHERE akhir
-  let statusFilterClause = "";
-  if (status === "sisa_piutang" || status === "belum_lunas") {
-    statusFilterClause = `
+  console.log("cabang param =", cabang);
+
+  // 2. Global Search (Tetap ada)
+  let searchFilter = "";
+  if (search) {
+    searchFilter = `
       AND (
-        COALESCE(PR.SaldoAkhir, 0) > 100 -- Cek langsung dari hasil Join PiutangReal
+        h.inv_nomor LIKE ? OR 
+        c.cus_nama LIKE ? OR 
+        h.inv_cus_kode LIKE ? OR
+        h.inv_nomor_so LIKE ?
+      )
+    `;
+    const term = `%${search}%`;
+    params.push(term, term, term, term);
+  }
+
+  // 3. [PENTING] Dynamic Column Filters (Excel-Style)
+  let dynamicFilter = "";
+
+  if (columnFilters) {
+    try {
+      const filtersObj = JSON.parse(columnFilters);
+
+      // === MAPPING LENGKAP FIELD FRONTEND KE DATABASE ===
+      // Key sebelah kiri harus SAMA PERSIS dengan 'key' di headers frontend
+      const fieldMap = {
+        // -- Header Utama --
+        Nomor: "h.inv_nomor",
+        Tanggal: "h.inv_tanggal", // Bisa difilter by date string
+        Posting: `(CASE 
+                      WHEN EXISTS (SELECT 1 FROM finance.tjurnal j WHERE j.jur_nomor = h.inv_nomor) THEN 'SUDAH' 
+                      ELSE 'BELUM' 
+                    END)`, // Filter posting agak berat (subquery), tapi bisa
+        NomorSO: "h.inv_nomor_so",
+        TglSO: "o.so_tanggal",
+        Top: "h.inv_top",
+
+        // -- Keuangan --
+        Diskon: "h.inv_disc",
+        Dp: "h.inv_dp",
+        Biayakirim: "h.inv_bkrm",
+        RpRetur: "h.inv_rj_rp", // <--- RETUR
+        NoRetur: "h.inv_rj_nomor",
+
+        // -- Customer --
+        Kdcus: "h.inv_cus_kode",
+        Customer: "COALESCE(k.kar_nama, c.cus_nama)",
+        Nama: "COALESCE(k.kar_nama, c.cus_nama)",
+        Alamat: "COALESCE(k.kar_alamat, c.cus_alamat)",
+        Kota: "c.cus_kota",
+        Telp: "c.cus_telp",
+        Hp: "h.inv_mem_hp",
+        Member: "h.inv_mem_nama",
+        Level: "lvl.level_nama", // <--- LEVEL
+
+        // -- Pembayaran --
+        RpTunai: "h.inv_rptunai", // <--- TUNAI
+        RpVoucher: "h.inv_rpvoucher",
+        RpTransfer: "h.inv_rpcard",
+        NoVoucher: "h.inv_novoucher",
+        NoSetoran: "h.inv_nosetor",
+        NoRekening: "rek.rek_rekening", // <--- REKENING (Butuh Join)
+        Akun: "sh.sh_akun",
+        TglTransfer: "sh.sh_tgltransfer",
+
+        // -- Status & System --
+        SC: "h.inv_sc",
+        Keterangan: "h.inv_ket",
+        Created: "h.date_create",
+        UserModified: "h.user_modified",
+        DateModified: "h.date_modified",
+        Prn: "h.inv_print", // <--- PRINT
+        Puas: "h.inv_puas",
+        Closing: "h.inv_closing", // <--- CLOSING
+
+        // -- Marketplace --
+        Marketplace: "h.inv_mp_nama",
+        NoPesanan: "h.inv_mp_nomor_pesanan",
+        NoResi: "h.inv_mp_resi",
+      };
+
+      for (const [key, filter] of Object.entries(filtersObj)) {
+        let dbField = fieldMap[key];
+
+        // Fallback: Jika filter tidak ada di map, abaikan agar tidak error SQL
+        if (!dbField) continue;
+
+        // A. Multi Select (Checkbox banyak)
+        if (
+          filter.type === "multi" &&
+          Array.isArray(filter.values) &&
+          filter.values.length > 0
+        ) {
+          const placeholders = filter.values.map(() => "?").join(",");
+          dynamicFilter += ` AND ${dbField} IN (${placeholders}) `;
+          params.push(...filter.values);
+        }
+
+        // B. Custom Filter (Input Text / Comparison)
+        else if (
+          filter.type === "custom" &&
+          filter.operator &&
+          filter.value !== undefined
+        ) {
+          const val = filter.value;
+
+          switch (filter.operator) {
+            case "=":
+              dynamicFilter += ` AND ${dbField} = ? `;
+              params.push(val);
+              break;
+            case "!=":
+              dynamicFilter += ` AND ${dbField} <> ? `;
+              params.push(val);
+              break;
+            case "contains":
+              dynamicFilter += ` AND ${dbField} LIKE ? `;
+              params.push(`%${val}%`);
+              break;
+            case "starts":
+              dynamicFilter += ` AND ${dbField} LIKE ? `;
+              params.push(`${val}%`);
+              break;
+            case "ends":
+              dynamicFilter += ` AND ${dbField} LIKE ? `;
+              params.push(`%${val}`);
+              break;
+            case ">":
+              dynamicFilter += ` AND ${dbField} > ? `;
+              params.push(val);
+              break;
+            case ">=":
+              dynamicFilter += ` AND ${dbField} >= ? `;
+              params.push(val);
+              break;
+            case "<":
+              dynamicFilter += ` AND ${dbField} < ? `;
+              params.push(val);
+              break;
+            case "<=":
+              dynamicFilter += ` AND ${dbField} <= ? `;
+              params.push(val);
+              break;
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Error parsing column filters:", e);
+    }
+  }
+
+  // 4. Status Filter Clause (Sisa Piutang)
+  // Ini tetap di layer paling luar karena butuh perhitungan complex
+  let piutangSubQuery = "";
+  if (status === "sisa_piutang" || status === "belum_lunas") {
+    // Logika: Cari invoice yang ada di tabel piutang DAN saldo akhirnya > 100
+    // Menggunakan EXISTS dengan korelasi langsung ke h.inv_nomor
+    piutangSubQuery = `
+      AND EXISTS (
+        SELECT 1 
+        FROM tpiutang_hdr ph
+        LEFT JOIN (
+            SELECT pd_ph_nomor, SUM(pd_debet) as debet, SUM(pd_kredit) as kredit
+            FROM tpiutang_dtl
+            GROUP BY pd_ph_nomor
+        ) pd ON pd.pd_ph_nomor = ph.ph_nomor
+        WHERE ph.ph_inv_nomor = h.inv_nomor
+        AND (IFNULL(pd.debet, 0) - IFNULL(pd.kredit, 0)) > 100
       )
     `;
   }
 
-  // 3. Query Utama (Optimized)
-  // Perubahan: Kita buat CTE "FilteredInvoices" di awal untuk memperkecil scope data.
   const query = `
     WITH 
-    -- [OPTIMASI 1] Filter dulu Header Invoice sesuai Tanggal & Cabang
-    -- Semua perhitungan di bawah hanya akan memproses ID yang ada di sini.
-    FilteredInvoices AS (
-        SELECT h.inv_nomor, h.inv_pro_nomor, h.inv_disc
+    -- [STEP 1] Pagination CTE
+    -- DI SINI KITA LAKUKAN JOIN AGAR FILTER BISA JALAN SEBELUM DI-LIMIT
+    PagedInvoices AS (
+        SELECT h.inv_nomor
         FROM tinv_hdr h
+        -- Join Customer & Karyawan (Untuk filter Nama)
+        LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+        LEFT JOIN hrd2.karyawan k ON k.kar_nik = h.inv_cus_kode
+        LEFT JOIN tcustomer_level lvl ON lvl.level_kode = h.inv_cus_level
+        
+        -- Join SO (Untuk Tgl SO)
+        LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
+        
+        -- Join Pembayaran (Untuk filter Rekening, Akun, Tgl Transfer)
+        LEFT JOIN tsetor_hdr sh ON sh.sh_nomor = h.inv_nosetor
+        LEFT JOIN finance.trekening rek ON rek.rek_kode = sh.sh_akun
+
         WHERE h.inv_sts_pro = 0
           AND h.inv_tanggal BETWEEN ? AND ?
           ${cabangFilter}
+          ${searchFilter}
+          ${dynamicFilter}  -- <--- Filter Kolom disuntikkan di sini
+          ${piutangSubQuery}
+        ORDER BY h.inv_tanggal DESC, h.inv_nomor DESC
+        LIMIT ? OFFSET ? 
     ),
 
-    -- [OPTIMASI 2] Hitung Detail hanya untuk Invoice yang terpilih
+    -- [STEP 2] Ambil Data Lengkap (Sama seperti sebelumnya)
+    FilteredInvoices AS (
+        SELECT h.* FROM tinv_hdr h
+        INNER JOIN PagedInvoices pi ON pi.inv_nomor = h.inv_nomor
+    ),
+
+    -- [STEP 3] Detail Calc (Hitung Total Item)
     DetailCalc AS (
         SELECT 
           d.invd_inv_nomor,
-          -- Logika Promo Lipat langsung di sini
-          IFNULL(p.pro_lipat, 'N') as pro_lipat,
-          SUM(
-             (d.invd_jumlah * d.invd_harga) - (d.invd_jumlah * d.invd_diskon)
-          ) as TotalItemNetto
+          SUM((d.invd_jumlah * d.invd_harga) - (d.invd_jumlah * d.invd_diskon)) as TotalItemNetto
         FROM tinv_dtl d
-        INNER JOIN FilteredInvoices fi ON fi.inv_nomor = d.invd_inv_nomor
-        LEFT JOIN tpromo p ON p.pro_nomor = fi.inv_pro_nomor
+        INNER JOIN PagedInvoices pi ON pi.inv_nomor = d.invd_inv_nomor
         GROUP BY d.invd_inv_nomor
     ),
 
-    -- [OPTIMASI 3] Hitung DP Terpakai hanya untuk Invoice terpilih
-    DPUsed AS (
-        SELECT sd.sd_inv, SUM(sd.sd_bayar) AS dpDipakai
-        FROM tsetor_dtl sd
-        INNER JOIN FilteredInvoices fi ON fi.inv_nomor = sd.sd_inv
-        WHERE sd.sd_ket = 'DP LINK DARI INV'
-        GROUP BY sd.sd_inv
+    -- [STEP 4] Piutang Real (Hitung Saldo)
+    PiutangReal AS (
+        SELECT 
+            ph.ph_inv_nomor,
+            (SUM(pd.pd_debet) - SUM(pd.pd_kredit)) AS SaldoAkhir
+        FROM tpiutang_hdr ph
+        INNER JOIN PagedInvoices pi ON pi.inv_nomor = ph.ph_inv_nomor
+        JOIN tpiutang_dtl pd ON pd.pd_ph_nomor = ph.ph_nomor
+        GROUP BY ph.ph_inv_nomor
     ),
 
-    -- [OPTIMASI 4] Cek Minus Stok (Ini yang biasanya paling berat)
-    -- Kita batasi join hanya ke barang yang ada di invoice terpilih
+    -- [STEP 5] Minus Check
     MinusCheck AS (
         SELECT 
           d.invd_inv_nomor AS Nomor,
           'Y' AS Minus
         FROM tinv_dtl d
-        INNER JOIN FilteredInvoices fi ON fi.inv_nomor = d.invd_inv_nomor
+        INNER JOIN PagedInvoices pi ON pi.inv_nomor = d.invd_inv_nomor
         JOIN tbarangdc b ON b.brg_kode = d.invd_kode
         LEFT JOIN tmasterstok m ON m.mst_brg_kode = d.invd_kode 
              AND m.mst_ukuran = d.invd_ukuran 
@@ -122,25 +326,14 @@ const getList = async (filters) => {
         WHERE b.brg_logstok = 'Y'
         GROUP BY d.invd_inv_nomor
         HAVING SUM(COALESCE(m.mst_stok_in,0) - COALESCE(m.mst_stok_out,0)) < 0
-    ),
-
-    -- [OPTIMASI 5] Hitung Sisa Piutang Real hanya untuk Invoice terpilih
-    PiutangReal AS (
-        SELECT 
-            ph.ph_inv_nomor,
-            (SUM(pd.pd_debet) - SUM(pd.pd_kredit)) AS SaldoAkhir
-        FROM tpiutang_hdr ph
-        INNER JOIN FilteredInvoices fi ON fi.inv_nomor = ph.ph_inv_nomor
-        JOIN tpiutang_dtl pd ON pd.pd_ph_nomor = ph.ph_nomor
-        GROUP BY ph.ph_inv_nomor
     )
 
-    -- QUERY UTAMA: Join kan Header asli dengan hasil kalkulasi di atas
+    -- [STEP 6] SELECT FINAL (Output ke Frontend)
     SELECT 
         h.inv_nomor AS Nomor,
         h.inv_tanggal AS Tanggal,
         
-        -- Cek Posting Jurnal (Subquery ini biasanya cepat jika jur_nomor di-index)
+        -- Logic Posting
         CASE 
             WHEN h.inv_nomor_so <> "" THEN ""
             WHEN h.inv_rptunai = 0 AND h.inv_nosetor = "" THEN ""
@@ -153,13 +346,16 @@ const getList = async (filters) => {
         o.so_tanggal AS TglSO,
         h.inv_top AS Top,
         DATE_FORMAT(DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY), "%d/%m/%Y") AS Tempo,
+        
         h.inv_disc1 AS \`Dis%\`,
         h.inv_disc AS Diskon,
         h.inv_dp AS Dp,
         h.inv_bkrm AS Biayakirim,
 
-        -- Kalkulasi Nominal
+        -- [LOGIC NOMINAL]
         (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0)) AS Nominal,
+        
+        -- [LOGIC PIUTANG]
         (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0)) AS Piutang,
 
         h.inv_mp_nama AS Marketplace,
@@ -167,61 +363,57 @@ const getList = async (filters) => {
         h.inv_mp_resi AS NoResi, 
         h.inv_mp_biaya_platform AS BiayaPlatform,
 
-        -- Kalkulasi Bayar (Nominal - Sisa)
+        -- [LOGIC BAYAR]
         (
-          (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0)) 
-          - 
-          IF(COALESCE(PR.SaldoAkhir, 0) < 0, 0, COALESCE(PR.SaldoAkhir, (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0))))
+           (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0)) 
+           - 
+           IF(COALESCE(PR.SaldoAkhir, 0) < 0, 0, COALESCE(PR.SaldoAkhir, (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0))))
         ) AS Bayar,
 
-        -- Sisa Piutang Logic
+        -- [LOGIC SISA PIUTANG]
         IF(COALESCE(PR.SaldoAkhir, 0) < 0, 0, 
-           COALESCE(PR.SaldoAkhir, 
-             (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0))
-           )
+           COALESCE(PR.SaldoAkhir, (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0)))
         ) AS SisaPiutang,
 
+        -- Customer Info
         h.inv_cus_kode AS Kdcus,
         COALESCE(k.kar_nama, c.cus_nama, 'KARYAWAN (Cek NIK)') AS Customer,
         COALESCE(k.kar_alamat, c.cus_alamat, '') AS Alamat,
         c.cus_kota AS Kota,
         c.cus_telp AS Telp,
-        CONCAT(h.inv_cus_level, " - ", lvl.level_nama) AS xLevel,
+        CONCAT(h.inv_cus_level, " - ", IFNULL(lvl.level_nama, '')) AS xLevel,
+        
         h.inv_mem_hp AS Hp,
         h.inv_mem_nama AS Member,
+        
+        -- System Info
         h.inv_ket AS Keterangan,
         h.inv_rptunai AS RpTunai,
         h.inv_novoucher AS NoVoucher,
         h.inv_rpvoucher AS RpVoucher,
         h.inv_rpcard AS RpTransfer,
         h.inv_nosetor AS NoSetoran,
+        
         sh.sh_tgltransfer AS TglTransfer,
         sh.sh_akun AS Akun,
         rek.rek_rekening AS NoRekening,
+
         h.inv_rj_nomor AS NoRetur,
         h.inv_rj_rp AS RpRetur,
+
         h.inv_sc AS SC,
         h.inv_print AS Prn,
         h.inv_puas AS Puas,
-        h.date_create AS Created,
+        h.date_create AS Created, 
         h.inv_closing AS Closing,
         h.user_modified AS UserModified,
         h.date_modified AS DateModified,
         
-        -- Info Tambahan
         IFNULL(MC.Minus, 'N') AS Minus,
-        (SELECT ii.pd_tanggal 
-         FROM tpiutang_dtl ii 
-         JOIN tpiutang_hdr jj ON jj.ph_nomor = ii.pd_ph_nomor 
-         WHERE jj.ph_inv_nomor = h.inv_nomor AND ii.pd_kredit <> 0 
-         ORDER BY ii.pd_tanggal DESC LIMIT 1
-        ) AS LastPayment
+        (SELECT ii.pd_tanggal FROM tpiutang_dtl ii JOIN tpiutang_hdr jj ON jj.ph_nomor = ii.pd_ph_nomor WHERE jj.ph_inv_nomor = h.inv_nomor AND ii.pd_kredit <> 0 ORDER BY ii.pd_tanggal DESC LIMIT 1) AS LastPayment
 
-    FROM tinv_hdr h
-    -- Join hanya ke invoice yang sudah difilter di awal (FilteredInvoices)
-    -- Ini memaksa MySQL menggunakan index tanggal
-    INNER JOIN FilteredInvoices fi ON fi.inv_nomor = h.inv_nomor
-
+    FROM FilteredInvoices h
+    -- JOIN UTAMA (Untuk Output Final)
     LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
     LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
     LEFT JOIN hrd2.karyawan k ON k.kar_nik = h.inv_cus_kode
@@ -229,19 +421,47 @@ const getList = async (filters) => {
     LEFT JOIN tsetor_hdr sh ON sh.sh_nomor = h.inv_nosetor
     LEFT JOIN finance.trekening rek ON rek.rek_kode = sh.sh_akun
     
-    -- Join Hasil CTE
+    -- JOIN CTE CALCULATIONS
     LEFT JOIN DetailCalc DC ON DC.invd_inv_nomor = h.inv_nomor
     LEFT JOIN PiutangReal PR ON PR.ph_inv_nomor = h.inv_nomor
-    LEFT JOIN DPUsed DP ON DP.sd_inv = h.inv_nomor
     LEFT JOIN MinusCheck MC ON MC.Nomor = h.inv_nomor
-
-    WHERE 1=1 
-      ${statusFilterClause}
+    
+    WHERE 1=1
     ORDER BY h.inv_tanggal DESC, h.inv_nomor DESC;
   `;
 
+  // Push params
+  params.push(parseInt(limit), parseInt(offset));
+
   const [rows] = await pool.query(query, params);
-  return rows;
+
+  // --- QUERY TOTAL (Untuk Pagination) ---
+  // Kita harus duplicate logic JOIN PagedInvoices agar filter COUNT akurat
+  const countQuery = `
+    SELECT COUNT(*) as total 
+    FROM tinv_hdr h 
+    LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+    LEFT JOIN hrd2.karyawan k ON k.kar_nik = h.inv_cus_kode
+    LEFT JOIN tcustomer_level lvl ON lvl.level_kode = h.inv_cus_level
+    LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
+    LEFT JOIN tsetor_hdr sh ON sh.sh_nomor = h.inv_nosetor
+    LEFT JOIN finance.trekening rek ON rek.rek_kode = sh.sh_akun
+    WHERE h.inv_sts_pro = 0 
+      AND h.inv_tanggal BETWEEN ? AND ?
+      ${cabangFilter}
+      ${searchFilter}
+      ${dynamicFilter}
+      ${piutangSubQuery}
+  `;
+
+  // Params untuk count (buang 2 terakhir: limit & offset)
+  const countParams = params.slice(0, params.length - 2);
+  const [countRows] = await pool.query(countQuery, countParams);
+
+  return {
+    data: rows,
+    total: countRows[0].total,
+  };
 };
 
 const getDetails = async (nomor) => {
@@ -355,34 +575,311 @@ const remove = async (nomor, user) => {
   }
 };
 
-const getExportDetails = async (filters) => {
-  const { startDate, endDate, cabang } = filters;
+const getExportHeader = async (filters) => {
+  const { startDate, endDate, cabang, status, search, columnFilters } = filters;
 
-  // Logika Filter Cabang (sesuaikan jika perlu logic khusus untuk 'ALL' atau 'KDC')
-  let branchFilter = "AND h.inv_cab = ?";
-  let params = [startDate, endDate, cabang];
+  // [PENTING] Jangan ambil variable 'page' atau 'limit' di sini.
+  // Kita ingin ambil SEMUA data.
+
+  // [SETUP PARAMS] Tambahkan jam agar index tanggal terbaca optimal & akurat
+  const startDateTime = `${startDate} 00:00:00`;
+  const endDateTime = `${endDate} 23:59:59`;
+  const params = [startDateTime, endDateTime];
+
+  // 1. Filter Cabang
+  let cabangFilter = "";
+  if (cabang && cabang !== "KDC" && cabang !== "ALL") {
+    cabangFilter = " AND h.inv_cab = ?";
+    params.push(cabang);
+  }
+
+  // 2. Global Search
+  let searchFilter = "";
+  if (search) {
+    searchFilter = `
+      AND (
+        h.inv_nomor LIKE ? OR 
+        c.cus_nama LIKE ? OR 
+        h.inv_cus_kode LIKE ? OR
+        h.inv_nomor_so LIKE ?
+      )
+    `;
+    const term = `%${search}%`;
+    params.push(term, term, term, term);
+  }
+
+  // 3. Dynamic Column Filters
+  let dynamicFilter = "";
+  if (columnFilters) {
+    try {
+      const filtersObj = JSON.parse(columnFilters);
+      // Mapping field disederhanakan untuk header
+      const fieldMap = {
+        Nomor: "h.inv_nomor",
+        Customer: "c.cus_nama",
+        Kdcus: "h.inv_cus_kode",
+        NomorSO: "h.inv_nomor_so",
+      };
+
+      for (const [key, filter] of Object.entries(filtersObj)) {
+        let dbField = fieldMap[key];
+        if (!dbField) continue;
+        if (filter.type === "multi" && filter.values?.length) {
+          dynamicFilter += ` AND ${dbField} IN (${filter.values
+            .map(() => "?")
+            .join(",")}) `;
+          params.push(...filter.values);
+        } else if (filter.type === "custom" && filter.value !== undefined) {
+          const val = filter.value;
+          switch (filter.operator) {
+            case "=":
+              dynamicFilter += ` AND ${dbField} = ? `;
+              params.push(val);
+              break;
+            case "contains":
+              dynamicFilter += ` AND ${dbField} LIKE ? `;
+              params.push(`%${val}%`);
+              break;
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 4. Status Filter Clause (Sisa Piutang)
+  let piutangSubQuery = "";
+  if (status === "sisa_piutang" || status === "belum_lunas") {
+    piutangSubQuery = `
+      AND EXISTS (
+        SELECT 1 FROM tpiutang_hdr ph
+        LEFT JOIN (
+            SELECT pd_ph_nomor, SUM(pd_debet) as debet, SUM(pd_kredit) as kredit
+            FROM tpiutang_dtl GROUP BY pd_ph_nomor
+        ) pd ON pd.pd_ph_nomor = ph.ph_nomor
+        WHERE ph.ph_inv_nomor = h.inv_nomor
+        AND (IFNULL(pd.debet, 0) - IFNULL(pd.kredit, 0)) > 100
+      )
+    `;
+  }
+
+  // 5. Query Utama (CTE)
+  // [FIX] Hapus LIMIT ? OFFSET ? di dalam PagedInvoices dan ganti nama CTE biar tidak bingung
+  const query = `
+    WITH 
+    BaseInvoices AS (
+        SELECT h.inv_nomor
+        FROM tinv_hdr h
+        LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+        LEFT JOIN hrd2.karyawan k ON k.kar_nik = h.inv_cus_kode
+        LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
+        WHERE h.inv_sts_pro = 0
+          -- Gunakan format DateTime lengkap agar index jalan
+          AND h.inv_tanggal BETWEEN ? AND ?
+          ${cabangFilter}
+          ${searchFilter}
+          ${dynamicFilter}
+          ${piutangSubQuery}
+        -- [PENTING] TIDAK ADA LIMIT DI SINI
+    ),
+
+    -- Hitung Total Item
+    DetailCalc AS (
+        SELECT d.invd_inv_nomor,
+          SUM((d.invd_jumlah * d.invd_harga) - (d.invd_jumlah * d.invd_diskon)) as TotalItemNetto
+        FROM tinv_dtl d
+        INNER JOIN BaseInvoices fb ON fb.inv_nomor = d.invd_inv_nomor
+        GROUP BY d.invd_inv_nomor
+    ),
+
+    -- Hitung Saldo Piutang
+    PiutangReal AS (
+        SELECT ph.ph_inv_nomor, (SUM(pd.pd_debet) - SUM(pd.pd_kredit)) AS SaldoAkhir
+        FROM tpiutang_hdr ph
+        INNER JOIN BaseInvoices fb ON fb.inv_nomor = ph.ph_inv_nomor
+        JOIN tpiutang_dtl pd ON pd.pd_ph_nomor = ph.ph_nomor
+        GROUP BY ph.ph_inv_nomor
+    )
+
+    SELECT 
+        h.inv_nomor AS 'Nomor',
+        DATE_FORMAT(h.inv_tanggal, '%Y-%m-%d') AS 'Tanggal',
+        h.inv_nomor_so AS 'Nomor SO',
+        DATE_FORMAT(o.so_tanggal, '%Y-%m-%d') AS 'Tgl SO',
+        h.inv_top AS 'TOP',
+        DATE_FORMAT(DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY), '%Y-%m-%d') AS 'Jatuh Tempo',
+        
+        -- Customer
+        h.inv_cus_kode AS 'Kode Customer',
+        COALESCE(k.kar_nama, c.cus_nama, 'KARYAWAN') AS 'Nama Customer',
+        c.cus_kota AS 'Kota',
+
+        -- Keuangan
+        h.inv_disc AS 'Diskon',
+        h.inv_dp AS 'DP',
+        h.inv_bkrm AS 'Biaya Kirim',
+        h.inv_mp_biaya_platform AS 'Biaya Platform',
+
+        -- Nominal Netto
+        (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0)) AS 'Nominal',
+
+        -- Bayar
+        (
+           (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0)) 
+           - 
+           IF(COALESCE(PR.SaldoAkhir, 0) < 0, 0, COALESCE(PR.SaldoAkhir, (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0))))
+        ) AS 'Bayar',
+
+        -- Sisa Piutang
+        IF(COALESCE(PR.SaldoAkhir, 0) < 0, 0, 
+           COALESCE(PR.SaldoAkhir, (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0)))
+        ) AS 'Sisa Piutang'
+
+    FROM tinv_hdr h
+    INNER JOIN BaseInvoices fb ON fb.inv_nomor = h.inv_nomor
+    LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+    LEFT JOIN hrd2.karyawan k ON k.kar_nik = h.inv_cus_kode
+    LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
+    LEFT JOIN DetailCalc DC ON DC.invd_inv_nomor = h.inv_nomor
+    LEFT JOIN PiutangReal PR ON PR.ph_inv_nomor = h.inv_nomor
+    
+    ORDER BY h.inv_tanggal DESC, h.inv_nomor DESC;
+  `;
+
+  // [PENTING] Jangan push limit & offset ke params
+  // params.push(limit, offset); <-- JANGAN ADA INI
+
+  const [rows] = await pool.query(query, params);
+  return rows;
+};
+
+const getExportDetails = async (filters) => {
+  const { startDate, endDate, cabang, status, search, columnFilters } = filters;
+
+  // 1. Params Dasar (Tanggal)
+  const params = [startDate, endDate];
+
+  // 2. Filter Cabang
+  let branchFilter = "";
+  if (cabang && cabang !== "KDC" && cabang !== "ALL") {
+    branchFilter = " AND h.inv_cab = ? ";
+    params.push(cabang);
+  }
+
+  // 3. Filter Pencarian Global
+  let searchFilter = "";
+  if (search) {
+    searchFilter = `
+      AND (
+        h.inv_nomor LIKE ? OR 
+        c.cus_nama LIKE ? OR 
+        h.inv_cus_kode LIKE ? OR
+        h.inv_nomor_so LIKE ?
+      )
+    `;
+    const term = `%${search}%`;
+    params.push(term, term, term, term);
+  }
+
+  // 4. Dynamic Column Filters (Opsional)
+  let dynamicFilter = "";
+  if (columnFilters) {
+    try {
+      const filtersObj = JSON.parse(columnFilters);
+      const fieldMap = {
+        Nomor: "h.inv_nomor",
+        Customer: "c.cus_nama",
+        Kdcus: "h.inv_cus_kode",
+        NomorSO: "h.inv_nomor_so",
+      };
+
+      for (const [key, filter] of Object.entries(filtersObj)) {
+        let dbField = fieldMap[key];
+        if (!dbField) continue;
+
+        if (
+          filter.type === "multi" &&
+          Array.isArray(filter.values) &&
+          filter.values.length > 0
+        ) {
+          const placeholders = filter.values.map(() => "?").join(",");
+          dynamicFilter += ` AND ${dbField} IN (${placeholders}) `;
+          params.push(...filter.values);
+        } else if (
+          filter.type === "custom" &&
+          filter.operator &&
+          filter.value !== undefined
+        ) {
+          const val = filter.value;
+          switch (filter.operator) {
+            case "=":
+              dynamicFilter += ` AND ${dbField} = ? `;
+              params.push(val);
+              break;
+            case "contains":
+              dynamicFilter += ` AND ${dbField} LIKE ? `;
+              params.push(`%${val}%`);
+              break;
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 5. Filter Sisa Piutang
+  let piutangSubQuery = "";
+  if (status === "sisa_piutang" || status === "belum_lunas") {
+    piutangSubQuery = `
+      AND EXISTS (
+        SELECT 1 
+        FROM tpiutang_hdr ph
+        LEFT JOIN (
+            SELECT pd_ph_nomor, SUM(pd_debet) as debet, SUM(pd_kredit) as kredit
+            FROM tpiutang_dtl
+            GROUP BY pd_ph_nomor
+        ) pd ON pd.pd_ph_nomor = ph.ph_nomor
+        WHERE ph.ph_inv_nomor = h.inv_nomor
+        AND (IFNULL(pd.debet, 0) - IFNULL(pd.kredit, 0)) > 100
+      )
+    `;
+  }
 
   const query = `
         SELECT 
             h.inv_nomor AS 'Nomor Invoice',
-            h.inv_tanggal AS 'Tanggal',
+            
+            -- [FIX] Gunakan format ISO YYYY-MM-DD agar JS Frontend bisa membacanya
+            DATE_FORMAT(h.inv_tanggal, '%Y-%m-%d') AS 'Tanggal',
+            
             h.inv_nomor_so AS 'Nomor SO',
             c.cus_nama AS 'Customer',
             d.invd_kode AS 'Kode Barang',
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS 'Nama Barang',
+            
+            TRIM(CONCAT(
+              IFNULL(a.brg_jeniskaos,''), " ", 
+              IFNULL(a.brg_tipe,''), " ", 
+              IFNULL(a.brg_lengan,''), " ", 
+              IFNULL(a.brg_jeniskain,''), " ", 
+              IFNULL(a.brg_warna,'')
+            )) AS 'Nama Barang',
+            
             d.invd_ukuran AS 'Ukuran',
             d.invd_jumlah AS 'Jumlah',
             d.invd_harga AS 'Harga',
             d.invd_diskon AS 'Diskon Rp',
             (d.invd_jumlah * (d.invd_harga - d.invd_diskon)) AS 'Total'
+
         FROM tinv_hdr h
         JOIN tinv_dtl d ON h.inv_nomor = d.invd_inv_nomor
         LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
         LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
+        
         WHERE h.inv_sts_pro = 0
-          -- [PERBAIKAN] Gunakan DATE() agar jam diabaikan
           AND DATE(h.inv_tanggal) BETWEEN ? AND ?
           ${branchFilter}
+          ${searchFilter}
+          ${dynamicFilter}
+          ${piutangSubQuery} -- Pastikan ini aktif untuk filter piutang
+          
         ORDER BY h.inv_nomor, d.invd_nourut;
     `;
 
@@ -576,6 +1073,7 @@ module.exports = {
   getList,
   getDetails,
   remove,
+  getExportHeader,
   getExportDetails,
   checkIfInvoiceInFsk,
   changePaymentMethod,

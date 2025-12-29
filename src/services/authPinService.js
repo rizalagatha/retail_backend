@@ -5,12 +5,9 @@ const fcmService = require("../services/fcmService");
 // Helper untuk generate Nomor Urut: CAB.AUTH.YYMM.0001
 const generateAuthNumber = async (cabang) => {
   const date = new Date();
-  const yyMM = format(date, "yyMM"); // Contoh: 2512 (Des 2025)
-
-  // Format Prefix: K06.AUTH.2512.
+  const yyMM = format(date, "yyMM");
   const prefix = `${cabang}.AUTH.${yyMM}.`;
 
-  // Cari nomor terakhir di database berdasarkan prefix bulan ini
   const query = `
         SELECT o_nomor 
         FROM totorisasi 
@@ -22,37 +19,42 @@ const generateAuthNumber = async (cabang) => {
   const [rows] = await pool.query(query, [`${prefix}%`]);
 
   let sequence = 1;
-
   if (rows.length > 0) {
-    // Jika ada data (misal: K06.AUTH.2512.0005)
     const lastNomor = rows[0].o_nomor;
-    const lastSeqString = lastNomor.split(".").pop(); // Ambil 0005
+    const lastSeqString = lastNomor.split(".").pop();
     const lastSeq = parseInt(lastSeqString, 10);
-
-    if (!isNaN(lastSeq)) {
-      sequence = lastSeq + 1;
-    }
+    if (!isNaN(lastSeq)) sequence = lastSeq + 1;
   }
 
-  // Pad dengan 0 di depan (misal: 1 -> 0001)
   const formattedSeq = sequence.toString().padStart(4, "0");
-
   return `${prefix}${formattedSeq}`;
 };
 
 const authPinService = {
   async createRequest(payload) {
-    // [UPDATE] Tambahkan barcode dari payload
-    const { transaksi, jenis, keterangan, nominal, cabang, user, barcode } =
-      payload;
+    // 1. Destructure Payload
+    const {
+      transaksi,
+      jenis,
+      keterangan,
+      nominal,
+      cabang,
+      user,
+      barcode,
+      target_cabang,
+    } = payload;
 
+    // Debugging Payload Masuk
+    console.log("--- CREATE AUTH REQUEST ---");
+    console.log("Jenis:", jenis);
+    console.log("Target Cabang:", target_cabang);
+
+    // 2. Generate Nomor & Insert DB
     const authNomor = await generateAuthNumber(cabang);
-
-    // [UPDATE] Tambahkan o_barcode pada INSERT
     const query = `
             INSERT INTO totorisasi 
-            (o_nomor, o_transaksi, o_jenis, o_ket, o_nominal, o_cab, o_status, o_requester, o_created, o_pin, o_barcode)
-            VALUES (?, ?, ?, ?, ?, ?, 'P', ?, NOW(), '-', ?)
+            (o_nomor, o_transaksi, o_jenis, o_ket, o_nominal, o_cab, o_status, o_requester, o_created, o_pin, o_barcode, o_target)
+            VALUES (?, ?, ?, ?, ?, ?, 'P', ?, NOW(), '-', ?, ?)
         `;
 
     await pool.query(query, [
@@ -63,66 +65,69 @@ const authPinService = {
       nominal || 0,
       cabang,
       user,
-      barcode || "", // Simpan barcode (default string kosong)
+      barcode || "",
+      target_cabang || null,
     ]);
 
     // ------------------------------------------------------------------
-    // [BARU] LOGIKA KIRIM NOTIFIKASI KE MANAGER (FIREBASE)
+    // 3. LOGIKA NOTIFIKASI (FIXED)
     // ------------------------------------------------------------------
     try {
-      // A. Cari Token HP Manager dari tabel tuser
-      // Logic: Ambil user dengan level MANAGER.
-      // Jika ingin spesifik cabang, tambahkan: AND user_cabang = ? (isi dengan cabang)
-      // Disini saya buat agar semua MANAGER menerima notif (atau sesuaikan kebutuhan)
-      const [managers] = await pool.query(
-        `SELECT DISTINCT user_fcm_token FROM tuser 
-          WHERE user_kode IN ('HARIS', 'DARUL') 
-          AND user_fcm_token IS NOT NULL 
-          AND user_fcm_token != ''`
-      );
+      const title = `Permintaan Otorisasi: ${jenis.replace(/_/g, " ")}`;
+      // Body notifikasi disesuaikan agar jelas untuk penerima
+      const body = `Req: ${user} (Dari: ${cabang})\nKet: ${
+        keterangan.split("\n")[0]
+      }`;
 
-      if (managers.length > 0) {
-        console.log(
-          `[FCM] Mengirim notif ke ${managers.length} orang (HARIS/DARUL).`
+      const dataPayload = {
+        jenis: String(jenis),
+        nominal: String(nominal),
+        transaksi: String(transaksi || ""),
+        authId: String(authNomor),
+      };
+
+      // [CRITICAL FIX] Pastikan pengecekan string 'AMBIL_BARANG' benar
+      if (String(jenis).trim() === "AMBIL_BARANG" && target_cabang) {
+        // --- ALUR 1: KIRIM KE USER TOKO (VIA TOPIC) ---
+        const targetTopic = `approval_${target_cabang}`;
+        console.log(`[FCM-ROUTING] Mode: TARGET STORE via TOPIC`);
+        console.log(`[FCM-ROUTING] Sending to Topic: ${targetTopic}`);
+
+        // Kirim ke Topic
+        await fcmService.sendToTopic(targetTopic, title, body, dataPayload);
+      } else {
+        // --- ALUR 2: KIRIM KE MANAGER (HARIS/DARUL) ---
+        console.log(`[FCM-ROUTING] Mode: DEFAULT MANAGER (HARIS/DARUL)`);
+
+        const [managers] = await pool.query(
+          `SELECT DISTINCT user_fcm_token FROM tuser 
+             WHERE user_kode IN ('HARIS', 'DARUL') 
+             AND user_fcm_token IS NOT NULL 
+             AND user_fcm_token != ''`
         );
 
-        const title = `Permintaan Otorisasi: ${jenis.replace(/_/g, " ")}`;
-        const body = `Req: ${user} (Cab: ${cabang})\nNominal: Rp ${Number(
-          nominal
-        ).toLocaleString("id-ID")}\n${keterangan.split("\n")[0]}`;
-
-        // Payload Data (untuk dibuka di HP)
-        const dataPayload = {
-          jenis: String(jenis),
-          nominal: String(nominal),
-          transaksi: String(transaksi || ""),
-          keterangan: String(keterangan || ""),
-        };
-
-        // B. Loop & Kirim
-        // Kita gunakan Promise.all agar tidak memblokir response terlalu lama
-        const sendPromises = managers.map((mgr) =>
-          fcmService.sendNotification(
-            mgr.user_fcm_token,
-            title,
-            body,
-            dataPayload
-          )
-        );
-
-        // Jalankan background (jangan await jika ingin response API cepat,
-        // tapi await lebih aman untuk debugging awal)
-        await Promise.all(sendPromises);
+        if (managers.length > 0) {
+          console.log(`[FCM] Sending direct to ${managers.length} managers.`);
+          const sendPromises = managers.map((mgr) =>
+            fcmService.sendNotification(
+              mgr.user_fcm_token,
+              title,
+              body,
+              dataPayload
+            )
+          );
+          await Promise.all(sendPromises);
+        } else {
+          console.log("[FCM] Tidak ada token manager yang ditemukan.");
+        }
       }
     } catch (fcmError) {
-      // Jangan biarkan error notifikasi menggagalkan transaksi utama
       console.error("[FCM] Gagal mengirim notifikasi (Ignored):", fcmError);
     }
-    // ------------------------------------------------------------------
 
     return {
       success: true,
-      message: "Permintaan otorisasi terkirim ke Manager.",
+      message: "Permintaan otorisasi terkirim.",
       authNomor: authNomor,
     };
   },
@@ -132,16 +137,13 @@ const authPinService = {
     const [rows] = await pool.query(query, [authNomor]);
 
     if (rows.length === 0) {
-      // Opsional: return status NOT_FOUND atau error
       return { status: "NOT_FOUND", isApproved: false };
     }
 
     const data = rows[0];
-
     let statusText = "PENDING";
     let isApproved = false;
 
-    // [FIX] Cek menggunakan String 'Y' dan 'N' (bukan angka 1 atau 2)
     if (data.o_status === "Y") {
       statusText = "APPROVED";
       isApproved = true;
@@ -157,26 +159,35 @@ const authPinService = {
     };
   },
 
-  async getPendingRequests(cabang) {
-    // [UBAH] Filter WHERE o_status = 'P'
+  async getPendingRequests(userCabang) {
+    // [LOGIC BARU YANG BENAR]
+
     let query = `SELECT * FROM totorisasi WHERE o_status = 'P' `;
     const params = [];
 
-    if (cabang !== "KDC") {
-      query += `AND o_cab = ? `;
-      params.push(cabang);
+    if (userCabang === "KDC") {
+      // MANAGER (HARIS):
+      // Hanya lihat request yang TIDAK punya target spesifik ke toko lain.
+      // Artinya: o_target IS NULL (internal) ATAU o_target = 'KDC'
+      // JANGAN tampilkan jika o_target = 'K01', 'K02', dst.
+      query += ` AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '') `;
+    } else {
+      // USER TOKO (TITA - K01):
+      // 1. Lihat request yang DITUJUKAN ke saya (o_target = 'K01') -> INI KASUS AMBIL BARANG
+      // 2. Lihat request yang SAYA BUAT sendiri (o_cab = 'K01') -> KASUS OTORISASI INTERNAL
+      query += ` AND (o_target = ? OR (o_cab = ? AND (o_target IS NULL OR o_target = ''))) `;
+      params.push(userCabang, userCabang);
     }
 
-    query += `ORDER BY o_created DESC`;
+    query += ` ORDER BY o_created DESC`;
+
+    console.log("[DEBUG SQL] GetPending:", query, params); // Cek log ini di terminal backend
 
     const [rows] = await pool.query(query, params);
     return rows;
   },
 
   async processRequest(authNomor, managerUser, action) {
-    // [UBAH] Mapping Action ke Huruf
-    // APPROVE -> 'Y'
-    // REJECT  -> 'N'
     const newStatus = action === "APPROVE" ? "Y" : "N";
 
     const query = `
@@ -185,7 +196,7 @@ const authPinService = {
                 o_status = ?, 
                 o_approver = ?, 
                 o_approved_at = NOW()
-            WHERE o_nomor = ? AND o_status = 'P'  -- Pastikan hanya update yang masih 'P'
+            WHERE o_nomor = ? AND o_status = 'P'
         `;
 
     const [result] = await pool.query(query, [

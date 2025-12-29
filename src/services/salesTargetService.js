@@ -3,108 +3,176 @@ const pool = require("../config/database");
 const getList = async (filters) => {
   const { tahun, bulan } = filters;
 
-  // Query ini dirombak total untuk memastikan hanya cabang dengan data yang muncul
   const query = `
-        WITH SalesData AS (
+        WITH 
+        -- [BASE 1] Penjualan Bersih (Sama seperti v_nominal di Delphi)
+        -- Logika: Sales Kotor - Diskon Faktur - Biaya MP - PPN - Retur
+        InvoiceNetto AS (
             SELECT 
-                LEFT(inv_nomor, 3) AS cabang,
-                YEAR(inv_tanggal) AS tahun,
-                MONTH(inv_tanggal) AS bulan,
-                SUM(invd_jumlah) as qty,
-                SUM(
-                    (invd_harga - invd_diskon) * invd_jumlah
-                ) - (inv_disc / (SELECT COUNT(*) FROM tinv_dtl i WHERE i.invd_inv_nomor = h.inv_nomor)) AS nominal
+                LEFT(h.inv_nomor, 3) AS cabang,
+                YEAR(h.inv_tanggal) AS tahun,
+                MONTH(h.inv_tanggal) AS bulan,
+                SUM(d.invd_jumlah) AS qty,
+                (
+                    SUM((d.invd_harga - d.invd_diskon) * d.invd_jumlah) 
+                    - COALESCE(h.inv_disc, 0)
+                    - COALESCE(h.inv_mp_biaya_platform, 0)
+                ) AS nominal_sales
             FROM tinv_hdr h
             JOIN tinv_dtl d ON h.inv_nomor = d.invd_inv_nomor
             WHERE h.inv_sts_pro = 0
-            GROUP BY h.inv_nomor
+            GROUP BY LEFT(h.inv_nomor, 3), YEAR(h.inv_tanggal), MONTH(h.inv_tanggal)
         ),
+        ReturNetto AS (
+            SELECT 
+                LEFT(rh.rj_nomor, 3) AS cabang,
+                YEAR(rh.rj_tanggal) AS tahun,
+                MONTH(rh.rj_tanggal) AS bulan,
+                0 AS qty,
+                -SUM(rd.rjd_jumlah * (rd.rjd_harga - rd.rjd_diskon)) AS nominal_retur
+            FROM trj_hdr rh
+            JOIN trj_dtl rd ON rh.rj_nomor = rd.rjd_nomor
+            GROUP BY LEFT(rh.rj_nomor, 3), YEAR(rh.rj_tanggal), MONTH(rh.rj_tanggal)
+        ),
+        -- v_nominal (Gabungan Sales & Retur)
+        V_Nominal AS (
+            SELECT cabang, tahun, bulan, SUM(qty) as jumlah, SUM(nominal_sales) as nominal FROM InvoiceNetto GROUP BY cabang, tahun, bulan
+            UNION ALL
+            SELECT cabang, tahun, bulan, SUM(qty) as jumlah, SUM(nominal_retur) as nominal FROM ReturNetto GROUP BY cabang, tahun, bulan
+        ),
+        -- Aggregated V_Nominal (karena UNION ALL bisa duplikat row per cabang/bulan)
+        V_Nominal_Agg AS (
+            SELECT cabang, tahun, bulan, SUM(jumlah) as jumlah, SUM(nominal) as nominal
+            FROM V_Nominal
+            GROUP BY cabang, tahun, bulan
+        ),
+
+        -- [BASE 2] Target Omset (kpi.ttarget_kaosan)
         TargetData AS (
             SELECT kode_gudang AS cabang, tahun, bulan, SUM(target_omset) AS target
             FROM kpi.ttarget_kaosan
-            GROUP BY cabang, tahun, bulan
+            GROUP BY kode_gudang, tahun, bulan
         ),
-        BulanIni AS (
-            SELECT cabang, SUM(qty) AS jumlah, SUM(nominal) AS nominal
-            FROM SalesData WHERE tahun = ? AND bulan = ? GROUP BY cabang
+
+        -- =========================================================
+        -- MAPPING LOGIKA DELPHI (A, B, C, D, E, F, G)
+        -- =========================================================
+
+        -- A: Bulan Ini (Actual)
+        Data_A AS (
+            SELECT cabang, jumlah, nominal FROM V_Nominal_Agg WHERE tahun = ? AND bulan = ?
         ),
-        BulanLalu AS (
-            SELECT cabang, SUM(qty) AS jumlah, SUM(nominal) AS nominal
-            FROM SalesData 
+        -- B: Target Bulan Ini
+        Data_B AS (
+            SELECT cabang, target FROM TargetData WHERE tahun = ? AND bulan = ?
+        ),
+        -- C: Bulan Lalu (Actual)
+        Data_C AS (
+            SELECT cabang, jumlah, nominal FROM V_Nominal_Agg 
             WHERE (tahun = ? AND bulan = ? - 1) OR (tahun = ? - 1 AND bulan = 12 AND ? = 1)
+        ),
+        -- D: Kumulatif s.d Bulan Ini (Actual)
+        Data_D AS (
+            SELECT cabang, SUM(nominal) as nominal 
+            FROM V_Nominal_Agg WHERE tahun = ? AND bulan <= ? 
             GROUP BY cabang
         ),
-        KumulatifBulanIni AS (
-            SELECT cabang, SUM(nominal) AS nominal
-            FROM SalesData WHERE tahun = ? AND bulan <= ? GROUP BY cabang
+        -- E: Target Kumulatif s.d Bulan Ini
+        Data_E AS (
+            SELECT cabang, SUM(target) as target 
+            FROM TargetData WHERE tahun = ? AND bulan <= ? 
+            GROUP BY cabang
         ),
-        BulanIniTahunLalu AS (
-            SELECT cabang, SUM(nominal) AS nominal
-            FROM SalesData WHERE tahun = ? - 1 AND bulan = ? GROUP BY cabang
+        -- F: Bulan Ini Tahun Lalu (Actual)
+        Data_F AS (
+            SELECT cabang, nominal FROM V_Nominal_Agg WHERE tahun = ? - 1 AND bulan = ?
         ),
-        TargetBulanIni AS (
-            SELECT cabang, SUM(target) AS target_omset FROM TargetData WHERE tahun = ? AND bulan = ? GROUP BY cabang
+        -- G: Target Akhir Tahun (Full Year Target)
+        Data_G AS (
+            SELECT cabang, SUM(target) as target 
+            FROM TargetData WHERE tahun = ? 
+            GROUP BY cabang
         ),
-        TargetKumulatif AS (
-            SELECT cabang, SUM(target) AS target_omset FROM TargetData WHERE tahun = ? AND bulan <= ? GROUP BY cabang
-        ),
-        TargetAkhirTahun AS (
-            SELECT cabang, SUM(target) AS target_omset FROM TargetData WHERE tahun = ? GROUP BY cabang
-        ),
-        -- KUMPULKAN SEMUA CABANG YANG PUNYA DATA
-        RelevantBranches AS (
-            SELECT cabang FROM BulanIni
-            UNION
-            SELECT cabang FROM BulanLalu
-            UNION
-            SELECT cabang FROM TargetBulanIni
+
+        -- List Semua Cabang
+        AllBranches AS (
+            SELECT gdg_kode AS cabang, gdg_nama FROM tgudang
+            -- Opsional: Filter cabang aktif saja atau yang ada transaksi
         )
-        -- QUERY UTAMA SEKARANG DIMULAI DARI CABANG YANG RELEVAN
+
+        -- SELECT FINAL (Sesuai output Delphi)
         SELECT 
-            ? AS tahun,  
+            ? AS tahun,
             ? AS bulan,
-            rb.cabang AS kode_cabang,
-            g.gdg_nama AS nama_cabang,
-            IFNULL(bi.jumlah, 0) AS qty_bulan_ini,
-            IFNULL(bi.nominal, 0) AS nominal_bulan_ini,
-            IFNULL(tbi.target_omset, 0) AS target_bulan_ini,
-            IFNULL(bl.jumlah, 0) AS qty_bulan_lalu,
-            IFNULL(bl.nominal, 0) AS nominal_bulan_lalu,
-            IFNULL(kbi.nominal, 0) AS realisasi_kumulatif,
-            IFNULL(tk.target_omset, 0) AS target_kumulatif,
-            IFNULL(bitl.nominal, 0) AS realisasi_bulan_ini_thn_lalu,
-            IFNULL(tat.target_omset, 0) AS target_akhir_tahun,
-            0 AS realisasi_akhir_tahun
-        FROM RelevantBranches rb
-        JOIN tgudang g ON rb.cabang = g.gdg_kode
-        LEFT JOIN BulanIni bi ON rb.cabang = bi.cabang
-        LEFT JOIN BulanLalu bl ON rb.cabang = bl.cabang
-        LEFT JOIN KumulatifBulanIni kbi ON rb.cabang = kbi.cabang
-        LEFT JOIN BulanIniTahunLalu bitl ON rb.cabang = bitl.cabang
-        LEFT JOIN TargetBulanIni tbi ON rb.cabang = tbi.cabang
-        LEFT JOIN TargetKumulatif tk ON rb.cabang = tk.cabang
-        LEFT JOIN TargetAkhirTahun tat ON rb.cabang = tat.cabang
-        ORDER BY rb.cabang;
+            ab.cabang AS kode_cabang,
+            ab.gdg_nama AS nama_cabang,
+
+            -- A & B (Bulan Ini)
+            IFNULL(a.jumlah, 0) AS qty_bulan_ini,
+            IFNULL(a.nominal, 0) AS nominal_bulan_ini,
+            IFNULL(b.target, 0) AS target_bulan_ini,
+            
+            -- C (Bulan Lalu)
+            IFNULL(c.jumlah, 0) AS qty_bulan_lalu,
+            IFNULL(c.nominal, 0) AS nominal_bulan_lalu,
+
+            -- D & E (Kumulatif)
+            IFNULL(d.nominal, 0) AS realisasi_kumulatif,
+            IFNULL(e.target, 0) AS target_kumulatif,
+
+            -- F (Tahun Lalu)
+            IFNULL(f.nominal, 0) AS realisasi_bulan_ini_thn_lalu,
+
+            -- G (Akhir Tahun)
+            IFNULL(g.target, 0) AS target_akhir_tahun,
+            0 AS realisasi_akhir_tahun -- Placeholder (Delphi logic: nominal4 (d) / target4 (g))
+
+        FROM AllBranches ab
+        LEFT JOIN Data_A a ON ab.cabang = a.cabang
+        LEFT JOIN Data_B b ON ab.cabang = b.cabang
+        LEFT JOIN Data_C c ON ab.cabang = c.cabang
+        LEFT JOIN Data_D d ON ab.cabang = d.cabang
+        LEFT JOIN Data_E e ON ab.cabang = e.cabang
+        LEFT JOIN Data_F f ON ab.cabang = f.cabang
+        LEFT JOIN Data_G g ON ab.cabang = g.cabang
+        
+        -- Filter agar hanya muncul cabang yang punya data (Sesuai WHERE di Delphi)
+        WHERE (
+            IFNULL(a.nominal, 0) > 0 OR 
+            IFNULL(b.target, 0) > 0 OR 
+            IFNULL(c.nominal, 0) > 0 OR 
+            IFNULL(d.nominal, 0) > 0
+        )
+        ORDER BY ab.cabang;
     `;
 
   const params = [
+    // Params A (Bulan Ini)
+    tahun,
+    bulan,
+    // Params B (Target Bulan Ini)
+    tahun,
+    bulan,
+    // Params C (Bulan Lalu - Handle Januari)
     tahun,
     bulan,
     tahun,
-    bulan, // BulanIni
+    bulan,
+    // Params D (Kumulatif Actual)
     tahun,
     bulan,
+    // Params E (Kumulatif Target)
     tahun,
-    bulan, // BulanLalu
+    bulan,
+    // Params F (Tahun Lalu)
     tahun,
-    bulan, // KumulatifBulanIni
+    bulan,
+    // Params G (Target Akhir Tahun)
     tahun,
-    bulan, // BulanIniTahunLalu
+
+    // Select Constants
     tahun,
-    bulan, // TargetBulanIni
-    tahun,
-    bulan, // TargetKumulatif
-    tahun, // TargetAkhirTahun
+    bulan,
   ];
 
   const [rows] = await pool.query(query, params);
@@ -115,17 +183,17 @@ const getDynamicCabangOptions = async (filters, user) => {
   const { startDate, endDate } = filters;
   let query = `
         SELECT DISTINCT 
-            LEFT(h.inv_nomor, 3) AS kode, 
+            h.inv_cab AS kode, 
             g.gdg_nama AS nama 
         FROM tinv_hdr h
-        JOIN tgudang g ON LEFT(h.inv_nomor, 3) = g.gdg_kode
+        JOIN tgudang g ON h.inv_cab = g.gdg_kode
         WHERE h.inv_tanggal BETWEEN ? AND ?
     `;
   const params = [startDate, endDate];
 
   // Jika user bukan KDC, batasi hanya untuk cabangnya sendiri
   if (user.cabang !== "KDC") {
-    query += " AND LEFT(h.inv_nomor, 3) = ?";
+    query += " AND h.inv_cab = ?";
     params.push(user.cabang);
   }
 

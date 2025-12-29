@@ -38,6 +38,30 @@ const remove = async (req, res) => {
   }
 };
 
+const getExportHeader = async (req, res) => {
+  try {
+    // 1. Ambil User & Query
+    const user = req.user;
+
+    // Copy req.query ke variabel baru agar bisa dimodifikasi
+    const filters = { ...req.query };
+
+    // 2. [SECURITY] Paksa Filter Cabang
+    // Ini LOGIKA PENTING yang tidak ada di exportDetails lama
+    if (user.cabang !== "KDC") {
+      filters.cabang = user.cabang;
+    }
+
+    // 3. Panggil Service (Langsung oper object filters)
+    const rows = await service.getExportHeader(filters);
+
+    res.json(rows);
+  } catch (error) {
+    console.error("Error getExportHeader:", error);
+    res.status(500).json({ message: error.message || "Gagal export header." });
+  }
+};
+
 const exportDetails = async (req, res) => {
   try {
     const data = await service.getExportDetails(req.query);
@@ -84,6 +108,7 @@ module.exports = {
   getList,
   getDetails,
   remove,
+  getExportHeader,
   exportDetails,
   checkIfInvoiceInFsk,
   changePayment,

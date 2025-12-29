@@ -46,10 +46,13 @@ const generateFinalPayload = async (user, selectedCabang) => {
   );
   const cabangNama = gudangRows.length > 0 ? gudangRows[0].gdg_nama : "";
 
-  // [LOGIC BARU] Daftar User Finance
-  const financeUsers = ["DARUL", "LIA", "HANI", "DEVI"];
+  // [LOGIC BARU] Daftar User Gudang (Hanya lihat stok)
+  const warehouseUsers = ["LUTFI", "ADIN"];
   const userKodeUpper = user.user_kode.toUpperCase();
+  const isWarehouseUser = warehouseUsers.includes(userKodeUpper);
 
+  // [LOGIC BARU] Daftar User Finance
+  const financeUsers = ["DARUL", "LIA", "HANI", "DEVI"];  
   // Cek apakah user termasuk Finance
   const isFinance = financeUsers.includes(userKodeUpper);
 
@@ -58,6 +61,7 @@ const generateFinalPayload = async (user, selectedCabang) => {
     nama: user.user_nama,
     cabang: selectedCabang,
     cabangNama: cabangNama,
+    isWarehouseUser: isWarehouseUser,
     // Flag khusus Refund
     canApproveRefund: isFinance,
     // Flag existing Anda
