@@ -687,6 +687,7 @@ const getDataForPrint = async (nomor) => {
         o.jo_nama,
         s.sal_nama AS salesNama,
         DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
+        DATE_FORMAT(h.sd_dateline, "%Y-%m-%d") AS dateline,
 
         (SELECT CAST(GROUP_CONCAT(
             CONCAT(sdd2_nourut, ". ", sdd2_ket, ": P=", sdd2_panjang, "cm L=", sdd2_lebar, "cm")
