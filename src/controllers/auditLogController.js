@@ -41,7 +41,7 @@ const getLogs = async (req, res) => {
     }
 
     if (cabang && cabang !== "ALL") {
-      conditions.push("user_cabang = ?");
+      conditions.push("TRIM(user_cabang) = TRIM(?)");
       params.push(cabang);
     }
 

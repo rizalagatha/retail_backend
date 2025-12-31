@@ -26,79 +26,126 @@ const searchProducts = async (
   source
 ) => {
   const offset = (page - 1) * itemsPerPage;
-  const searchTerm = term ? `%${term}%` : null;
 
   let fromClause = `
     FROM tbarangdc a
-    LEFT JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
+    LEFT JOIN tbarangdc_dtl b 
+      ON a.brg_kode = b.brgd_kode
   `;
-  let whereClause = "WHERE a.brg_aktif=0 AND b.brgd_kode IS NOT NULL";
+
+  let whereClause = `
+    WHERE a.brg_aktif = 0 
+      AND b.brgd_kode IS NOT NULL
+  `;
+
   const params = [];
 
-  // Filter berdasarkan source
+  // ---------- FILTER SOURCE ----------
   if (source === "minta-barang") {
-    if (gudang === "K04") whereClause += ' AND a.brg_ktg <> ""';
-    else if (gudang === "K05") whereClause += ' AND a.brg_ktg = ""';
+    if (gudang === "K04") whereClause += ` AND a.brg_ktg <> ''`;
+    else if (gudang === "K05") whereClause += ` AND a.brg_ktg = ''`;
   } else if (source === "mutasi-kirim" && gudang === "KBD") {
-    whereClause += ' AND a.brg_ktg <> ""';
+    whereClause += ` AND a.brg_ktg <> ''`;
   } else {
-    whereClause += ' AND a.brg_logstok="Y"';
+    whereClause += ` AND a.brg_logstok='Y'`;
     if (category === "Kaosan")
-      whereClause += ' AND (a.brg_ktg IS NULL OR a.brg_ktg = "")';
-    else whereClause += ' AND a.brg_ktg IS NOT NULL AND a.brg_ktg <> ""';
+      whereClause += ` AND (a.brg_ktg IS NULL OR a.brg_ktg = '')`;
+    else whereClause += ` AND a.brg_ktg IS NOT NULL AND a.brg_ktg <> ''`;
   }
 
-  if (term) {
-    whereClause += `
-      AND (
-        a.brg_kode LIKE ? OR
-        a.brg_tipe LIKE ? OR
-        a.brg_warna LIKE ? OR
-        a.brg_jeniskain LIKE ? OR
-        a.brg_lengan LIKE ? OR
-        b.brgd_barcode LIKE ? OR
-        CONCAT_WS(' ', a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna) LIKE ?
-      )
-    `;
-    params.push(
-      searchTerm,
-      searchTerm,
-      searchTerm,
-      searchTerm,
-      searchTerm,
-      searchTerm,
-      searchTerm
-    );
+  // ---------- SMART MULTI-TOKEN SEARCH ----------
+  const tokens = (term || "")
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+
+  if (tokens.length > 0) {
+    whereClause += " AND (";
+    const parts = [];
+
+    for (const t of tokens) {
+      parts.push(`
+        (
+          a.brg_kode LIKE ?
+          OR b.brgd_barcode LIKE ?
+          OR a.brg_tipe LIKE ?
+          OR a.brg_warna LIKE ?
+          OR a.brg_jeniskain LIKE ?
+          OR a.brg_lengan LIKE ?
+          OR CONCAT_WS(
+              ' ',
+              a.brg_jeniskaos,
+              a.brg_tipe,
+              a.brg_lengan,
+              a.brg_jeniskain,
+              a.brg_warna
+            ) LIKE ?
+        )
+      `);
+
+      const like = `%${t}%`;
+
+      params.push(
+        like, // kode
+        like, // barcode
+        like, // tipe
+        like, // warna
+        like, // kain
+        like, // lengan
+        like // nama gabungan
+      );
+    }
+
+    // semua token HARUS match (AND antar token)
+    whereClause += parts.join(" AND ");
+    whereClause += ")";
   }
 
+  // ---------- DATA QUERY ----------
   const dataQuery = `
     SELECT SQL_CALC_FOUND_ROWS
       a.brg_kode AS kode,
       b.brgd_barcode AS barcode,
-      CONCAT_WS(' ', a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna) AS nama,
+
+      CONCAT_WS(
+        ' ',
+        a.brg_jeniskaos,
+        a.brg_tipe,
+        a.brg_lengan,
+        a.brg_jeniskain,
+        a.brg_warna
+      ) AS nama,
+
       b.brgd_ukuran AS ukuran,
       b.brgd_harga AS harga,
+
       IFNULL((
         SELECT SUM(m.mst_stok_in - m.mst_stok_out)
         FROM tmasterstok m
-        WHERE m.mst_aktif = "Y"
+        WHERE m.mst_aktif = 'Y'
           AND m.mst_cab = ?
           AND m.mst_brg_kode = b.brgd_kode
           AND m.mst_ukuran = b.brgd_ukuran
       ), 0) AS stok
+
     ${fromClause}
     ${whereClause}
+
     ORDER BY nama, b.brgd_ukuran
     LIMIT ? OFFSET ?
   `;
 
   const dataParams = [gudang, ...params, itemsPerPage, offset];
+
   const [items] = await pool.query(dataQuery, dataParams);
 
-  const [[{ total }]] = await pool.query(`SELECT FOUND_ROWS() AS total`);
+  const [[{ total }]] = await pool.query(`
+    SELECT FOUND_ROWS() AS total
+  `);
 
   return { items, total };
 };
+
 
 const getProductDetails = async (productCode) => {
   // Mengambil detail ukuran dan barcode untuk produk yang dipilih

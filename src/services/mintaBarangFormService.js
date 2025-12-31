@@ -568,40 +568,83 @@ const lookupProducts = async (filters) => {
   const page = parseInt(filters.page, 10) || 1;
   const itemsPerPage = parseInt(filters.itemsPerPage, 10) || 10;
   const { term } = filters;
-  const gudang = filters.gudang; // <-- penting
+  const gudang = filters.gudang;
 
   const offset = (page - 1) * itemsPerPage;
-  const searchTerm = term ? `%${term}%` : null;
 
+  // ---------- BASE CLAUSE ----------
   let fromClause = `
-        FROM tbarangdc a
-        INNER JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
-    `;
+    FROM tbarangdc a
+    INNER JOIN tbarangdc_dtl b 
+      ON a.brg_kode = b.brgd_kode
+  `;
 
-  let whereClause = `WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'`;
+  let whereClause = `
+    WHERE a.brg_aktif = 0
+      AND a.brg_logstok = 'Y'
+  `;
+
+  // semua parameter query disimpan disini
   let params = [];
 
-  if (term) {
-    whereClause += `
-      AND (a.brg_kode LIKE ?
-      OR b.brgd_barcode LIKE ?
-      OR TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ",
-         a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) LIKE ?)`;
-    params.push(searchTerm, searchTerm, searchTerm);
+  // ---------- SMART MULTI-TOKEN SEARCH ----------
+  const tokens = (term || "")
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+
+  if (tokens.length > 0) {
+    whereClause += " AND (";
+    const parts = [];
+
+    for (const t of tokens) {
+      parts.push(`
+        (
+          a.brg_kode LIKE ?
+          OR b.brgd_barcode LIKE ?
+          OR TRIM(CONCAT(
+            a.brg_jeniskaos, ' ',
+            a.brg_tipe, ' ',
+            a.brg_lengan, ' ',
+            a.brg_jeniskain, ' ',
+            a.brg_warna
+          )) LIKE ?
+        )
+      `);
+
+      const like = `%${t}%`;
+      params.push(like, like, like);
+    }
+
+    // semua token wajib match
+    whereClause += parts.join(" AND ");
+    whereClause += ")";
   }
 
-  // COUNT QUERY
-  const countQuery = `SELECT COUNT(*) as total ${fromClause} ${whereClause}`;
+  // ---------- COUNT QUERY ----------
+  const countQuery = `
+    SELECT COUNT(*) AS total
+    ${fromClause}
+    ${whereClause}
+  `;
+
   const [countRows] = await pool.query(countQuery, params);
   const total = countRows[0].total;
 
-  // DATA QUERY — FIXED VERSION
+  // ---------- DATA QUERY ----------
   const dataQuery = `
     SELECT
       b.brgd_kode AS kode,
       b.brgd_barcode AS barcode,
-      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ",
-        a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+
+      TRIM(CONCAT(
+        a.brg_jeniskaos, ' ',
+        a.brg_tipe, ' ',
+        a.brg_lengan, ' ',
+        a.brg_jeniskain, ' ',
+        a.brg_warna
+      )) AS nama,
+
       b.brgd_ukuran AS ukuran,
       b.brgd_harga AS harga,
       a.brg_ktg AS kategori,
@@ -613,19 +656,26 @@ const lookupProducts = async (filters) => {
           AND m.mst_cab = ?
           AND m.mst_brg_kode = b.brgd_kode
           AND m.mst_ukuran = b.brgd_ukuran
-        ), 0) AS stok,
+      ), 0) AS stok,
 
-        CONCAT(b.brgd_kode, '-', b.brgd_ukuran) AS uniqueId
+      CONCAT(b.brgd_kode, '-', b.brgd_ukuran) AS uniqueId
 
-      ${fromClause}
-      ${whereClause}
-      ORDER BY nama, b.brgd_ukuran
-      LIMIT ? OFFSET ?
-    `;
+    ${fromClause}
+    ${whereClause}
 
-  params = [gudang, ...params, itemsPerPage, offset];
+    ORDER BY nama, b.brgd_ukuran
+    LIMIT ? OFFSET ?
+  `;
 
-  const [items] = await pool.query(dataQuery, params);
+  // param urutannya harus benar:
+  // 1. gudang untuk stok
+  // 2. semua params pencarian
+  // 3. limit
+  // 4. offset
+  const dataParams = [gudang, ...params, itemsPerPage, offset];
+
+  const [items] = await pool.query(dataQuery, dataParams);
+
   return { items, total };
 };
 

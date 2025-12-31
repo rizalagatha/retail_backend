@@ -874,7 +874,7 @@ const saveData = async (payload, user) => {
         mpBiaya,
 
         1,
-        
+
         user.kode,
         invNomor,
       ]);
@@ -1905,114 +1905,150 @@ const searchProducts = async (filters, user) => {
   const limitVal = parseInt(itemsPerPage) || 25;
   const offsetVal = (parseInt(page) - 1) * limitVal;
 
-  const searchTerm = `%${term || ""}%`;
-
+  // PARAMETER QUERY (dideklarasikan AWAL supaya bisa dipakai di mana saja)
   let params = [];
 
-  // [FIX] Tambahkan spasi di awal string untuk keamanan penggabungan
-  let baseFrom = ` FROM tbarangdc_dtl b INNER JOIN tbarangdc a ON a.brg_kode = b.brgd_kode `;
+  // ---------- BASE QUERY ----------
+  let baseFrom = ` FROM tbarangdc_dtl b 
+                   INNER JOIN tbarangdc a 
+                   ON a.brg_kode = b.brgd_kode `;
+
   let baseWhere = ` WHERE a.brg_aktif = 0 `;
 
   let promoFilterJoin = "";
   let hargaSelect = "b.brgd_harga AS harga";
 
+  // ---------- PROMO ----------
   if (promoNomor === "PRO-2025-005") {
     promoFilterJoin = `
-      INNER JOIN tpromo_barang pb ON pb.pb_brg_kode = a.brg_kode 
-      AND pb.pb_ukuran = b.brgd_ukuran
-      AND pb.pb_nomor = ? 
+      INNER JOIN tpromo_barang pb 
+        ON pb.pb_brg_kode = a.brg_kode 
+       AND pb.pb_ukuran = b.brgd_ukuran
+       AND pb.pb_nomor = ? 
     `;
     params.push(promoNomor);
     hargaSelect = "33333 AS harga";
   }
 
+  // ---------- FILTER CABANG KHUSUS ----------
   if (user.cabang === "K04") {
-    baseWhere += ' AND a.brg_ktg <> "" ';
+    baseWhere += ` AND a.brg_ktg <> '' `;
   } else if (user.cabang === "K05") {
-    baseWhere += ' AND a.brg_ktg = "" ';
+    baseWhere += ` AND a.brg_ktg = '' `;
   }
 
-  // [FIX] Ganti Double Quote (" ") menjadi Single Quote (' ') dalam CONCAT
-  // Ini mencegah error jika server database menggunakan mode ANSI_QUOTES
-  const searchWhere = ` AND (b.brgd_kode LIKE ? OR b.brgd_barcode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) LIKE ?) `;
+  // ---------- SMART SEARCH ----------
+  const tokens = (term || "")
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
 
-  params.push(searchTerm, searchTerm, searchTerm);
+  let searchWhere = "";
 
-  // --- QUERY TOTAL ROW ---
-  const countQuery = `SELECT COUNT(*) AS total ${baseFrom} ${promoFilterJoin} ${baseWhere} ${searchWhere}`;
+  if (tokens.length > 0) {
+    searchWhere += " AND (";
+    const likeParts = [];
+
+    for (const t of tokens) {
+      likeParts.push(`
+        (
+          b.brgd_kode LIKE ?
+          OR b.brgd_barcode LIKE ?
+          OR TRIM(CONCAT(
+            a.brg_jeniskaos, ' ',
+            a.brg_tipe, ' ',
+            a.brg_lengan, ' ',
+            a.brg_jeniskain, ' ',
+            a.brg_warna
+          )) LIKE ?
+        )
+      `);
+
+      const likeVal = `%${t}%`;
+      params.push(likeVal, likeVal, likeVal);
+    }
+
+    // semua token wajib match
+    searchWhere += likeParts.join(" AND ");
+    searchWhere += ")";
+  }
+
+  // ---------- QUERY TOTAL ----------
+  const countQuery = `
+    SELECT COUNT(*) AS total
+    ${baseFrom}
+    ${promoFilterJoin}
+    ${baseWhere}
+    ${searchWhere}
+  `;
+
   const [countRows] = await pool.query(countQuery, params);
 
-  // --- SUBQUERY STOK TERPISAH (Agar parameter ? terbaca dengan benar) ---
+  // ---------- SUBQUERY STOK ----------
   const stokFisik = `
     (SELECT SUM(m.mst_stok_in - m.mst_stok_out)
-     FROM tmasterstok m 
-     WHERE m.mst_aktif = 'Y' 
-       AND m.mst_cab = ? 
-       AND m.mst_brg_kode = b.brgd_kode 
-       AND m.mst_ukuran = b.brgd_ukuran)
+       FROM tmasterstok m
+      WHERE m.mst_aktif = 'Y'
+        AND m.mst_cab = ?
+        AND m.mst_brg_kode = b.brgd_kode
+        AND m.mst_ukuran = b.brgd_ukuran)
   `;
 
   const stokPesanan = `
     (SELECT SUM(s.mst_stok_in - s.mst_stok_out)
-     FROM tmasterstokso s
-     WHERE s.mst_aktif = 'Y' 
-       AND s.mst_cab = ? 
-       AND s.mst_brg_kode = b.brgd_kode 
-       AND s.mst_ukuran = b.brgd_ukuran)
+       FROM tmasterstokso s
+      WHERE s.mst_aktif = 'Y'
+        AND s.mst_cab = ?
+        AND s.mst_brg_kode = b.brgd_kode
+        AND s.mst_ukuran = b.brgd_ukuran)
   `;
 
-  // Gabungkan stok fisik + pesanan
   const stokSubQuery = `(IFNULL(${stokFisik}, 0) + IFNULL(${stokPesanan}, 0))`;
 
-  // --- QUERY DATA ---
-  // [FIX] Masukkan Limit & Offset langsung ke string (interpolation)
-  // [FIX] Pastikan ada spasi antar variabel template literal
+  // ---------- QUERY DATA ----------
   const dataQuery = `
     SELECT
       b.brgd_kode AS kode,
       b.brgd_barcode AS barcode,
-      TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) AS nama,
+      TRIM(CONCAT(
+        a.brg_jeniskaos, ' ',
+        a.brg_tipe, ' ',
+        a.brg_lengan, ' ',
+        a.brg_jeniskain, ' ',
+        a.brg_warna
+      )) AS nama,
       b.brgd_ukuran AS ukuran,
+
       b.brgd_hrg3 AS harga3,
       b.brgd_hrg1 AS harga1,
       ${hargaSelect},
       a.brg_ktgp AS kategori,
-      
+
       COALESCE(${stokFisik}, 0) AS stokFisik,
       COALESCE(${stokPesanan}, 0) AS stokPesanan,
       ${stokSubQuery} AS stok
 
-    ${baseFrom} 
-    ${promoFilterJoin} 
-    ${baseWhere} 
+    ${baseFrom}
+    ${promoFilterJoin}
+    ${baseWhere}
     ${searchWhere}
-    
+
     ORDER BY nama, b.brgd_ukuran
     LIMIT ${limitVal} OFFSET ${offsetVal}
   `;
 
-  // Urutan Parameter:
-  // 1. Cabang (untuk stok fisik)
-  // 2. Cabang (untuk stok pesanan)
-  // 3. Cabang (untuk stok fisik kolom terpisah)
-  // 4. Cabang (untuk stok pesanan kolom terpisah)
-  // 5. ...params (Promo?, Search1, Search2, Search3)
-
-  // Perhatikan: Karena kita memanggil subquery stokFisik dan stokPesanan DUA KALI (sekali di dalam penjumlahan 'stok', sekali sebagai kolom sendiri 'stokFisik'/'stokPesanan'),
-  // Kita perlu menyuplai parameternya berulang kali.
-  // Urutan di SELECT: stokFisik (1), stokPesanan (1), stokTotal(stokFisik(1)+stokPesanan(1))
-
+  // ---------- PARAMS UNTUK DATA ----------
   const dataParams = [
-    // Untuk kolom 'stokFisik'
+    // stokFisik
     user.cabang,
-    // Untuk kolom 'stokPesanan'
+    // stokPesanan
     user.cabang,
-    // Untuk kolom 'stok' (penjumlahan) -> stokFisik
+    // stokTotal (fisik)
     user.cabang,
-    // Untuk kolom 'stok' (penjumlahan) -> stokPesanan
+    // stokTotal (pesanan)
     user.cabang,
 
-    // Sisa parameter (filter)
+    // sisanya filter promo + smart search
     ...params,
   ];
 
