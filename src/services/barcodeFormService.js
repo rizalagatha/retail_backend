@@ -65,35 +65,27 @@ const searchProducts = async (
 
     for (const t of tokens) {
       parts.push(`
-        (
-          a.brg_kode LIKE ?
-          OR b.brgd_barcode LIKE ?
-          OR a.brg_tipe LIKE ?
-          OR a.brg_warna LIKE ?
-          OR a.brg_jeniskain LIKE ?
-          OR a.brg_lengan LIKE ?
-          OR CONCAT_WS(
-              ' ',
-              a.brg_jeniskaos,
-              a.brg_tipe,
-              a.brg_lengan,
-              a.brg_jeniskain,
-              a.brg_warna
-            ) LIKE ?
-        )
-      `);
+    (
+      LOWER(a.brg_kode) LIKE ?
+      OR LOWER(b.brgd_barcode) LIKE ?
+      OR LOWER(a.brg_tipe) LIKE ?
+      OR LOWER(a.brg_warna) LIKE ?
+      OR LOWER(a.brg_jeniskain) LIKE ?
+      OR LOWER(a.brg_lengan) LIKE ?
+      OR LOWER(CONCAT_WS(
+        ' ',
+        a.brg_jeniskaos,
+        a.brg_tipe,
+        a.brg_lengan,
+        a.brg_jeniskain,
+        a.brg_warna
+      )) LIKE ?
+    )
+  `);
 
-      const like = `%${t}%`;
+      const like = `%${t.toLowerCase()}%`;
 
-      params.push(
-        like, // kode
-        like, // barcode
-        like, // tipe
-        like, // warna
-        like, // kain
-        like, // lengan
-        like // nama gabungan
-      );
+      params.push(like, like, like, like, like, like, like);
     }
 
     // semua token HARUS match (AND antar token)
@@ -145,7 +137,6 @@ const searchProducts = async (
 
   return { items, total };
 };
-
 
 const getProductDetails = async (productCode) => {
   // Mengambil detail ukuran dan barcode untuk produk yang dipilih
