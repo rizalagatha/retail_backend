@@ -193,54 +193,83 @@ const saveBarcode = async (data) => {
 
 const searchMaster = async (term, page, itemsPerPage) => {
   const offset = (page - 1) * itemsPerPage;
-  const searchTerm = `%${term || ""}%`;
 
-  let whereClause = "WHERE a.brg_aktif = 0";
-  const params = [];
+  let params = [];
 
-  // Kalau ada term, tambahkan pencarian LIKE di banyak kolom
-  if (term && term.trim() !== "") {
-    whereClause += `
-      AND (
-        a.brg_kode LIKE ? OR
-        a.brg_jeniskaos LIKE ? OR
-        a.brg_tipe LIKE ? OR
-        a.brg_lengan LIKE ? OR
-        a.brg_jeniskain LIKE ? OR
-        a.brg_warna LIKE ? OR
-        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) LIKE ?
-      )
-    `;
-    params.push(
-      searchTerm,
-      searchTerm,
-      searchTerm,
-      searchTerm,
-      searchTerm,
-      searchTerm,
-      searchTerm
-    );
+  // ---------- SMART MULTI TOKEN ----------
+  const tokens = (term || "")
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+
+  let whereClause = `WHERE a.brg_aktif = 0`;
+
+  if (tokens.length > 0) {
+    whereClause += " AND (";
+    const parts = [];
+
+    for (const t of tokens) {
+      parts.push(`
+        (
+          LOWER(a.brg_kode) LIKE ?
+          OR LOWER(a.brg_jeniskaos) LIKE ?
+          OR LOWER(a.brg_tipe) LIKE ?
+          OR LOWER(a.brg_lengan) LIKE ?
+          OR LOWER(a.brg_jeniskain) LIKE ?
+          OR LOWER(a.brg_warna) LIKE ?
+          OR LOWER(
+            TRIM(CONCAT(
+              a.brg_jeniskaos, ' ',
+              a.brg_tipe, ' ',
+              a.brg_lengan, ' ',
+              a.brg_jeniskain, ' ',
+              a.brg_warna
+            ))
+          ) LIKE ?
+        )
+      `);
+
+      const like = `%${t.toLowerCase()}%`;
+
+      params.push(like, like, like, like, like, like, like);
+    }
+
+    // semua token HARUS match (AND antar token)
+    whereClause += parts.join(" AND ");
+    whereClause += ")";
   }
 
-  // Hitung total
-  const countQuery = `SELECT COUNT(*) AS total FROM tbarangdc a ${whereClause}`;
+  // ---------- TOTAL ----------
+  const countQuery = `
+    SELECT COUNT(*) AS total
+    FROM tbarangdc a
+    ${whereClause}
+  `;
   const [countRows] = await pool.query(countQuery, params);
-  const total = countRows[0]?.total || 0;
+  const total = countRows[0]?.total ?? 0;
 
-  // Query data (gunakan template literal untuk LIMIT/OFFSET)
+  // ---------- DATA ----------
   const dataQuery = `
     SELECT 
-      a.brg_kode AS kode, 
-      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama
+      a.brg_kode AS kode,
+      TRIM(CONCAT(
+        a.brg_jeniskaos, ' ',
+        a.brg_tipe, ' ',
+        a.brg_lengan, ' ',
+        a.brg_jeniskain, ' ',
+        a.brg_warna
+      )) AS nama
     FROM tbarangdc a
     ${whereClause}
     ORDER BY nama
-    LIMIT ${itemsPerPage} OFFSET ${offset};
+    LIMIT ${itemsPerPage} OFFSET ${offset}
   `;
+
   const [items] = await pool.query(dataQuery, params);
 
   return { items, total };
 };
+
 
 const findByBarcode = async (barcode) => {
   console.log("Mulai query barcode:", barcode);
