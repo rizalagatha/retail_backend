@@ -556,6 +556,7 @@ const saveData = async (payload, user) => {
         };
       }
     }
+
     await connection.beginTransaction();
     const { header, items, dps, payment, isNew, pins, totals } = payload;
     const nomorInv = header.nomor;
@@ -611,6 +612,25 @@ const saveData = async (payload, user) => {
     const pundiAmal = Number(payment.pundiAmal || header.pundiAmal || 0);
 
     const dpDipakai = applyRoundingPolicy(Number(totals.totalDp || 0));
+
+    // Hitung total bayar asli (DP + Pembayaran baru)
+    const totalBayarAsli =
+      dpDipakai +
+      Number(payment.tunai || 0) +
+      Number(payment.transfer?.nominal || 0) +
+      Number(payment.voucher?.nominal || 0) +
+      Number(payment.retur?.nominal || 0);
+
+    // Cek apakah lunas terhadap Grand Total Final
+    const isBelumLunas = totalBayarAsli < grandTotal;
+
+    // WAJIBKAN PIN OTORISASI jika belum lunas
+    if (isBelumLunas && !payment.pinBelumLunas) {
+      throw new Error(
+        `Invoice Belum Lunas (Sisa: Rp ${grandTotal - totalBayarAsli}). ` +
+          `Penyimpanan invoice piutang wajib mendapatkan otorisasi Manager.`
+      );
+    }
 
     // =========================================================
     //  PERHITUNGAN LOGIC BAYAR (UPDATED UNTUK POTONG GAJI)
