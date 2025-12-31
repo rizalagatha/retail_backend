@@ -222,6 +222,41 @@ const getStokKosong = async (req, res) => {
   }
 };
 
+const getParetoStockHealth = async (req, res) => {
+  try {
+    // Panggil Service
+    await dashboardService.getParetoStockHealth(req, res);
+  } catch (error) {
+    // [LOGGING LENGKAP]
+    console.error("🔥 [ERROR DASHBOARD] getParetoStockHealth Failed:");
+    console.error("------------------------------------------------");
+    console.error("Message :", error.message);
+    console.error("SQL     :", error.sql); // Menampilkan query yang bermasalah (jika ada)
+    console.error("Stack   :", error.stack);
+    console.error("------------------------------------------------");
+
+    // Jangan kirim error mentah ke frontend untuk keamanan, kirim pesan umum
+    if (!res.headersSent) {
+      res.status(500).json({
+        message:
+          "Gagal memuat data kesehatan stok. Cek log server untuk detail.",
+      });
+    }
+  }
+};
+
+const getParetoDetails = async (req, res) => {
+  try {
+    // Memanggil service yang menangani req, res langsung (sesuai kode service sebelumnya)
+    await dashboardService.getParetoDetails(req, res);
+  } catch (error) {
+    console.error("Error getParetoDetails:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ message: "Gagal mengambil detail pareto" });
+    }
+  }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -241,4 +276,6 @@ module.exports = {
   getAppChangelog,
   getStockAlerts,
   getStokKosong,
+  getParetoStockHealth,
+  getParetoDetails,
 };

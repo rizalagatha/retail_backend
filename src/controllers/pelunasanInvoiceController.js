@@ -1,4 +1,5 @@
 const service = require("../services/pelunasanInvoiceService");
+const auditService = require("../services/auditService"); // Import Audit
 
 // GET: Ambil daftar piutang user
 const getOutstandingPiutang = async (req, res) => {
@@ -19,6 +20,7 @@ const getOutstandingPiutang = async (req, res) => {
 };
 
 // POST: Simpan Pelunasan
+// [AUDIT TRAIL DITERAPKAN DI SINI]
 const savePelunasan = async (req, res) => {
   try {
     const payload = req.body;
@@ -35,7 +37,24 @@ const savePelunasan = async (req, res) => {
         .status(400)
         .json({ message: "Tidak ada invoice yang dipilih." });
 
+    // 1. PROSES: Simpan Data
     const result = await service.savePelunasan(payload, req.user);
+
+    // 2. AUDIT: Catat Log
+    // Action: CREATE (Karena menghasilkan No. Bukti Setoran Baru)
+    const targetId = result.nomor || "UNKNOWN";
+    const metode = payload.paymentMethod || "TUNAI";
+
+    auditService.logActivity(
+      req,
+      "CREATE",
+      "PELUNASAN_INVOICE",
+      targetId,
+      null, // Old Data (Null karena Create)
+      payload, // New Data
+      `Input Pelunasan Piutang Customer: ${payload.customerKode} via ${metode}`
+    );
+
     res.json(result);
   } catch (error) {
     console.error("Error savePelunasan:", error);

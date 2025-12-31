@@ -1,9 +1,10 @@
 const soFormService = require("../services/soFormService");
+const auditService = require("../services/auditService"); // Import Audit
+const pool = require("../config/database"); // Import Pool untuk Snapshot
 
 const getForEdit = async (req, res) => {
   try {
     const { nomor } = req.params;
-    // Panggil fungsi service yang sudah kita buat
     const data = await soFormService.getSoForEdit(nomor);
     if (data) {
       res.json(data);
@@ -15,10 +16,64 @@ const getForEdit = async (req, res) => {
   }
 };
 
+// [AUDIT TRAIL DITERAPKAN DI SINI]
 const save = async (req, res) => {
   try {
-    const result = await soFormService.save(req.body, req.user);
-    res.status(req.body.isNew ? 201 : 200).json(result);
+    const payload = req.body;
+
+    // 1. DETEKSI: Apakah ini Update?
+    const isUpdate = payload.isNew === false;
+    const nomorDokumen = payload.header?.nomor;
+
+    let oldData = null;
+
+    // 2. SNAPSHOT: Ambil data lama LENGKAP jika Update
+    if (isUpdate && nomorDokumen) {
+      try {
+        // A. Ambil Header
+        const [headerRows] = await pool.query(
+          "SELECT * FROM tso_hdr WHERE so_nomor = ?",
+          [nomorDokumen]
+        );
+
+        if (headerRows.length > 0) {
+          const header = headerRows[0];
+
+          // B. Ambil Detail (Gunakan sod_so_nomor)
+          const [detailRows] = await pool.query(
+            "SELECT * FROM tso_dtl WHERE sod_so_nomor = ? ORDER BY sod_nourut",
+            [nomorDokumen]
+          );
+
+          // C. Gabungkan
+          oldData = {
+            ...header,
+            items: detailRows
+          };
+        }
+      } catch (e) {
+        console.warn("Gagal snapshot oldData save SO:", e.message);
+      }
+    }
+
+    // 3. PROSES: Simpan ke Database
+    const result = await soFormService.save(payload, req.user);
+
+    // 4. AUDIT: Catat Log
+    const targetId = result.nomor || nomorDokumen || "UNKNOWN";
+    const action = isUpdate ? "UPDATE" : "CREATE";
+
+    auditService.logActivity(
+      req,
+      action,
+      "SURAT_PESANAN",
+      targetId,
+      oldData, // Data Lama (Header + Items)
+      payload, // Data Baru (Payload Form)
+      `${action === "CREATE" ? "Input" : "Edit"} SO (Customer: ${payload.header?.customer?.nama})`
+    );
+
+    res.status(payload.isNew ? 201 : 200).json(result);
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
@@ -98,7 +153,7 @@ const getDpPrintData = async (req, res) => {
 const getByBarcode = async (req, res) => {
   try {
     const { barcode } = req.params;
-    const { gudang } = req.query; // Gudang diambil dari query parameter
+    const { gudang } = req.query;
     if (!gudang) {
       return res.status(400).json({ message: "Parameter gudang diperlukan." });
     }

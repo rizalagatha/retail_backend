@@ -36,13 +36,11 @@ const saveData = async (req, res) => {
 };
 
 const getNewBarcodeId = async (req, res) => {
-  console.log('🔵 getNewBarcodeId endpoint hit');
   try {
     const { date } = req.query;
     if (!date) return res.status(400).json({ message: "Tanggal diperlukan." });
     
     const newId = await service.getNewBarcodeId(date); // newId adalah number
-    console.log('Returning newId:', newId, 'Type:', typeof newId);
     
     res.json({ newId }); // Response: { newId: 278 }
   } catch (error) {

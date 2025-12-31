@@ -1,4 +1,6 @@
 const service = require("../services/invoiceFormService");
+const auditService = require("../services/auditService"); // Import Audit
+const pool = require("../config/database"); // Import Pool untuk Snapshot
 
 const loadForEdit = async (req, res) => {
   try {
@@ -10,9 +12,60 @@ const loadForEdit = async (req, res) => {
   }
 };
 
+// [AUDIT TRAIL DITERAPKAN DI SINI]
 const save = async (req, res) => {
   try {
+    // 1. DETEKSI: Apakah ini Create Baru atau Update?
+    const isUpdate = req.body.nomor && req.body.nomor !== "AUTO";
+    let oldData = null;
+
+    if (isUpdate) {
+      try {
+        // A. SNAPSHOT HEADER
+        const [headerRows] = await pool.query(
+          "SELECT * FROM tinv_hdr WHERE inv_nomor = ?",
+          [req.body.nomor]
+        );
+
+        if (headerRows.length > 0) {
+          const header = headerRows[0];
+
+          // B. SNAPSHOT DETAIL [DITAMBAHKAN]
+          // Mengambil item barang yang ada di invoice tersebut
+          const [detailRows] = await pool.query(
+            "SELECT * FROM tinv_dtl WHERE invd_inv_nomor = ? ORDER BY invd_nourut",
+            [req.body.nomor]
+          );
+
+          // C. GABUNGKAN
+          // Masukkan detail ke dalam properti 'items' agar sejajar dengan struktur req.body
+          oldData = {
+            ...header,
+            items: detailRows,
+          };
+        }
+      } catch (e) {
+        console.warn("Gagal snapshot oldData save invoice:", e.message);
+      }
+    }
+
+    // 2. PROSES: Simpan ke DB
     const result = await service.saveData(req.body, req.user);
+
+    // 3. AUDIT: Catat Log
+    const targetId = result.nomor || req.body.nomor || "UNKNOWN";
+    const action = oldData ? "UPDATE" : "CREATE"; // Cek oldData bukan isUpdate agar lebih akurat
+
+    auditService.logActivity(
+      req,
+      action,
+      "INVOICE",
+      targetId,
+      oldData, // Data lama (Header + Items)
+      req.body, // Data baru (Payload Form)
+      `${action === "CREATE" ? "Input" : "Edit"} Transaksi Penjualan`
+    );
+
     res.json(result);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -87,9 +140,22 @@ const getMemberByHp = async (req, res) => {
   }
 };
 
+// [AUDIT TRAIL DITERAPKAN DI SINI]
 const saveMember = async (req, res) => {
   try {
     const result = await service.saveMember(req.body, req.user);
+
+    // Audit sederhana untuk Member
+    auditService.logActivity(
+      req,
+      "SAVE", // Bisa Create atau Update (Upsert)
+      "MEMBER",
+      result.kode || result.nama, // Target ID
+      null, // Kita skip snapshot lama demi performa
+      req.body, // Data baru
+      `Input/Update Member via Kasir: ${result.nama}`
+    );
+
     res.json({
       message: `Member ${result.nama} berhasil disimpan.`,
       savedMember: result,
@@ -281,7 +347,6 @@ const getDataForSjPrint = async (req, res) => {
 const getActivePromos = async (req, res) => {
   try {
     const data = await service.getActivePromos(req.query, req.user);
-    console.log("🟢 Active promos sent to frontend:", data);
     res.json(data);
   } catch (error) {
     console.error("❌ getActivePromos error:", error);
@@ -310,6 +375,7 @@ const getPromoHeader = async (req, res) => {
   }
 };
 
+// [AUDIT TRAIL DITERAPKAN DI SINI]
 const updateInvoiceHeaderOnly = async (req, res) => {
   try {
     const nomor = req.params.nomor;
@@ -322,7 +388,33 @@ const updateInvoiceHeaderOnly = async (req, res) => {
       return res.status(400).json({ message: "Tanggal tidak boleh kosong." });
     }
 
+    // 1. Snapshot Old Data
+    let oldData = null;
+    try {
+      const [rows] = await pool.query(
+        "SELECT * FROM tinv_hdr WHERE inv_nomor = ?",
+        [nomor]
+      );
+      if (rows.length > 0) oldData = rows[0];
+    } catch (e) {
+      console.warn("Gagal snapshot oldData update header:", e.message);
+    }
+
+    // 2. Proses Update
     const result = await service.updateHeaderOnly(nomor, body, req.user);
+
+    // 3. Audit Log
+    if (oldData) {
+      auditService.logActivity(
+        req,
+        "UPDATE",
+        "INVOICE",
+        nomor,
+        oldData,
+        body,
+        "Koreksi Header Invoice (Admin)"
+      );
+    }
 
     res.json(result);
   } catch (error) {

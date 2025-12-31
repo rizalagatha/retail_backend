@@ -1,4 +1,6 @@
 const service = require("../services/returDcService");
+const auditService = require("../services/auditService"); // Import Audit
+const pool = require("../config/database"); // Import Pool untuk Snapshot
 
 const getList = async (req, res) => {
   try {
@@ -18,9 +20,55 @@ const getDetails = async (req, res) => {
   }
 };
 
+// [AUDIT TRAIL DITERAPKAN DI SINI]
 const remove = async (req, res) => {
   try {
-    const result = await service.remove(req.params.nomor, req.user);
+    const { nomor } = req.params;
+
+    // 1. SNAPSHOT: Ambil data lama LENGKAP (Header + Detail)
+    let oldData = null;
+    try {
+      // A. Ambil Header
+      const [headerRows] = await pool.query(
+        "SELECT * FROM trbdc_hdr WHERE rb_nomor = ?",
+        [nomor]
+      );
+
+      if (headerRows.length > 0) {
+        const header = headerRows[0];
+
+        // B. Ambil Detail (Gunakan rbd_nomor)
+        const [detailRows] = await pool.query(
+          "SELECT * FROM trbdc_dtl WHERE rbd_nomor = ? ORDER BY rbd_kode",
+          [nomor]
+        );
+
+        // C. Gabungkan
+        oldData = {
+          ...header,
+          items: detailRows
+        };
+      }
+    } catch (e) {
+      console.warn("Gagal snapshot oldData remove retur DC:", e.message);
+    }
+
+    // 2. PROSES: Jalankan service remove
+    const result = await service.remove(nomor, req.user);
+
+    // 3. AUDIT: Catat Log
+    if (oldData) {
+      auditService.logActivity(
+        req,
+        "DELETE",            // Action
+        "RETUR_DC",          // Module
+        nomor,               // Target ID
+        oldData,             // Data Lama (Header + Items)
+        null,                // Data Baru (Null)
+        `Menghapus Retur DC (Ke: ${oldData.rb_kecab || "Unknown"})`
+      );
+    }
+
     res.json(result);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -36,4 +84,9 @@ const exportDetails = async (req, res) => {
   }
 };
 
-module.exports = { getList, getDetails, remove, exportDetails };
+module.exports = {
+  getList,
+  getDetails,
+  remove,
+  exportDetails,
+};

@@ -2,25 +2,31 @@ const pool = require("../config/database");
 const { startOfMonth, endOfMonth, format, subDays } = require("date-fns");
 
 // Fungsi untuk mengambil statistik penjualan & transaksi hari ini
-// Fungsi untuk mengambil statistik penjualan, transaksi, DAN QTY hari ini
 const getTodayStats = async (user) => {
   const today = format(new Date(), "yyyy-MM-dd");
   let branchFilter = "AND h.inv_cab = ?";
   let params = [today, today, user.cabang];
 
-  if (user.cabang === "KDC") {
+  const isKDC = user.cabang === "KDC";
+
+  // LOGIK KHUSUS KDC
+  if (isKDC) {
     branchFilter = "";
-    params = [today, today];
+    // Params untuk query utama: [Regex, Today, Today]
+    // Regex digunakan untuk exclude Custom Order di perhitungan QTY (bukan Omset)
+    const excludePattern = "^K[0-9]{2}\\.(SD|BR|PM|DP|TG|PL|SB)\\.";
+    params = [excludePattern, today, today];
+  } else {
+    const excludePattern = "^K[0-9]{2}\\.(SD|BR|PM|DP|TG|PL|SB)\\.";
+    params = [excludePattern, today, today, user.cabang];
   }
 
-  // Pola REGEX yang sama untuk mengecualikan Custom Order
-  const excludePattern = "^K[0-9]{2}\\.(SD|BR|PM|DP|TG|PL|SB)\\.";
-
-  const query = `
+  // 1. QUERY UTAMA (Total Agregat)
+  const queryTotal = `
     SELECT
       COUNT(DISTINCT h.inv_nomor) AS todayTransactions,
       
-      -- 1. Total Nominal (UANG): Tetap hitung semua (termasuk Jasa & Custom) karena ini omzet
+      -- Total Nominal (Omset): Hitung SEMUA (termasuk Jasa/Custom)
       SUM(
           (SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) 
            FROM tinv_dtl dd 
@@ -31,16 +37,17 @@ const getTodayStats = async (user) => {
                FROM tinv_dtl dd 
                WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc
             ))
+          + h.inv_bkrm
       ) AS todaySales,
 
-      -- 2. Total Qty (BARANG): Filter Jasa & Custom agar yang terhitung hanya Kaos Retail
+      -- Total Qty (Barang): Filter Jasa & Custom
       IFNULL(SUM(
         (
           SELECT SUM(dd.invd_jumlah) 
           FROM tinv_dtl dd 
           WHERE dd.invd_inv_nomor = h.inv_nomor
-            AND dd.invd_kode NOT LIKE 'JASA%'  -- Filter Jasa
-            AND dd.invd_kode NOT REGEXP ?      -- Filter Custom SO DTF
+            AND dd.invd_kode NOT LIKE 'JASA%' 
+            AND dd.invd_kode NOT REGEXP ?
         )
       ), 0) AS todayQty
 
@@ -50,24 +57,49 @@ const getTodayStats = async (user) => {
       ${branchFilter};
   `;
 
-  // Masukkan excludePattern ke dalam params.
-  // Urutan params query: [RegexPattern, DateStart, DateEnd, (BranchCode)]
-  // Kita perlu memodifikasi array params agar Regex Pattern masuk di posisi yang benar (sebelum branch filter)
+  const [rows] = await pool.query(queryTotal, params);
+  let result = rows[0];
 
-  // Karena struktur query di atas kompleks (subquery di dalam select),
-  // lebih aman kita masukkan parameter secara eksplisit:
+  // 2. QUERY TAMBAHAN: BREAKDOWN PER CABANG (Hanya jika KDC)
+  if (isKDC) {
+    // Gunakan logika matematika yang SAMA PERSIS dengan query utama
+    // tapi dikelompokkan (GROUP BY) berdasarkan Cabang.
+    const queryBreakdown = `
+        SELECT 
+            IFNULL(g.gdg_nama, h.inv_cab) AS nama,
+            SUM(
+                (SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) 
+                 FROM tinv_dtl dd 
+                 WHERE dd.invd_inv_nomor = h.inv_nomor) 
+                - h.inv_disc 
+                + (h.inv_ppn / 100 * (
+                    (SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) 
+                     FROM tinv_dtl dd 
+                     WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc
+                  ))
+                + h.inv_bkrm
+            ) AS omset
+        FROM tinv_hdr h
+        LEFT JOIN tgudang g ON h.inv_cab = g.gdg_kode
+        WHERE h.inv_sts_pro = 0 
+          AND h.inv_tanggal BETWEEN ? AND ?
+        GROUP BY h.inv_cab, g.gdg_nama
+        ORDER BY omset DESC;
+    `;
 
-  let finalParams;
-  if (user.cabang === "KDC") {
-    // Params: [RegexPattern, Today, Today]
-    finalParams = [excludePattern, today, today];
+    try {
+      // Parameternya cukup tanggal saja (start & end)
+      const [breakdownRows] = await pool.query(queryBreakdown, [today, today]);
+      result.salesBreakdown = breakdownRows; // [FIX] Pastikan nama property konsisten
+    } catch (err) {
+      console.error("Gagal load sales breakdown:", err);
+      result.salesBreakdown = [];
+    }
   } else {
-    // Params: [RegexPattern, Today, Today, Cabang]
-    finalParams = [excludePattern, today, today, user.cabang];
+    result.salesBreakdown = [];
   }
 
-  const [rows] = await pool.query(query, finalParams);
-  return rows[0];
+  return result;
 };
 
 // Fungsi untuk mengambil data grafik penjualan
@@ -884,6 +916,279 @@ LIMIT 100;
   return rows;
 };
 
+const getParetoStockHealth = async (req, res) => {
+  const { gudang } = req.query;
+  const connection = await pool.getConnection();
+
+  try {
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startDateStr = firstDay.toISOString().split("T")[0];
+
+    // Cek apakah request datang untuk KDC
+    const isPusat = gudang === "KDC";
+
+    const params = [];
+    params.push(startDateStr); // Param 1: Tanggal
+
+    let stokFilter = "";
+    let salesFilter = "";
+
+    if (gudang && gudang !== "ALL") {
+      // 1. Filter STOK: Selalu spesifik ke gudang yang diminta
+      stokFilter = "AND m.mst_cab = ?";
+
+      // 2. Filter SALES (Pareto):
+      if (isPusat) {
+        // Jika KDC: Pareto ditentukan dari Global Sales (Semua Cabang)
+        salesFilter = "";
+      } else {
+        // Jika Cabang: Pareto ditentukan dari Sales Cabang itu sendiri
+        salesFilter = "AND h.inv_cab = ?";
+      }
+    }
+
+    if (gudang && gudang !== "ALL") {
+      if (!isPusat) {
+        params.push(gudang); // Param Sales (Jika Cabang)
+      }
+      params.push(gudang); // Param Stok
+    }
+
+    const query = `
+      SELECT 
+        -- 1. STOK AKTUAL (Numerator)
+        SUM(IFNULL(s.stok, 0)) AS total_actual_stock,
+        
+        -- 2. BUFFER STANDAR (Denominator Base)
+        -- Ini adalah total brgd_min dari barang-barang pareto (untuk 1 toko)
+        SUM(IFNULL(b.brgd_min, 0)) AS base_buffer_pareto,
+        
+        -- 3. JUMLAH ITEM
+        COUNT(DISTINCT a.brg_kode) AS count_pareto_sku,
+
+        -- 4. [BARU] HITUNG JUMLAH TOKO AKTIF (Dinamis)
+        -- Hitung berapa banyak gudang yang BUKAN DC (gdg_dc = 0)
+        (SELECT COUNT(gdg_kode) FROM tgudang WHERE gdg_dc = 0) AS active_store_count
+
+      FROM tbarangdc a
+      JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
+      
+      -- Filter Pareto / Demand
+      INNER JOIN (
+          SELECT DISTINCT d.invd_kode, d.invd_ukuran
+          FROM tinv_dtl d
+          JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+          WHERE h.inv_sts_pro = 0 
+            AND h.inv_tanggal >= ? 
+            ${salesFilter} 
+      ) pareto ON a.brg_kode = pareto.invd_kode AND b.brgd_ukuran = pareto.invd_ukuran
+
+      -- Filter Stok (Supply)
+      LEFT JOIN (
+          SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_in - mst_stok_out) as stok
+          FROM tmasterstok m WHERE m.mst_aktif = 'Y' ${stokFilter}
+          GROUP BY mst_brg_kode, mst_ukuran
+      ) s ON a.brg_kode = s.mst_brg_kode AND b.brgd_ukuran = s.mst_ukuran
+
+      WHERE a.brg_aktif = 0 
+        AND a.brg_logstok = 'Y';
+    `;
+
+    const [rows] = await connection.query(query, params);
+    const result = rows[0];
+
+    const actual = Number(result.total_actual_stock) || 0;
+    const baseBuffer = Number(result.base_buffer_pareto) || 0;
+    const count = Number(result.count_pareto_sku) || 0;
+    const storeCount = Number(result.active_store_count) || 1; // Default 1 biar aman
+
+    // --- PERHITUNGAN TARGET DINAMIS ---
+    let finalTargetBuffer = baseBuffer;
+
+    if (isPusat) {
+      // [LOGIKA KDC]
+      // Target KDC = (Buffer Barang Pareto) x (Jumlah Toko Aktif di Database)
+      // Ini mengakomodir penambahan toko secara otomatis
+      finalTargetBuffer = baseBuffer * storeCount;
+    }
+
+    let healthScore = 0;
+    if (finalTargetBuffer > 0) {
+      healthScore = (actual / finalTargetBuffer) * 100;
+    } else if (actual > 0) {
+      healthScore = 100;
+    }
+
+    res.json({
+      score: healthScore.toFixed(1),
+      actual_stock: actual,
+      buffer_stock: finalTargetBuffer,
+      sku_count: count,
+      is_pusat: isPusat,
+      store_count: storeCount, // Kirim info jumlah toko agar bisa dicek di frontend
+    });
+  } catch (error) {
+    console.error("Error getParetoStockHealth:", error);
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
+const getParetoDetails = async (req, res) => {
+  const { gudang } = req.query;
+  const connection = await pool.getConnection();
+
+  try {
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startDateStr = firstDay.toISOString().split("T")[0];
+
+    const isPusat = gudang === "KDC";
+    const params = [startDateStr];
+
+    let stokFilter = "";
+    let salesFilter = "";
+
+    // Setup Filter dasar
+    if (gudang && gudang !== "ALL") {
+      stokFilter = "AND m.mst_cab = ?";
+      salesFilter = isPusat ? "" : "AND h.inv_cab = ?";
+    }
+
+    if (gudang && gudang !== "ALL") {
+      if (!isPusat) params.push(gudang);
+      params.push(gudang);
+    }
+
+    // 1. QUERY UTAMA: List Barang Pareto
+    const queryItems = `
+      SELECT 
+        a.brg_kode AS kode,
+        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+        b.brgd_ukuran AS ukuran,
+        IFNULL(s.stok, 0) AS stok_aktual,
+        IFNULL(b.brgd_min, 0) AS buffer_base,
+        pareto.qty_sold AS penjualan_bulan_ini,
+        (SELECT COUNT(gdg_kode) FROM tgudang WHERE gdg_dc = 0) AS store_count
+      FROM tbarangdc a
+      JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
+      INNER JOIN (
+          SELECT d.invd_kode, d.invd_ukuran, SUM(d.invd_jumlah) as qty_sold
+          FROM tinv_dtl d
+          JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+          WHERE h.inv_sts_pro = 0 AND h.inv_tanggal >= ? ${salesFilter}
+          GROUP BY d.invd_kode, d.invd_ukuran
+      ) pareto ON a.brg_kode = pareto.invd_kode AND b.brgd_ukuran = pareto.invd_ukuran
+      LEFT JOIN (
+          SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_in - mst_stok_out) as stok
+          FROM tmasterstok m WHERE m.mst_aktif = 'Y' ${stokFilter}
+          GROUP BY mst_brg_kode, mst_ukuran
+      ) s ON a.brg_kode = s.mst_brg_kode AND b.brgd_ukuran = s.mst_ukuran
+      WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
+      ORDER BY pareto.qty_sold DESC;
+    `;
+
+    const [items] = await connection.query(queryItems, params);
+
+    // 2. QUERY TAMBAHAN: Detail Stok & Penjualan Per Cabang
+    // Ambil data hanya untuk barang-barang yang masuk list pareto di atas agar efisien
+    let branchDetails = [];
+
+    if (items.length > 0 && isPusat) {
+      // Kumpulkan kode barang untuk filter WHERE IN
+      const codes = items.map((i) => `'${i.kode}'`).join(","); // Hati-hati SQL Injection jika kode aneh, tapi aman jika internal
+
+      // Query ini mengambil breakdown per cabang untuk item-item tersebut
+      const queryBreakdown = `
+          SELECT 
+            m.mst_cab AS cabang_kode,
+            g.gdg_nama AS cabang_nama,
+            m.mst_brg_kode AS kode,
+            m.mst_ukuran AS ukuran,
+            SUM(m.mst_stok_in - m.mst_stok_out) AS stok
+          FROM tmasterstok m
+          LEFT JOIN tgudang g ON m.mst_cab = g.gdg_kode
+          WHERE m.mst_aktif = 'Y' 
+            AND m.mst_brg_kode IN (SELECT brg_kode FROM tbarangdc WHERE brg_logstok='Y') -- Optimasi sederhana
+            AND g.gdg_dc = 0 -- Hanya ambil toko, bukan DC lain
+          GROUP BY m.mst_cab, m.mst_brg_kode, m.mst_ukuran
+       `;
+      // Note: Query di atas disederhanakan. Untuk performa tinggi di data besar, sebaiknya filter by codes.
+      // Tapi jika barang pareto banyak, query string jadi terlalu panjang.
+      // Kita tarik global stok toko aktif saja, lalu filter di JS (lebih aman resource DB).
+
+      const [details] = await connection.query(queryBreakdown);
+      branchDetails = details;
+    }
+
+    // 3. Gabungkan Data (Merge)
+    const result = items.map((row, index) => {
+      const target = isPusat
+        ? row.buffer_base * row.store_count
+        : row.buffer_base;
+
+      let status = "AMAN";
+      let color = "success";
+      if (target > 0) {
+        const ratio = (row.stok_aktual / target) * 100;
+        if (ratio < 100) {
+          status = "KRITIS";
+          color = "error";
+        } else if (ratio > 300) {
+          status = "OVER";
+          color = "warning";
+        }
+      } else if (row.stok_aktual <= 0) {
+        status = "KRITIS";
+        color = "error";
+      }
+
+      // Filter detail cabang milik item ini
+      const itemBranches = isPusat
+        ? branchDetails
+            .filter((d) => d.kode === row.kode && d.ukuran === row.ukuran)
+            .map((b) => ({
+              nama: b.cabang_nama,
+              stok: Number(b.stok),
+              // Status per toko (Target per toko = buffer_base)
+              status:
+                Number(b.stok) < row.buffer_base
+                  ? "KRITIS"
+                  : Number(b.stok) > row.buffer_base * 3
+                  ? "OVER"
+                  : "AMAN",
+            }))
+        : [];
+
+      // Urutkan detail: Cabang Kritis (Stok < Min) paling atas
+      itemBranches.sort((a, b) => (a.status === "KRITIS" ? -1 : 1));
+
+      return {
+        rank: index + 1,
+        kode: row.kode,
+        nama: row.nama,
+        ukuran: row.ukuran,
+        stok: Number(row.stok_aktual),
+        target: target,
+        buffer_per_toko: row.buffer_base, // Info tambahan untuk frontend
+        sales: Number(row.penjualan_bulan_ini),
+        status,
+        color,
+        branches: itemBranches, // Data Nested
+      };
+    });
+
+    res.json(result);
+  } catch (error) {
+    console.error("Error getParetoDetails:", error);
+    res.status(500).json({ message: "Gagal mengambil detail pareto" });
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -902,4 +1207,6 @@ module.exports = {
   getItemSalesTrend,
   getStockAlerts,
   getStokKosongReguler,
+  getParetoStockHealth,
+  getParetoDetails,
 };

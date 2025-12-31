@@ -206,6 +206,7 @@ const saveData = async (payload, user) => {
         header.jenisMutasi,
         user.kode,
         msoNomor,
+        user.cabang,
       ]);
       // (Catatan: Delphi mengambil idrec dari select, kita bisa asumsikan idrec tidak berubah saat edit)
     }

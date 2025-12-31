@@ -1,4 +1,6 @@
 const service = require("../services/setoranBayarFormService");
+const auditService = require("../services/auditService"); // Import Audit
+const pool = require("../config/database"); // Import Pool untuk Snapshot
 
 const loadForEdit = async (req, res) => {
   try {
@@ -9,9 +11,66 @@ const loadForEdit = async (req, res) => {
   }
 };
 
+// [AUDIT TRAIL DITERAPKAN DI SINI]
 const save = async (req, res) => {
   try {
-    const result = await service.saveData(req.body, req.user);
+    const payload = req.body;
+
+    // 1. DETEKSI: Apakah ini Update?
+    const isUpdate = payload.isNew === false;
+    const nomorDokumen = payload.header?.nomor;
+
+    let oldData = null;
+
+    // 2. SNAPSHOT: Ambil data lama LENGKAP jika Update
+    if (isUpdate && nomorDokumen) {
+      try {
+        // A. Ambil Header
+        const [headerRows] = await pool.query(
+          "SELECT * FROM tsetor_hdr WHERE sh_nomor = ?",
+          [nomorDokumen]
+        );
+
+        if (headerRows.length > 0) {
+          const header = headerRows[0];
+
+          // B. Ambil Detail (Gunakan sd_sh_nomor)
+          const [detailRows] = await pool.query(
+            "SELECT * FROM tsetor_dtl WHERE sd_sh_nomor = ? ORDER BY sd_nourut",
+            [nomorDokumen]
+          );
+
+          // C. Gabungkan
+          oldData = {
+            ...header,
+            items: detailRows
+          };
+        }
+      } catch (e) {
+        console.warn("Gagal snapshot oldData save setoran:", e.message);
+      }
+    }
+
+    // 3. PROSES: Simpan ke Database
+    const result = await service.saveData(payload, req.user);
+
+    // 4. AUDIT: Catat Log
+    const targetId = result.nomor || nomorDokumen || "UNKNOWN";
+    const action = isUpdate ? "UPDATE" : "CREATE";
+    const note = payload.header?.nomorSo
+      ? `Input DP untuk SO: ${payload.header.nomorSo}`
+      : `${action === "CREATE" ? "Input" : "Edit"} Pembayaran Piutang`;
+
+    auditService.logActivity(
+      req,
+      action,
+      "SETORAN_BAYAR",
+      targetId,
+      oldData, // Data Lama (Header + Items)
+      payload, // Data Baru (Payload Form)
+      note
+    );
+
     res.json(result);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -99,7 +158,8 @@ const getSoDetails = async (req, res) => {
 const getInvoicesFromSo = async (req, res) => {
   try {
     const nomorSo = req.query.nomorSo;
-    if (!nomorSo) return res.status(400).json({ message: "Nomor SO diperlukan." });
+    if (!nomorSo)
+      return res.status(400).json({ message: "Nomor SO diperlukan." });
 
     const result = await service.getInvoicesFromSo(nomorSo);
     res.json(result);
@@ -108,7 +168,6 @@ const getInvoicesFromSo = async (req, res) => {
   }
 };
 
-
 module.exports = {
   loadForEdit,
   save,
@@ -116,5 +175,5 @@ module.exports = {
   getPrintData,
   searchSoForSetoran,
   getSoDetails,
-  getInvoicesFromSo
+  getInvoicesFromSo,
 };

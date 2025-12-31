@@ -42,27 +42,10 @@ const searchSoPo = async (req, res) => {
 
 const saveData = async (req, res) => {
   try {
-    console.log(
-      "🔵 [LHK SAVE] Incoming payload:",
-      JSON.stringify(req.body, null, 2)
-    );
-    console.log("🔵 [LHK SAVE] User:", req.user);
 
     const result = await lhkSoDtfFormService.saveData(req.body, req.user);
     res.status(201).json(result);
   } catch (error) {
-    console.error("❌ ERROR saveData:");
-    console.error("📌 Message:", error.message);
-    console.error("📌 Stack:", error.stack);
-
-    // Jika error MySQL, tampilkan detailnya
-    if (error.sql) {
-      console.error("📌 SQL:", error.sql);
-      console.error("📌 SQL Message:", error.sqlMessage);
-      console.error("📌 SQL State:", error.sqlState);
-      console.error("📌 Errno:", error.errno);
-    }
-
     res.status(500).json({ message: error.message });
   }
 };
@@ -73,7 +56,6 @@ const removeData = async (req, res) => {
     const result = await lhkSoDtfFormService.removeData(tanggal, cabang);
     res.json(result);
   } catch (error) {
-    console.error("❌ ERROR removeData:", error);
     res.status(400).json({ message: error.message });
   }
 };

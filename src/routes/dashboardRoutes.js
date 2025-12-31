@@ -78,12 +78,28 @@ router.get(
   dashboardController.getTotalStokPerCabang
 );
 
-router.get('/item-sales-trend', verifyToken, dashboardController.getItemSalesTrend);
+router.get(
+  "/item-sales-trend",
+  verifyToken,
+  dashboardController.getItemSalesTrend
+);
 
-router.get('/changelog', verifyToken, dashboardController.getAppChangelog);
+router.get("/changelog", verifyToken, dashboardController.getAppChangelog);
 
 router.get("/stock-alerts", verifyToken, dashboardController.getStockAlerts);
 
 router.get("/stok-kosong", verifyToken, dashboardController.getStokKosong);
+
+router.get(
+  "/pareto-health",
+  verifyToken,
+  dashboardController.getParetoStockHealth
+);
+
+router.get(
+  "/pareto-details",
+  verifyToken,
+  dashboardController.getParetoDetails
+);
 
 module.exports = router;

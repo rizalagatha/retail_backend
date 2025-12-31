@@ -6,10 +6,15 @@ const getList = async (filters) => {
   let params = [startDate, endDate];
 
   let branchFilter = "";
-  if (cabang === "KDC") {
+  if (cabang === "ALL") {
+    // Jika ALL, jangan pakai filter cabang sama sekali (Tampilkan Semua)
+    branchFilter = "";
+  } else if (cabang === "KDC") {
+    // Jika KDC (Default), tampilkan gudang milik DC saja
     branchFilter =
       "AND h.so_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)";
-  } else {
+  } else if (cabang) {
+    // Jika cabang spesifik (misal K01, K02)
     branchFilter = "AND h.so_cab = ?";
     params.push(cabang);
   }
@@ -471,48 +476,110 @@ const remove = async (nomor, user) => {
 };
 
 const getExportDetails = async (filters) => {
-  const { startDate, endDate, cabang } = filters;
-  let params = [startDate, endDate];
-  let branchFilter = "";
+  const { startDate, endDate, cabang, status, search } = filters;
+  const params = [startDate, endDate];
 
-  // Logika Filter Cabang
+  // 1. Filter Cabang
+  let branchFilter = "";
+  // [FIX] Jika KDC dan pilih ALL, jangan pakai filter apapun (Tampilkan semua)
   if (cabang === "KDC") {
+    // Jika KDC default (bukan ALL), biasanya ada logic khusus?
+    // Tapi kalau di InvoiceView logicnya "ALL" = No Filter.
+    // Kita asumsikan default view KDC adalah list cabang tertentu, tapi kalau ALL ya semua.
     branchFilter =
       "AND h.so_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)";
   } else if (cabang && cabang !== "ALL") {
+    // Jika user cabang biasa ATAU KDC memilih cabang spesifik
     branchFilter = "AND h.so_cab = ?";
     params.push(cabang);
   }
+  // Jika cabang == "ALL", branchFilter tetap string kosong "" (No Filter)
 
-  // --- DEBUGGING (Opsional: Cek di terminal backend) ---
-  console.log("Export SO Params:", {
-    startDate,
-    endDate,
-    cabang,
-    branchFilter,
-  });
+  // 2. Filter Search (Opsional, agar hasil export sesuai tampilan tabel)
+  let searchFilter = "";
+  if (search) {
+    searchFilter = `
+      AND (
+        h.so_nomor LIKE ? OR 
+        c.cus_nama LIKE ? 
+      )
+    `;
+    const term = `%${search}%`;
+    params.push(term, term);
+  }
+
+  // 3. Filter Status (Open / Sisa Piutang Logic)
+  // Kita perlu subquery/CTE ringkas untuk menentukan status SO sebelum join detail
+  // Logic OPEN: so_close = 0 (Belum manual close) DAN (QtySO > QtyInv)
+  let statusClause = "";
+  if (status === "open") {
+    // Kita filter di WHERE utama menggunakan Subquery exists
+    // Cari SO yang QtyOrder > QtyInvoice
+    statusClause = `
+      AND h.so_close = 0 -- Belum Close Manual
+      AND (
+        (SELECT SUM(sod_jumlah) FROM tso_dtl WHERE sod_so_nomor = h.so_nomor) 
+        > 
+        IFNULL((SELECT SUM(invd_jumlah) 
+                FROM tinv_dtl id 
+                JOIN tinv_hdr ih ON ih.inv_nomor = id.invd_inv_nomor 
+                WHERE ih.inv_sts_pro = 0 AND ih.inv_nomor_so = h.so_nomor), 0)
+      )
+    `;
+  }
 
   const query = `
         SELECT 
             h.so_nomor AS 'Nomor SO',
-            h.so_tanggal AS 'Tanggal',
+            DATE_FORMAT(h.so_tanggal, '%Y-%m-%d') AS 'Tanggal', -- Format ISO agar mudah diparsing frontend
             c.cus_nama AS 'Customer',
             d.sod_kode AS 'Kode Barang',
-            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) AS Nama,
+            
+            -- Nama Barang (Gabungan DC / DTF / Custom)
+            COALESCE(
+              TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), " ", IFNULL(a.brg_tipe,''), " ", IFNULL(a.brg_lengan,''), " ", IFNULL(a.brg_jeniskain,''), " ", IFNULL(a.brg_warna,''))),
+              f.sd_nama,
+              d.sod_custom_nama
+            ) AS Nama,
+            
             d.sod_ukuran AS 'Ukuran',
-            d.sod_jumlah AS 'Qty',
+            d.sod_jumlah AS 'Qty SO',
+            
+            -- [TAMBAHAN] Qty Terkirim & Sisa (Penting untuk laporan Open SO)
+            IFNULL((
+                SELECT SUM(id.invd_jumlah) 
+                FROM tinv_dtl id 
+                JOIN tinv_hdr ih ON ih.inv_nomor = id.invd_inv_nomor 
+                WHERE ih.inv_sts_pro = 0 
+                  AND ih.inv_nomor_so = h.so_nomor 
+                  AND id.invd_kode = d.sod_kode 
+                  AND id.invd_ukuran = d.sod_ukuran
+            ), 0) AS 'Qty Kirim',
+            
+            (d.sod_jumlah - IFNULL((
+                SELECT SUM(id.invd_jumlah) 
+                FROM tinv_dtl id 
+                JOIN tinv_hdr ih ON ih.inv_nomor = id.invd_inv_nomor 
+                WHERE ih.inv_sts_pro = 0 
+                  AND ih.inv_nomor_so = h.so_nomor 
+                  AND id.invd_kode = d.sod_kode 
+                  AND id.invd_ukuran = d.sod_ukuran
+            ), 0)) AS 'Sisa Qty',
+
             d.sod_harga AS 'Harga',
             d.sod_diskon AS 'Diskon',
-            (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS 'Total'
+            (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS 'Total Nilai SO'
+
         FROM tso_hdr h
         JOIN tso_dtl d ON h.so_nomor = d.sod_so_nomor
         LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
         LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
         LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_kode
         
-        -- [PERBAIKAN] Gunakan DATE() agar jam diabaikan (mengcover full 24 jam)
         WHERE DATE(h.so_tanggal) BETWEEN ? AND ? 
         ${branchFilter}
+        ${searchFilter}
+        ${statusClause} -- Filter status "Open" masuk sini
         
         ORDER BY h.so_nomor, d.sod_nourut;
     `;

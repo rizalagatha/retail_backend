@@ -1,4 +1,6 @@
 const soDtfFormService = require("../services/soDtfFormService");
+const auditService = require("../services/auditService"); // Import Audit
+const pool = require("../config/database"); // Import Pool untuk Snapshot
 const fs = require("fs");
 const path = require("path");
 
@@ -18,28 +20,92 @@ const getById = async (req, res) => {
   }
 };
 
+// [AUDIT TRAIL DITERAPKAN DI SINI]
 const create = async (req, res) => {
   try {
-    // user didapat dari middleware verifyToken
     const user = req.user;
+
+    // 1. PROSES: Simpan Baru
     const newData = await soDtfFormService.create(req.body, user);
+
+    // 2. AUDIT: Catat Log Create
+    const targetId = newData.header?.sd_nomor || "UNKNOWN";
+    const refSO = req.body.header?.soNomor || "UNKNOWN";
+
+    auditService.logActivity(
+      req,
+      "CREATE",
+      "SO_DTF",
+      targetId,
+      null, // Old Data
+      req.body, // New Data (Payload Form sudah lengkap Header + 2 Details)
+      `Input SO DTF Baru (Ref SO: ${refSO})`
+    );
+
     res.status(201).json(newData);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
+// [AUDIT TRAIL DITERAPKAN DI SINI]
 const update = async (req, res) => {
   try {
     const { nomor } = req.params;
     const user = req.user;
 
-    // Service sekarang mengembalikan data lengkap termasuk header dengan imageUrl
+    // 1. SNAPSHOT: Ambil data lama LENGKAP sebelum update
+    let oldData = null;
+    try {
+      // A. Ambil Header
+      const [headerRows] = await pool.query(
+        "SELECT * FROM tsodtf_hdr WHERE sd_nomor = ?",
+        [nomor]
+      );
+
+      if (headerRows.length > 0) {
+        const header = headerRows[0];
+
+        // B. Ambil Detail 1
+        const [detail1Rows] = await pool.query(
+          "SELECT * FROM tsodtf_dtl WHERE sdd_nomor = ? ORDER BY sdd_nourut",
+          [nomor]
+        );
+
+        // C. Ambil Detail 2
+        const [detail2Rows] = await pool.query(
+          "SELECT * FROM tsodtf_dtl2 WHERE sdd2_nomor = ? ORDER BY sdd2_nourut",
+          [nomor]
+        );
+
+        // D. Gabungkan
+        oldData = {
+          ...header,
+          items: detail1Rows,
+          titikCetak: detail2Rows
+        };
+      }
+    } catch (e) {
+      console.warn("Gagal snapshot oldData update SO DTF:", e.message);
+    }
+
+    // 2. PROSES: Update Data
     const updatedData = await soDtfFormService.update(nomor, req.body, user);
+
+    // 3. AUDIT: Catat Log Update
+    auditService.logActivity(
+      req,
+      "UPDATE",
+      "SO_DTF",
+      nomor, // Target ID
+      oldData, // Old Data (Header + 2 Details)
+      req.body, // New Data (Payload Form)
+      `Update SO DTF`
+    );
 
     res.json({
       message: "Data berhasil diperbarui",
-      data: updatedData, // Langsung kirim respons dari service
+      data: updatedData,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -117,20 +183,17 @@ const uploadImage = async (req, res) => {
 
     const { nomor } = req.params;
     if (!nomor) {
-      // Hapus file temp jika nomor tidak ada
       if (fs.existsSync(req.file.path)) {
         fs.unlinkSync(req.file.path);
       }
       return res.status(400).json({ message: "Nomor SO DTF diperlukan." });
     }
 
-    // Proses gambar (rename & pindah ke folder cabang)
     const finalPath = await soDtfFormService.processSoDtfImage(
       req.file.path,
       nomor
     );
 
-    // Buat URL yang bisa diakses frontend
     const cabang = nomor.substring(0, 3);
     const fileExtension = path.extname(req.file.originalname);
     const imageUrl = `/images/${cabang}/${nomor}${fileExtension}`;
@@ -145,7 +208,6 @@ const uploadImage = async (req, res) => {
   } catch (error) {
     console.error("UPLOAD ERROR:", error);
 
-    // Hapus file temp jika ada error
     if (req.file && fs.existsSync(req.file.path)) {
       try {
         fs.unlinkSync(req.file.path);

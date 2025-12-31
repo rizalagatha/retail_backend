@@ -74,8 +74,9 @@ const remove = async (nomor, user) => {
     await connection.beginTransaction();
 
     // 1. Ambil header mutasi
+    // UBAH: ganti mo_status menjadi mo_closing
     const [rows] = await connection.query(
-      `SELECT mo_nomor, mo_status, mo_cab, mo_idrec
+      `SELECT mo_nomor, mo_closing, mo_cab, mo_idrec
        FROM tmutasiout_hdr
        WHERE mo_nomor = ?`,
       [nomor]
@@ -87,24 +88,26 @@ const remove = async (nomor, user) => {
 
     const data = rows[0];
 
-    // 2. Validasi status
-    if (data.mo_status !== "OPEN") {
-      throw new Error(`Status sudah ${data.mo_status}. Tidak bisa dihapus.`);
+    // 2. Validasi status (Gunakan mo_closing)
+    // Jika mo_closing == 'Y', berarti sudah close/posted -> Gagal
+    if (data.mo_closing === "Y") {
+      throw new Error(`Mutasi Out sudah Closing (Posted). Tidak bisa dihapus.`);
     }
 
     // 3. Validasi kepemilikan cabang
+    // Pastikan user yang menghapus berasal dari cabang pembuat (mo_cab)
     if (data.mo_cab !== user.cabang) {
       throw new Error(
-        `Data milik cabang ${data.mo_cab}. Anda tidak boleh menghapus.`
+        `Data milik cabang ${data.mo_cab}. Anda (${user.cabang}) tidak boleh menghapus.`
       );
     }
 
     // 4. Hapus detail jika ada
-    await connection.query(`DELETE FROM tmutasiout_dtl WHERE md_nomor = ?`, [
+    await connection.query(`DELETE FROM tmutasiout_dtl WHERE mod_nomor = ?`, [
       nomor,
     ]);
 
-    // 5. Hapus header berdasarkan mo_idrec (mengikuti Delphi)
+    // 5. Hapus header
     await connection.query(`DELETE FROM tmutasiout_hdr WHERE mo_idrec = ?`, [
       data.mo_idrec,
     ]);

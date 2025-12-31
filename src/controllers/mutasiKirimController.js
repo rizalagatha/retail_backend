@@ -1,4 +1,6 @@
 const service = require("../services/mutasiKirimService");
+const auditService = require("../services/auditService"); // Import Audit
+const pool = require("../config/database"); // Import Pool untuk Snapshot
 
 const getCabangList = async (req, res) => {
   try {
@@ -28,10 +30,55 @@ const getDetails = async (req, res) => {
   }
 };
 
+// [AUDIT TRAIL DITERAPKAN DI SINI]
 const remove = async (req, res) => {
   try {
     const { nomor } = req.params;
+
+    // 1. SNAPSHOT: Ambil data lama LENGKAP (Header + Detail)
+    let oldData = null;
+    try {
+      // A. Ambil Header
+      const [headerRows] = await pool.query(
+        "SELECT * FROM tmsk_hdr WHERE msk_nomor = ?",
+        [nomor]
+      );
+
+      if (headerRows.length > 0) {
+        const header = headerRows[0];
+
+        // B. Ambil Detail (Gunakan mskd_nomor)
+        const [detailRows] = await pool.query(
+          "SELECT * FROM tmsk_dtl WHERE mskd_nomor = ? ORDER BY mskd_kode", // Order by kode/idrec
+          [nomor]
+        );
+
+        // C. Gabungkan
+        oldData = {
+          ...header,
+          items: detailRows
+        };
+      }
+    } catch (e) {
+      console.warn("Gagal snapshot oldData remove mutasi kirim:", e.message);
+    }
+
+    // 2. PROSES: Jalankan service remove
     const result = await service.remove(nomor, req.user);
+
+    // 3. AUDIT: Catat Log
+    if (oldData) {
+      auditService.logActivity(
+        req,
+        "DELETE",            // Action
+        "MUTASI_KIRIM",      // Module
+        nomor,               // Target ID
+        oldData,             // Data Lama (Header + Items)
+        null,                // Data Baru (Null)
+        `Menghapus Dokumen Mutasi Kirim (Tujuan: ${oldData.msk_cabang_tujuan || "Unknown"})`
+      );
+    }
+
     res.json(result);
   } catch (error) {
     res.status(400).json({ message: error.message });

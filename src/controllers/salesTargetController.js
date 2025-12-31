@@ -17,12 +17,12 @@ const getList = async (req, res) => {
 };
 
 const getDynamicCabangOptions = async (req, res) => {
-    try {
-        const data = await service.getDynamicCabangOptions(req.query, req.user);
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
+  try {
+    const data = await service.getDynamicCabangOptions(req.query, req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
 module.exports = {

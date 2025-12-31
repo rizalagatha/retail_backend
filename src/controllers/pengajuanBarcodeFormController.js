@@ -1,4 +1,6 @@
 const service = require("../services/pengajuanBarcodeFormService");
+const auditService = require("../services/auditService"); // Import Audit
+const pool = require("../config/database"); // Import Pool untuk Snapshot
 const fs = require("fs");
 
 const getForEdit = async (req, res) => {
@@ -10,9 +12,76 @@ const getForEdit = async (req, res) => {
   }
 };
 
+// [AUDIT TRAIL DITERAPKAN DI SINI]
 const save = async (req, res) => {
   try {
-    const result = await service.save(req.body, req.user);
+    const payload = req.body;
+
+    // 1. DETEKSI: Apakah ini Update?
+    const isUpdate = payload.isNew === false;
+    const nomorDokumen = payload.header?.nomor || payload.nomor;
+
+    let oldData = null;
+
+    // 2. SNAPSHOT: Ambil data lama LENGKAP jika Update
+    if (isUpdate && nomorDokumen) {
+      try {
+        // A. Ambil Header
+        const [headerRows] = await pool.query(
+          "SELECT * FROM tpengajuanbarcode_hdr WHERE pc_nomor = ?",
+          [nomorDokumen]
+        );
+
+        if (headerRows.length > 0) {
+          const header = headerRows[0];
+
+          // B. Ambil Detail 1 (Barang)
+          const [detail1Rows] = await pool.query(
+            "SELECT * FROM tpengajuanbarcode_dtl WHERE pcd_nomor = ? ORDER BY pcd_nourut",
+            [nomorDokumen]
+          );
+
+          // C. Ambil Detail 2 (Harga)
+          const [detail2Rows] = await pool.query(
+            "SELECT * FROM tpengajuanbarcode_dtl2 WHERE pcd2_nomor = ? ORDER BY pcd2_nourut",
+            [nomorDokumen]
+          );
+
+          // D. Gabungkan
+          oldData = {
+            ...header,
+            itemsBarang: detail1Rows,
+            itemsHarga: detail2Rows
+          };
+        }
+      } catch (e) {
+        console.warn("Gagal snapshot oldData save pengajuan barcode:", e.message);
+      }
+    }
+
+    // 3. PROSES: Simpan ke Database
+    const result = await service.save(payload, req.user);
+
+    // 4. AUDIT: Catat Log
+    const targetId = result.nomor || nomorDokumen || "UNKNOWN";
+    let action = isUpdate ? "UPDATE" : "CREATE";
+    let note = `${action === "CREATE" ? "Input" : "Edit"} Pengajuan Barcode`;
+
+    if (payload.isApproved) {
+      action = "APPROVE";
+      note = `Approve Pengajuan Barcode (Status: ACC)`;
+    }
+
+    auditService.logActivity(
+      req,
+      action,
+      "PENGAJUAN_BARCODE",
+      targetId,
+      oldData, // Data Lama (Header + 2 Details)
+      payload, // Data Baru (Payload Form)
+      note
+    );
+
     res.status(201).json(result);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -21,7 +90,6 @@ const save = async (req, res) => {
 
 const lookupProducts = async (req, res) => {
   try {
-    // Langsung teruskan semua filter dari query ke service
     const data = await service.lookupProducts(req.query);
     res.json(data);
   } catch (error) {
@@ -40,7 +108,6 @@ const getJenisReject = async (req, res) => {
 
 const getProductDetails = async (req, res) => {
   try {
-    // Validasi parameter yang dibutuhkan
     const { kode, ukuran, gudang } = req.query;
     if (!kode || !ukuran || !gudang) {
       return res
@@ -65,7 +132,6 @@ const lookupStickers = async (req, res) => {
 
 const getDataForBarcodePrint = async (req, res) => {
   try {
-    // Ambil 'nomor' dari parameter URL (req.params)
     const { nomor } = req.params;
     if (!nomor) {
       return res.status(400).json({ message: "Nomor dokumen diperlukan." });
@@ -83,10 +149,8 @@ const uploadItemImage = async (req, res) => {
       return res.status(400).json({ message: "Tidak ada file yang diunggah." });
     }
 
-    // Ambil data dari form-data body
     const { nomor, kode, ukuran } = req.body;
     if (!nomor || !kode || !ukuran) {
-      // Hapus file temp jika data tidak lengkap
       if (fs.existsSync(req.file.path)) {
         fs.unlinkSync(req.file.path);
       }
@@ -95,7 +159,6 @@ const uploadItemImage = async (req, res) => {
         .json({ message: "Informasi item (nomor, kode, ukuran) diperlukan." });
     }
 
-    // Panggil service baru
     const { imageUrl } = await service.processItemImage(
       req.file.path,
       nomor,
@@ -110,7 +173,6 @@ const uploadItemImage = async (req, res) => {
     });
   } catch (error) {
     console.error("UPLOAD ITEM IMAGE ERROR:", error);
-    // Hapus file temp jika ada error
     if (req.file && fs.existsSync(req.file.path)) {
       try {
         fs.unlinkSync(req.file.path);
@@ -128,13 +190,9 @@ const uploadItemImage = async (req, res) => {
 const getDataForPrint = async (req, res) => {
   try {
     const { nomor } = req.params;
-
-    // Panggil service getDataForPrint yang baru dibuat
     const data = await service.getDataForPrint(nomor);
-
     res.json(data);
   } catch (error) {
-    // Jika dokumen tidak ditemukan, service throw Error, tangkap sebagai 404
     if (error.message === "Dokumen tidak ditemukan.") {
       return res.status(404).json({ message: error.message });
     }
@@ -151,5 +209,5 @@ module.exports = {
   lookupStickers,
   getDataForBarcodePrint,
   uploadItemImage,
-  getDataForPrint,  
+  getDataForPrint,
 };

@@ -1,4 +1,6 @@
 const potonganService = require("../services/potonganService");
+const auditService = require("../services/auditService"); // Import Audit
+const pool = require("../config/database"); // Import Pool untuk Snapshot
 
 // --- Lookup ---
 const getCabangList = async (req, res) => {
@@ -42,7 +44,7 @@ const getPotonganList = async (req, res) => {
 const getBrowseDetails = async (req, res) => {
   try {
     const { nomor } = req.params;
-    const data = await potonganService.getBrowseDetails(nomor); // Memanggil service baru
+    const data = await potonganService.getBrowseDetails(nomor);
     res.status(200).json(data);
   } catch (error) {
     console.error("getBrowseDetails error:", error.message);
@@ -52,13 +54,11 @@ const getBrowseDetails = async (req, res) => {
     });
   }
 };
-// === BATAS FUNGSI BARU ===
 
 // --- Detail (Untuk Halaman Edit) ---
 const getPotonganDetails = async (req, res) => {
   try {
     const { nomor } = req.params;
-    // PERBAIKAN: Memanggil 'getDetails' (sesuai service)
     const data = await potonganService.getDetails(nomor);
     res.status(200).json(data);
   } catch (error) {
@@ -68,11 +68,52 @@ const getPotonganDetails = async (req, res) => {
 };
 
 // --- Simpan (insert/update) ---
+// [AUDIT TRAIL DITERAPKAN DI SINI]
 const savePotongan = async (req, res) => {
   try {
     const data = req.body;
     const user = req.user;
+
+    // 1. DETEKSI: Apakah ini Update?
+    // Gunakan flag 'isEdit' dari frontend
+    const isUpdate = data.isEdit === true;
+    const nomorDokumen = data.header?.pt_nomor;
+
+    let oldData = null;
+
+    // 2. SNAPSHOT: Ambil data lama jika Update
+    if (isUpdate && nomorDokumen) {
+      try {
+        // Tabel: tpotongan_hdr, PK: pt_nomor
+        const [rows] = await pool.query(
+          "SELECT * FROM tpotongan_hdr WHERE pt_nomor = ?",
+          [nomorDokumen]
+        );
+        if (rows.length > 0) oldData = rows[0];
+      } catch (e) {
+        console.warn("Gagal snapshot oldData save potongan:", e.message);
+      }
+    }
+
+    // 3. PROSES: Simpan ke Database
     const result = await potonganService.save(data, user);
+
+    // 4. AUDIT: Catat Log
+    const targetId = result.nomor || nomorDokumen || "UNKNOWN";
+    const action = isUpdate ? "UPDATE" : "CREATE";
+
+    auditService.logActivity(
+      req,
+      action,
+      "POTONGAN",
+      targetId,
+      oldData, // Data Lama (Null jika Create)
+      data, // Data Baru
+      `${action === "CREATE" ? "Input" : "Edit"} Potongan Piutang (Rp ${
+        data.header.pt_nominal
+      })`
+    );
+
     res.status(200).json(result);
   } catch (error) {
     console.error(error);
@@ -81,11 +122,56 @@ const savePotongan = async (req, res) => {
 };
 
 // --- Hapus ---
+// [AUDIT TRAIL DITERAPKAN DI SINI]
 const deletePotongan = async (req, res) => {
   try {
     const { nomor } = req.params;
     const user = req.user;
+
+    // 1. SNAPSHOT: Ambil data lama LENGKAP (Header + Detail)
+    let oldData = null;
+    try {
+      // A. Ambil Header
+      const [headerRows] = await pool.query(
+        "SELECT * FROM tpotongan_hdr WHERE pt_nomor = ?",
+        [nomor]
+      );
+
+      if (headerRows.length > 0) {
+        const header = headerRows[0];
+
+        // B. Ambil Detail (Gunakan ptd_nomor)
+        const [detailRows] = await pool.query(
+          "SELECT * FROM tpotongan_dtl WHERE ptd_nomor = ? ORDER BY ptd_inv", // Order by inv
+          [nomor]
+        );
+
+        // C. Gabungkan
+        oldData = {
+          ...header,
+          items: detailRows
+        };
+      }
+    } catch (e) {
+      console.warn("Gagal snapshot oldData delete potongan:", e.message);
+    }
+
+    // 2. PROSES: Hapus data
     const result = await potonganService.remove(nomor, user);
+
+    // 3. AUDIT: Catat Log Delete
+    if (oldData) {
+      auditService.logActivity(
+        req,
+        "DELETE",            // Action
+        "POTONGAN",          // Module
+        nomor,               // Target ID
+        oldData,             // Data Lama (Header + Items)
+        null,                // Data Baru (Null)
+        `Menghapus Potongan Piutang (Customer: ${oldData.pt_cus_kode || "Unknown"})`
+      );
+    }
+
     res.status(200).json(result);
   } catch (error) {
     console.error(error);
@@ -115,7 +201,7 @@ const exportPotonganDetails = async (req, res) => {
 module.exports = {
   getCabangList,
   getPotonganList,
-  getBrowseDetails, // <-- TAMBAHKAN FUNGSI BARU
+  getBrowseDetails,
   getPotonganDetails,
   savePotongan,
   deletePotongan,

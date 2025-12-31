@@ -1022,8 +1022,8 @@ const changePaymentMethod = async (payload, user) => {
       await connection.query(
         `INSERT INTO tsetor_hdr (
            sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, 
-           sh_akun, sh_norek, sh_otomatis, user_create, date_create
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Y', ?, NOW())`,
+           sh_akun, sh_norek, sh_tgltransfer, sh_otomatis, user_create, date_create
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Y', ?, NOW())`,
         [
           idrec,
           nomorSetoranBaru,
@@ -1033,6 +1033,7 @@ const changePaymentMethod = async (payload, user) => {
           nominalBayar,
           bank?.kode || "",
           noRek || "",
+          tglSql,
           user.kode,
         ]
       );

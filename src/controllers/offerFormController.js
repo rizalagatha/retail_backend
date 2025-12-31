@@ -1,4 +1,6 @@
 const offerFormService = require("../services/offerFormService");
+const auditService = require("../services/auditService"); // Import Audit
+const pool = require("../config/database"); // Import Pool untuk Snapshot
 
 const getNextNumber = async (req, res) => {
   try {
@@ -9,6 +11,7 @@ const getNextNumber = async (req, res) => {
         .json({ message: "Parameter cabang dan tanggal diperlukan." });
     }
     const nextNumber = await offerFormService.generateNewOfferNumber(
+      pool, // Pass pool connection
       cabang,
       tanggal
     );
@@ -20,14 +23,10 @@ const getNextNumber = async (req, res) => {
 
 const searchCustomers = async (req, res) => {
   try {
-    // 1. Ambil parameter paginasi dan pencarian dari query string
     const { term, gudang, page, itemsPerPage } = req.query;
-
-    // Perbaikan: Tambahkan nilai default untuk paginasi
     const pageNumber = parseInt(page, 10) || 1;
     const limit = parseInt(itemsPerPage, 10) || 10;
 
-    // 2. Panggil service dengan semua parameter yang diperlukan
     const result = await offerFormService.searchCustomers(
       term || "",
       gudang,
@@ -35,7 +34,6 @@ const searchCustomers = async (req, res) => {
       limit
     );
 
-    // 3. Kirim kembali data dalam format { items, total } yang diharapkan frontend
     res.json(result);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -45,7 +43,11 @@ const searchCustomers = async (req, res) => {
 const getCustomerDetails = async (req, res) => {
   try {
     const { kode } = req.params;
-    const details = await offerFormService.getCustomerDetails(kode);
+    // Tambahkan parameter gudang jika diperlukan oleh service (berdasarkan kode service Anda butuh gudang)
+    // Asumsi frontend mengirim gudang via query atau kita ambil dari user cabang jika tidak ada
+    const gudang = req.query.gudang || req.user.cabang;
+
+    const details = await offerFormService.getCustomerDetails(kode, gudang);
     if (details) {
       res.json(details);
     } else {
@@ -56,16 +58,70 @@ const getCustomerDetails = async (req, res) => {
   }
 };
 
+// [AUDIT TRAIL DITERAPKAN DI SINI]
 const saveOffer = async (req, res) => {
   try {
-    const result = await offerFormService.saveOffer(req.body);
-    console.log("Data yang dikirim ke frontend:", result);
-    // Gunakan status 201 untuk data baru, 200 untuk update
-    const statusCode = req.body.isNew ? 201 : 200;
+    const payload = req.body;
+
+    // 1. DETEKSI: Apakah ini Update?
+    const isUpdate = payload.isNew === false;
+    const nomorDokumen = payload.header?.nomor || payload.nomor;
+
+    let oldData = null;
+
+    // 2. SNAPSHOT: Ambil data lama LENGKAP jika Update
+    if (isUpdate && nomorDokumen) {
+      try {
+        // A. Ambil Header
+        const [headerRows] = await pool.query(
+          "SELECT * FROM tpenawaran_hdr WHERE pen_nomor = ?",
+          [nomorDokumen]
+        );
+
+        if (headerRows.length > 0) {
+          const header = headerRows[0];
+
+          // B. Ambil Detail (Gunakan pend_nomor)
+          const [detailRows] = await pool.query(
+            "SELECT * FROM tpenawaran_dtl WHERE pend_nomor = ? ORDER BY pend_nourut",
+            [nomorDokumen]
+          );
+
+          // C. Gabungkan
+          oldData = {
+            ...header,
+            items: detailRows
+          };
+        }
+      } catch (e) {
+        console.warn("Gagal snapshot oldData save offer:", e.message);
+      }
+    }
+
+    // 3. PROSES: Simpan ke Database
+    // Inject user info ke payload agar service bisa membacanya
+    payload.user = req.user;
+
+    const result = await offerFormService.saveOffer(payload);
+
+    // 4. AUDIT: Catat Log
+    const targetId = result.nomor || nomorDokumen || "UNKNOWN";
+    const action = isUpdate ? "UPDATE" : "CREATE";
+
+    auditService.logActivity(
+      req,
+      action,
+      "PENAWARAN",
+      targetId,
+      oldData, // Data Lama (Header + Items)
+      payload, // Data Baru (Payload Form)
+      `${action === "CREATE" ? "Input" : "Edit"} Penawaran`
+    );
+
+    const statusCode = payload.isNew ? 201 : 200;
     res.status(statusCode).json(result);
   } catch (error) {
     console.error("Error saving offer:", error);
-    // Kirim pesan error yang lebih spesifik dari service
     res
       .status(500)
       .json({ message: error.message || "Gagal menyimpan penawaran." });
@@ -76,15 +132,12 @@ const getDefaultDiscount = async (req, res) => {
   try {
     const { level, total, gudang } = req.query;
 
-    // Panggil Service
-    // parseFloat(total) digunakan untuk memastikan input string "10000" jadi number 10000
     const result = await offerFormService.getDefaultDiscount(
       level,
       parseFloat(total),
       gudang
     );
 
-    // Kirim response { discount: ... }
     res.status(200).json(result);
   } catch (error) {
     console.error("Error di Controller getDefaultDiscount:", error);
@@ -173,7 +226,7 @@ const getPrintData = async (req, res) => {
 const getByBarcode = async (req, res) => {
   try {
     const { barcode } = req.params;
-    const { gudang } = req.query; // Gudang diambil dari query parameter
+    const { gudang } = req.query;
     if (!gudang) {
       return res.status(400).json({ message: "Parameter gudang diperlukan." });
     }

@@ -1,4 +1,25 @@
 const changelogs = {
+  "1.2.11": {
+    date: "2025-12-31",
+    changes: [
+      "Update Promo Kaosan Bulan Januari 2026 : Promo Reguler sama seperti bulan Desember 2025",
+      {
+        title: "Penambahan:",
+        items: [
+          "Tampilan Card baru pada Dashboard : Analisis Kesiapan Stok Pareto",
+          "Filter Semua Cabang pada halaman Surat Pesanan untuk user KDC/HO",
+        ],
+      },
+      {
+        title: "Perbaikan:",
+        items: [
+          "Perbaikan ubah Metode Pembayaran Invoice belum mengupdate Tanggal Transfer Setoran Pembayaran",
+          "Perbaikan Perhitungan Laporan Sales vs Target",
+          "Perbaikan Export data Surat Pesanan"
+        ],
+      },
+    ],
+  },
   "1.2.10": {
     date: "2025-12-29",
     changes: [

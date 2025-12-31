@@ -1,5 +1,6 @@
 const service = require("../services/formSetoranKasirService");
-const { getExportDetails } = require("./offerController");
+const auditService = require("../services/auditService"); // Import Audit
+const pool = require("../config/database"); // Import Pool untuk Snapshot
 
 const getCabangList = async (req, res) => {
   try {
@@ -28,16 +29,45 @@ const getDetails = async (req, res) => {
   }
 };
 
+// [AUDIT TRAIL DITERAPKAN DI SINI]
 const remove = async (req, res) => {
   try {
-    const result = await service.remove(req.params.nomor, req.user);
+    const { nomor } = req.params;
+
+    // 1. SNAPSHOT: Ambil data lama sebelum dihapus
+    let oldData = null;
+    try {
+      const [rows] = await pool.query(
+        "SELECT * FROM tform_setorkasir_hdr WHERE fsk_nomor = ?",
+        [nomor]
+      );
+      if (rows.length > 0) oldData = rows[0];
+    } catch (e) {
+      console.warn("Gagal snapshot oldData remove FSK (List):", e.message);
+    }
+
+    // 2. PROSES: Hapus data
+    const result = await service.remove(nomor, req.user);
+
+    // 3. AUDIT: Catat Log Delete
+    if (oldData) {
+      auditService.logActivity(
+        req,
+        "DELETE", // Action
+        "FORM_SETORAN_KASIR", // Module
+        nomor, // Target ID
+        oldData, // Data Lama
+        null, // Data Baru
+        `Menghapus FSK dari List (Tanggal: ${oldData.fsk_tanggal || "-"})`
+      );
+    }
+
     res.json(result);
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
 };
 
-// [BARU]
 const exportHeaders = async (req, res) => {
   try {
     const data = await service.getExportHeaders(req.query);
@@ -49,7 +79,6 @@ const exportHeaders = async (req, res) => {
 
 const exportDetails = async (req, res) => {
   try {
-    // [FIX] Gunakan variabel service, bukan import terpisah
     const data = await service.getExportDetails(req.query);
     res.json(data);
   } catch (error) {
@@ -62,6 +91,6 @@ module.exports = {
   getList,
   getDetails,
   remove,
-  exportHeaders, // <--- Tambahkan
+  exportHeaders,
   exportDetails,
 };
