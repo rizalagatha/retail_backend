@@ -23,7 +23,7 @@ const getNextNumber = async (req, res) => {
 
 const searchCustomers = async (req, res) => {
   try {
-    const { term, gudang, page, itemsPerPage } = req.query;
+    const { term, gudang, page, itemsPerPage, isInvoice } = req.query; // Ambil isInvoice di sini
     const pageNumber = parseInt(page, 10) || 1;
     const limit = parseInt(itemsPerPage, 10) || 10;
 
@@ -31,7 +31,8 @@ const searchCustomers = async (req, res) => {
       term || "",
       gudang,
       pageNumber,
-      limit
+      limit,
+      isInvoice // <--- Harus dikirim ke service!
     );
 
     res.json(result);

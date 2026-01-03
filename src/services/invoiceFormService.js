@@ -1881,6 +1881,10 @@ const handlePromotions = async (
 };
 
 const findByBarcode = async (barcode, gudang) => {
+  // 1. Buat versi barcode yang sudah dibersihkan dari nol di depan
+  // Contoh: "0023079300" menjadi "23079300"
+  const cleanedBarcode = barcode.replace(/^0+/, "");
+
   const query = `
     SELECT
       d.brgd_barcode AS barcode,
@@ -1891,8 +1895,6 @@ const findByBarcode = async (barcode, gudang) => {
       d.brgd_hrg1 AS harga1,
       d.brgd_harga AS harga,
       h.brg_ktgp AS kategori,
-            
-      -- Logika perhitungan stok dari Delphi menggunakan tmasterstok --
       IFNULL((
         SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
         FROM tmasterstok m 
@@ -1901,16 +1903,16 @@ const findByBarcode = async (barcode, gudang) => {
           AND m.mst_brg_kode = d.brgd_kode 
           AND m.mst_ukuran = d.brgd_ukuran
         ), 0) AS stok
-
     FROM tbarangdc_dtl d
     LEFT JOIN tbarangdc h ON h.brg_kode = d.brgd_kode
     WHERE h.brg_aktif = 0 
       AND h.brg_logstok <> 'N'
-      AND d.brgd_barcode = ?;
+      -- 2. Modifikasi WHERE agar mengecek Barcode Asli ATAU Barcode Tanpa Nol
+      AND (d.brgd_barcode = ? OR d.brgd_barcode = ?);
   `;
 
-  // Parameter 'gudang' sekarang digunakan untuk subquery stok
-  const [rows] = await pool.query(query, [gudang, barcode]);
+  // Masukkan parameter: [gudang, barcode_asli, barcode_bersih]
+  const [rows] = await pool.query(query, [gudang, barcode, cleanedBarcode]);
 
   if (rows.length === 0) {
     throw new Error("Barcode tidak ditemukan atau barang tidak aktif.");

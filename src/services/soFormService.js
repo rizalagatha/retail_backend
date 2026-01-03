@@ -363,6 +363,7 @@ const getSoForEdit = async (nomor) => {
       l.level_nama,
       g.gdg_kode,
       g.gdg_nama,
+      a.brg_ktgp,
       CONCAT(h.so_cus_level, ' - ', l.level_nama) AS xLevel,
       COALESCE(
         NULLIF(TRIM(CONCAT(
@@ -477,6 +478,9 @@ const getSoForEdit = async (nomor) => {
         barcode: row.brgd_barcode || "",
         noSoDtf: row.sod_sd_nomor || "",
         noPengajuanHarga: row.sod_ph_nomor || "",
+        kategori: row.brg_ktgp || "",
+        sod_custom: row.sod_custom,
+        sod_custom_data: row.sod_custom_data,
       };
       return item;
     });

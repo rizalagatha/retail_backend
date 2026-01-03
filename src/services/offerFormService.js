@@ -37,21 +37,33 @@ const generateNewOfferNumber = async (connection, cabang, tanggal) => {
 };
 
 // Meniru F1 untuk pencarian customer
-const searchCustomers = async (term, gudang, page, itemsPerPage) => {
+const searchCustomers = async (term, gudang, page, itemsPerPage, isInvoice) => {
   const offset = (page - 1) * itemsPerPage;
   const searchTerm = `%${term}%`;
+
+  // 1. Inisialisasi parameter kosong
   let params = [];
 
-  // Logika filter franchise dari Delphi
-  let franchiseFilter = "";
-  if (gudang === "KPR") {
-    franchiseFilter = ' AND c.cus_franchise="Y"';
+  // 2. Tentukan logic Retailer
+  let retailerFilter = "";
+  if (String(isInvoice) === "1") {
+    // Jika dari Invoice: JANGAN BLOKIR "RETAIL%".
+    // Kita ijinkan semua customer umum + customer khusus cabang ini (cus_cab)
+    retailerFilter = ` AND (c.cus_nama NOT LIKE "RETAIL%" OR c.cus_cab = ? OR c.cus_nama LIKE "RETAILER%")`;
+    params.push(gudang);
   } else {
-    franchiseFilter = ' AND c.cus_franchise="N"';
+    // Jika dari Penawaran/SO: Tetap blokir agar tidak salah pilih
+    retailerFilter = ' AND c.cus_nama NOT LIKE "RETAIL%"';
   }
 
+  // 3. Filter Franchise (Tanpa tanda tanya)
+  let franchiseFilter =
+    gudang === "KPR" ? ' AND c.cus_franchise="Y"' : ' AND c.cus_franchise="N"';
+
+  // 4. Filter Search (Term)
   let searchFilter = "";
   if (term) {
+    // Tanda tanya berikutnya (ke-2, 3, 4) ada di sini
     searchFilter = `
       AND (
         c.cus_kode LIKE ? 
@@ -62,20 +74,25 @@ const searchCustomers = async (term, gudang, page, itemsPerPage) => {
     params.push(searchTerm, searchTerm, searchTerm);
   }
 
+  // Gabungkan ke Base Query
   const baseQuery = `
         FROM tcustomer c 
-        WHERE c.cus_aktif = 0 AND c.cus_nama NOT LIKE "RETAIL%"
+        WHERE c.cus_aktif = 0 
+        ${retailerFilter}
         ${franchiseFilter}
         ${searchFilter}
     `;
 
-  // Query untuk menghitung total
-  const countQuery = `SELECT COUNT(*) as total ${baseQuery}`;
-  const [countRows] = await pool.query(countQuery, params);
-  const total = countRows[0].total;
+  try {
+    // Eksekusi Count (Gunakan params yang sudah disusun berurutan)
+    const [countRows] = await pool.query(
+      `SELECT COUNT(*) as total ${baseQuery}`,
+      params
+    );
+    const total = countRows[0].total;
 
-  // Query untuk mengambil data per halaman, ditambahkan kolom "Level"
-  const dataQuery = `
+    // Eksekusi Data Query
+    const dataQuery = `
         SELECT 
           c.cus_kode AS kode,
           c.cus_nama AS nama,
@@ -88,26 +105,29 @@ const searchCustomers = async (term, gudang, page, itemsPerPage) => {
             LEFT JOIN tcustomer_level l ON l.level_kode = v.clh_level
             WHERE v.clh_cus_kode = c.cus_kode
             ORDER BY v.clh_tanggal DESC, v.clh_level DESC 
-          LIMIT 1
+            LIMIT 1
           ), "") AS level_nama,
           IFNULL((
             SELECT v.clh_level
             FROM tcustomer_level_history v
             WHERE v.clh_cus_kode = c.cus_kode
             ORDER BY v.clh_tanggal DESC, v.clh_level DESC 
-          LIMIT 1
+            LIMIT 1
           ), "") AS level_kode
         ${baseQuery}
         ORDER BY c.cus_nama
         LIMIT ? OFFSET ?
     `;
-  const [items] = await pool.query(dataQuery, [
-    ...params,
-    itemsPerPage,
-    offset,
-  ]);
 
-  return { items, total };
+    // Tambahkan Limit dan Offset di akhir params (Sangat Penting!)
+    const finalParams = [...params, itemsPerPage, offset];
+    const [items] = await pool.query(dataQuery, finalParams);
+
+    return { items, total };
+  } catch (dbError) {
+    console.error("SQL Error:", dbError.message);
+    throw dbError;
+  }
 };
 
 // Meniru edtCusExit untuk mengambil detail customer
