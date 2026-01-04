@@ -23,20 +23,28 @@ const getNextNumber = async (req, res) => {
 
 const searchCustomers = async (req, res) => {
   try {
-    const { term, gudang, page, itemsPerPage, isInvoice } = req.query; // Ambil isInvoice di sini
+    const { term, gudang, page, itemsPerPage, isInvoice } = req.query;
+
     const pageNumber = parseInt(page, 10) || 1;
-    const limit = parseInt(itemsPerPage, 10) || 10;
+    // PENTING: Jika itemsPerPage -1 (All), ganti menjadi angka besar (misal 1 juta)
+    let limit = parseInt(itemsPerPage, 10);
+    if (limit === -1) {
+      limit = 1000000;
+    } else {
+      limit = limit || 10;
+    }
 
     const result = await offerFormService.searchCustomers(
       term || "",
       gudang,
       pageNumber,
       limit,
-      isInvoice // <--- Harus dikirim ke service!
+      isInvoice
     );
 
     res.json(result);
   } catch (error) {
+    console.error("Controller Error:", error.message);
     res.status(500).json({ message: error.message });
   }
 };
@@ -91,7 +99,7 @@ const saveOffer = async (req, res) => {
           // C. Gabungkan
           oldData = {
             ...header,
-            items: detailRows
+            items: detailRows,
           };
         }
       } catch (e) {
