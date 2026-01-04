@@ -70,7 +70,7 @@ const generateFinalPayload = async (user, selectedCabang) => {
   };
 
   const token = jwt.sign(userForToken, process.env.JWT_SECRET, {
-    expiresIn: "8h",
+    expiresIn: "12h",
   });
   const permissions = await getPermissions(user.user_kode);
 
