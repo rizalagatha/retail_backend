@@ -2,12 +2,34 @@ const changelogs = {
   "1.2.12": {
     date: "2026-01-03",
     changes: [
+      "Setting Penjualan Online/Marketplace Online untuk K05",
+      {
+        title: "Penambahan:",
+        items: [
+          "Warna Baris Magenta untuk Halaman Browse SO, untuk SO yang sudah Lunas namun belum Invoice",
+          "Pencarian barang pada Invoice/SO tidak harus tepat nama barangnya dan tidak harus menggunakan %, contoh mencari (KO POLOS PENDEK DBF SIGNATURE BLACK) bisa langsung ketik (black dbf)",
+        ],
+      },
+      {
+        title: "Perbaikan:",
+        items: [
+          "Perbaikan Card dan Running Text Promo berlaku untuk K11",
+          "Card Promo pada Buat Invoice sekarang dapat di-minimize",
+          "Pencarian Customer Retail pada Invoice",
+          "Perbaikan Cetak Barcode",
+        ],
+      },
+    ],
+  },
+  "1.2.12": {
+    date: "2026-01-03",
+    changes: [
       "Setting Retail Web Based untuk Reszo K04",
       {
         title: "Penambahan:",
         items: [
           "Warna Baris Magenta untuk Halaman Browse SO, untuk SO yang sudah Lunas namun belum Invoice",
-          "Pencarian barang pada Invoice/SO tidak harus tepat nama barangnya dan tidak harus menggunakan %, contoh mencari (KO POLOS PENDEK DBF SIGNATURE BLACK) bisa langsung ketik (black dbf)"
+          "Pencarian barang pada Invoice/SO tidak harus tepat nama barangnya dan tidak harus menggunakan %, contoh mencari (KO POLOS PENDEK DBF SIGNATURE BLACK) bisa langsung ketik (black dbf)",
         ],
       },
       {
@@ -37,7 +59,7 @@ const changelogs = {
         items: [
           "Perbaikan ubah Metode Pembayaran Invoice belum mengupdate Tanggal Transfer Setoran Pembayaran",
           "Perbaikan Perhitungan Laporan Sales vs Target",
-          "Perbaikan Export data Surat Pesanan"
+          "Perbaikan Export data Surat Pesanan",
         ],
       },
     ],

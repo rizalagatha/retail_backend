@@ -99,6 +99,16 @@ const saveData = async (payload, user) => {
       }
     }
 
+    // --- [TAMBAHAN] 3. Update Status Minta Barang Menjadi Close ---
+    if (header.permintaan) {
+      await connection.query(
+        `UPDATE retail.tmintabarang_hdr 
+         SET mt_close = 'Y', user_modified = ?, date_modified = NOW() 
+         WHERE mt_nomor = ?`,
+        [user.kode, header.permintaan]
+      );
+    }
+
     await connection.commit();
     return {
       message: `Packing List ${plNomor} berhasil disimpan.`,
