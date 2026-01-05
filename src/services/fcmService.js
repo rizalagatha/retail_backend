@@ -24,9 +24,7 @@ const sendNotification = async (token, title, body, dataPayload) => {
         },
       },
     });
-    console.log("Notif sent to:", token);
   } catch (err) {
-    console.error("FCM Error:", err.message);
   }
 };
 
@@ -55,7 +53,6 @@ const sendToTopic = async (topic, title, body, dataPayload) => {
         },
       },
     });
-    console.log("Notif sent to TOPIC:", topic);
   } catch (err) {
     console.error("FCM Topic Error:", err.message);
   }

@@ -28,9 +28,6 @@ const incrementSequence = async (connection, seqName, seqDate) => {
       [seqName, seqDate]
     );
 
-    console.log(
-      `[LOG] Sequence incremented: ${seqName}, new value: ${rows[0].seq_value}`
-    );
     return rows[0].seq_value;
   } catch (error) {
     console.error("Error incrementing sequence:", error);

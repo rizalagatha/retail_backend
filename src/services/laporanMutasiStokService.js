@@ -224,11 +224,6 @@ const getMutationDetails = async (filters) => {
   query = `SELECT b.brgd_ukuran AS ukuran, ${stockColumns}, ${finalCalculation} FROM tbarangdc_dtl b ${stockJoins} WHERE b.brgd_kode = ? GROUP BY b.brgd_ukuran ORDER BY b.brgd_ukuran;`;
   params.push(kodeProduk);
 
-  console.log("QUERY:", query);
-  console.log("PARAMS LENGTH:", params.length);
-  console.log("FIRST 10 PARAMS:", params.slice(0, 10));
-  console.log("TOTAL PLACEHOLDERS:", (query.match(/\?/g) || []).length);
-
   const [rows] = await pool.query(query, params);
   return rows;
 };

@@ -90,12 +90,6 @@ const getProductList = async (filters) => {
     "yyyy-MM-dd"
   );
 
-  console.log(">>> PRODUCTLIST DEBUG");
-  console.log("jenis =", jenis);
-  console.log("dawal =", dawal);
-  console.log("startDateEff =", startDateEff);
-  console.log("startDateMinus1 =", startDateMinus1);
-
   // Hanya implementasi STORE (gdg_dc = 0 / 3) sesuai Delphi bagian pertama
   let query = `
     SELECT
@@ -470,24 +464,6 @@ LEFT JOIN (
       mutInProduksi -
       (invoice + returKeDC + mutStoreKirim + mutOutPesan + mutOutProduksi);
 
-    // DEBUG per baris
-    console.log("==== DEBUG SALDO HEADER ====");
-    console.log("ID      :", row.kode + row.ukuran);
-    console.log("SAWAL   :", stokAwal);
-    console.log("SOP     :", selisihSop);
-    console.log("KOR     :", koreksi);
-    console.log("RJ      :", returJual);
-    console.log("TJ      :", terimaSJ);
-    console.log("MST IN  :", mutStoreTerima);
-    console.log("MSI IN  :", mutInPesan);
-    console.log("MIP IN  :", mutInProduksi);
-    console.log("INV     :", invoice);
-    console.log("RB OUT  :", returKeDC);
-    console.log("MSK OUT :", mutStoreKirim);
-    console.log("MSO OUT :", mutOutPesan);
-    console.log("MOP OUT :", mutOutProduksi);
-    console.log("SALDO   :", saldoAkhir);
-
     return {
       ...row,
       invoice,
@@ -521,13 +497,6 @@ const getKartuDetails = async (filters) => {
   const endDateStr = format(end, "yyyy-MM-dd");
   const startMinus1Str = format(subDays(start, 1), "yyyy-MM-dd");
   const startPlus1Str = format(addDays(start, 1), "yyyy-MM-dd");
-
-  console.log(">>> DETAIL DEBUG");
-  console.log("jenis =", jenis);
-  console.log("dawal =", dawal);
-  console.log("startDateEff =", startDateEff);
-  console.log("startMinus1Str =", startMinus1Str);
-  console.log("startPlus1Str =", startPlus1Str);
 
   // === STOK AWAL: sesuaikan dengan jenis (sama Delphi) ===
   let stokAwalQuery = "";
@@ -890,11 +859,6 @@ const getMutationDetails = async (filters) => {
 
   query = `SELECT b.brgd_ukuran AS ukuran, ${stockColumns}, ${finalCalculation} FROM tbarangdc_dtl b ${stockJoins} WHERE b.brgd_kode = ? GROUP BY b.brgd_ukuran ORDER BY b.brgd_ukuran;`;
   params.push(kodeProduk);
-
-  console.log("QUERY:", query);
-  console.log("PARAMS LENGTH:", params.length);
-  console.log("FIRST 10 PARAMS:", params.slice(0, 10));
-  console.log("TOTAL PLACEHOLDERS:", (query.match(/\?/g) || []).length);
 
   const [rows] = await pool.query(query, params);
   return rows;

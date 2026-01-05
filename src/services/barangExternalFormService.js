@@ -22,7 +22,6 @@ const generateNewKode = async (connection, date) => {
 const getNewBarcodeId = async (date) => {
   try {
     const tahun = format(new Date(date), "yyyy");
-    console.log("Getting barcode ID for year:", tahun);
 
     const [rows] = await pool.query(
       'SELECT IFNULL(MAX(brg_bcdid), 0) as max_id FROM retail.tbarangdc WHERE DATE_FORMAT(date_create, "%Y") = ?',
@@ -30,7 +29,6 @@ const getNewBarcodeId = async (date) => {
     );
 
     const newId = parseInt(rows[0].max_id, 10) + 1;
-    console.log("New barcode ID:", newId);
 
     return newId; // ← Return NUMBER langsung, bukan object
   } catch (error) {
@@ -120,7 +118,6 @@ const saveData = async (data, file, user) => {
       if (barcodeId === 0 || isNaN(barcodeId)) {
         // getNewBarcodeId sekarang return number langsung
         barcodeId = await getNewBarcodeId(header.date_create);
-        console.log("Generated barcodeId in saveData:", barcodeId);
       }
     }
 

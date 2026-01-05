@@ -702,8 +702,6 @@ const activateSoIfDpEnough = async (connection, nomorSo, shNomor, user) => {
       `,
       [shNomor, user.kode, totalDp, nomorSo]
     );
-
-    console.log(`SO ${nomorSo} DISET AKTIF karena DP >= minimal DP`);
   }
 };
 

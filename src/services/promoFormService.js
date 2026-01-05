@@ -190,9 +190,6 @@ const save = async (payload, user) => {
       );
     } else if (applicableItems === null) {
       // Tidak ada perubahan di applicableItems — biarkan data lama tetap ada
-      console.log(
-        `[PROMO SAVE] Applicable items tidak berubah → skip update barang.`
-      );
     }
 
     await connection.commit();

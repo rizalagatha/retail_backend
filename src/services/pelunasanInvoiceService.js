@@ -51,7 +51,6 @@ const getOutstandingPiutang = async (customerKode, user) => {
 // 2. Simpan Transaksi Pelunasan (FIXED FEE DEDUCTION)
 const savePelunasan = async (payload, user) => {
   const connection = await pool.getConnection();
-  console.log(`[Pelunasan] Starting transaction for User: ${user.kode}`);
 
   try {
     await connection.beginTransaction();
@@ -165,10 +164,6 @@ const savePelunasan = async (payload, user) => {
       const angsurIdFee = `${user.cabang}F${batchTs}-${globalCounter++}`;
       const idrecDtl = `${user.cabang}D${batchTs}-${globalCounter}`;
 
-      console.log(
-        `[Pelunasan] ${inv.inv_nomor}: Gross=${bayarGross}, Fee=${feePlatform} => Uang=${uangReal}`
-      );
-
       // --- A. INSERT TSETOR_DTL (Hanya Uang Real) ---
       if (uangReal > 0) {
         await connection.query(
@@ -232,7 +227,6 @@ const savePelunasan = async (payload, user) => {
     }
 
     await connection.commit();
-    console.log(`[Pelunasan] Success: ${nomorSetor}`);
     return { message: "Pelunasan berhasil disimpan.", nomor: nomorSetor };
   } catch (error) {
     await connection.rollback();

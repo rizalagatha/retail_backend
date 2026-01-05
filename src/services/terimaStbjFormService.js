@@ -54,8 +54,6 @@ const save = async (payload, user) => {
 
       try {
         // 1. Insert Header Penerimaan
-        console.log(`[LOG] Nomor generated: ${nomorTerima}`);
-        console.log(`[LOG] About to INSERT tdc_stbj_hdr...`);
         await connection.query(
           "INSERT INTO tdc_stbj_hdr (ts_nomor, ts_tanggal, ts_sj_garmen, ts_stbj, user_create, date_create) VALUES (?, ?, ?, ?, ?, NOW())",
           [
@@ -66,7 +64,6 @@ const save = async (payload, user) => {
             user.kode,
           ]
         );
-        console.log(`[LOG] INSERT tdc_stbj_hdr SUCCESS`);
 
         // 2. Insert Detail Penerimaan (dari Grid 2)
         if (allocationItems.length > 0) {
@@ -195,10 +192,6 @@ const save = async (payload, user) => {
           console.error("Save STBJ Error:", error);
           throw error;
         } else {
-          retries--;
-          console.log(
-            `Error terjadi, mencoba lagi... Sisa percobaan: ${retries}`
-          );
           await new Promise((res) => setTimeout(res, 50 + Math.random() * 100));
         }
       }

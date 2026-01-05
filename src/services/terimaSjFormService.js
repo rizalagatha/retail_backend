@@ -5,11 +5,6 @@ const { format } = require("date-fns"); // Pastikan import ini ada di paling ata
  * Menghasilkan nomor Terima SJ (TJ) baru.
  */
 const generateNewTjNumber = async (connection, gudang, tanggal) => {
-  // 1. DEBUG LOG: Cek apa yang masuk ke sini
-  console.log("--- DEBUG GENERATOR ---");
-  console.log("Gudang (Cabang):", gudang); // <--- INI KUNCINYA
-  console.log("Tanggal:", tanggal);
-
   if (!gudang) {
     throw new Error(
       "FATAL: Kode Cabang (user.cabang) tidak terbaca/undefined!"
@@ -18,8 +13,6 @@ const generateNewTjNumber = async (connection, gudang, tanggal) => {
 
   const date = new Date(tanggal);
   const prefix = `${gudang}.TJ.${format(date, "yyMM")}.`;
-
-  console.log("Mencari Prefix:", prefix); // Pastikan hasilnya misal: "KPR.TJ.2512."
 
   // Query dengan CAST agar aman
   const query = `
@@ -30,8 +23,6 @@ const generateNewTjNumber = async (connection, gudang, tanggal) => {
 
   // Gunakan connection transaction yang dilempar
   const [rows] = await connection.query(query, [`${prefix}%`]);
-
-  console.log("Next Num Raw:", rows[0].next_num); // Harusnya 9 jika data terakhir 8
 
   const nextNumber = rows[0].next_num.toString().padStart(4, "0");
   return `${prefix}${nextNumber}`;
@@ -76,8 +67,6 @@ const loadInitialData = async (nomorSj) => {
  * Menyimpan data Terima SJ.
  */
 const saveData = async (payload, user) => {
-  console.log("--- DEBUG SAVE DATA ---");
-  console.log("User Object:", user);
   const { header, items } = payload;
   const connection = await pool.getConnection();
 

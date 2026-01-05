@@ -44,11 +44,6 @@ const authPinService = {
       target_cabang,
     } = payload;
 
-    // Debugging Payload Masuk
-    console.log("--- CREATE AUTH REQUEST ---");
-    console.log("Jenis:", jenis);
-    console.log("Target Cabang:", target_cabang);
-
     // 2. Generate Nomor & Insert DB
     const authNomor = await generateAuthNumber(cabang);
     const query = `
@@ -90,14 +85,11 @@ const authPinService = {
       if (String(jenis).trim() === "AMBIL_BARANG" && target_cabang) {
         // --- ALUR 1: KIRIM KE USER TOKO (VIA TOPIC) ---
         const targetTopic = `approval_${target_cabang}`;
-        console.log(`[FCM-ROUTING] Mode: TARGET STORE via TOPIC`);
-        console.log(`[FCM-ROUTING] Sending to Topic: ${targetTopic}`);
 
         // Kirim ke Topic
         await fcmService.sendToTopic(targetTopic, title, body, dataPayload);
       } else {
         // --- ALUR 2: KIRIM KE MANAGER (HARIS/DARUL) ---
-        console.log(`[FCM-ROUTING] Mode: DEFAULT MANAGER (HARIS/DARUL)`);
 
         const [managers] = await pool.query(
           `SELECT DISTINCT user_fcm_token FROM tuser 
@@ -107,7 +99,6 @@ const authPinService = {
         );
 
         if (managers.length > 0) {
-          console.log(`[FCM] Sending direct to ${managers.length} managers.`);
           const sendPromises = managers.map((mgr) =>
             fcmService.sendNotification(
               mgr.user_fcm_token,
@@ -118,7 +109,6 @@ const authPinService = {
           );
           await Promise.all(sendPromises);
         } else {
-          console.log("[FCM] Tidak ada token manager yang ditemukan.");
         }
       }
     } catch (fcmError) {
@@ -180,8 +170,6 @@ const authPinService = {
     }
 
     query += ` ORDER BY o_created DESC`;
-
-    console.log("[DEBUG SQL] GetPending:", query, params); // Cek log ini di terminal backend
 
     const [rows] = await pool.query(query, params);
     return rows;

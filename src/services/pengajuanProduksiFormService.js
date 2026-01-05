@@ -234,7 +234,6 @@ const getPrintData = async (nomor) => {
 
   try {
     const [rows] = await pool.query(query, [nomor.trim()]);
-    console.log('Jumlah baris hasil:', rows.length);
     if (rows.length === 0) {
       throw new Error('Data cetak tidak ditemukan.');
     }

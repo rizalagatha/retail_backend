@@ -83,8 +83,6 @@ const getList = async (filters) => {
     params.push(cab);
   }
 
-  console.log("cabang param =", cabang);
-
   // 2. Global Search (Tetap ada)
   let searchFilter = "";
   if (search) {
@@ -364,10 +362,11 @@ const getList = async (filters) => {
         h.inv_mp_biaya_platform AS BiayaPlatform,
 
         -- [LOGIC BAYAR]
+        -- Formula: Total Tagihan - Sisa Saldo Piutang
         (
-           (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0)) 
-           - 
-           IF(COALESCE(PR.SaldoAkhir, 0) < 0, 0, COALESCE(PR.SaldoAkhir, (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0))))
+          (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm) 
+          - 
+          IF(COALESCE(PR.SaldoAkhir, 0) < 0, 0, COALESCE(PR.SaldoAkhir, (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm)))
         ) AS Bayar,
 
         -- [LOGIC SISA PIUTANG]

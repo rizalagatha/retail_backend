@@ -98,8 +98,6 @@ const save = async (payload, user) => {
       // Pastikan fungsi generateIdRec sudah diimport atau didefinisikan
       currentIdRec = generateIdRec(header.cabangKode); 
 
-      console.log("Generate nomorDokumen =>", nomorDokumen);
-
       const headerInsertQuery = `
         INSERT INTO trj_hdr (
             rj_nomor, rj_inv, rj_jenis, rj_tanggal, 

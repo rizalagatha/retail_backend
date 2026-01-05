@@ -272,7 +272,6 @@ const searchMaster = async (term, page, itemsPerPage) => {
 
 
 const findByBarcode = async (barcode) => {
-  console.log("Mulai query barcode:", barcode);
   const query = `
     SELECT
       d.brgd_barcode AS barcode,
@@ -286,7 +285,6 @@ const findByBarcode = async (barcode) => {
       AND d.brgd_barcode = ?;
   `;
   const [rows] = await pool.query(query, [barcode]);
-  console.log("Selesai query, hasil:", rows.length);
   if (rows.length === 0) {
     throw new Error("Barcode tidak ditemukan atau barang tidak aktif.");
   }

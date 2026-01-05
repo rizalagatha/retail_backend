@@ -160,7 +160,6 @@ const loadForEdit = async (nomor) => {
  * Load Items dari Tabel Minta Barang
  */
 const loadItemsFromRequest = async (nomorMinta) => {
-  console.log(`[DEBUG] Loading items for Permintaan: ${nomorMinta}`);
 
   // Query ini mengambil detail dari tmintabarang_dtl
   // Dan menghitung stok di gudang KDC (Pusat)
@@ -190,8 +189,6 @@ const loadItemsFromRequest = async (nomorMinta) => {
   `;
 
   const [rows] = await pool.query(query, [nomorMinta]);
-
-  console.log(`[DEBUG] Found ${rows.length} items.`);
 
   // Jika rows kosong, kemungkinan nomor salah atau detail memang tidak ada
   if (rows.length === 0) {
