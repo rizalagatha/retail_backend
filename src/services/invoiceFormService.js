@@ -613,6 +613,10 @@ const saveData = async (payload, user) => {
 
     const dpDipakai = applyRoundingPolicy(Number(totals.totalDp || 0));
 
+    // 1. Definisikan flag marketplace di awal agar mudah digunakan
+    const isMarketplace =
+      header.isMarketplace === true || header.isMarketplace === "Y";
+
     // Hitung total bayar asli (DP + Pembayaran baru)
     const totalBayarAsli =
       dpDipakai +
@@ -625,7 +629,7 @@ const saveData = async (payload, user) => {
     const isBelumLunas = totalBayarAsli < grandTotal;
 
     // WAJIBKAN PIN OTORISASI jika belum lunas
-    if (isBelumLunas && !payment.pinBelumLunas) {
+    if (isBelumLunas && !payment.pinBelumLunas && !isMarketplace) {
       throw new Error(
         `Invoice Belum Lunas (Sisa: Rp ${grandTotal - totalBayarAsli}). ` +
           `Penyimpanan invoice piutang wajib mendapatkan otorisasi Manager.`
