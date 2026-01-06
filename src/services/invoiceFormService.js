@@ -938,6 +938,9 @@ const saveData = async (payload, user) => {
       for (let index = 0; index < validItems.length; index++) {
         const item = validItems[index];
         const jumlah = Number(item.jumlah || 0);
+        // [REVISI] Tentukan flag KPR/KDC
+        const isKprOrKdc =
+          header.gudang.kode === "KPR" || header.gudang.kode === "KDC";
         const hargaAsli = applyRoundingPolicy(Number(item.harga || 0));
         const diskonRp = applyRoundingPolicy(Number(item.diskonRp || 0));
 
@@ -948,8 +951,8 @@ const saveData = async (payload, user) => {
         let invd_mstpesan = 0;
         let invd_mststok = jumlah;
 
-        // Jika berasal dari SO → hitung stok SO
-        if (header.nomorSo && header.nomorSo !== "") {
+        // Logika: Hanya hitung stok SO jika BUKAN KPR/KDC dan ada nomor SO asli
+        if (!isKprOrKdc && header.nomorSo && header.nomorSo !== "") {
           const sisaSO = await getSisaStokSO(
             connection,
             header.nomorSo,
@@ -958,6 +961,11 @@ const saveData = async (payload, user) => {
           );
           invd_mstpesan = Math.min(jumlah, sisaSO);
           invd_mststok = jumlah - invd_mstpesan;
+        } else {
+          // Untuk KPR, KDC, atau transaksi tanpa SO:
+          // Paksa semua masuk ke stok showroom (Fisik)
+          invd_mstpesan = 0;
+          invd_mststok = jumlah;
         }
 
         detailValues.push([
@@ -966,8 +974,8 @@ const saveData = async (payload, user) => {
           item.kode,
           item.ukuran || "",
           jumlah,
-          invd_mstpesan,
-          invd_mststok,
+          invd_mstpesan, // Akan bernilai 0 untuk KPR
+          invd_mststok, // Akan bernilai FULL Qty untuk KPR
           hargaAsli,
           Number(item.hpp || 0),
           Number(item.diskonPersen || 0),
@@ -2724,6 +2732,103 @@ const updateHeaderOnly = async (nomor, payload, user) => {
   }
 };
 
+/**
+ * Mencari daftar SJ yang ditujukan ke cabang user (KPR)
+ */
+const searchSj = async (term, user) => {
+  const searchTerm = `%${term || ""}%`;
+  const query = `
+    SELECT 
+      h.sj_nomor AS NoSJ, 
+      h.sj_tanggal AS TglSJ, 
+      h.sj_mt_nomor AS NoPermintaan, 
+      h.sj_noterima AS NoTerimaSJ, 
+      m.mt_so AS NoSO, 
+      m.mt_cus AS KdCus, 
+      c.cus_nama AS Customer, 
+      c.cus_kota AS Kota
+    FROM tdc_sj_hdr h
+    LEFT JOIN tmintabarang_hdr m ON m.mt_nomor = h.sj_mt_nomor
+    LEFT JOIN tcustomer c ON c.cus_kode = m.mt_cus
+    WHERE h.sj_kecab = ? 
+      AND (h.sj_nomor LIKE ? OR c.cus_nama LIKE ?)
+    ORDER BY h.sj_tanggal DESC
+    LIMIT 50
+  `;
+  const [rows] = await pool.query(query, [user.cabang, searchTerm, searchTerm]);
+  return rows;
+};
+
+/**
+ * Mengambil detail lengkap SJ untuk dimasukkan ke Grid Invoice
+ */
+const getSjDetails = async (nomor, user, currentInvNomor = "") => {
+  const connection = await pool.getConnection();
+  try {
+    // 1. Ambil Header & Info Customer sesuai logic Delphi
+    const headerQuery = `
+      SELECT h.sj_nomor, h.sj_tanggal, h.sj_noterima, ifnull(m.mt_so,"") as noso, m.mt_cus,
+        IFNULL(c.cus_nama,"") as customer, IFNULL(c.cus_alamat,"") as alamat, 
+        IFNULL(c.cus_kota,"") as kota, IFNULL(c.cus_telp,"") as telp,
+        ifnull(j.so_sc,"") as sc, ifnull(j.so_nodp,0) as nodp, ifnull(j.so_dp,0) as rpdp, 
+        ifnull(j.so_top,0) as top, ifnull(j.so_disc,0) as so_disc, ifnull(j.so_disc1,0) as so_disc1, 
+        ifnull(j.so_ppn,0) as ppn,
+        (SELECT clh_level FROM tcustomer_level_history WHERE clh_cus_kode=c.cus_kode ORDER BY clh_tanggal DESC LIMIT 1) as nlevel,
+        (SELECT level_nama FROM tcustomer_level_history INNER JOIN tcustomer_level ON level_kode=clh_level 
+         WHERE clh_cus_kode=c.cus_kode ORDER BY clh_tanggal DESC LIMIT 1) as clevel
+      FROM tdc_sj_hdr h
+      LEFT JOIN tmintabarang_hdr m ON m.mt_nomor = h.sj_mt_nomor
+      LEFT JOIN tcustomer c ON c.cus_kode = m.mt_cus
+      LEFT JOIN tso_hdr j ON j.so_nomor = m.mt_so
+      WHERE h.sj_nomor = ? AND h.sj_kecab = ?
+    `;
+    const [headerRows] = await connection.query(headerQuery, [
+      nomor,
+      user.cabang,
+    ]);
+    if (headerRows.length === 0)
+      throw new Error("SJ tidak ditemukan atau bukan milik cabang Anda.");
+
+    const header = headerRows[0];
+
+    // Validasi: SJ harus sudah diterima di KPR
+    if (!header.sj_noterima || header.sj_noterima === "") {
+      throw new Error(
+        "SJ tersebut belum diterima. Silakan proses penerimaan SJ terlebih dahulu."
+      );
+    }
+
+    // 2. Ambil Items & Stok Cabang user saat ini
+    const itemsQuery = `
+      SELECT d.sjd_kode as kode, d.sjd_ukuran as ukuran, d.sjd_jumlah,
+        ifnull(trim(concat(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)), f.sd_nama) as nama,
+        b.brgd_barcode as barcode, b.brgd_harga, b.brgd_hpp, a.brg_ktgp as kategori,
+        -- [FIX] Gunakan IFNULL dan tambahkan pengecekan mst_noreferensi agar stok tidak 0 saat edit
+        IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
+                FROM tmasterstok m 
+                WHERE m.mst_aktif="Y" 
+                  AND m.mst_cab = ? 
+                  AND m.mst_brg_kode = d.sjd_kode 
+                  AND m.mst_ukuran = d.sjd_ukuran
+                  AND m.mst_noreferensi <> ?), 0) as stok
+      FROM tdc_sj_dtl d
+      LEFT JOIN tbarangdc a ON a.brg_kode = d.sjd_kode
+      LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sjd_kode
+      LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sjd_kode AND b.brgd_ukuran = d.sjd_ukuran
+      WHERE d.sjd_nomor = ?
+    `;
+    const [itemRows] = await connection.query(itemsQuery, [
+      user.cabang,
+      currentInvNomor,
+      nomor,
+    ]);
+
+    return { header: headerRows[0], items: itemRows };
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   searchSo,
   getSoDetailsForGrid,
@@ -2755,4 +2860,6 @@ module.exports = {
   getPromoItems,
   getPromoHeader,
   updateHeaderOnly,
+  searchSj,
+  getSjDetails,
 };

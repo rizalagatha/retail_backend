@@ -122,7 +122,7 @@ const saveData = async (payload, user) => {
         header.tanggalGiro,
         header.tanggalJatuhTempo,
         header.keterangan,
-        header.nomorSo || null,
+        header.nomorSo || "",
         user.kode,
       ]);
 
@@ -172,7 +172,7 @@ const saveData = async (payload, user) => {
         VALUES ?;
         `;
       const piutangDetailSql = `
-        INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur) 
+        INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur, pd_bk) 
         VALUES ?;
         `;
 
@@ -196,6 +196,7 @@ const saveData = async (payload, user) => {
         ]);
 
         if (item.invoice.includes("INV")) {
+          // Pelunasan Invoice Biasa
           piutangValues.push([
             `${header.customer.kode}${item.invoice}`,
             item.tglBayar,
@@ -203,6 +204,18 @@ const saveData = async (payload, user) => {
             item.bayar,
             shNomor,
             angsurId,
+            "N", // pd_bk = 'N'
+          ]);
+        } else if (item.invoice.includes(".BK")) {
+          // Pelunasan Biaya Kirim (Logika Pos('BK') di Delphi)
+          piutangValues.push([
+            item.invoice, // pd_ph_nomor = Nomor BK langsung
+            item.tglBayar,
+            `Pembayaran BK ${header.jenisSetor}`,
+            item.bayar,
+            shNomor,
+            angsurId,
+            "Y", // PENTING: pd_bk = 'Y' agar muncul di detail Biaya Kirim
           ]);
         }
       });
@@ -705,6 +718,25 @@ const activateSoIfDpEnough = async (connection, nomorSo, shNomor, user) => {
   }
 };
 
+const searchUnpaidBiayaKirim = async (customerKode, user) => {
+  const query = `
+    SELECT x.Nomor AS invoice, x.Tanggal AS tanggal, x.Nominal AS nominal, 
+           x.Bayar AS terbayar, (x.Nominal - x.Bayar) AS sisa
+    FROM (
+      SELECT 
+        k.bk_nomor AS Nomor, k.bk_tanggal AS Tanggal, k.bk_nominal AS Nominal,
+        IFNULL((SELECT SUM(p.pd_kredit) FROM tpiutang_dtl p WHERE p.pd_ph_nomor = k.bk_nomor), 0) AS Bayar
+      FROM tbiayakirim k
+      LEFT JOIN tinv_hdr h ON h.inv_nomor = k.bk_inv_nomor
+      WHERE h.inv_cus_kode = ? AND k.bk_cab = ?
+    ) x 
+    WHERE (x.Nominal - x.Bayar) > 0
+    ORDER BY x.Tanggal DESC
+  `;
+  const [rows] = await pool.query(query, [customerKode, user.cabang]);
+  return rows;
+};
+
 module.exports = {
   saveData,
   searchUnpaidInvoices,
@@ -715,4 +747,5 @@ module.exports = {
   getSoDetails,
   getInvoicesFromSo,
   activateSoIfDpEnough,
+  searchUnpaidBiayaKirim,
 };

@@ -7,12 +7,10 @@ const pool = require("../config/database");
  */
 const getList = async (filters) => {
   const { startDate, endDate, kodeBarang, cabang } = filters;
-
   let params = [startDate, endDate];
   let branchFilter = "";
   let itemFilter = "";
 
-  // Jika cabang diisi dan bukan kosong/ALL, tambahkan filter
   if (cabang && cabang !== "") {
     branchFilter = "AND h.sj_kecab = ?";
     params.push(cabang);
@@ -30,12 +28,14 @@ const getList = async (filters) => {
             h.sj_kecab AS Store,
             g.gdg_nama AS Nama_Store,
             h.sj_mt_nomor AS NoMinta,
+            -- FIX: Cari invoice yang inv_nomor_so nya adalah Nomor SJ (sj_nomor)
+            IFNULL((SELECT inv_nomor FROM retail.tinv_hdr WHERE inv_nomor_so = h.sj_nomor LIMIT 1), "") AS NoInvoice,
             m.mt_tanggal AS TglMinta,
-            IFNULL(m.mt_otomatis, "") AS MintaOtomatis,
             h.sj_noterima AS NomorTerima,
             t.tj_tanggal AS TglTerima,
             h.sj_ket AS Keterangan,
             sj_stbj AS NoSTBJ,
+            SUM(d.sjd_jumlah) AS TotalQty,
             IFNULL((
                 SELECT IFNULL(
                     IF(pin_acc="" AND pin_dipakai="", "WAIT",
@@ -57,7 +57,7 @@ const getList = async (filters) => {
         LEFT JOIN retail.tgudang g ON g.gdg_kode = h.sj_kecab
         LEFT JOIN retail.ttrm_sj_hdr t ON t.tj_nomor = h.sj_noterima
         LEFT JOIN retail.tmintabarang_hdr m ON m.mt_nomor = h.sj_mt_nomor
-        WHERE h.sj_peminta = "" 
+        WHERE (h.sj_peminta = "" OR h.sj_peminta IS NULL)
           AND h.sj_tanggal BETWEEN ? AND ?
           ${branchFilter}
           ${itemFilter}

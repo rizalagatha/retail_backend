@@ -117,6 +117,21 @@ router.get(
   controller.searchProducts
 );
 
+// Lookup SJ khusus cabang KPR
+router.get(
+  "/lookup/sj-list",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.searchSj
+);
+
+router.get(
+  "/lookup/sj-details/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getSjDetails
+);
+
 // Mencari DP (Setoran) yang belum lunas milik customer
 router.get(
   "/lookup/unpaid-dp/:customerKode",

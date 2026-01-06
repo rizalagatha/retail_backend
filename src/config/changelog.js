@@ -1,22 +1,27 @@
 const changelogs = {
-  "1.2.12": {
-    date: "2026-01-03",
+  "1.2.13": {
+    date: "2026-01-06",
     changes: [
-      "Setting Penjualan Online/Marketplace Online untuk K05",
       {
         title: "Penambahan:",
         items: [
-          "Warna Baris Magenta untuk Halaman Browse SO, untuk SO yang sudah Lunas namun belum Invoice",
-          "Pencarian barang pada Invoice/SO tidak harus tepat nama barangnya dan tidak harus menggunakan %, contoh mencari (KO POLOS PENDEK DBF SIGNATURE BLACK) bisa langsung ketik (black dbf)",
+          "Setting Penjualan Online/Marketplace Online untuk K05",
+          "Cetak Label Packing List DC",
+          "Penambahan Filter Semua Cabang pada Packing List DC",
+          "Setting untuk KPR/Prioritas, termasuk migrasi menu Biaya Kirim ke Web",
+          "Penambahan Kolom Total Qty pada halaman Surat Jalan",
+          "Penambahan Kolom Level pada Master Customer",
+          "Wajib Input NIK dan Nama Karyawan jika customer yang dipilih adalah Karyawan Kencana Print"
         ],
       },
       {
         title: "Perbaikan:",
         items: [
-          "Perbaikan Card dan Running Text Promo berlaku untuk K11",
-          "Card Promo pada Buat Invoice sekarang dapat di-minimize",
-          "Pencarian Customer Retail pada Invoice",
-          "Perbaikan Cetak Barcode",
+          "Perbaikan Cetak Surat Jalan 1 Copy saja",
+          "Perbaikan barang kategori belum terambil saat scan barang pada Surat Pesanan",
+          "Perbaikan Card Promo pada Surat Pesanan",
+          "Perbaikan Pending Actions bagian Penawaran belum memfilter dengan benar",
+          "Perbaikan Preview Struk Kasir",
         ],
       },
     ],

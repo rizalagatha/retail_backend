@@ -423,6 +423,26 @@ const updateInvoiceHeaderOnly = async (req, res) => {
   }
 };
 
+const searchSj = async (req, res) => {
+  try {
+    const { term } = req.query;
+    const data = await service.searchSj(term, req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getSjDetails = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const data = await service.getSjDetails(nomor, req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(404).json({ message: error.message });
+  }
+};
+
 module.exports = {
   loadForEdit,
   save,
@@ -454,4 +474,6 @@ module.exports = {
   getPromoItems,
   getPromoHeader,
   updateInvoiceHeaderOnly,
+  searchSj,
+  getSjDetails,
 };
