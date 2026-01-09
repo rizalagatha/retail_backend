@@ -1,4 +1,11 @@
 const changelogs = {
+  "1.3.1": {
+    date: "2026-01-09",
+    changes: [
+      "Pencarian Barang pada Invoice tetap diadakan dengan F1 atau melalui tombol search di samping field scanner, namun hanya untuk membantu cek stok dan harga barang, bukan untuk input ke tabel. Input tetap menggunakan scan barcode",
+      "Perbaikan layout cetak barcode menyesuaikan Retail Desktop, mengakomodasi cetak barcode baru untuk barcode-barcode yang buram atau sulit discan, terkait dengan wajib scan barcode saat input invoice",
+    ],
+  },
   "1.3.0": {
     date: "2026-01-09",
     changes: [
