@@ -21,8 +21,8 @@ const getLhkList = async (filters) => {
         d.panjang AS PanjangMtr,
         d.buangan AS BuanganMtr,
         d.keterangan AS Keterangan
-    FROM retail.tdtf d
-    LEFT JOIN retail.tsodtf_hdr h ON h.sd_nomor = d.sodtf
+    FROM tdtf d
+    LEFT JOIN tsodtf_hdr h ON h.sd_nomor = d.sodtf
     WHERE d.tanggal BETWEEN ? AND ?
         AND d.cab = ?
     ORDER BY d.tanggal, d.sodtf

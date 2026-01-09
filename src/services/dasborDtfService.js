@@ -23,7 +23,7 @@ const getDasborData = async (filters) => {
 
   // 1. Ambil kuota untuk cabang yang dipilih
   const [kuotaRows] = await pool.query(
-    "SELECT dq_kuota FROM retail.tdtf_kuota WHERE dq_cab = ?",
+    "SELECT dq_kuota FROM tdtf_kuota WHERE dq_cab = ?",
     [cabang]
   );
   const kuota = kuotaRows.length > 0 ? kuotaRows[0].dq_kuota : 0;
@@ -91,7 +91,7 @@ const getDasborDetail = async (filters) => {
                 IFNULL((SELECT SUM(d.sdd_jumlah) FROM tsodtf_dtl d WHERE d.sdd_nomor = h.sd_nomor), 0) *
                 IFNULL((SELECT COUNT(*) FROM tsodtf_dtl2 i WHERE i.sdd2_nomor = h.sd_nomor), 0)
             ) AS TotalTitik
-        FROM retail.tsodtf_hdr h
+        FROM tsodtf_hdr h
         WHERE h.sd_jo_kode = "SD" 
           AND h.sd_cab = ?
           AND h.sd_datekerja BETWEEN ? AND ?
@@ -117,7 +117,7 @@ const exportDetail = async (filters) => {
             IFNULL((SELECT SUM(d.sdd_jumlah) FROM tsodtf_dtl d WHERE d.sdd_nomor = h.sd_nomor), 0) *
             IFNULL((SELECT COUNT(*) FROM tsodtf_dtl2 i WHERE i.sdd2_nomor = h.sd_nomor), 0)
         ) AS TotalTitik
-    FROM retail.tsodtf_hdr h
+    FROM tsodtf_hdr h
     WHERE h.sd_jo_kode = "SD" 
         AND h.sd_cab = ?
         AND h.sd_datekerja BETWEEN ? AND ?

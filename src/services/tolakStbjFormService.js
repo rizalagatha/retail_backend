@@ -29,7 +29,7 @@ const loadFromStbj = async (nomorStbj) => {
             e.tsd_spk_nomor AS spk, e.tsd_kode AS kode, e.tsd_ukuran AS ukuran, e.tsd_jumlah AS jumlah, 
             TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS nama 
         FROM tdc_stbj e 
-        LEFT JOIN retail.tbarangdc a ON a.brg_kode=e.tsd_kode 
+        LEFT JOIN tbarangdc a ON a.brg_kode=e.tsd_kode 
         WHERE e.tsd_nomor = ?`,
     [nomorStbj]
   );

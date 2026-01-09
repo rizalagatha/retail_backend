@@ -27,9 +27,9 @@ const getList = async (filters, user) => {
             ) AS statusPengajuan,
             h.user_create AS usr,
             IFNULL(r.rb_closing, "N") AS closing
-        FROM retail.trbdc_hdr h
-        LEFT JOIN retail.trbdc_dtl d ON d.rbd_nomor = h.rb_nomor
-        LEFT JOIN retail.tgudang g ON g.gdg_kode = LEFT(h.rb_nomor, 3)
+        FROM trbdc_hdr h
+        LEFT JOIN trbdc_dtl d ON d.rbd_nomor = h.rb_nomor
+        LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.rb_nomor, 3)
         LEFT JOIN tdcrb_hdr r ON r.rb_nomor = h.rb_noterima
         WHERE h.rb_tanggal BETWEEN ? AND ?
         AND (? IS NULL OR d.rbd_kode = ?)
@@ -52,8 +52,8 @@ const getDetails = async (nomor) => {
             (IFNULL(r.rbd_jumlah, 0) - IF(d.rbd_input <> 0, d.rbd_input, d.rbd_jumlah)) AS selisih
         FROM trbdc_dtl d
         INNER JOIN trbdc_hdr h ON d.rbd_nomor = h.rb_nomor
-        LEFT JOIN retail.tdcrb_dtl r ON r.rbd_nomor = h.rb_noterima AND r.rbd_kode = d.rbd_kode AND r.rbd_ukuran = d.rbd_ukuran
-        LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.rbd_kode
+        LEFT JOIN tdcrb_dtl r ON r.rbd_nomor = h.rb_noterima AND r.rbd_kode = d.rbd_kode AND r.rbd_ukuran = d.rbd_ukuran
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.rbd_kode
         WHERE d.rbd_nomor = ?;
     `;
   const [rows] = await pool.query(query, [nomor]);
@@ -182,12 +182,12 @@ const getExportDetails = async (filters, user) => {
         IFNULL(rd.rbd_jumlah, 0) AS 'Jumlah Terima',
         (IFNULL(rd.rbd_jumlah, 0) - d.rbd_jumlah) AS 'Selisih'
 
-    FROM retail.trbdc_hdr h
-    INNER JOIN retail.trbdc_dtl d ON d.rbd_nomor = h.rb_nomor
-    LEFT JOIN retail.tgudang g ON g.gdg_kode = LEFT(h.rb_nomor, 3)
+    FROM trbdc_hdr h
+    INNER JOIN trbdc_dtl d ON d.rbd_nomor = h.rb_nomor
+    LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.rb_nomor, 3)
     LEFT JOIN tdcrb_hdr r ON r.rb_nomor = h.rb_noterima
-    LEFT JOIN retail.tdcrb_dtl rd ON rd.rbd_nomor = r.rb_nomor AND rd.rbd_kode = d.rbd_kode AND rd.rbd_ukuran = d.rbd_ukuran
-    LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.rbd_kode
+    LEFT JOIN tdcrb_dtl rd ON rd.rbd_nomor = r.rb_nomor AND rd.rbd_kode = d.rbd_kode AND rd.rbd_ukuran = d.rbd_ukuran
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.rbd_kode
     
     WHERE 
         -- [FIX] Gunakan DATE()

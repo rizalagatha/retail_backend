@@ -21,9 +21,9 @@ const getDataForApprove = async (nomor, user) => {
             s.Sup_nama, 
             CONCAT(s.Sup_alamat, " ", s.Sup_kota) AS alamat, 
             s.sup_telp
-        FROM retail.tdc_pengajuanproduksi_hdr h
-        LEFT JOIN retail.tdc_pengajuanproduksi_dtl d ON d.ppd_nomor = h.pp_nomor
-        LEFT JOIN retail.tsupplier s ON s.sup_kode = h.pp_sup_kode
+        FROM tdc_pengajuanproduksi_hdr h
+        LEFT JOIN tdc_pengajuanproduksi_dtl d ON d.ppd_nomor = h.pp_nomor
+        LEFT JOIN tsupplier s ON s.sup_kode = h.pp_sup_kode
         WHERE h.pp_nomor = ?
         ORDER BY d.ppd_nourut;
     `;
@@ -77,7 +77,7 @@ const saveApproval = async (nomor, data, user) => {
 
     // 1. Update Header
     await connection.query(
-      `UPDATE retail.tdc_pengajuanproduksi_hdr 
+      `UPDATE tdc_pengajuanproduksi_hdr 
              SET pp_approved = ?, pp_dtapproved = ?
              WHERE pp_nomor = ?`,
       [
@@ -99,7 +99,7 @@ const saveApproval = async (nomor, data, user) => {
       // Jika header tidak di-approve, item kembali ke status '' (kosong)
 
       await connection.query(
-        `UPDATE retail.tdc_pengajuanproduksi_dtl 
+        `UPDATE tdc_pengajuanproduksi_dtl 
                  SET ppd_approved = ? 
                  WHERE ppd_nomor = ? AND ppd_nourut = ?`,
         [itemApproveStatus, nomor, item.no]

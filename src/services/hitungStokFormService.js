@@ -62,24 +62,25 @@ const processScan = async (data, user) => {
  * Mengambil daftar item yang sudah di-scan untuk lokasi tertentu.
  */
 const getScannedItemsByLocation = async (lokasi, user) => {
-  // Query ini adalah terjemahan dari loaddetail di Delphi
   const query = `
         SELECT 
-            y.Barcode, y.Kode, y.Nama, y.Ukuran, y.jumlah, y.lokasi, y.total
+            y.barcode, y.kode, y.nama, y.ukuran, y.jumlah, y.lokasi, y.total
         FROM (
             SELECT 
-                x.cab, x.Barcode, x.Kode, x.Nama, x.Ukuran, x.Lokasi, x.total,
+                x.cab, x.barcode, x.kode, x.nama, x.ukuran, x.lokasi, x.total,
                 IFNULL((
                     SELECT SUM(i.hs_qty) 
                     FROM thitungstok i 
                     WHERE i.hs_proses = 'N' AND i.hs_lokasi = ? 
-                      AND i.hs_cab = x.cab AND i.hs_kode = x.Kode AND i.hs_ukuran = x.Ukuran
+                      AND i.hs_cab = x.cab AND i.hs_kode = x.kode AND i.hs_ukuran = x.ukuran
                 ), 0) AS jumlah
             FROM (
                 SELECT 
-                    h.hs_cab AS Cab, h.hs_kode AS Kode, h.hs_barcode AS Barcode,
-                    TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS Nama,
-                    h.hs_ukuran AS Ukuran, 
+                    h.hs_cab AS cab, 
+                    h.hs_kode AS kode, 
+                    h.hs_barcode AS barcode,
+                    TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS nama,
+                    h.hs_ukuran AS ukuran, 
                     SUM(h.hs_qty) AS total, 
                     CAST(GROUP_CONCAT(CONCAT(h.hs_lokasi,"=",h.hs_qty) SEPARATOR ", ") AS CHAR) AS lokasi
                 FROM thitungstok h
@@ -89,7 +90,7 @@ const getScannedItemsByLocation = async (lokasi, user) => {
             ) x
         ) y 
         WHERE y.jumlah <> 0 
-        ORDER BY y.Nama, RIGHT(y.barcode, 2)
+        ORDER BY y.nama, RIGHT(y.barcode, 2)
     `;
 
   const [rows] = await pool.query(query, [lokasi, user.cabang]);

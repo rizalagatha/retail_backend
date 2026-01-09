@@ -41,7 +41,7 @@ const getDetails = async (nomor) => {
             d.grd_ukuran AS ukuran,
             d.grd_jumlah AS jumlah
         FROM tdc_gr_dtl d
-        LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.grd_kode
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.grd_kode
         WHERE d.grd_nomor = ?
         ORDER BY d.grd_spk_nomor, d.grd_kode, d.grd_ukuran;
     `;
@@ -108,7 +108,7 @@ const getExportDetails = async (filters) => {
         FROM tdc_gr_hdr h
         LEFT JOIN tdc_gr_dtl d ON d.grd_nomor = h.gr_nomor
         LEFT JOIN tgudang g ON g.gdg_kode = h.gr_gudang
-        LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.grd_kode
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.grd_kode
         WHERE h.gr_tanggal BETWEEN ? AND ?
     `;
     const params = [startDate, endDate];

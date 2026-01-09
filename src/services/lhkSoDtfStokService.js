@@ -30,7 +30,7 @@ const getDetails = async (nomor) => {
             d.dsd_jumlah AS Jumlah
         FROM tdtfstok_dtl d
         JOIN tdtfstok_hdr h ON d.dsd_nomor = h.ds_nomor
-        LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.dsd_kode
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.dsd_kode
         WHERE d.dsd_nomor = ?
         ORDER BY d.dsd_kode, d.dsd_ukuran
     `;

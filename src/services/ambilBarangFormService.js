@@ -31,8 +31,8 @@ const getDataForEdit = async (nomor) => {
             o.gdg_nama AS storeNama,
             h.sj_peminta AS peminta
         FROM tdc_sj_hdr h
-        LEFT JOIN retail.tgudang g ON g.gdg_kode = LEFT(h.sj_nomor, 3)
-        LEFT JOIN retail.tgudang o ON o.gdg_kode = h.sj_kecab
+        LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.sj_nomor, 3)
+        LEFT JOIN tgudang o ON o.gdg_kode = h.sj_kecab
         WHERE h.sj_nomor = ?;
     `;
   const [headerRows] = await pool.query(headerQuery, [nomor]);
@@ -47,12 +47,12 @@ const getDataForEdit = async (nomor) => {
             d.sjd_jumlah AS jumlah,
             IFNULL((
                 SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
-                FROM retail.tmasterstok m 
+                FROM tmasterstok m 
                 WHERE m.mst_aktif = "Y" AND m.mst_cab = LEFT(?, 3) AND m.mst_brg_kode = d.sjd_kode AND m.mst_ukuran = d.sjd_ukuran
             ), 0) + d.sjd_jumlah AS stok
         FROM tdc_sj_dtl d
-        LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.sjd_kode
-        LEFT JOIN retail.tbarangdc_dtl b ON b.brgd_kode = d.sjd_kode AND b.brgd_ukuran = d.sjd_ukuran
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.sjd_kode
+        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sjd_kode AND b.brgd_ukuran = d.sjd_ukuran
         WHERE d.sjd_nomor = ?;
     `;
   const [itemsRows] = await pool.query(itemsQuery, [nomor, nomor]);
@@ -84,7 +84,7 @@ const saveData = async (payload, user) => {
         nomorSJ,
       ]);
       await connection.query(
-        `DELETE FROM retail.ttrm_sj_dtl WHERE tjd_nomor = ?`,
+        `DELETE FROM ttrm_sj_dtl WHERE tjd_nomor = ?`,
         [nomorTerima]
       );
     } else {
@@ -98,7 +98,7 @@ const saveData = async (payload, user) => {
       nomorTerima = await getNomorTerima(
         connection,
         header.storeKode,
-        "retail.ttrm_sj_hdr",
+        "ttrm_sj_hdr",
         "tj_nomor"
       );
 
@@ -114,7 +114,7 @@ const saveData = async (payload, user) => {
         ]
       );
       await connection.query(
-        `INSERT INTO retail.ttrm_sj_hdr (tj_nomor, tj_tanggal, user_create, date_create) VALUES (?, ?, ?, NOW())`,
+        `INSERT INTO ttrm_sj_hdr (tj_nomor, tj_tanggal, user_create, date_create) VALUES (?, ?, ?, NOW())`,
         [nomorTerima, header.tanggal, userId]
       );
     }
@@ -127,7 +127,7 @@ const saveData = async (payload, user) => {
           [nomorSJ, item.kode, item.ukuran, item.jumlah]
         );
         await connection.query(
-          `INSERT INTO retail.ttrm_sj_dtl (tjd_nomor, tjd_kode, tjd_ukuran, tjd_jumlah) VALUES (?, ?, ?, ?)`,
+          `INSERT INTO ttrm_sj_dtl (tjd_nomor, tjd_kode, tjd_ukuran, tjd_jumlah) VALUES (?, ?, ?, ?)`,
           [nomorTerima, item.kode, item.ukuran, item.jumlah]
         );
       }
@@ -169,11 +169,11 @@ const lookupProductByBarcode = async (barcode, gudang) => {
             b.brgd_ukuran AS ukuran,
             IFNULL((
                 SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
-                FROM retail.tmasterstok m 
+                FROM tmasterstok m 
                 WHERE m.mst_aktif = "Y" AND m.mst_cab = ? AND m.mst_brg_kode = b.brgd_kode AND m.mst_ukuran = b.brgd_ukuran
             ), 0) AS stok
-        FROM retail.tbarangdc_dtl b
-        INNER JOIN retail.tbarangdc a ON a.brg_kode = b.brgd_kode
+        FROM tbarangdc_dtl b
+        INNER JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
         WHERE a.brg_aktif = 0 AND b.brgd_barcode = ?;
     `;
   const [rows] = await pool.query(query, [gudang, barcode]);

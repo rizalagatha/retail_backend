@@ -11,22 +11,21 @@ const getList = async (req, res) => {
 
 const setDate = async (req, res) => {
   try {
-    const { tanggal } = req.body;
-    if (!tanggal) {
-      return res.status(400).json({ message: "Tanggal harus diisi." });
-    }
-    const result = await service.setDate(tanggal, req.user);
+    // PENTING: Kirim req.body secara utuh agar service mendapatkan 'cabangTarget'
+    const result = await service.setDate(req.body, req.user);
     res.status(201).json(result);
   } catch (error) {
-    // Gunakan status 409 (Conflict) untuk error validasi "sudah ada"
-    res.status(409).json({ message: error.message });
+    res.status(400).json({ message: error.message });
   }
 };
 
 const deleteDate = async (req, res) => {
   try {
     const { tanggal } = req.params;
-    const result = await service.deleteDate(tanggal, req.user);
+    // PENTING: Ambil cabang dari query parameter (params di axios frontend)
+    const { cabang } = req.query;
+
+    const result = await service.deleteDate(tanggal, cabang, req.user);
     res.json(result);
   } catch (error) {
     res.status(400).json({ message: error.message });

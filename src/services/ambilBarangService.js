@@ -29,8 +29,8 @@ const getList = async (filters) => {
             h.sj_closing AS closing
         FROM tdc_sj_hdr h
         INNER JOIN tdc_sj_dtl d ON d.sjd_nomor = h.sj_nomor
-        LEFT JOIN retail.tgudang g ON g.gdg_kode = h.sj_kecab
-        LEFT JOIN retail.ttrm_sj_hdr t ON t.tj_nomor = h.sj_noterima
+        LEFT JOIN tgudang g ON g.gdg_kode = h.sj_kecab
+        LEFT JOIN ttrm_sj_hdr t ON t.tj_nomor = h.sj_noterima
         WHERE 
             h.sj_peminta <> "" AND h.sj_kecab = "K01" 
             AND h.sj_tanggal BETWEEN ? AND ?
@@ -60,7 +60,7 @@ const getDetails = async (nomor) => {
             d.sjd_jumlah AS jumlah
         FROM tdc_sj_dtl d
         INNER JOIN tdc_sj_hdr h ON d.sjd_nomor = h.sj_nomor
-        LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.sjd_kode
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.sjd_kode
         WHERE h.sj_nomor = ?
         ORDER BY d.sjd_nomor;
     `;
@@ -116,7 +116,7 @@ const lookupProducts = async (filters) => {
   const offset = (page - 1) * itemsPerPage;
   const searchTerm = term ? `%${term}%` : null;
 
-  let fromClause = `FROM retail.tbarangdc a`;
+  let fromClause = `FROM tbarangdc a`;
   let whereClause = `WHERE 1=1`; // Dimulai dengan kondisi true
   let params = [];
 
@@ -165,9 +165,9 @@ const getExportDetails = async (filters) => {
             d.sjd_jumlah AS 'Jumlah'
         FROM tdc_sj_hdr h
         INNER JOIN tdc_sj_dtl d ON d.sjd_nomor = h.sj_nomor
-        LEFT JOIN retail.tgudang g ON g.gdg_kode = h.sj_kecab
-        LEFT JOIN retail.ttrm_sj_hdr t ON t.tj_nomor = h.sj_noterima
-        LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.sjd_kode
+        LEFT JOIN tgudang g ON g.gdg_kode = h.sj_kecab
+        LEFT JOIN ttrm_sj_hdr t ON t.tj_nomor = h.sj_noterima
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.sjd_kode
         WHERE h.sj_peminta <> "" AND h.sj_kecab = "K01"
             AND DATE(h.sj_tanggal) BETWEEN ? AND ?
     `;

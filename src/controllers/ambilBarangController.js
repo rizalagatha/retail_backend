@@ -33,21 +33,21 @@ const deleteAmbilBarang = async (req, res) => {
 };
 
 const lookupProducts = async (req, res) => {
-    try {
-        const result = await service.lookupProducts(req.query);
-        res.json(result);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
+  try {
+    const result = await service.lookupProducts(req.query);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
 const exportDetail = async (req, res) => {
-    try {
-        const data = await service.getExportDetails(req.query);
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
+  try {
+    const data = await service.getExportDetails(req.query);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
 module.exports = {
@@ -55,5 +55,5 @@ module.exports = {
   getDetails,
   deleteAmbilBarang,
   lookupProducts,
-  exportDetail
+  exportDetail,
 };

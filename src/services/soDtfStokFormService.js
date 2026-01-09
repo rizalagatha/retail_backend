@@ -13,8 +13,8 @@ const getTemplateItems = async (jenisOrder) => {
       b.brgd_ukuran AS ukuran,
       c.us_panjang AS panjang,
       c.us_lebar AS lebar
-    FROM retail.tbarangdc_dtl b
-    JOIN retail.tbarangdc a ON a.brg_kode = b.brgd_kode
+    FROM tbarangdc_dtl b
+    JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
     LEFT JOIN tukuran_sodtf c ON c.us_ukuran = b.brgd_ukuran AND c.us_jenis = ?
     WHERE a.brg_aktif = 0 AND a.brg_logstok = "Y" AND a.brg_kode = ?
   `;

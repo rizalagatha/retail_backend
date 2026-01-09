@@ -283,7 +283,7 @@ const getCabangOptions = async (user) => {
             UNION ALL
             SELECT * FROM (
                 SELECT gdg_kode AS kode, gdg_nama AS nama 
-                FROM retail.tgudang 
+                FROM tgudang 
                 ORDER BY gdg_kode
             ) AS x
         `;
@@ -291,7 +291,7 @@ const getCabangOptions = async (user) => {
     // --- DISESUAIKAN DENGAN QUERY DELPHI ---
     query = `
             SELECT gdg_kode AS kode, gdg_nama AS nama
-            FROM retail.tgudang 
+            FROM tgudang 
             WHERE gdg_kode = ?
         `;
     params.push(cabangUtama);

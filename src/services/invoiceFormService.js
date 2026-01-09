@@ -623,7 +623,8 @@ const saveData = async (payload, user) => {
       Number(payment.tunai || 0) +
       Number(payment.transfer?.nominal || 0) +
       Number(payment.voucher?.nominal || 0) +
-      Number(payment.retur?.nominal || 0);
+      Number(payment.retur?.nominal || 0) +
+      Number(payment.diskonPembulatan || 0);
 
     // Cek apakah lunas terhadap Grand Total Final
     const isBelumLunas = totalBayarAsli < grandTotal;
@@ -782,7 +783,7 @@ const saveData = async (payload, user) => {
           inv_idrec, inv_nomor, inv_nomor_so, inv_tanggal,
           inv_cab,
           inv_cus_kode, inv_cus_level, inv_ket, inv_sc,
-          inv_disc, inv_bkrm, inv_dp, inv_bayar, inv_pundiamal,
+          inv_disc, inv_bkrm, inv_dp, inv_bayar, inv_pundiamal, inv_diskon_pembulatan,
           inv_rptunai, inv_novoucher, inv_rpvoucher, inv_rpcard, inv_nosetor,
           inv_kembali,
           inv_mem_hp, inv_mem_nama, inv_mem_alamat, inv_mem_gender, inv_mem_usia, inv_mem_referensi,
@@ -791,7 +792,7 @@ const saveData = async (payload, user) => {
           user_create, date_create
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?, 
-          ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
       `;
 
@@ -816,6 +817,7 @@ const saveData = async (payload, user) => {
         dpDipakai, // inv_dp
         invBayar,
         pundiAmal,
+        Number(payment.diskonPembulatan || 0),
 
         // pembayaran
         bayarTunaiBersih, // inv_rptunai
@@ -848,7 +850,7 @@ const saveData = async (payload, user) => {
       const updateSql = `
         UPDATE tinv_hdr SET
           inv_nomor_so = ?, inv_tanggal = ?, inv_cab = ?, inv_cus_kode = ?, inv_cus_level = ?, inv_ket = ?, inv_sc = ?,
-          inv_disc = ?, inv_bkrm = ?, inv_dp = ?, inv_bayar = ?, inv_pundiamal = ?,
+          inv_disc = ?, inv_bkrm = ?, inv_dp = ?, inv_bayar = ?, inv_pundiamal = ?, inv_diskon_pembulatan = ?,
           inv_rptunai = ?, inv_novoucher = ?, inv_rpvoucher = ?, inv_rpcard = ?, inv_nosetor = ?,
           inv_kembali = ?,
           inv_mem_hp = ?, inv_mem_nama = ?, inv_mem_alamat = ?, 
@@ -874,6 +876,7 @@ const saveData = async (payload, user) => {
         dpDipakai,
         invBayar,
         pundiAmal,
+        Number(payment.diskonPembulatan || 0),
 
         bayarTunaiBersih,
         payment.voucher?.nomor || "",
@@ -1008,7 +1011,7 @@ const saveData = async (payload, user) => {
     const fullTagihan = applyRoundingPolicy(netto + biayaKirim); // Nilai Invoice
     const totalDpDipakai = dpDipakai;
     const totalBayarSemua = applyRoundingPolicy(
-      totalPaymentNonDp + totalDpDipakai
+      totalPaymentNonDp + totalDpDipakai + Number(payment.diskonPembulatan || 0)
     );
 
     // Hitung Sisa Piutang (Saldo Akhir)
@@ -1117,6 +1120,19 @@ const saveData = async (payload, user) => {
 
       // 4. Bayar Transfer/Card (Akan dihandle di blok khusus Transfer di bawah,
       // tapi pastikan insert ke tpiutang_dtl nya jalan)
+
+      // Diskon pembulatan dianggap sebagai 'Kredit' agar saldo piutang berkurang
+      if (Number(payment.diskonPembulatan || 0) > 0) {
+        piutangDtlValues.push([
+          `${user.cabang}RND${format(new Date(), "yyyyMMddHHmmssSSS")}`,
+          piutangNomor,
+          toSqlDateTime(header.tanggal),
+          "Pembulatan (Diskon)",
+          0, // pd_debet (0 karena ini pengurang tagihan)
+          Number(payment.diskonPembulatan), // pd_kredit (mengurangi sisa piutang)
+          "Diskon kurang bayar",
+        ]);
+      }
     }
 
     // Eksekusi Insert Detail (Batch)

@@ -6,7 +6,7 @@ const generateNewInvNomor = async (connection, tanggal, cabang) => {
   const ayymm = format(new Date(tanggal), "yyMM");
   const prefix = `${cabang}.INV.${ayymm}.`;
   const [rows] = await connection.query(
-    "SELECT IFNULL(MAX(RIGHT(inv_nomor, 4)), 0) as max_nomor FROM retail.tinv_hdr WHERE LEFT(inv_nomor, 12) = ?",
+    "SELECT IFNULL(MAX(RIGHT(inv_nomor, 4)), 0) as max_nomor FROM tinv_hdr WHERE LEFT(inv_nomor, 12) = ?",
     [prefix]
   );
   const nextNum = parseInt(rows[0].max_nomor, 10) + 1;
@@ -18,7 +18,7 @@ const generateNewSetorNomor = async (connection, tanggal, cabang) => {
   const ayymm = format(new Date(tanggal), "yyMM");
   const prefix = `${cabang}.STR.${ayymm}.`;
   const [rows] = await connection.query(
-    "SELECT IFNULL(MAX(RIGHT(sh_nomor, 4)), 0) as max_nomor FROM retail.tsetor_hdr WHERE LEFT(sh_nomor, 12) = ?",
+    "SELECT IFNULL(MAX(RIGHT(sh_nomor, 4)), 0) as max_nomor FROM tsetor_hdr WHERE LEFT(sh_nomor, 12) = ?",
     [prefix]
   );
   const nextNum = parseInt(rows[0].max_nomor, 10) + 1;
@@ -85,7 +85,7 @@ const prosesKlerek = async (items, cabang, user) => {
     // 1. Ambil MAX nomor invoice
     const invPrefix = `${cabang}.INV.${ayymm}.`;
     const [maxInvRows] = await connection.query(
-      "SELECT IFNULL(MAX(RIGHT(inv_nomor, 4)), 0) as max_nomor FROM retail.tinv_hdr WHERE LEFT(inv_nomor, 12) = ? FOR UPDATE",
+      "SELECT IFNULL(MAX(RIGHT(inv_nomor, 4)), 0) as max_nomor FROM tinv_hdr WHERE LEFT(inv_nomor, 12) = ? FOR UPDATE",
       [invPrefix]
     );
     let nextInvNum = parseInt(maxInvRows[0].max_nomor, 10) + 1;
@@ -93,7 +93,7 @@ const prosesKlerek = async (items, cabang, user) => {
     // 2. Ambil MAX nomor setoran (jika ada pembayaran non-tunai)
     const setorPrefix = `${cabang}.STR.${ayymm}.`;
     const [maxSetorRows] = await connection.query(
-      "SELECT IFNULL(MAX(RIGHT(sh_nomor, 4)), 0) as max_nomor FROM retail.tsetor_hdr WHERE LEFT(sh_nomor, 12) = ? FOR UPDATE",
+      "SELECT IFNULL(MAX(RIGHT(sh_nomor, 4)), 0) as max_nomor FROM tsetor_hdr WHERE LEFT(sh_nomor, 12) = ? FOR UPDATE",
       [setorPrefix]
     );
     let nextSetorNum = parseInt(maxSetorRows[0].max_nomor, 10) + 1;
@@ -114,7 +114,7 @@ const prosesKlerek = async (items, cabang, user) => {
                 IFNULL(h.Inv_top, 0) AS Inv_top_safe,
                 IFNULL(h.Inv_cus_kode, '') AS Inv_cus_kode_safe,
                 IFNULL(h.Inv_nomor, '') AS Inv_nomor_safe 
-            FROM retail.tinv_hdr_tmp h 
+            FROM tinv_hdr_tmp h 
             LEFT JOIN finance.trekening r ON r.rek_rekening = h.inv_nocard 
             WHERE inv_id = ?`,
           [cnomor]
@@ -129,7 +129,7 @@ const prosesKlerek = async (items, cabang, user) => {
         // 3. Insert ke inv_hdr permanen
         const cidrec = `${cabang}INV${format(new Date(), "yyyyMMddHHmmssSSS")}`;
         await connection.query(
-          `INSERT INTO retail.tinv_hdr (inv_idrec, inv_nomor, inv_nomor_so, inv_klerek, inv_tanggal, inv_cus_level, Inv_top, inv_ppn, inv_disc, inv_disc1, inv_disc2, inv_bkrm, inv_dp, inv_nodp, Inv_cus_kode, inv_pro_nomor, Inv_ket, inv_rptunai, inv_novoucher, inv_rpvoucher, inv_nocard, inv_rpcard, inv_nosetor, inv_mem_hp, inv_mem_nama, inv_mem_alamat, inv_mem_gender, inv_mem_usia, inv_mem_referensi, inv_print, inv_puas, inv_closing, user_create, date_create, user_modified, date_modified) 
+          `INSERT INTO tinv_hdr (inv_idrec, inv_nomor, inv_nomor_so, inv_klerek, inv_tanggal, inv_cus_level, Inv_top, inv_ppn, inv_disc, inv_disc1, inv_disc2, inv_bkrm, inv_dp, inv_nodp, Inv_cus_kode, inv_pro_nomor, Inv_ket, inv_rptunai, inv_novoucher, inv_rpvoucher, inv_nocard, inv_rpcard, inv_nosetor, inv_mem_hp, inv_mem_nama, inv_mem_alamat, inv_mem_gender, inv_mem_usia, inv_mem_referensi, inv_print, inv_puas, inv_closing, user_create, date_create, user_modified, date_modified) 
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
           [
             cidrec,
@@ -172,7 +172,7 @@ const prosesKlerek = async (items, cabang, user) => {
 
         // 4. Piutang Header
         await connection.query(
-          "INSERT INTO retail.tpiutang_hdr (ph_nomor, ph_tanggal, ph_cus_kode, ph_inv_nomor, ph_top, ph_nominal, ph_flag) VALUES (?, ?, ?, ?, 0, ?, 0) ON DUPLICATE KEY UPDATE ph_nominal = ?",
+          "INSERT INTO tpiutang_hdr (ph_nomor, ph_tanggal, ph_cus_kode, ph_inv_nomor, ph_top, ph_nominal, ph_flag) VALUES (?, ?, ?, ?, 0, ?, 0) ON DUPLICATE KEY UPDATE ph_nominal = ?",
           [
             `${ckdcus}${cklerek}`,
             invHeader.inv_tanggal,
@@ -189,7 +189,7 @@ const prosesKlerek = async (items, cabang, user) => {
           "yyyyMMddHHmmssSSS"
         )}D`;
         await connection.query(
-          'INSERT INTO retail.tpiutang_dtl (pd_sd_angsur, pd_ph_nomor, pd_tanggal, pd_uraian, pd_debet, pd_kredit, pd_ket) VALUES (?, ?, ?, "Penjualan", ?, 0, "")',
+          'INSERT INTO tpiutang_dtl (pd_sd_angsur, pd_ph_nomor, pd_tanggal, pd_uraian, pd_debet, pd_kredit, pd_ket) VALUES (?, ?, ?, "Penjualan", ?, 0, "")',
           [cpdidrec, `${ckdcus}${cklerek}`, invHeader.inv_tanggal, item.nominal]
         );
 
@@ -198,7 +198,7 @@ const prosesKlerek = async (items, cabang, user) => {
           // 6a. Bayar Tunai
           cpdidrec = `${cabang}CASH${format(new Date(), "yyyyMMddHHmmssSSS")}D`;
           await connection.query(
-            'INSERT INTO retail.tpiutang_dtl (pd_sd_angsur, pd_ph_nomor, pd_tanggal, pd_uraian, pd_debet, pd_kredit, pd_ket) VALUES (?, ?, ?, "Bayar Tunai Langsung", 0, ?, "")',
+            'INSERT INTO tpiutang_dtl (pd_sd_angsur, pd_ph_nomor, pd_tanggal, pd_uraian, pd_debet, pd_kredit, pd_ket) VALUES (?, ?, ?, "Bayar Tunai Langsung", 0, ?, "")',
             [
               cpdidrec,
               `${ckdcus}${cklerek}`,
@@ -217,7 +217,7 @@ const prosesKlerek = async (items, cabang, user) => {
 
           // Setor Header
           await connection.query(
-            `INSERT INTO retail.tsetor_hdr (sh_idrec, sh_nomor, sh_tanggal, sh_jenis, sh_nominal, sh_akun, sh_norek, sh_tgltransfer, sh_cus_kode, sh_otomatis, sh_ket, user_create, date_create) 
+            `INSERT INTO tsetor_hdr (sh_idrec, sh_nomor, sh_tanggal, sh_jenis, sh_nominal, sh_akun, sh_norek, sh_tgltransfer, sh_cus_kode, sh_otomatis, sh_ket, user_create, date_create) 
                          VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, "Y", "", ?, ?)`,
             [
               cshidrec,
@@ -239,7 +239,7 @@ const prosesKlerek = async (items, cabang, user) => {
             "yyyyMMddHHmmssSSS"
           )}`;
           await connection.query(
-            'INSERT INTO retail.tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut) VALUES (?, ?, ?, ?, ?, "PEMBAYARAN DARI KASIR", ?, 1)',
+            'INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut) VALUES (?, ?, ?, ?, ?, "PEMBAYARAN DARI KASIR", ?, 1)',
             [
               cshidrec,
               csetornew,
@@ -277,13 +277,13 @@ const prosesKlerek = async (items, cabang, user) => {
 
         // 8. Insert Detail
         const [tsql2] = await connection.query(
-          "SELECT d.*, b.brgd_hpp FROM retail.tinv_dtl_tmp d LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.invd_kode AND b.brgd_ukuran = d.invd_ukuran WHERE invd_inv_nomor = ?",
+          "SELECT d.*, b.brgd_hpp FROM tinv_dtl_tmp d LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.invd_kode AND b.brgd_ukuran = d.invd_ukuran WHERE invd_inv_nomor = ?",
           [invHeader.inv_nomor]
         );
 
         for (const dtl of tsql2) {
           await connection.query(
-            "INSERT INTO retail.tinv_dtl (invd_idrec, Invd_Inv_nomor, Invd_kode, invd_ukuran, Invd_jumlah, invd_harga, invd_hpp, invd_disc, invd_diskon, invd_pro_nomor, invd_nourut) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO tinv_dtl (invd_idrec, Invd_Inv_nomor, Invd_kode, invd_ukuran, Invd_jumlah, invd_harga, invd_hpp, invd_disc, invd_diskon, invd_pro_nomor, invd_nourut) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
               cidrec,
               cklerek,
@@ -324,11 +324,11 @@ const getCabangOptions = async (user) => {
   if (user.cabang === "KDC") {
     // KDC bisa melihat semua cabang (sesuai permintaan "tampilkan semua aja")
     query =
-      "SELECT gdg_kode AS kode, gdg_nama AS nama FROM retail.tgudang ORDER BY kode";
+      "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang ORDER BY kode";
   } else {
     // Cabang biasa hanya melihat cabangnya sendiri
     query =
-      "SELECT gdg_kode AS kode, gdg_nama AS nama FROM retail.tgudang WHERE gdg_kode = ?";
+      "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ?";
     params.push(user.cabang);
   }
   const [rows] = await pool.query(query, params);

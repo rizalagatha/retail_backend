@@ -10,7 +10,7 @@ const uploadDir = path.join(__dirname, "../../public/images/cabang/KDC"); // Asu
 const generateNewKode = async (connection, date) => {
   const ayy = format(new Date(date), "yy");
   const [rows] = await pool.query(
-    'SELECT IFNULL(MAX(RIGHT(brg_kode, 5)), 0) as max_nomor FROM retail.tbarangdc WHERE (brg_ktg <> "" OR brg_kelompok <> "") AND LEFT(brg_kode, 2) = ?',
+    'SELECT IFNULL(MAX(RIGHT(brg_kode, 5)), 0) as max_nomor FROM tbarangdc WHERE (brg_ktg <> "" OR brg_kelompok <> "") AND LEFT(brg_kode, 2) = ?',
     [ayy]
   );
   const nextNum = parseInt(rows[0].max_nomor, 10) + 1;
@@ -24,7 +24,7 @@ const getNewBarcodeId = async (date) => {
     const tahun = format(new Date(date), "yyyy");
 
     const [rows] = await pool.query(
-      'SELECT IFNULL(MAX(brg_bcdid), 0) as max_id FROM retail.tbarangdc WHERE DATE_FORMAT(date_create, "%Y") = ?',
+      'SELECT IFNULL(MAX(brg_bcdid), 0) as max_id FROM tbarangdc WHERE DATE_FORMAT(date_create, "%Y") = ?',
       [tahun]
     );
 
@@ -47,12 +47,12 @@ const generateBarcode = (date, barcodeId, kodeUkuran) => {
 // Mengambil data untuk filter dan load awal (dari FormCreate)
 const getInitialData = async () => {
   const [ktg] = await pool.query(
-    'SELECT DISTINCT(kategori) FROM retail.tukuran WHERE kategori <> "" ORDER BY kategori'
+    'SELECT DISTINCT(kategori) FROM tukuran WHERE kategori <> "" ORDER BY kategori'
   );
   const [ktgp] = await pool.query(
-    'SELECT DISTINCT(brg_ktgp) FROM retail.tbarangdc WHERE brg_ktgp <> "" ORDER BY brg_ktgp'
+    'SELECT DISTINCT(brg_ktgp) FROM tbarangdc WHERE brg_ktgp <> "" ORDER BY brg_ktgp'
   );
-  const [versi] = await pool.query("SELECT hpprezso FROM retail.tversi");
+  const [versi] = await pool.query("SELECT hpprezso FROM tversi");
   return {
     kategoriOptions: ktg.map((k) => k.kategori),
     ktgProdukOptions: ktgp.map((k) => k.brg_ktgp),
@@ -63,7 +63,7 @@ const getInitialData = async () => {
 // Mengambil daftar ukuran (dari loadukuran)
 const getUkuranOptions = async (kategori) => {
   const [rows] = await pool.query(
-    "SELECT kode, ukuran FROM retail.tukuran WHERE kategori = ? ORDER BY kode",
+    "SELECT kode, ukuran FROM tukuran WHERE kategori = ? ORDER BY kode",
     [kategori]
   );
   return rows.map((r) => ({
@@ -80,7 +80,7 @@ const getUkuranOptions = async (kategori) => {
 // Mengambil data untuk mode Ubah (dari loaddata)
 const getDataForEdit = async (kode) => {
   const [headerRows] = await pool.query(
-    'SELECT *, brg_warna AS nama, brg_bahan AS bahan FROM retail.tbarangdc WHERE brg_ktg <> "" AND brg_kode = ?',
+    'SELECT *, brg_warna AS nama, brg_bahan AS bahan FROM tbarangdc WHERE brg_ktg <> "" AND brg_kode = ?',
     [kode]
   );
   if (headerRows.length === 0)
@@ -88,7 +88,7 @@ const getDataForEdit = async (kode) => {
   const header = headerRows[0];
 
   const [detailRows] = await pool.query(
-    "SELECT * FROM retail.tbarangdc_dtl WHERE brgd_kode = ?",
+    "SELECT * FROM tbarangdc_dtl WHERE brgd_kode = ?",
     [kode]
   );
 
@@ -123,7 +123,7 @@ const saveData = async (data, file, user) => {
 
     if (isEdit) {
       await connection.query(
-        `UPDATE retail.tbarangdc SET 
+        `UPDATE tbarangdc SET 
                     brg_aktif = ?, brg_ktg = ?, brg_ktgp = ?, brg_warna = ?, brg_bahan = ?, 
                     brg_bcdid = ?, brg_logstok = "Y", user_modified = ?, date_modified = NOW()
                  WHERE brg_kode = ?`,
@@ -140,7 +140,7 @@ const saveData = async (data, file, user) => {
       );
     } else {
       await connection.query(
-        `INSERT INTO retail.tbarangdc 
+        `INSERT INTO tbarangdc 
                     (brg_kode, brg_ktg, brg_ktgp, brg_warna, brg_bahan, brg_aktif, brg_bcdid, brg_logstok, user_create, date_create) 
                  VALUES (?, ?, ?, ?, ?, ?, ?, "Y", ?, ?)`,
         [
@@ -175,7 +175,7 @@ const saveData = async (data, file, user) => {
         }
 
         await connection.query(
-          `INSERT INTO retail.tbarangdc_dtl 
+          `INSERT INTO tbarangdc_dtl 
                         (brgd_kode, brgd_barcode, brgd_ukuran, brgd_hpp, brgd_harga) 
                      VALUES (?, ?, ?, ?, ?)
                      ON DUPLICATE KEY UPDATE 

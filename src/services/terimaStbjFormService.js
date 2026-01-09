@@ -21,7 +21,7 @@ const loadFromStbj = async (nomorStbj) => {
   );
 
   const [allocationItems] = await pool.query(
-    `SELECT e.tsd_spk_nomor AS spk, e.tsd_kode AS kode, e.tsd_ukuran AS ukuran, e.tsd_jumlah AS jumlah, concat(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna) AS nama FROM tdc_stbj e LEFT JOIN retail.tbarangdc a ON a.brg_kode=e.tsd_kode WHERE e.tsd_nomor = ?`,
+    `SELECT e.tsd_spk_nomor AS spk, e.tsd_kode AS kode, e.tsd_ukuran AS ukuran, e.tsd_jumlah AS jumlah, concat(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna) AS nama FROM tdc_stbj e LEFT JOIN tbarangdc a ON a.brg_kode=e.tsd_kode WHERE e.tsd_nomor = ?`,
     [nomorStbj]
   );
 
@@ -29,10 +29,11 @@ const loadFromStbj = async (nomorStbj) => {
 };
 
 const save = async (payload, user) => {
-  let retries = 3;
+  let retries = 5;
   while (retries > 0) {
     // ✅ PENTING: Ambil connection BARU untuk generate nomor (AUTOCOMMIT)
     const seqConnection = await pool.getConnection();
+    const connection = await pool.getConnection();
 
     try {
       const { header, summaryItems, allocationItems } = payload;
@@ -48,8 +49,6 @@ const save = async (payload, user) => {
       // Release sequence connection
       seqConnection.release();
 
-      // ✅ SEKARANG: Mulai transaksi main dengan connection baru
-      const connection = await pool.getConnection();
       await connection.beginTransaction();
 
       try {
@@ -81,13 +80,28 @@ const save = async (payload, user) => {
           );
         }
 
+        // ✅ PERBAIKAN UTAMA: Konsolidasi summaryItems agar tidak duplikat di tsj_dtl
+        const consolidatedSjItems = summaryItems.reduce((acc, current) => {
+          // Buat key unik berdasarkan SPK dan Ukuran
+          const key = `${current.spk}-${current.ukuran}`;
+          if (!acc[key]) {
+            acc[key] = { ...current };
+          } else {
+            // Jika sudah ada, tambahkan jumlah dan kolinya
+            acc[key].jumlah += Number(current.jumlah || 0);
+            acc[key].koli += Number(current.koli || 0);
+          }
+          return acc;
+        }, {});
+
         // 3. Insert Detail SJ Garmen (dari Grid 1) - Pola Delete-then-Insert
         await connection.query(
           "DELETE FROM kencanaprint.tsj_dtl WHERE sjd_sj_nomor = ?",
           [nomorSjGarmen]
         );
-        if (summaryItems.length > 0) {
-          const sjDtlValues = summaryItems.map((item) => [
+        const summaryRows = Object.values(consolidatedSjItems);
+        if (summaryRows.length > 0) {
+          const sjDtlValues = summaryRows.map((item) => [
             nomorSjGarmen,
             item.spk,
             item.ukuran,
@@ -183,21 +197,32 @@ const save = async (payload, user) => {
           message: `Penerimaan STBJ berhasil disimpan dengan nomor ${nomorTerima}`,
           nomor: nomorTerima,
         };
-      } catch (error) {
+      } catch (innerError) {
         await connection.rollback();
-        connection.release();
-
-        // Retry hanya untuk network/timeout errors, bukan duplicate
-        if (error.code === "ER_DUP_ENTRY" || retries <= 1) {
-          console.error("Save STBJ Error:", error);
-          throw error;
-        } else {
-          await new Promise((res) => setTimeout(res, 50 + Math.random() * 100));
-        }
+        throw innerError; // Lemparkan ke catch di luar untuk dicek retries-nya
       }
     } catch (error) {
-      seqConnection.release();
-      throw error;
+      // ✅ FIX UTAMA: Jika duplicate, jangan langsung "throw". Kurangi retries dan loop lagi.
+      if (error.code === "ER_DUP_ENTRY") {
+        retries--;
+        console.warn(
+          `Tabrakan Nomor Dokumen. Mencoba ulang... Sisa retry: ${retries}`
+        );
+        // Tunggu sebentar sebelum mencoba lagi (jitter)
+        await new Promise((res) => setTimeout(res, Math.random() * 100));
+
+        if (retries === 0)
+          throw new Error(
+            "Gagal mendapatkan nomor dokumen unik setelah beberapa kali percobaan."
+          );
+        continue; // Lanjut ke iterasi while berikutnya
+      } else {
+        // Jika error lain (bukan duplicate), langsung lempar error
+        throw error;
+      }
+    } finally {
+      if (connection) connection.release();
+      if (seqConnection) seqConnection.release();
     }
   }
 };

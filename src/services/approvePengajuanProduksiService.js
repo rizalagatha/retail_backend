@@ -25,9 +25,9 @@ const getList = async (filters, user) => {
                 WHEN IFNULL(p.po_close, 0) = 1 THEN "CLOSE"
                 ELSE "ONPROSES"
             END AS statusPO
-        FROM retail.tdc_pengajuanproduksi_hdr h
-        LEFT JOIN retail.tsupplier s ON s.sup_kode = h.pp_sup_kode
-        LEFT JOIN retail.tdc_po_hdr p ON p.po_referensi = h.pp_nomor
+        FROM tdc_pengajuanproduksi_hdr h
+        LEFT JOIN tsupplier s ON s.sup_kode = h.pp_sup_kode
+        LEFT JOIN tdc_po_hdr p ON p.po_referensi = h.pp_nomor
         WHERE h.pp_tanggal BETWEEN ? AND ?
     `;
   const params = [startDate, endDate];
@@ -57,7 +57,7 @@ const getDetails = async (nomor) => {
             d.ppd_jumlah AS jumlah,
             d.ppd_harga AS harga,
             (d.ppd_jumlah * d.ppd_harga) AS total
-        FROM retail.tdc_pengajuanproduksi_dtl d
+        FROM tdc_pengajuanproduksi_dtl d
         WHERE d.ppd_nomor = ?
         ORDER BY d.ppd_nomor, d.ppd_nourut
     `;
@@ -83,8 +83,8 @@ const getExportDetails = async (filters, user) => {
             d.ppd_jumlah AS 'Jumlah',
             d.ppd_harga AS 'Harga',
             (d.ppd_jumlah * d.ppd_harga) AS 'Total'
-        FROM retail.tdc_pengajuanproduksi_dtl d
-        INNER JOIN retail.tdc_pengajuanproduksi_hdr h ON d.ppd_nomor = h.pp_nomor
+        FROM tdc_pengajuanproduksi_dtl d
+        INNER JOIN tdc_pengajuanproduksi_hdr h ON d.ppd_nomor = h.pp_nomor
         WHERE h.pp_tanggal BETWEEN ? AND ?
     `;
   const params = [startDate, endDate];

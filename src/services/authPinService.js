@@ -81,21 +81,22 @@ const authPinService = {
         authId: String(authNomor),
       };
 
-      // [CRITICAL FIX] Pastikan pengecekan string 'AMBIL_BARANG' benar
-      if (String(jenis).trim() === "AMBIL_BARANG" && target_cabang) {
-        // --- ALUR 1: KIRIM KE USER TOKO (VIA TOPIC) ---
+      if (
+        String(jenis).trim() === "AMBIL_BARANG" &&
+        target_cabang &&
+        target_cabang !== "KDC"
+      ) {
+        // Jalur Toko (seperti Ambil Barang antar Toko)
         const targetTopic = `approval_${target_cabang}`;
-
-        // Kirim ke Topic
         await fcmService.sendToTopic(targetTopic, title, body, dataPayload);
       } else {
         // --- ALUR 2: KIRIM KE MANAGER (HARIS/DARUL) ---
 
         const [managers] = await pool.query(
           `SELECT DISTINCT user_fcm_token FROM tuser 
-             WHERE user_kode IN ('HARIS', 'DARUL') 
-             AND user_fcm_token IS NOT NULL 
-             AND user_fcm_token != ''`
+       WHERE user_kode IN ('HARIS', 'DARUL', 'ESTU') 
+       AND user_fcm_token IS NOT NULL 
+       AND user_fcm_token != ''`
         );
 
         if (managers.length > 0) {
@@ -108,7 +109,6 @@ const authPinService = {
             )
           );
           await Promise.all(sendPromises);
-        } else {
         }
       }
     } catch (fcmError) {
@@ -160,7 +160,7 @@ const authPinService = {
       // Hanya lihat request yang TIDAK punya target spesifik ke toko lain.
       // Artinya: o_target IS NULL (internal) ATAU o_target = 'KDC'
       // JANGAN tampilkan jika o_target = 'K01', 'K02', dst.
-      query += ` AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '') `;
+      query += ` AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '' OR o_jenis = 'PEMINJAMAN_BARANG') `;
     } else {
       // USER TOKO (TITA - K01):
       // 1. Lihat request yang DITUJUKAN ke saya (o_target = 'K01') -> INI KASUS AMBIL BARANG

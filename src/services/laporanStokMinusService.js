@@ -7,22 +7,17 @@ const pool = require("../config/database");
  */
 const getLaporanStokMinus = async (filters) => {
   const { tanggal, cabang } = filters;
-  
-  let cabangFilter = "";
-  const params = [tanggal]; // Parameter pertama selalu tanggal
 
-  // [PERBAIKAN] Logika filter cabang diubah
-  if (cabang && cabang !== 'KDC') {
-    // Jika user memilih cabang spesifik
+  let cabangFilter = "";
+  const params = [tanggal];
+
+  if (cabang && cabang !== "KDC") {
     cabangFilter = "AND mst_cab = ?";
     params.push(cabang);
-  } else if (cabang === 'KDC') {
-    // Jika user KDC memilih 'SEMUA CABANG DC'
-    cabangFilter = "AND mst_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)";
-    // Tidak perlu menambah parameter
+  } else if (cabang === "KDC") {
+    cabangFilter =
+      "AND mst_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)";
   }
-  // Jika user BUKAN KDC dan filternya adalah cabang KDC,
-  // query akan tetap berjalan sesuai parameter (misal 'K01')
 
   const query = `
     SELECT
@@ -32,8 +27,21 @@ const getLaporanStokMinus = async (filters) => {
         TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
         s.mst_ukuran AS ukuran,
         s.stok,
-        s.mst_cab AS cabang_kode,  -- [TAMBAHAN 1]
-        g.gdg_nama AS cabang_nama   -- [TAMBAHAN 2]
+        s.mst_cab AS cabang_kode,
+        g.gdg_nama AS cabang_nama,
+        /* [TAMBAHAN] Mencari referensi transaksi keluar terakhir yang menyebabkan minus */
+        (
+          SELECT mst_noreferensi 
+          FROM tmasterstok 
+          WHERE mst_brg_kode = s.mst_brg_kode 
+            AND mst_ukuran = s.mst_ukuran 
+            AND mst_cab = s.mst_cab 
+            AND mst_stok_out > 0 
+            AND mst_aktif = 'Y'
+            AND mst_tanggal <= ?
+          ORDER BY mst_tanggal DESC, date_create DESC 
+          LIMIT 1
+        ) AS referensi
     FROM (
         SELECT 
             mst_brg_kode, 
@@ -42,19 +50,20 @@ const getLaporanStokMinus = async (filters) => {
             SUM(mst_stok_in - mst_stok_out) AS stok
         FROM tmasterstok
         WHERE mst_aktif = 'Y'
-          AND mst_tanggal <= ?  -- Filter tanggal (parameter ke-1)
-          ${cabangFilter}       -- Filter cabang (parameter ke-2, opsional)
+          AND mst_tanggal <= ?
+          ${cabangFilter}
         GROUP BY mst_brg_kode, mst_ukuran, mst_cab
         HAVING stok < 0
     ) s
     LEFT JOIN tbarangdc a ON a.brg_kode = s.mst_brg_kode
     LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = s.mst_brg_kode AND b.brgd_ukuran = s.mst_ukuran
-    LEFT JOIN tgudang g ON g.gdg_kode = s.mst_cab -- [TAMBAHAN 3: JOIN ke tgudang]
+    LEFT JOIN tgudang g ON g.gdg_kode = s.mst_cab
     WHERE a.brg_logstok = 'Y'
     ORDER BY s.stok ASC;
   `;
 
-  const [rows] = await pool.query(query, params);
+  // Tambahkan parameter tanggal untuk subquery referensi di paling depan
+  const [rows] = await pool.query(query, [tanggal, ...params]);
   return rows;
 };
 

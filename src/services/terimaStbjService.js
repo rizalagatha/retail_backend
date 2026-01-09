@@ -50,7 +50,7 @@ const getDetails = async (nomor) => {
             d.tsd_jumlah AS jumlah
         FROM tdc_stbj_hdr h
         INNER JOIN tdc_stbj_dtl d ON d.tsd_nomor = h.ts_nomor
-        LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.tsd_kode
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.tsd_kode
         WHERE h.ts_stbj = ?
         ORDER BY d.tsd_nomor, d.tsd_spk_nomor, d.tsd_kode, d.tsd_ukuran;
     `;
@@ -195,7 +195,7 @@ const getExportDetails = async (filters) => {
         INNER JOIN tdc_stbj_hdr ts ON h.stbj_nomor = ts.ts_stbj
         INNER JOIN tdc_stbj_dtl d ON ts.ts_nomor = d.tsd_nomor
         LEFT JOIN kencanaprint.tgudang g ON g.gdg_kode = h.stbj_gdg_kode 
-        LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.tsd_kode
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.tsd_kode
         WHERE 
             -- [FIX] Gunakan DATE()
             DATE(h.stbj_tanggal) BETWEEN ? AND ?

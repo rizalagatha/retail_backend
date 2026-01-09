@@ -13,8 +13,8 @@ const loadData = async (tanggal, cabang) => {
       d.panjang,
       d.buangan,
       d.keterangan AS ket
-    FROM retail.tdtf d
-    LEFT JOIN retail.tsodtf_hdr h ON h.sd_nomor = d.sodtf
+    FROM tdtf d
+    LEFT JOIN tsodtf_hdr h ON h.sd_nomor = d.sodtf
     WHERE d.tanggal = ? AND d.cab = ?;
   `;
   const [rows] = await pool.query(query, [tanggal, cabang]);
@@ -36,7 +36,7 @@ const searchSoPo = async (term, cabang, tipe, page = 1, limit = 50) => {
           (SELECT SUM(sdd_jumlah) FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor) AS jumlah,
           h.sd_tanggal AS tanggal,
           'SO DTF' AS tipe
-      FROM retail.tsodtf_hdr h 
+      FROM tsodtf_hdr h 
       WHERE (h.sd_cab = ? OR h.sd_workshop = ?)
     `;
     params = [cabang, cabang];
@@ -80,7 +80,7 @@ const searchSoPo = async (term, cabang, tipe, page = 1, limit = 50) => {
           (SELECT SUM(sdd_jumlah) FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor) AS jumlah, 
           h.sd_tanggal AS tanggal, 
           'SO DTF' AS tipe
-        FROM retail.tsodtf_hdr h 
+        FROM tsodtf_hdr h 
         WHERE (h.sd_cab = ? OR h.sd_workshop = ?) 
           AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?)
       )
@@ -121,7 +121,7 @@ const searchSoPo = async (term, cabang, tipe, page = 1, limit = 50) => {
   if (tipe === "SO") {
     countQuery = `
       SELECT COUNT(*) AS total
-      FROM retail.tsodtf_hdr h
+      FROM tsodtf_hdr h
       WHERE (h.sd_cab = ? OR h.sd_workshop = ?)
     `;
     countParams = [cabang, cabang];
@@ -144,7 +144,7 @@ const searchSoPo = async (term, cabang, tipe, page = 1, limit = 50) => {
     countQuery = `
       SELECT (
         (SELECT COUNT(*) 
-         FROM retail.tsodtf_hdr h 
+         FROM tsodtf_hdr h 
          WHERE (h.sd_cab= ? OR h.sd_workshop = ?)
            AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?))
         +
@@ -185,14 +185,14 @@ const saveData = async (data, user) => {
 
   try {
     await connection.query(
-      "DELETE FROM retail.tdtf WHERE tanggal = ? AND cab = ?",
+      "DELETE FROM tdtf WHERE tanggal = ? AND cab = ?",
       [tanggal, cabang]
     );
 
     for (const item of items) {
       if (item.kode && item.nama) {
         const insertQuery = `
-          INSERT INTO retail.tdtf 
+          INSERT INTO tdtf 
             (tanggal, sodtf, depan, belakang, lengan, variasi, saku, panjang, buangan, keterangan, cab, user_create, date_create) 
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         `;
@@ -229,7 +229,7 @@ const removeData = async (tanggal, cabang) => {
     await connection.beginTransaction();
 
     const [rows] = await connection.query(
-      "SELECT COUNT(*) AS count FROM retail.tdtf WHERE tanggal = ? AND cab = ?",
+      "SELECT COUNT(*) AS count FROM tdtf WHERE tanggal = ? AND cab = ?",
       [tanggal, cabang]
     );
 
@@ -239,7 +239,7 @@ const removeData = async (tanggal, cabang) => {
       );
 
     await connection.query(
-      "DELETE FROM retail.tdtf WHERE tanggal = ? AND cab = ?",
+      "DELETE FROM tdtf WHERE tanggal = ? AND cab = ?",
       [tanggal, cabang]
     );
 

@@ -1,4 +1,28 @@
 const changelogs = {
+  "1.3.0": {
+    date: "2026-01-09",
+    changes: [
+      "Modul Baru : Peminjaman Barang, digunakan untuk memproses dan mendata peminjaman barang ke Store, dengan tenggat waktu pengembalian 14 hari",
+      "Fitur Baru : Inputan Diskon Pembulatan pada saat Pembayaran Invoice, untuk menangani kekurangan pembayaran dari customer dengan maksimal nominal Rp 500,-",
+      {
+        title: "Penambahan:",
+        items: [
+          "Setting dan Perbaikan untuk Stok Opname",
+          "BARU : Invoice Penjualan Langsung pencarian barang F1/F2 dinonaktifkan, kecuali untuk KPR dan K01",
+          "Pada halaman Terima SJ, qty terima disamakan dengan qty kirim khusus untuk cabang K01 karena belum ada fasilitas scanner",
+          "Penambahan kolom Referensi No Inv/SJ yang menyebabkan stok minus pada Laporan Stok Minus",
+        ],
+      },
+      {
+        title: "Perbaikan:",
+        items: [
+          "Disable Hapus pada beberapa Halaman",
+          "Lock Terima Surat Jalan di Web, agar Store Terima SJ lewat aplikasi Kaosan Mobile. Pengecualian sementara untuk K01 karena belum ada fasilitas scanner",
+          "Perbaikan Simpan Terima STBJ untuk DC, dan tampilannya",
+        ],
+      },
+    ],
+  },
   "1.2.13": {
     date: "2026-01-06",
     changes: [
@@ -11,7 +35,7 @@ const changelogs = {
           "Setting untuk KPR/Prioritas, termasuk migrasi menu Biaya Kirim ke Web",
           "Penambahan Kolom Total Qty pada halaman Surat Jalan",
           "Penambahan Kolom Level pada Master Customer",
-          "Wajib Input NIK dan Nama Karyawan jika customer yang dipilih adalah Karyawan Kencana Print"
+          "Wajib Input NIK dan Nama Karyawan jika customer yang dipilih adalah Karyawan Kencana Print",
         ],
       },
       {

@@ -29,7 +29,7 @@ const getList = async (filters) => {
             g.gdg_nama AS Nama_Store,
             h.sj_mt_nomor AS NoMinta,
             -- FIX: Cari invoice yang inv_nomor_so nya adalah Nomor SJ (sj_nomor)
-            IFNULL((SELECT inv_nomor FROM retail.tinv_hdr WHERE inv_nomor_so = h.sj_nomor LIMIT 1), "") AS NoInvoice,
+            IFNULL((SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor_so = h.sj_nomor LIMIT 1), "") AS NoInvoice,
             m.mt_tanggal AS TglMinta,
             h.sj_noterima AS NomorTerima,
             t.tj_tanggal AS TglTerima,
@@ -54,9 +54,9 @@ const getList = async (filters) => {
             sj_closing AS Closing
         FROM tdc_sj_hdr h
         INNER JOIN tdc_sj_dtl d ON d.sjd_nomor = h.sj_nomor
-        LEFT JOIN retail.tgudang g ON g.gdg_kode = h.sj_kecab
-        LEFT JOIN retail.ttrm_sj_hdr t ON t.tj_nomor = h.sj_noterima
-        LEFT JOIN retail.tmintabarang_hdr m ON m.mt_nomor = h.sj_mt_nomor
+        LEFT JOIN tgudang g ON g.gdg_kode = h.sj_kecab
+        LEFT JOIN ttrm_sj_hdr t ON t.tj_nomor = h.sj_noterima
+        LEFT JOIN tmintabarang_hdr m ON m.mt_nomor = h.sj_mt_nomor
         WHERE (h.sj_peminta = "" OR h.sj_peminta IS NULL)
           AND h.sj_tanggal BETWEEN ? AND ?
           ${branchFilter}
@@ -82,7 +82,7 @@ const getDetails = async (nomor) => {
             d.sjd_ukuran AS Ukuran,
             d.sjd_jumlah AS Jumlah
         FROM tdc_sj_dtl d
-        LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.sjd_kode
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.sjd_kode
         WHERE d.sjd_nomor = ?
         ORDER BY d.sjd_kode;
     `;
@@ -323,9 +323,9 @@ const exportDetails = async (filters) => {
 
     FROM tdc_sj_hdr h
     INNER JOIN tdc_sj_dtl d ON d.sjd_nomor = h.sj_nomor
-    LEFT JOIN retail.tgudang g ON g.gdg_kode = h.sj_kecab
-    LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.sjd_kode
-    LEFT JOIN retail.ttrm_sj_hdr t ON t.tj_nomor = h.sj_noterima
+    LEFT JOIN tgudang g ON g.gdg_kode = h.sj_kecab
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.sjd_kode
+    LEFT JOIN ttrm_sj_hdr t ON t.tj_nomor = h.sj_noterima
     
     WHERE 
       (h.sj_peminta = "" OR h.sj_peminta IS NULL)

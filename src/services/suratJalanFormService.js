@@ -384,8 +384,8 @@ const getExportDetails = async (filters) => {
             d.sjd_jumlah AS 'Jumlah'
         FROM tdc_sj_hdr h
         JOIN tdc_sj_dtl d ON h.sj_nomor = d.sjd_nomor
-        LEFT JOIN retail.tgudang g ON g.gdg_kode = h.sj_kecab
-        LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.sjd_kode
+        LEFT JOIN tgudang g ON g.gdg_kode = h.sj_kecab
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.sjd_kode
         WHERE h.sj_peminta = "" 
           AND h.sj_tanggal BETWEEN ? AND ?
           ${itemFilter}
@@ -426,8 +426,8 @@ const loadItemsFromPackingList = async (nomorPL) => {
       ), 0) AS stok
 
     FROM tpacking_list_dtl d
-    LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.pld_kode
-    LEFT JOIN retail.tbarangdc_dtl b ON b.brgd_kode = d.pld_kode AND b.brgd_ukuran = d.pld_ukuran
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.pld_kode
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.pld_kode AND b.brgd_ukuran = d.pld_ukuran
     WHERE d.pld_nomor = ?
     ORDER BY d.pld_kode, d.pld_ukuran
   `;

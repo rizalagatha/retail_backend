@@ -21,7 +21,7 @@ const loadFromKirim = async (nomorKirim) => {
             d.grd_spk_nomor AS spk, d.grd_kode AS kode, d.grd_ukuran AS ukuran, d.grd_jumlah AS jumlah,
             TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS nama
         FROM tdc_gr_dtl d
-        LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.grd_kode
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.grd_kode
         WHERE d.grd_nomor = ?`,
     [nomorKirim]
   );

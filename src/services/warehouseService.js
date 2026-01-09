@@ -101,7 +101,7 @@ const getSoDtfBranchOptions = async (userCabang) => {
 };
 
 const getById = async (kode) => {
-    const query = "SELECT gdg_kode AS kode, gdg_nama AS nama FROM retail.tgudang WHERE gdg_kode = ?";
+    const query = "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ?";
     const [rows] = await pool.query(query, [kode]);
     // Kembalikan null jika tidak ditemukan agar frontend bisa menangani
     return rows.length > 0 ? rows[0] : null; 

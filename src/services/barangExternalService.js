@@ -21,7 +21,7 @@ const getList = async (filters, user) => {
             IF(a.brg_otomatis = 1, "YA", "") AS otomatis,
             a.brg_logstok AS adaStok,
             IF(a.brg_aktif = 0, "AKTIF", "PASIF") AS status
-        FROM retail.tbarangdc a
+        FROM tbarangdc a
         WHERE a.brg_ktg <> "" 
           AND a.date_create >= ? 
           AND a.date_create < ?
@@ -52,8 +52,8 @@ const getDetails = async (nomor, user) => {
     }
     
     query += `
-        FROM retail.tbarangdc_dtl b
-        LEFT JOIN retail.tbarangdc a ON a.brg_kode = b.brgd_kode
+        FROM tbarangdc_dtl b
+        LEFT JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
         WHERE a.brg_ktg <> "" AND b.brgd_kode = ?
         ORDER BY b.brgd_kode, b.brgd_ukuran
     `;
@@ -84,8 +84,8 @@ const getExportDetails = async (filters, user) => {
     }
     
     query += `
-        FROM retail.tbarangdc_dtl b
-        LEFT JOIN retail.tbarangdc a ON a.brg_kode = b.brgd_kode
+        FROM tbarangdc_dtl b
+        LEFT JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
         WHERE a.brg_ktg <> ""
           AND a.date_create >= ? 
           AND a.date_create < ?
