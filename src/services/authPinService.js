@@ -92,11 +92,31 @@ const authPinService = {
       } else {
         // --- ALUR 2: KIRIM KE MANAGER (HARIS/DARUL) ---
 
+        const today = new Date();
+        const isEstuManagerPeriod =
+          today >= new Date(2026, 0, 12) && today < new Date(2026, 0, 17);
+        const isPeminjaman = String(jenis).trim() === "PEMINJAMAN_BARANG";
+
+        let managerCodes = ["DARUL"]; // Darul selalu dikirim
+
+        if (isPeminjaman) {
+          // Jika peminjaman barang, notifikasi ke ESTU (peran tetap dia)
+          managerCodes.push("ESTU");
+        }
+
+        if (isEstuManagerPeriod) {
+          // Periode 12-16 Jan: Transaksi Manager lari ke ESTU
+          if (!managerCodes.includes("ESTU")) managerCodes.push("ESTU");
+        } else {
+          // Periode Normal: Transaksi Manager lari ke HARIS
+          managerCodes.push("HARIS");
+        }
+
         const [managers] = await pool.query(
           `SELECT DISTINCT user_fcm_token FROM tuser 
-       WHERE user_kode IN ('HARIS', 'DARUL', 'ESTU') 
-       AND user_fcm_token IS NOT NULL 
-       AND user_fcm_token != ''`
+           WHERE user_kode IN (?) 
+           AND user_fcm_token IS NOT NULL AND user_fcm_token != ''`,
+          [managerCodes]
         );
 
         if (managers.length > 0) {
@@ -149,28 +169,41 @@ const authPinService = {
     };
   },
 
-  async getPendingRequests(userCabang) {
-    // [LOGIC BARU YANG BENAR]
+  async getPendingRequests(userCabang, userKode) {
+    const userKodeUpper = String(userKode).toUpperCase();
+    const today = new Date();
+    const isEstuManagerPeriod =
+      today >= new Date(2026, 0, 12) && today < new Date(2026, 0, 17);
 
-    let query = `SELECT * FROM totorisasi WHERE o_status = 'P' `;
+    let query = "SELECT * FROM totorisasi WHERE o_status = 'P' ";
     const params = [];
 
     if (userCabang === "KDC") {
-      // MANAGER (HARIS):
-      // Hanya lihat request yang TIDAK punya target spesifik ke toko lain.
-      // Artinya: o_target IS NULL (internal) ATAU o_target = 'KDC'
-      // JANGAN tampilkan jika o_target = 'K01', 'K02', dst.
-      query += ` AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '' OR o_jenis = 'PEMINJAMAN_BARANG') `;
+      if (userKodeUpper === "ESTU") {
+        if (isEstuManagerPeriod) {
+          query +=
+            " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '' OR o_jenis = 'PEMINJAMAN_BARANG') ";
+        } else {
+          query += " AND o_jenis = 'PEMINJAMAN_BARANG' ";
+        }
+      } else if (userKodeUpper === "HARIS") {
+        if (isEstuManagerPeriod) {
+          query += " AND 1=0 "; // Kosongkan list
+        } else {
+          query +=
+            " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '') ";
+        }
+      } else {
+        query +=
+          " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '' OR o_jenis = 'PEMINJAMAN_BARANG') ";
+      }
     } else {
-      // USER TOKO (TITA - K01):
-      // 1. Lihat request yang DITUJUKAN ke saya (o_target = 'K01') -> INI KASUS AMBIL BARANG
-      // 2. Lihat request yang SAYA BUAT sendiri (o_cab = 'K01') -> KASUS OTORISASI INTERNAL
-      query += ` AND (o_target = ? OR (o_cab = ? AND (o_target IS NULL OR o_target = ''))) `;
+      query +=
+        " AND (o_target = ? OR (o_cab = ? AND (o_target IS NULL OR o_target = ''))) ";
       params.push(userCabang, userCabang);
     }
 
-    query += ` ORDER BY o_created DESC`;
-
+    query += " ORDER BY o_created DESC";
     const [rows] = await pool.query(query, params);
     return rows;
   },
