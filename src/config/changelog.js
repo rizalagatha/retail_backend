@@ -1,4 +1,18 @@
 const changelogs = {
+  "1.3.2": {
+    date: "2026-01-11",
+    changes: [
+      {
+        title: "Perbaikan:",
+        items: [
+          "Pengecualian untuk promo Beli 3 Harga 100 ribu, F1 tetap bisa digunakan dan bisa menambahkan barang ke tabel saat invoice",
+          "Jasa Design Gambar dan Jasa Design Tulisan sudah bisa ditambahkan saat buat Penawaran",
+          "Perbaikan KK POLOS PENDEK POLO LACOS CVC HITAM tidak ditemukan di Pengajuan Harga untuk jenis kaos KK POLOS KERAH PENDEK POLO LACOS CVC",
+          "Perbaikan Print Penawaran untuk case tertentu",
+        ],
+      },
+    ],
+  },
   "1.3.1": {
     date: "2026-01-09",
     changes: [
