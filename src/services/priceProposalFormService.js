@@ -130,22 +130,32 @@ const getDiscountByBruto = async (bruto) => {
 };
 
 const searchProductsByType = async (jenisKaos) => {
-  // Query ini meniru CONCAT dan LIKE dari kode Delphi Anda
-  const query = `
+  // 1. Pecah string menjadi array kata-kata, buang spasi kosong
+  const tokens = (jenisKaos || "")
+    .split(" ")
+    .filter((t) => t.trim().length > 0 && t.toUpperCase() !== "KERAH"); // Abaikan kata "KERAH" jika ada
+
+  let query = `
         SELECT 
-            x.Kode,
-            x.Nama
-        FROM (
-            SELECT 
-                a.brg_kode AS Kode,
-                TRIM(CONCAT_WS(' ', a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna)) AS Nama
-            FROM tbarangdc a
-            WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
-        ) x
-        WHERE x.Nama LIKE ?
-        ORDER BY x.Nama;
+            a.brg_kode AS Kode,
+            TRIM(CONCAT_WS(' ', a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna)) AS Nama
+        FROM tbarangdc a
+        WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
     `;
-  const [rows] = await pool.query(query, [`${jenisKaos}%`]);
+
+  const params = [];
+
+  // 2. Tambahkan kondisi LIKE untuk setiap token kata
+  if (tokens.length > 0) {
+    tokens.forEach((token) => {
+      query += ` AND TRIM(CONCAT_WS(' ', a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain)) LIKE ?`;
+      params.push(`%${token}%`);
+    });
+  }
+
+  query += ` ORDER BY Nama`;
+
+  const [rows] = await pool.query(query, params);
   return rows;
 };
 
