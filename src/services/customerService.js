@@ -4,7 +4,6 @@ const pool = require("../config/database");
 const getAllCustomers = async (user) => {
   const userCabang = user ? user.cabang : null;
 
-  // Query dasar
   let query = `
     SELECT 
         c.cus_kode AS kode,
@@ -16,6 +15,7 @@ const getAllCustomers = async (user) => {
         IF(c.cus_aktif = 0, 'AKTIF', 'PASIF') AS status,
         c.cus_tgllahir AS tglLahir,
         c.cus_top AS top,
+        c.cus_limit AS limitTrans,
         (
             SELECT lvl.level_nama
             FROM tcustomer_level_history h
@@ -28,16 +28,27 @@ const getAllCustomers = async (user) => {
   `;
 
   const params = [];
+  const whereClauses = [];
 
-  // Tambahkan kondisi WHERE jika user BUKAN 'kdc' dan memiliki cabang
-  if (userCabang && userCabang.toLowerCase() !== "kdc") {
-    // Asumsi kode cabang ada di 3 karakter pertama cus_kode
-    // (Berdasarkan fungsi generateNewCustomerCode Anda)
-    query += ` WHERE LEFT(c.cus_kode, 3) = ?`;
-    params.push(userCabang);
+  if (userCabang) {
+    const branch = userCabang.toUpperCase();
+
+    if (branch === "KPR") {
+      // KHUSUS KPR: Tampilkan semua yang Franchise = 'Y'
+      // Tanpa filter prefix kode agar K01, K-, dll tetap muncul
+      whereClauses.push(`c.cus_franchise = 'Y'`);
+    } else if (branch !== "KDC") {
+      // CABANG LAIN (Selain KDC & KPR): Gunakan filter prefix kode cabang
+      whereClauses.push(`LEFT(c.cus_kode, 3) = ?`);
+      params.push(userCabang);
+    }
+    // Jika KDC: whereClauses kosong, sehingga menampilkan semua data
   }
 
-  // Tambahkan ORDER BY di akhir
+  if (whereClauses.length > 0) {
+    query += ` WHERE ` + whereClauses.join(" AND ");
+  }
+
   query += ` ORDER BY c.cus_kode;`;
 
   const [rows] = await pool.query(query, params);
@@ -62,6 +73,7 @@ const createCustomer = async (customerData, user) => {
     namaNpwp,
     alamatNpwp,
     kotaNpwp,
+    limit,
   } = customerData;
   const connection = await pool.getConnection();
   try {
@@ -79,8 +91,8 @@ const createCustomer = async (customerData, user) => {
     const toNull = (v) => (v === "" || v === undefined ? null : v);
 
     await connection.query(
-      `INSERT INTO tcustomer (cus_kode, cus_nama, cus_alamat, cus_kota, cus_telp, cus_nama_kontak, cus_tgllahir, cus_top, cus_aktif, cus_npwp, cus_nama_npwp, cus_alamat_npwp, cus_kota_npwp) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO tcustomer (cus_kode, cus_nama, cus_alamat, cus_kota, cus_telp, cus_nama_kontak, cus_tgllahir, cus_top, cus_aktif, cus_npwp, cus_nama_npwp, cus_alamat_npwp, cus_kota_npwp, cus_limit) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         newKode,
         nama,
@@ -95,6 +107,7 @@ const createCustomer = async (customerData, user) => {
         toNull(namaNpwp),
         toNull(alamatNpwp),
         toNull(kotaNpwp),
+        limitTrans || 0,
       ]
     );
 
@@ -176,7 +189,7 @@ const updateCustomer = async (kode, customerData) => {
     const toNull = (v) => (v === "" || v === undefined ? null : v);
 
     await connection.query(
-      `UPDATE tcustomer SET cus_nama = ?, cus_alamat = ?, cus_kota = ?, cus_telp = ?, cus_nama_kontak = ?, cus_tgllahir = ?, cus_top = ?, cus_aktif = ?, cus_npwp = ?, cus_nama_npwp = ?, cus_alamat_npwp = ?, cus_kota_npwp = ?
+      `UPDATE tcustomer SET cus_nama = ?, cus_alamat = ?, cus_kota = ?, cus_telp = ?, cus_nama_kontak = ?, cus_tgllahir = ?, cus_top = ?, cus_aktif = ?, cus_npwp = ?, cus_nama_npwp = ?, cus_alamat_npwp = ?, cus_kota_npwp = ?, cus_limit = ?
              WHERE cus_kode = ?`,
       [
         nama,
@@ -191,6 +204,7 @@ const updateCustomer = async (kode, customerData) => {
         toNull(namaNpwp),
         toNull(alamatNpwp),
         toNull(kotaNpwp),
+        limitTrans || 0,
         kode,
       ]
     );
@@ -239,7 +253,8 @@ const getCustomerDetails = async (kode) => {
             cus_npwp AS npwp,
             cus_nama_npwp AS namaNpwp,
             cus_alamat_npwp AS alamatNpwp,
-            cus_kota_npwp AS kotaNpwp
+            cus_kota_npwp AS kotaNpwp,
+            cus_limit AS limitTrans
         FROM tcustomer 
         WHERE cus_kode = ?
     `;

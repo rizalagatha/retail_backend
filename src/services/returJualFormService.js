@@ -243,14 +243,19 @@ const save = async (payload, user) => {
 
 // Fungsi untuk lookup invoice (meniru F1 di edtinv)
 const lookupInvoices = async (cabang) => {
+  // [BARU] Tentukan interval berdasarkan cabang
+  // Jika K09, izinkan melihat invoice hingga 30 hari ke belakang agar bisa dicari
+  const dateInterval = cabang === "K09" ? "30 DAY" : "7 DAY";
+
   const query = `
     SELECT h.inv_nomor AS nomor, h.inv_tanggal AS tanggal, c.cus_nama
     FROM tinv_hdr h
     LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
     WHERE h.inv_cab = ? 
-        AND h.inv_tanggal >= DATE_SUB(NOW(), INTERVAL 7 DAY) -- Filter 7 hari terakhir agar tidak terlalu berat
+        AND h.inv_tanggal >= DATE_SUB(NOW(), INTERVAL ${dateInterval})
     ORDER BY h.inv_nomor DESC;
-    `;
+  `;
+
   const [rows] = await pool.query(query, [cabang]);
   return rows;
 };

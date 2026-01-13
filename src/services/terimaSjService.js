@@ -67,10 +67,15 @@ const getDetails = async (nomor) => {
         d.sjd_kode AS Kode,
         TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS Nama,
         d.sjd_ukuran AS Ukuran,
-        d.sjd_jumlah AS Jumlah
+        d.sjd_jumlah AS Jumlah,
+        IFNULL(td.tjd_jumlah, 0) AS JumlahTerima
     FROM tdc_sj_dtl d
     INNER JOIN tdc_sj_hdr h ON d.sjd_nomor = h.sj_nomor
     LEFT JOIN tbarangdc a ON a.brg_kode = d.sjd_kode
+    -- Join ke detail penerimaan menggunakan sj_noterima dari header
+    LEFT JOIN ttrm_sj_dtl td ON td.tjd_nomor = h.sj_noterima 
+        AND td.tjd_kode = d.sjd_kode 
+        AND td.tjd_ukuran = d.sjd_ukuran
     WHERE d.sjd_nomor = ?
     ORDER BY d.sjd_kode, d.sjd_ukuran;
     `;

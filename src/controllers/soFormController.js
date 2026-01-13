@@ -48,7 +48,7 @@ const save = async (req, res) => {
           // C. Gabungkan
           oldData = {
             ...header,
-            items: detailRows
+            items: detailRows,
           };
         }
       } catch (e) {
@@ -70,7 +70,9 @@ const save = async (req, res) => {
       targetId,
       oldData, // Data Lama (Header + Items)
       payload, // Data Baru (Payload Form)
-      `${action === "CREATE" ? "Input" : "Edit"} SO (Customer: ${payload.header?.customer?.nama})`
+      `${action === "CREATE" ? "Input" : "Edit"} SO (Customer: ${
+        payload.header?.customer?.nama
+      })`
     );
 
     res.status(payload.isNew ? 201 : 200).json(result);
@@ -91,8 +93,13 @@ const searchPenawaran = async (req, res) => {
 const getPenawaranDetails = async (req, res) => {
   try {
     const { nomor } = req.params;
-    const data = await soFormService.getPenawaranDetailsForSo(nomor);
-    res.json(data);
+    const { cabang } = req.query; // Ambil cabang dari parameter URL (?cabang=K01)
+
+    const result = await soFormService.getPenawaranDetailsForSo(
+      nomor,
+      cabang
+    );
+    res.json(result);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

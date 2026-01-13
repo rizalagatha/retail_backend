@@ -561,7 +561,7 @@ const searchAvailablePenawaran = async (filters) => {
 /**
  * @description Mengambil semua data dari Penawaran (DAN CUSTOMER) untuk diimpor ke SO.
  */
-const getPenawaranDetailsForSo = async (nomor) => {
+const getPenawaranDetailsForSo = async (nomor, cabang) => {
   // 1. Ambil Header, Customer, dan Level Info
   const headerQuery = `
     SELECT 
@@ -641,6 +641,11 @@ const getPenawaranDetailsForSo = async (nomor) => {
         COALESCE(a.brg_warna, '')
     )) AS nama,
     d.pend_ukuran AS ukuran,
+    IFNULL((
+        SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
+        FROM tmasterstok m 
+        WHERE m.mst_aktif = "Y" AND m.mst_cab = ? AND m.mst_brg_kode = d.pend_kode AND m.mst_ukuran = d.pend_ukuran
+      ), 0) AS stok,
     d.pend_jumlah AS jumlah,
     d.pend_harga AS harga,
     d.pend_disc AS diskonPersen,
@@ -656,7 +661,7 @@ const getPenawaranDetailsForSo = async (nomor) => {
   WHERE d.pend_nomor = ? 
   ORDER BY d.pend_nourut
 `,
-    [nomor]
+    [cabang, nomor] // Masukkan cabang untuk filter tmasterstok
   );
 
   // 4. Kembalikan semua data

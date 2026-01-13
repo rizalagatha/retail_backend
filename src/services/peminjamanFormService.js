@@ -33,21 +33,21 @@ const saveData = async (payload, user) => {
     const statusAcc = approver ? "ACC" : "WAIT";
 
     // --- VALIDASI STOK SEBELUM LANJUT ---
-    for (const item of items) {
-      const [stokRows] = await connection.query(
-        `SELECT IFNULL(SUM(mst_stok_in - mst_stok_out), 0) AS saldo 
-                 FROM tmasterstok 
-                 WHERE mst_aktif = "Y" AND mst_cab = ? AND mst_brg_kode = ? AND mst_ukuran = ?`,
-        [user.cabang, item.kode, item.ukuran]
-      );
+    // for (const item of items) {
+    //   const [stokRows] = await connection.query(
+    //     `SELECT IFNULL(SUM(mst_stok_in - mst_stok_out), 0) AS saldo 
+    //              FROM tmasterstok 
+    //              WHERE mst_aktif = "Y" AND mst_cab = ? AND mst_brg_kode = ? AND mst_ukuran = ?`,
+    //     [user.cabang, item.kode, item.ukuran]
+    //   );
 
-      const stokTersedia = stokRows[0].saldo;
-      if (item.jumlah > stokTersedia) {
-        throw new Error(
-          `Stok tidak cukup untuk ${item.nama} (${item.ukuran}). Tersedia: ${stokTersedia}, Diminta: ${item.jumlah}`
-        );
-      }
-    }
+    //   const stokTersedia = stokRows[0].saldo;
+    //   if (item.jumlah > stokTersedia) {
+    //     throw new Error(
+    //       `Stok tidak cukup untuk ${item.nama} (${item.ukuran}). Tersedia: ${stokTersedia}, Diminta: ${item.jumlah}`
+    //     );
+    //   }
+    // }
 
     let nomorPJ = header.nomor;
     const tglPinjam = header.tanggal || format(new Date(), "yyyy-MM-dd");
