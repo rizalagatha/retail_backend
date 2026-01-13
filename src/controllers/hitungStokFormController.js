@@ -33,8 +33,31 @@ const getScannedItemsByLocation = async (req, res) => {
   }
 };
 
+// --- Fungsi Baru: Update Qty Manual ---
+const updateQty = async (req, res) => {
+  try {
+    // req.body berisi { lokasi, barcode, delta }
+    const result = await service.updateQty(req.body, req.user);
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+const deleteItem = async (req, res) => {
+  try {
+    // Menggunakan body atau query, di sini kita gunakan query agar sesuai standar DELETE
+    const result = await service.deleteItem(req.query, req.user);
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getProductByBarcode,
   processScan,
   getScannedItemsByLocation,
+  updateQty,
+  deleteItem,
 };

@@ -14,4 +14,14 @@ router.post('/process-scan', verifyToken, checkPermission(MENU_ID, 'insert'), co
 // Rute untuk mengambil daftar item yang sudah di-scan di lokasi tertentu
 router.get('/scanned-items', verifyToken, checkPermission(MENU_ID, 'view'), controller.getScannedItemsByLocation);
 
+// --- Rute Baru: Update Qty Manual (+1/-1) ---
+router.post('/update-qty', verifyToken, checkPermission(MENU_ID, 'edit'), controller.updateQty);
+
+router.delete(
+  "/delete-item",
+  verifyToken,
+  checkPermission(MENU_ID, "delete"),
+  controller.deleteItem
+);
+
 module.exports = router;

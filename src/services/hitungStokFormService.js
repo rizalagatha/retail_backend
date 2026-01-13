@@ -97,8 +97,61 @@ const getScannedItemsByLocation = async (lokasi, user) => {
   return rows;
 };
 
+/**
+ * [BARU] Memperbarui Qty secara manual (Tambah/Kurang)
+ * Digunakan oleh tombol + dan - di Frontend
+ */
+const updateQty = async (data, user) => {
+  const { lokasi, barcode, delta } = data;
+
+  if (!lokasi || !barcode || delta === undefined) {
+    throw new Error("Data tidak lengkap.");
+  }
+
+  // Gunakan HS_PROSES = 'N' untuk memastikan hanya stok yang belum diposting yang bisa diubah
+  const query = `
+        UPDATE thitungstok 
+        SET hs_qty = hs_qty + ? 
+        WHERE hs_cab = ? AND hs_lokasi = ? AND hs_barcode = ? AND hs_proses = 'N'
+    `;
+
+  const [result] = await pool.query(query, [delta, user.cabang, lokasi, barcode]);
+
+  if (result.affectedRows === 0) {
+    throw new Error("Data tidak ditemukan atau sudah diposting.");
+  }
+
+  // Opsional: Hapus baris jika Qty menjadi 0 (tergantung kebijakan bisnis)
+  // await pool.query("DELETE FROM thitungstok WHERE hs_qty <= 0 AND hs_cab = ? AND hs_lokasi = ? AND hs_barcode = ?", [user.cabang, lokasi, barcode]);
+
+  return { message: "Jumlah berhasil diperbarui." };
+};
+
+const deleteItem = async (data, user) => {
+  const { lokasi, barcode } = data;
+
+  if (!lokasi || !barcode) {
+    throw new Error("Data tidak lengkap.");
+  }
+
+  const query = `
+        DELETE FROM thitungstok 
+        WHERE hs_cab = ? AND hs_lokasi = ? AND hs_barcode = ? AND hs_proses = 'N'
+    `;
+
+  const [result] = await pool.query(query, [user.cabang, lokasi, barcode]);
+
+  if (result.affectedRows === 0) {
+    throw new Error("Data tidak ditemukan atau sudah diposting.");
+  }
+
+  return { message: "Item berhasil dihapus." };
+};
+
 module.exports = {
   getProductByBarcode,
   processScan,
   getScannedItemsByLocation,
+  updateQty,
+  deleteItem,
 };
