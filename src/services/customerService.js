@@ -73,7 +73,7 @@ const createCustomer = async (customerData, user) => {
     namaNpwp,
     alamatNpwp,
     kotaNpwp,
-    limit,
+    limitTrans,
   } = customerData;
   const connection = await pool.getConnection();
   try {
@@ -177,6 +177,7 @@ const updateCustomer = async (kode, customerData) => {
     namaNpwp,
     alamatNpwp,
     kotaNpwp,
+    limitTrans,
   } = customerData;
   const connection = await pool.getConnection();
   try {
