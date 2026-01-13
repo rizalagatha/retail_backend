@@ -443,6 +443,24 @@ const getSjDetails = async (req, res) => {
   }
 };
 
+const getCustomerDebt = async (req, res) => {
+  try {
+    const { kode } = req.params;
+    if (!kode) {
+      return res.status(400).json({ message: "Kode customer diperlukan." });
+    }
+
+    const totalDebt = await service.getCustomerDebt(kode);
+
+    res.json({
+      customerKode: kode,
+      totalDebt: Number(totalDebt),
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   loadForEdit,
   save,
@@ -476,4 +494,5 @@ module.exports = {
   updateInvoiceHeaderOnly,
   searchSj,
   getSjDetails,
+  getCustomerDebt,
 };

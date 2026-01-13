@@ -2845,6 +2845,25 @@ const getSjDetails = async (nomor, user, currentInvNomor = "") => {
   }
 };
 
+/**
+ * Menghitung total sisa piutang berjalan milik customer
+ */
+const getCustomerDebt = async (customerKode) => {
+  const query = `
+    SELECT IFNULL(SUM(h.ph_nominal - IFNULL(d.total_bayar, 0)), 0) as totalDebt
+    FROM tpiutang_hdr h
+    LEFT JOIN (
+      SELECT pd_ph_nomor, SUM(pd_kredit) as total_bayar
+      FROM tpiutang_dtl
+      GROUP BY pd_ph_nomor
+    ) d ON d.pd_ph_nomor = h.ph_nomor
+    WHERE h.ph_cus_kode = ?
+  `;
+
+  const [rows] = await pool.query(query, [customerKode]);
+  return rows[0].totalDebt;
+};
+
 module.exports = {
   searchSo,
   getSoDetailsForGrid,
@@ -2878,4 +2897,5 @@ module.exports = {
   updateHeaderOnly,
   searchSj,
   getSjDetails,
+  getCustomerDebt,
 };

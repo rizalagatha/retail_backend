@@ -99,6 +99,7 @@ const searchCustomers = async (term, gudang, page, itemsPerPage, isInvoice) => {
           c.cus_alamat AS alamat,
           c.cus_kota AS kota,
           c.cus_telp AS telp,
+          c.cus_limit AS limitTrans,
           IFNULL((
             SELECT l.level_nama
             FROM tcustomer_level_history v

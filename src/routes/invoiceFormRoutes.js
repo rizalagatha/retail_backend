@@ -85,6 +85,9 @@ router.get(
   controller.getDiscountRule
 );
 
+// Endpoint lookup sisa piutang customer
+router.get('/lookup/customer-debt/:kode', verifyToken, controller.getCustomerDebt);
+
 router.get("/lookup/active-promos", verifyToken, controller.getActivePromos);
 
 router.get('/lookup/promo-items/:nomorPromo', verifyToken, controller.getPromoItems);
