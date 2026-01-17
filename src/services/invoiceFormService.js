@@ -1411,6 +1411,23 @@ const saveData = async (payload, user) => {
       idrec
     );
 
+    if (header.nomorSo && header.nomorSo !== "") {
+      // [UPDATE] Catat nomor invoice ke tabel SJ agar otomatis "ter-close"
+      const updateSjSql = `
+        UPDATE tdc_sj_hdr 
+        SET sj_nomor_inv = ?, 
+            user_modified = ?, 
+            date_modified = NOW() 
+        WHERE sj_nomor = ?
+    `;
+
+      await connection.query(updateSjSql, [
+        invNomor,
+        user.kode,
+        header.nomorSo,
+      ]);
+    }
+
     await connection.commit();
     return {
       message: `Invoice ${invNomor} berhasil disimpan.`,
@@ -2750,10 +2767,21 @@ const updateHeaderOnly = async (nomor, payload, user) => {
 
 /**
  * Mencari daftar SJ yang ditujukan ke cabang user (KPR)
+ * dengan dukungan Pagination dan Pencarian
  */
-const searchSj = async (term, user) => {
+const searchSj = async (filters, user) => {
+  const { term, page = 1, itemsPerPage = 15 } = filters;
   const searchTerm = `%${term || ""}%`;
-  const query = `
+  
+  // 1. Hitung Offset
+  const limit = parseInt(itemsPerPage);
+  const offset = (parseInt(page) - 1) * limit;
+
+  // 2. Query Data (Gunakan LIMIT dan OFFSET dinamis)
+  // Jika itemsPerPage = -1 (Pilihan 'Semua'), hilangkan LIMIT
+  const paginationSql = limit === -1 ? '' : `LIMIT ${limit} OFFSET ${offset}`;
+
+  const dataQuery = `
     SELECT 
       h.sj_nomor AS NoSJ, 
       h.sj_tanggal AS TglSJ, 
@@ -2767,12 +2795,30 @@ const searchSj = async (term, user) => {
     LEFT JOIN tmintabarang_hdr m ON m.mt_nomor = h.sj_mt_nomor
     LEFT JOIN tcustomer c ON c.cus_kode = m.mt_cus
     WHERE h.sj_kecab = ? 
+      AND h.sj_nomor_inv = '' 
       AND (h.sj_nomor LIKE ? OR c.cus_nama LIKE ?)
     ORDER BY h.sj_tanggal DESC
-    LIMIT 50
+    ${paginationSql} 
   `;
-  const [rows] = await pool.query(query, [user.cabang, searchTerm, searchTerm]);
-  return rows;
+
+  // 3. Query Total (Wajib untuk pagination agar Frontend tahu jumlah halaman)
+  const countQuery = `
+    SELECT COUNT(*) as total
+    FROM tdc_sj_hdr h
+    LEFT JOIN tmintabarang_hdr m ON m.mt_nomor = h.sj_mt_nomor
+    LEFT JOIN tcustomer c ON c.cus_kode = m.mt_cus
+    WHERE h.sj_kecab = ? 
+      AND h.sj_nomor_inv = ''
+      AND (h.sj_nomor LIKE ? OR c.cus_nama LIKE ?)
+  `;
+
+  const [rows] = await pool.query(dataQuery, [user.cabang, searchTerm, searchTerm]);
+  const [totalRows] = await pool.query(countQuery, [user.cabang, searchTerm, searchTerm]);
+
+  return {
+    items: rows,
+    total: totalRows[0].total
+  };
 };
 
 /**

@@ -91,13 +91,18 @@ const saveData = async (payload, user) => {
 
     let totalQty = 0;
     for (const item of items) {
-      if (item.jumlah > item.stok) {
-        throw new Error(
-          `Jumlah untuk barang ${item.nama} (${item.ukuran}) melebihi stok.`
-        );
-      }
-      totalQty += item.jumlah;
+      /* [REVISI] Pengecekan stok dihapus agar sistem mengizinkan stok minus.
+         Logic ini disamakan dengan sistem Invoice.
+      */
+      // if (item.jumlah > item.stok) {
+      //   throw new Error(
+      //     `Jumlah untuk barang ${item.nama} (${item.ukuran}) melebihi stok.`
+      //   );
+      // }
+
+      totalQty += Number(item.jumlah || 0);
     }
+
     if (totalQty <= 0) throw new Error("Total jumlah barang tidak boleh nol.");
     // --- AKHIR VALIDASI ---
 

@@ -425,8 +425,8 @@ const updateInvoiceHeaderOnly = async (req, res) => {
 
 const searchSj = async (req, res) => {
   try {
-    const { term } = req.query;
-    const data = await service.searchSj(term, req.user);
+    // Teruskan seluruh req.query (termasuk page dan itemsPerPage)
+    const data = await service.searchSj(req.query, req.user);
     res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });
