@@ -629,6 +629,18 @@ const saveData = async (payload, user) => {
     // Cek apakah lunas terhadap Grand Total Final
     const isBelumLunas = totalBayarAsli < grandTotal;
 
+    // =========================================================
+    //  PERHITUNGAN LOGIC BAYAR (UPDATED UNTUK POTONG GAJI)
+    // =========================================================
+
+    // Cek Flag Potong Gaji dari Frontend
+    const isPotongGaji = payment.jenis === "POTONG_GAJI";
+
+    let bayarTunaiBersih = 0;
+    let totalPaymentNonDp = 0;
+    let invBayar = 0;
+    let kembalianFinal = 0;
+
     // WAJIBKAN PIN OTORISASI jika belum lunas
     if (
       isBelumLunas &&
@@ -641,18 +653,6 @@ const saveData = async (payload, user) => {
           `Penyimpanan invoice piutang wajib mendapatkan otorisasi Manager.`,
       );
     }
-
-    // =========================================================
-    //  PERHITUNGAN LOGIC BAYAR (UPDATED UNTUK POTONG GAJI)
-    // =========================================================
-
-    // Cek Flag Potong Gaji dari Frontend
-    const isPotongGaji = payment.jenis === "POTONG_GAJI";
-
-    let bayarTunaiBersih = 0;
-    let totalPaymentNonDp = 0;
-    let invBayar = 0;
-    let kembalianFinal = 0;
 
     if (isPotongGaji) {
       // [REVISI FIX] LOGIKA KHUSUS KARYAWAN POTONG GAJI
