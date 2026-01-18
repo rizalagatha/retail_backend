@@ -376,7 +376,7 @@ const loadForEdit = async (nomor, user) => {
 
   const [fskCheckRows] = await pool.query(
     `SELECT 1 FROM tform_setorkasir_dtl WHERE fskd_inv = ? LIMIT 1`,
-    [nomor]
+    [nomor],
   );
   const isLockedFsk = fskCheckRows.length > 0;
 
@@ -539,7 +539,7 @@ const saveData = async (payload, user) => {
       // Cek apakah idrec ini sudah ada di database?
       const [dupCheck] = await connection.query(
         "SELECT inv_nomor FROM tinv_hdr WHERE inv_idrec = ? LIMIT 1",
-        [frontendIdRec]
+        [frontendIdRec],
       );
 
       if (dupCheck.length > 0) {
@@ -563,11 +563,11 @@ const saveData = async (payload, user) => {
     if (!isNew && nomorInv) {
       const [rows] = await pool.query(
         "SELECT 1 FROM tform_setorkasir_dtl WHERE fskd_inv = ? LIMIT 1",
-        [nomorInv]
+        [nomorInv],
       );
       if (rows.length > 0) {
         throw new Error(
-          `Invoice ${nomorInv} sudah masuk Form Setoran Kasir — tidak bisa diubah.`
+          `Invoice ${nomorInv} sudah masuk Form Setoran Kasir — tidak bisa diubah.`,
         );
       }
     }
@@ -581,10 +581,10 @@ const saveData = async (payload, user) => {
     const subTotalFromPayload = Number(totals.subTotal || 0);
     // compute subTotal from details if payload missing
     const computedSubTotal = applyRoundingPolicy(
-      (items || []).reduce((s, it) => s + (Number(it.total) || 0), 0)
+      (items || []).reduce((s, it) => s + (Number(it.total) || 0), 0),
     );
     const subTotal = applyRoundingPolicy(
-      subTotalFromPayload > 0 ? subTotalFromPayload : computedSubTotal
+      subTotalFromPayload > 0 ? subTotalFromPayload : computedSubTotal,
     );
 
     const totalDiskon = totalDiskonFaktur;
@@ -595,7 +595,7 @@ const saveData = async (payload, user) => {
     const grandTotal = applyRoundingPolicy(
       Number(totals.grandTotal || 0) > 0
         ? Number(totals.grandTotal)
-        : netto + biayaKirim - (Number(totals.totalDp || 0) || 0)
+        : netto + biayaKirim - (Number(totals.totalDp || 0) || 0),
     );
 
     if (!header.customer.kode) throw new Error("Customer harus diisi.");
@@ -605,7 +605,7 @@ const saveData = async (payload, user) => {
     if (validItems.length === 0) throw new Error("Detail barang harus diisi.");
     const totalQty = validItems.reduce(
       (sum, item) => sum + (item.jumlah || 0),
-      0
+      0,
     );
     if (totalQty <= 0) throw new Error("Qty Invoice kosong semua.");
 
@@ -630,10 +630,15 @@ const saveData = async (payload, user) => {
     const isBelumLunas = totalBayarAsli < grandTotal;
 
     // WAJIBKAN PIN OTORISASI jika belum lunas
-    if (isBelumLunas && !payment.pinBelumLunas && !isMarketplace) {
+    if (
+      isBelumLunas &&
+      !payment.pinBelumLunas &&
+      !isMarketplace &&
+      !isPotongGaji
+    ) {
       throw new Error(
         `Invoice Belum Lunas (Sisa: Rp ${grandTotal - totalBayarAsli}). ` +
-          `Penyimpanan invoice piutang wajib mendapatkan otorisasi Manager.`
+          `Penyimpanan invoice piutang wajib mendapatkan otorisasi Manager.`,
       );
     }
 
@@ -655,7 +660,7 @@ const saveData = async (payload, user) => {
       // 1. Validasi Wajib
       if (!payment.nikKaryawan || !payment.namaKaryawan) {
         throw new Error(
-          "NIK dan Nama Karyawan wajib diisi untuk transaksi Potong Gaji."
+          "NIK dan Nama Karyawan wajib diisi untuk transaksi Potong Gaji.",
         );
       }
 
@@ -692,24 +697,24 @@ const saveData = async (payload, user) => {
           Number(payment.tunai || 0) +
           Number(payment.transfer?.nominal || 0) +
           Number(payment.voucher?.nominal || 0) +
-          Number(payment.retur?.nominal || 0)
+          Number(payment.retur?.nominal || 0),
       );
       invBayar = bayarTotal;
 
       const kembalianBeforePundi = applyRoundingPolicy(
-        Math.max(bayarTotal - grandTotal, 0)
+        Math.max(bayarTotal - grandTotal, 0),
       );
       kembalianFinal = applyRoundingPolicy(
-        Math.max(kembalianBeforePundi - pundiAmal, 0)
+        Math.max(kembalianBeforePundi - pundiAmal, 0),
       );
 
       if (header.nomorSo && header.nomorSo !== "") {
         bayarTunaiBersih = applyRoundingPolicy(
-          Number(payment.tunaiAfterChange || 0)
+          Number(payment.tunaiAfterChange || 0),
         );
       } else {
         bayarTunaiBersih = applyRoundingPolicy(
-          Math.max(Number(payment.tunai || 0) - kembalianBeforePundi, 0)
+          Math.max(Number(payment.tunai || 0) - kembalianBeforePundi, 0),
         );
       }
 
@@ -726,7 +731,7 @@ const saveData = async (payload, user) => {
       nomorSetoran = await generateNewSetorNumber(
         connection,
         user.cabang,
-        header.tanggal
+        header.tanggal,
       );
     }
 
@@ -744,13 +749,13 @@ const saveData = async (payload, user) => {
         // Fallback: Generate baru
         idrec = `${header.gudang.kode}INV${format(
           new Date(),
-          "yyyyMMddHHmmssSSS"
+          "yyyyMMddHHmmssSSS",
         )}`;
       } else {
         // Edit Mode: Coba ambil dari Database dulu
         const [hdrRows] = await connection.query(
           "SELECT inv_idrec FROM tinv_hdr WHERE inv_nomor = ? LIMIT 1",
-          [invNomor]
+          [invNomor],
         );
         if (hdrRows && hdrRows.length > 0) {
           idrec = hdrRows[0].inv_idrec;
@@ -758,7 +763,7 @@ const saveData = async (payload, user) => {
           // Last Resort: Generate baru (Self-healing jika data lama korup)
           idrec = `${header.gudang.kode}INV${format(
             new Date(),
-            "yyyyMMddHHmmssSSS"
+            "yyyyMMddHHmmssSSS",
           )}`;
         }
       }
@@ -915,7 +920,7 @@ const saveData = async (payload, user) => {
         `UPDATE tinv_hdr 
          SET inv_rj_nomor = ?, inv_rj_rp = ?
          WHERE inv_nomor = ?`,
-        [payment.retur.nomor, Number(payment.retur.nominal || 0), invNomor]
+        [payment.retur.nomor, Number(payment.retur.nominal || 0), invNomor],
       );
     }
 
@@ -948,7 +953,7 @@ const saveData = async (payload, user) => {
         const diskonRp = applyRoundingPolicy(Number(item.diskonRp || 0));
 
         const invdIdrec = `${invNomor.replace(/\./g, "")}${String(
-          index + 1
+          index + 1,
         ).padStart(3, "0")}`;
 
         let invd_mstpesan = 0;
@@ -960,7 +965,7 @@ const saveData = async (payload, user) => {
             connection,
             header.nomorSo,
             item.kode,
-            item.ukuran
+            item.ukuran,
           );
           invd_mstpesan = Math.min(jumlah, sisaSO);
           invd_mststok = jumlah - invd_mstpesan;
@@ -1011,12 +1016,14 @@ const saveData = async (payload, user) => {
     const fullTagihan = applyRoundingPolicy(netto + biayaKirim); // Nilai Invoice
     const totalDpDipakai = dpDipakai;
     const totalBayarSemua = applyRoundingPolicy(
-      totalPaymentNonDp + totalDpDipakai + Number(payment.diskonPembulatan || 0)
+      totalPaymentNonDp +
+        totalDpDipakai +
+        Number(payment.diskonPembulatan || 0),
     );
 
     // Hitung Sisa Piutang (Saldo Akhir)
     const piutangFinal = applyRoundingPolicy(
-      Math.max(fullTagihan - totalBayarSemua, 0)
+      Math.max(fullTagihan - totalBayarSemua, 0),
     );
 
     // [RULE BARU] SELALU INSERT KE TPIUTANG_HDR
@@ -1168,7 +1175,7 @@ const saveData = async (payload, user) => {
     WHERE sd.sd_inv = ?
       AND sd.sd_ket = 'DP LINK DARI INV'
     `,
-        [invNomor]
+        [invNomor],
       );
 
       // 2) Gabungkan DP lama + DP baru dari frontend
@@ -1196,11 +1203,11 @@ const saveData = async (payload, user) => {
         // 3) Hapus link DP lama khusus invoice ini
         await connection.query(
           "DELETE FROM tsetor_dtl WHERE sd_inv = ? AND sd_ket = 'DP LINK DARI INV'",
-          [invNomor]
+          [invNomor],
         );
         await connection.query(
           "DELETE FROM tpiutang_dtl WHERE pd_ph_nomor = ? AND pd_uraian = 'DP'",
-          [piutangNomor]
+          [piutangNomor],
         );
 
         // 4) Tulis ulang semua DP
@@ -1218,14 +1225,14 @@ const saveData = async (payload, user) => {
           // Ambil idrec setoran DP yang asli
           const [setorHdr] = await connection.query(
             "SELECT sh_idrec FROM tsetor_hdr WHERE sh_nomor = ?",
-            [dp.nomor]
+            [dp.nomor],
           );
           if (setorHdr.length === 0) continue;
 
           const idrecSetoran = setorHdr[0].sh_idrec;
           const angsurId = `${user.cabang}DP${format(
             new Date(),
-            "yyyyMMddHHmmssSSS"
+            "yyyyMMddHHmmssSSS",
           )}${index}`;
 
           // Insert ke tsetor_dtl untuk menandai DP sudah terpakai
@@ -1243,7 +1250,7 @@ const saveData = async (payload, user) => {
               invNomor,
               dpYangDipakai,
               angsurId,
-            ]
+            ],
           );
 
           // Insert ke tpiutang_dtl sebagai pembayaran DP
@@ -1254,7 +1261,13 @@ const saveData = async (payload, user) => {
         )
         VALUES (?, ?, 'DP', ?, ?, ?)
         `,
-            [piutangNomor, headerTanggalTime, dpYangDipakai, dp.nomor, angsurId]
+            [
+              piutangNomor,
+              headerTanggalTime,
+              dpYangDipakai,
+              dp.nomor,
+              angsurId,
+            ],
           );
         }
       }
@@ -1267,7 +1280,7 @@ const saveData = async (payload, user) => {
         (await generateNewSetorNumber(connection, user.cabang, header.tanggal));
       const idrecSetoran = `${user.cabang}SH${format(
         new Date(),
-        "yyyyMMddHHmmssSSS"
+        "yyyyMMddHHmmssSSS",
       )}`;
 
       await connection.query("DELETE FROM tsetor_hdr WHERE sh_nomor = ?", [
@@ -1293,7 +1306,7 @@ const saveData = async (payload, user) => {
       // Insert detail setoran
       const angsurId = `${user.cabang}KS${format(
         new Date(),
-        "yyyyMMddHHmmssSSS"
+        "yyyyMMddHHmmssSSS",
       )}`;
       const setorDtlSql = `
         INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut)
@@ -1387,7 +1400,7 @@ const saveData = async (payload, user) => {
     // 3. Simpan Log untuk Invoice Belum Lunas (Piutang)
     if (pinBelumLunas) {
       const kurangBayar = applyRoundingPolicy(
-        Math.max(grandTotal - invBayar, 0)
+        Math.max(grandTotal - invBayar, 0),
       );
 
       const authLogSql = `
@@ -1408,7 +1421,7 @@ const saveData = async (payload, user) => {
       connection,
       { header, totals, user },
       invNomor,
-      idrec
+      idrec,
     );
 
     if (header.nomorSo && header.nomorSo !== "") {
@@ -1732,14 +1745,14 @@ const getPrintData = async (nomor) => {
     WHERE sd_inv = ?
       AND sd_ket = 'DP LINK DARI INV'
     `,
-    [nomor]
+    [nomor],
   );
 
   const dpDipakai = applyRoundingPolicy(dpRows?.[0]?.dpDipakai || 0);
 
   // =============== SUMMARY CALC ===============
   const subTotal = applyRoundingPolicy(
-    details.reduce((s, it) => s + it.total, 0)
+    details.reduce((s, it) => s + it.total, 0),
   );
   const diskonFaktur = header.inv_disc || 0;
   const netto = applyRoundingPolicy(subTotal - diskonFaktur);
@@ -1755,7 +1768,7 @@ const getPrintData = async (nomor) => {
 
   const kembali = Number(
     header.inv_kembali ??
-      Math.max(totalBayar - grandTotal - Number(header.inv_pundiamal || 0), 0)
+      Math.max(totalBayar - grandTotal - Number(header.inv_pundiamal || 0), 0),
   );
 
   header.summary = {
@@ -1808,7 +1821,7 @@ const handlePromotions = async (
   connection,
   { header, totals, user },
   invNomor,
-  idrec
+  idrec,
 ) => {
   // Hapus kupon lama jika ada (untuk mode edit)
   await connection.query("DELETE FROM tinv_kupon WHERE invk_inv_nomor = ?", [
@@ -1853,7 +1866,7 @@ const handlePromotions = async (
           const kuponNomor = await generateKuponNumber(
             connection,
             user.cabang,
-            header.tanggal
+            header.tanggal,
           );
           kuponToInsert.push([
             idrec,
@@ -1887,7 +1900,7 @@ const handlePromotions = async (
           kuponNomor = await generateKuponNumber(
             connection,
             user.cabang,
-            header.tanggal
+            header.tanggal,
           );
         } else if (promo.pro_generate === "V") {
           // Generate Voucher
@@ -2281,7 +2294,7 @@ END AS total,
 
   // Total diskon item
   const totalDiskonItem = applyRoundingPolicy(
-    rows.reduce((sum, r) => sum + Number(r.total_diskon || 0), 0)
+    rows.reduce((sum, r) => sum + Number(r.total_diskon || 0), 0),
   );
 
   // Diskon faktur (kalau ada)
@@ -2296,7 +2309,7 @@ END AS total,
 
   // Grand Total setelah diskon item + diskon faktur
   const grandTotal = applyRoundingPolicy(
-    header.inv_rptunai + header.inv_rpcard + header.inv_rpvoucher
+    header.inv_rptunai + header.inv_rpcard + header.inv_rpvoucher,
   );
 
   // Bayar
@@ -2480,7 +2493,7 @@ const validateVoucher = async ({ voucherNo, invoiceNo }, user) => {
   ]);
   if (usageRows.length > 0) {
     throw new Error(
-      `Voucher sudah dipakai di Invoice: ${usageRows[0].inv_nomor}`
+      `Voucher sudah dipakai di Invoice: ${usageRows[0].inv_nomor}`,
     );
   }
 
@@ -2692,11 +2705,11 @@ const updateHeaderOnly = async (nomor, payload, user) => {
     ================================================ */
     const [lockRows] = await pool.query(
       `SELECT 1 FROM tform_setorkasir_dtl WHERE fskd_inv = ? LIMIT 1`,
-      [nomor]
+      [nomor],
     );
     if (lockRows.length > 0) {
       throw new Error(
-        `Invoice ${nomor} sudah masuk Form Setoran Kasir (FSK) — tidak bisa diubah.`
+        `Invoice ${nomor} sudah masuk Form Setoran Kasir (FSK) — tidak bisa diubah.`,
       );
     }
 
@@ -2772,14 +2785,14 @@ const updateHeaderOnly = async (nomor, payload, user) => {
 const searchSj = async (filters, user) => {
   const { term, page = 1, itemsPerPage = 15 } = filters;
   const searchTerm = `%${term || ""}%`;
-  
+
   // 1. Hitung Offset
   const limit = parseInt(itemsPerPage);
   const offset = (parseInt(page) - 1) * limit;
 
   // 2. Query Data (Gunakan LIMIT dan OFFSET dinamis)
   // Jika itemsPerPage = -1 (Pilihan 'Semua'), hilangkan LIMIT
-  const paginationSql = limit === -1 ? '' : `LIMIT ${limit} OFFSET ${offset}`;
+  const paginationSql = limit === -1 ? "" : `LIMIT ${limit} OFFSET ${offset}`;
 
   const dataQuery = `
     SELECT 
@@ -2812,12 +2825,20 @@ const searchSj = async (filters, user) => {
       AND (h.sj_nomor LIKE ? OR c.cus_nama LIKE ?)
   `;
 
-  const [rows] = await pool.query(dataQuery, [user.cabang, searchTerm, searchTerm]);
-  const [totalRows] = await pool.query(countQuery, [user.cabang, searchTerm, searchTerm]);
+  const [rows] = await pool.query(dataQuery, [
+    user.cabang,
+    searchTerm,
+    searchTerm,
+  ]);
+  const [totalRows] = await pool.query(countQuery, [
+    user.cabang,
+    searchTerm,
+    searchTerm,
+  ]);
 
   return {
     items: rows,
-    total: totalRows[0].total
+    total: totalRows[0].total,
   };
 };
 
@@ -2856,7 +2877,7 @@ const getSjDetails = async (nomor, user, currentInvNomor = "") => {
     // Validasi: SJ harus sudah diterima di KPR
     if (!header.sj_noterima || header.sj_noterima === "") {
       throw new Error(
-        "SJ tersebut belum diterima. Silakan proses penerimaan SJ terlebih dahulu."
+        "SJ tersebut belum diterima. Silakan proses penerimaan SJ terlebih dahulu.",
       );
     }
 
