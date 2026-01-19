@@ -29,7 +29,7 @@ const generateNewOfferNumber = async (connection, cabang, tanggal) => {
   // Validasi: Jika nextNum > 9999, throw error
   if (nextNum > 9999) {
     throw new Error(
-      `Nomor penawaran untuk periode ${datePrefix} sudah mencapai maksimum (9999).`
+      `Nomor penawaran untuk periode ${datePrefix} sudah mencapai maksimum (9999).`,
     );
   }
 
@@ -87,7 +87,7 @@ const searchCustomers = async (term, gudang, page, itemsPerPage, isInvoice) => {
     // Eksekusi Count (Gunakan params yang sudah disusun berurutan)
     const [countRows] = await pool.query(
       `SELECT COUNT(*) as total ${baseQuery}`,
-      params
+      params,
     );
     const total = countRows[0].total;
 
@@ -205,11 +205,11 @@ const saveOffer = async (data) => {
       nomorPenawaran = await generateNewOfferNumber(
         connection,
         header.gudang.kode,
-        header.tanggal
+        header.tanggal,
       );
       idrec = `${header.gudang.kode}PEN${format(
         new Date(),
-        "yyyyMMddHHmmssSSS"
+        "yyyyMMddHHmmssSSS",
       )}`;
 
       const insertHeaderQuery = `
@@ -237,7 +237,7 @@ const saveOffer = async (data) => {
     } else {
       const [idrecRows] = await connection.query(
         "SELECT pen_idrec FROM tpenawaran_hdr WHERE pen_nomor = ?",
-        [nomorPenawaran]
+        [nomorPenawaran],
       );
       if (idrecRows.length === 0)
         throw new Error("Nomor penawaran untuk diupdate tidak ditemukan.");
@@ -292,9 +292,15 @@ const saveOffer = async (data) => {
       ]);
     }
 
+    await connection.query(
+      "DELETE FROM totorisasi WHERE o_nomor = ? AND o_transaksi = 'PENAWARAN'",
+      [nomorPenawaran],
+    );
+
+    // 4. Simpan Otorisasi Per ITEM
+    const processedBarcodes = new Set(); // Opsional: Cegah duplikat jika item sama muncul 2x
     for (const item of details) {
-      if (item.pin) {
-        // Simpan PIN per item
+      if (item.pin && !processedBarcodes.has(item.barcode)) {
         const pinItemQuery =
           'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_nominal) VALUES (?, "PENAWARAN", "DISKON ITEM", ?, NOW(), ?, ?)';
         await connection.query(pinItemQuery, [
@@ -303,10 +309,12 @@ const saveOffer = async (data) => {
           item.pin,
           item.diskonPersen,
         ]);
+        processedBarcodes.add(item.barcode);
       }
     }
+
+    // 5. Simpan Otorisasi DISKON FAKTUR 1
     if (footer.pinDiskon1) {
-      // Simpan PIN Diskon Faktur 1
       const pinFaktur1Query =
         'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "PENAWARAN", "DISKON FAKTUR", NOW(), ?, ?)';
       await connection.query(pinFaktur1Query, [
@@ -315,8 +323,9 @@ const saveOffer = async (data) => {
         footer.diskonPersen1,
       ]);
     }
+
+    // 6. Simpan Otorisasi DISKON FAKTUR 2
     if (footer.pinDiskon2) {
-      // Simpan PIN Diskon Faktur 2
       const pinFaktur2Query =
         'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "PENAWARAN", "DISKON FAKTUR 2", NOW(), ?, ?)';
       await connection.query(pinFaktur2Query, [
@@ -436,7 +445,7 @@ const getOfferForEdit = async (nomor) => {
     top: headerRows[0].top,
     tempo: format(
       addDays(new Date(headerRows[0].tanggal), headerRows[0].top),
-      "yyyy-MM-dd"
+      "yyyy-MM-dd",
     ),
     ppnPersen: headerRows[0].ppnPersen,
     keterangan: headerRows[0].keterangan,
@@ -580,7 +589,7 @@ const getPriceProposalDetailsForSo = async (nomor) => {
   // 1. Ambil Header
   const [headerRows] = await pool.query(
     "SELECT * FROM tpengajuanharga WHERE ph_nomor = ?",
-    [nomor]
+    [nomor],
   );
   if (headerRows.length === 0)
     throw new Error("Data Pengajuan Harga tidak ditemukan.");
