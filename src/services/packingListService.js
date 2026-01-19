@@ -44,9 +44,9 @@ const getList = async (filters) => {
         h.user_create AS Usr
     FROM tpacking_list_hdr h
     INNER JOIN tpacking_list_dtl d ON d.pld_nomor = h.pl_nomor
-    LEFT JOIN retail.tgudang g ON g.gdg_kode = h.pl_cab_tujuan
+    LEFT JOIN tgudang g ON g.gdg_kode = h.pl_cab_tujuan
     LEFT JOIN tdc_sj_hdr sj ON sj.sj_nomor = h.pl_sj_nomor
-    LEFT JOIN retail.tmintabarang_hdr m ON m.mt_nomor = h.pl_mt_nomor
+    LEFT JOIN tmintabarang_hdr m ON m.mt_nomor = h.pl_mt_nomor
     WHERE h.pl_tanggal BETWEEN ? AND ?
       ${branchFilter}
       ${itemFilter}
@@ -69,7 +69,7 @@ const getDetails = async (nomor) => {
         d.pld_ukuran AS Ukuran,
         d.pld_jumlah AS Jumlah
     FROM tpacking_list_dtl d
-    LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.pld_kode
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.pld_kode
     WHERE d.pld_nomor = ?
     ORDER BY d.pld_kode, d.pld_ukuran;
   `;
@@ -156,8 +156,8 @@ const exportDetails = async (filters) => {
 
     FROM tpacking_list_hdr h
     INNER JOIN tpacking_list_dtl d ON d.pld_nomor = h.pl_nomor
-    LEFT JOIN retail.tgudang g ON g.gdg_kode = h.pl_cab_tujuan
-    LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.pld_kode
+    LEFT JOIN tgudang g ON g.gdg_kode = h.pl_cab_tujuan
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.pld_kode
     
     WHERE h.pl_tanggal >= ? AND h.pl_tanggal <= ?
       ${branchFilter}

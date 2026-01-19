@@ -46,7 +46,7 @@ const getDetails = async (nomor) => {
                 AND dd.mid_ukuran = d.mod_ukuran
         ), 0) AS QtyIn
     FROM tmutasiout_dtl d
-    LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.mod_kode
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.mod_kode
     WHERE d.mod_nomor = ?
     ORDER BY d.mod_kode, d.mod_ukuran
     `;

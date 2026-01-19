@@ -2,9 +2,18 @@ const customerService = require("../services/customerService");
 
 const getAll = async (req, res) => {
   try {
-    // Berikan req.user ke service
-    const customers = await customerService.getAllCustomers(req.user);
-    res.json(customers);
+    // Ambil parameter query (term, page, itemsPerPage) dari request
+    const filters = {
+      term: req.query.term,
+      page: req.query.page,
+      itemsPerPage: req.query.itemsPerPage,
+    };
+
+    // Teruskan filters dan data user ke service
+    const result = await customerService.getAllCustomers(filters, req.user);
+
+    // Kembalikan hasil berupa { items, total }
+    res.json(result);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

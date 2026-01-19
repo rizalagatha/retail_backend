@@ -31,40 +31,36 @@ const loadFromStbj = async (nomorStbj) => {
 const save = async (payload, user) => {
   let retries = 5;
   while (retries > 0) {
-    // ✅ PENTING: Ambil connection BARU untuk generate nomor (AUTOCOMMIT)
     const seqConnection = await pool.getConnection();
     const connection = await pool.getConnection();
 
     try {
-      const { header, summaryItems, allocationItems } = payload;
+      const { header, allocationItems } = payload; // summaryItems tidak lagi dibutuhkan untuk SJ Garmen
       const tanggal = header.tanggal;
 
-      // ✅ PENTING: Generate nomor OUTSIDE transaksi main
-      // Connection ini dalam mode AUTOCOMMIT
+      // 1. Generate nomor terima (TS)
       const nomorTerima = await generateNomorTerima(seqConnection, tanggal);
-      const nomorSjGarmen =
-        header.nomorSjGarmen ||
-        (await generateNomorSjGarmen(seqConnection, tanggal));
 
-      // Release sequence connection
+      // [PERBAIKAN] SJ Garmen dikosongkan sesuai referensi Delphi (anomor := '')
+      const nomorSjGarmen = "";
+
       seqConnection.release();
-
       await connection.beginTransaction();
 
       try {
-        // 1. Insert Header Penerimaan
+        // 1. Insert Header Penerimaan (tdc_stbj_hdr)
         await connection.query(
           "INSERT INTO tdc_stbj_hdr (ts_nomor, ts_tanggal, ts_sj_garmen, ts_stbj, user_create, date_create) VALUES (?, ?, ?, ?, ?, NOW())",
           [
             nomorTerima,
             header.tanggal,
-            nomorSjGarmen,
+            nomorSjGarmen, // Disimpan sebagai string kosong
             header.nomorStbj,
             user.kode,
           ]
         );
 
-        // 2. Insert Detail Penerimaan (dari Grid 2)
+        // 2. Insert Detail Penerimaan (tdc_stbj_dtl)
         if (allocationItems.length > 0) {
           const stbjDtlValues = allocationItems.map((item, i) => [
             nomorTerima + (i + 1).toString(),
@@ -80,42 +76,16 @@ const save = async (payload, user) => {
           );
         }
 
-        // ✅ PERBAIKAN UTAMA: Konsolidasi summaryItems agar tidak duplikat di tsj_dtl
-        const consolidatedSjItems = summaryItems.reduce((acc, current) => {
-          // Buat key unik berdasarkan SPK dan Ukuran
-          const key = `${current.spk}-${current.ukuran}`;
-          if (!acc[key]) {
-            acc[key] = { ...current };
-          } else {
-            // Jika sudah ada, tambahkan jumlah dan kolinya
-            acc[key].jumlah += Number(current.jumlah || 0);
-            acc[key].koli += Number(current.koli || 0);
-          }
-          return acc;
-        }, {});
+        // --- [BAGIAN SJ GARMEN (kencanaprint.tsj_hdr/dtl) DIHAPUS DARI SINI] ---
 
-        // 3. Insert Detail SJ Garmen (dari Grid 1) - Pola Delete-then-Insert
+        // 3. Update referensi di tabel STBJ Produksi (tstbj_hdr)
         await connection.query(
-          "DELETE FROM kencanaprint.tsj_dtl WHERE sjd_sj_nomor = ?",
-          [nomorSjGarmen]
+          "UPDATE kencanaprint.tstbj_hdr SET stbj_ts_nomor = ? WHERE stbj_nomor = ?",
+          [nomorTerima, header.nomorStbj]
         );
-        const summaryRows = Object.values(consolidatedSjItems);
-        if (summaryRows.length > 0) {
-          const sjDtlValues = summaryRows.map((item) => [
-            nomorSjGarmen,
-            item.spk,
-            item.ukuran,
-            item.jumlah,
-            item.koli,
-            item.keterangan,
-          ]);
-          await connection.query(
-            "INSERT INTO kencanaprint.tsj_dtl (sjd_sj_nomor, sjd_spk_nomor, sjd_ukuran, sjd_jumlah, sjd_koli, sjd_keterangan) VALUES ?",
-            [sjDtlValues]
-          );
-        }
 
-        // 4. Proses Otomatis Pembuatan Dokumen Mutasi & SJ
+        // 4. Proses Otomatis Pembuatan Dokumen Mutasi & SJ Cabang
+        // (Logika ini tetap dipertahankan karena ini adalah distribusi internal DC)
         const cabangAlokasi = [
           "KBS",
           "KPS",
@@ -132,10 +102,10 @@ const save = async (payload, user) => {
           const itemsForCabang = allocationItems.filter(
             (item) => item[cabang.toLowerCase()] > 0
           );
+
           if (itemsForCabang.length > 0) {
             if (["KBS", "KPS"].includes(cabang)) {
-              // ✅ PENTING: Generate nomor mutasi di connection transaksi ini
-              // TAPI buat connection terpisah untuk sequence
+              // Logic Mutasi Otomatis (Tetap)
               const mutasiSeqConn = await pool.getConnection();
               const mutasiResult = await generateNomorMutasi(
                 mutasiSeqConn,
@@ -148,22 +118,24 @@ const save = async (payload, user) => {
                 'INSERT INTO tdc_mts_hdr (mts_nomor, mts_tanggal, mts_kecab, mts_ket, mts_stbj, user_create, date_create) VALUES (?, ?, ?, "MUTASI OTOMATIS", ?, ?, NOW())',
                 [nomorMutasi, tanggal, cabang, header.nomorStbj, user.kode]
               );
+
               const mutasiDtlValues = itemsForCabang.map((item) => [
                 nomorMutasi,
                 `${cabang}.MTS.${format(new Date(tanggal), "yyMM")}${(1)
                   .toString()
-                  .padStart(5, "0")}`,
+                  .padStart(5, "0")}`, // Nomor In (Sesuai Delphi)
                 item.spk,
                 item.kode,
                 item.ukuran,
                 item[cabang.toLowerCase()],
               ]);
+
               await connection.query(
                 "INSERT INTO tdc_mts_dtl (mtsd_nomor, mtsd_nomorin, mtsd_spk, mtsd_kode, mtsd_ukuran, mtsd_jumlah) VALUES ?",
                 [mutasiDtlValues]
               );
             } else {
-              // ✅ PENTING: Generate nomor SJ di connection terpisah
+              // Logic SJ Otomatis ke Store (Tetap)
               const sjSeqConn = await pool.getConnection();
               const sjStoreResult = await generateNomorSjStore(
                 sjSeqConn,
@@ -176,6 +148,7 @@ const save = async (payload, user) => {
                 'INSERT INTO tdc_sj_hdr (sj_nomor, sj_tanggal, sj_kecab, sj_ket, sj_stbj, user_create, date_create) VALUES (?, ?, ?, "SJ OTOMATIS", ?, ?, NOW())',
                 [nomorSj, tanggal, cabang, header.nomorStbj, user.kode]
               );
+
               const sjDtlValues = itemsForCabang.map((item) => [
                 nomorSj,
                 item.spk,
@@ -183,6 +156,7 @@ const save = async (payload, user) => {
                 item.ukuran,
                 item[cabang.toLowerCase()],
               ]);
+
               await connection.query(
                 "INSERT INTO tdc_sj_dtl (sjd_nomor, sjd_spk, sjd_kode, sjd_ukuran, sjd_jumlah) VALUES ?",
                 [sjDtlValues]
@@ -192,32 +166,21 @@ const save = async (payload, user) => {
         }
 
         await connection.commit();
-        connection.release();
         return {
           message: `Penerimaan STBJ berhasil disimpan dengan nomor ${nomorTerima}`,
           nomor: nomorTerima,
         };
       } catch (innerError) {
         await connection.rollback();
-        throw innerError; // Lemparkan ke catch di luar untuk dicek retries-nya
+        throw innerError;
       }
     } catch (error) {
-      // ✅ FIX UTAMA: Jika duplicate, jangan langsung "throw". Kurangi retries dan loop lagi.
       if (error.code === "ER_DUP_ENTRY") {
         retries--;
-        console.warn(
-          `Tabrakan Nomor Dokumen. Mencoba ulang... Sisa retry: ${retries}`
-        );
-        // Tunggu sebentar sebelum mencoba lagi (jitter)
         await new Promise((res) => setTimeout(res, Math.random() * 100));
-
-        if (retries === 0)
-          throw new Error(
-            "Gagal mendapatkan nomor dokumen unik setelah beberapa kali percobaan."
-          );
-        continue; // Lanjut ke iterasi while berikutnya
+        if (retries === 0) throw new Error("Gagal mendapatkan nomor unik.");
+        continue;
       } else {
-        // Jika error lain (bukan duplicate), langsung lempar error
         throw error;
       }
     } finally {

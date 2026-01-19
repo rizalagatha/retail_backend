@@ -76,7 +76,7 @@ const savePelunasan = async (payload, user) => {
       // Cek Fee Platform per invoice
       const [invData] = await connection.query(
         `SELECT inv_mp_biaya_platform FROM tinv_hdr WHERE inv_nomor = ?`,
-        [inv.inv_nomor]
+        [inv.inv_nomor],
       );
       const fee = Number(invData[0]?.inv_mp_biaya_platform || 0);
 
@@ -90,11 +90,11 @@ const savePelunasan = async (payload, user) => {
     const nomorSetor = await generateNewSetorNumber(
       connection,
       user.cabang,
-      paymentDate
+      paymentDate,
     );
     const idrecSetor = `${user.cabang}PL${format(
       new Date(),
-      "yyyyMMddHHmmssSSS"
+      "yyyyMMddHHmmssSSS",
     )}`;
 
     let jenisBayar = 0;
@@ -119,7 +119,7 @@ const savePelunasan = async (payload, user) => {
         paymentDate,
         keterangan || "PELUNASAN PIUTANG MARKETPLACE",
         user.kode,
-      ]
+      ],
     );
 
     // [SAFETY NET] Hapus sisa-sisa error sebelumnya
@@ -139,7 +139,7 @@ const savePelunasan = async (payload, user) => {
       // 4a. Ambil Data Fee & Piutang Header
       const [invRow] = await connection.query(
         `SELECT inv_mp_biaya_platform FROM tinv_hdr WHERE inv_nomor = ?`,
-        [inv.inv_nomor]
+        [inv.inv_nomor],
       );
       const feePlatform = Number(invRow[0]?.inv_mp_biaya_platform || 0);
 
@@ -148,7 +148,7 @@ const savePelunasan = async (payload, user) => {
       if (!phNomor) {
         const [hdr] = await connection.query(
           `SELECT ph_nomor FROM tpiutang_hdr WHERE ph_inv_nomor = ? LIMIT 1`,
-          [inv.inv_nomor]
+          [inv.inv_nomor],
         );
         if (!hdr.length)
           throw new Error(`Piutang tidak ditemukan: ${inv.inv_nomor}`);
@@ -177,7 +177,7 @@ const savePelunasan = async (payload, user) => {
             uangReal,
             urut,
             angsurIdUang,
-          ]
+          ],
         );
 
         // --- B. POTONG PIUTANG 1 (Uang Real) ---
@@ -192,14 +192,14 @@ const savePelunasan = async (payload, user) => {
             uangReal, // pd_kredit
             `VIA ${paymentMethod}`, // pd_ket
             angsurIdUang, // pd_sd_angsur
-          ]
+          ],
         );
       }
 
       // --- C. POTONG PIUTANG 2 (Fee Platform - Non Tunai) ---
       const [cekFee] = await connection.query(
         `SELECT COUNT(*) as cnt FROM tpiutang_dtl WHERE pd_ph_nomor = ? AND pd_ket = 'BIAYA LAYANAN'`,
-        [phNomor]
+        [phNomor],
       );
 
       if (feePlatform > 0 && cekFee[0].cnt === 0) {
@@ -211,7 +211,7 @@ const savePelunasan = async (payload, user) => {
             paymentDate,
             feePlatform, // pd_kredit
             angsurIdFee, // pd_sd_angsur
-          ]
+          ],
         );
       }
 
@@ -220,7 +220,7 @@ const savePelunasan = async (payload, user) => {
       // inv_pundiamal = uangReal + feePlatform = bayarGross
       await connection.query(
         `UPDATE tinv_hdr SET inv_pundiamal = IFNULL(inv_pundiamal, 0) + ? WHERE inv_nomor = ?`,
-        [bayarGross, inv.inv_nomor]
+        [bayarGross, inv.inv_nomor],
       );
 
       urut++;
@@ -239,11 +239,30 @@ const savePelunasan = async (payload, user) => {
 
 // [BARU] 3. Ambil History Pelunasan (Browse)
 const getPaymentHistory = async (filters, user) => {
-  const { page = 1, itemsPerPage = 10, term, startDate, endDate } = filters;
+  const {
+    page = 1,
+    itemsPerPage = 10,
+    term,
+    startDate,
+    endDate,
+    cabang,
+  } = filters;
   const offset = (page - 1) * itemsPerPage;
 
-  let whereClause = `WHERE h.sh_cab = ? AND h.sh_ket LIKE '%PELUNASAN%'`;
-  const params = [user.cabang];
+  // 1. Logika Filter Cabang Dinamis
+  let branchFilter = "";
+  let params = [];
+
+  if (cabang && cabang !== "ALL") {
+    branchFilter = " AND h.sh_cab = ? ";
+    params.push(cabang);
+  } else if (!cabang && user.cabang !== "KDC") {
+    // Fallback keamanan: jika param kosong dan bukan KDC, kunci ke cabang user
+    branchFilter = " AND h.sh_cab = ? ";
+    params.push(user.cabang);
+  }
+
+  let whereClause = `WHERE h.sh_ket LIKE '%PELUNASAN PIUTANG MARKETPLACE%' ${branchFilter}`;
 
   if (startDate && endDate) {
     whereClause += ` AND h.sh_tanggal BETWEEN ? AND ?`;
@@ -255,26 +274,10 @@ const getPaymentHistory = async (filters, user) => {
     params.push(`%${term}%`, `%${term}%`);
   }
 
-  // Query Count
-  const countQuery = `
-    SELECT COUNT(*) as total 
-    FROM tsetor_hdr h
-    LEFT JOIN tcustomer c ON c.cus_kode = h.sh_cus_kode
-    ${whereClause}
-  `;
-  const [countRows] = await pool.query(countQuery, params);
-
-  // Query Data
+  // Query Count & Data
+  const countQuery = `SELECT COUNT(*) as total FROM tsetor_hdr h LEFT JOIN tcustomer c ON c.cus_kode = h.sh_cus_kode ${whereClause}`;
   const dataQuery = `
-    SELECT 
-      h.sh_nomor, 
-      h.sh_tanggal, 
-      h.sh_cus_kode, 
-      c.cus_nama,
-      h.sh_jenis, -- 1=Transfer, 0=Tunai
-      h.sh_nominal AS total_bayar,
-      h.sh_ket,
-      h.user_create
+    SELECT h.sh_nomor, h.sh_tanggal, h.sh_cus_kode, c.cus_nama, h.sh_jenis, h.sh_nominal AS total_bayar, h.sh_ket, h.user_create
     FROM tsetor_hdr h
     LEFT JOIN tcustomer c ON c.cus_kode = h.sh_cus_kode
     ${whereClause}
@@ -282,18 +285,20 @@ const getPaymentHistory = async (filters, user) => {
     LIMIT ? OFFSET ?
   `;
 
+  const [countRows] = await pool.query(countQuery, params);
   const [rows] = await pool.query(dataQuery, [
     ...params,
     Number(itemsPerPage),
     Number(offset),
   ]);
+
   return { items: rows, total: countRows[0].total };
 };
 
 // [BARU] 4. Ambil Detail Satu Pelunasan (Read View)
 const getPaymentDetail = async (nomor, user) => {
-  // A. Header
-  const headerQuery = `
+  // 1. Buat query dasar
+  let headerSql = `
     SELECT 
       h.*, 
       c.cus_nama, c.cus_alamat,
@@ -302,20 +307,34 @@ const getPaymentDetail = async (nomor, user) => {
            ELSE 'TUNAI' END as metode_bayar_desc
     FROM tsetor_hdr h
     LEFT JOIN tcustomer c ON c.cus_kode = h.sh_cus_kode
-    WHERE h.sh_nomor = ? AND h.sh_cab = ?
+    WHERE h.sh_nomor = ?
   `;
-  const [headerRows] = await pool.query(headerQuery, [nomor, user.cabang]);
-  if (headerRows.length === 0)
-    throw new Error("Data pelunasan tidak ditemukan.");
 
-  // B. Detail Invoice yang dibayar
+  const params = [nomor];
+
+  // 2. Jika BUKAN user KDC, maka kunci pengecekan ke cabang user tersebut
+  if (user.cabang !== "KDC") {
+    headerSql += ` AND h.sh_cab = ?`;
+    params.push(user.cabang);
+  }
+
+  const [headerRows] = await pool.query(headerSql, params);
+
+  if (headerRows.length === 0) {
+    // Jika tidak ketemu, berarti memang nomor salah atau user store mencoba akses cabang lain
+    throw new Error(
+      "Data pelunasan tidak ditemukan atau Anda tidak memiliki akses.",
+    );
+  }
+
+  // 3. Detail Invoice yang dibayar (Query ini tetap karena mengacu pada sd_sh_nomor)
   const detailQuery = `
     SELECT 
       d.sd_inv AS inv_nomor,
       d.sd_bayar AS nominal_bayar,
       i.inv_tanggal,
-      i.inv_mp_nomor_pesanan, -- No Pesanan Marketplace
-      i.inv_mp_nama           -- Nama Marketplace
+      i.inv_mp_nomor_pesanan,
+      i.inv_mp_nama 
     FROM tsetor_dtl d
     LEFT JOIN tinv_hdr i ON i.inv_nomor = d.sd_inv
     WHERE d.sd_sh_nomor = ?

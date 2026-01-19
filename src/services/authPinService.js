@@ -81,7 +81,10 @@ const authPinService = {
         authId: String(authNomor),
       };
 
-      if (
+      if (String(jenis).trim() === "TRANSFER_SOP") {
+        // Sesuai permintaan: Kirim hanya ke RIO untuk Transfer SOP
+        managerCodes = ["RIO"];
+      } else if (
         String(jenis).trim() === "AMBIL_BARANG" &&
         target_cabang &&
         target_cabang !== "KDC"
@@ -193,6 +196,9 @@ const authPinService = {
           query +=
             " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '') ";
         }
+      } else if (userKodeUpper === "RIO") {
+        // RIO hanya melihat otorisasi Transfer SOP
+        query += " AND o_jenis = 'TRANSFER_SOP' ";
       } else {
         query +=
           " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '' OR o_jenis = 'PEMINJAMAN_BARANG') ";

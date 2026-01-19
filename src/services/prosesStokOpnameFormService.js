@@ -11,47 +11,48 @@ const generateNewNumber = async (connection, branchCode, date) => {
 };
 
 /**
- * Mengambil data selisih dari hasil hitung stok untuk di-load ke form.
+ * Mengambil data selisih dari hasil hitung stok.
+ * Sekarang menerima parameter cabang dinamis.
  */
-const getInitialData = async (user) => {
-  const { cabang } = user;
+const getInitialData = async (user, targetCabang = null) => {
+  const cabang = targetCabang || user.cabang;
 
-  // 1. Dapatkan tanggal stok opname yang aktif
   const [sopTanggalRows] = await pool.query(
     "SELECT st_tanggal FROM tsop_tanggal WHERE st_cab = ? AND st_transfer = 'N' LIMIT 1",
-    [cabang]
+    [cabang],
   );
+
   if (sopTanggalRows.length === 0) {
     throw new Error(
-      `Tidak ada tanggal stok opname yang aktif untuk cabang ${cabang}.`
+      `Tidak ada tanggal stok opname yang aktif untuk cabang ${cabang}.`,
     );
   }
   const zsoptgl = sopTanggalRows[0].st_tanggal;
 
-  // 2. Query dari 'btnHitungClick' Delphi untuk mengambil data selisih
   const query = `
-        SELECT y.Kode, y.Barcode, y.Nama, y.Ukuran, y.hpp, y.lokasi,
-               (y.showroom + y.pesan) AS Stok, y.hitung AS Jumlah, y.Selisih
+    SELECT y.Kode, y.Barcode, y.Nama, y.Ukuran, y.hpp, y.lokasi,
+           (y.showroom + y.pesan) AS Stok, y.hitung AS Jumlah, y.Selisih
+    FROM (
+        SELECT x.*, (x.hitung - (x.showroom + x.pesan)) AS Selisih
         FROM (
-            SELECT x.*, (x.hitung - (x.showroom + x.pesan)) AS Selisih
-            FROM (
-                SELECT 
-                    a.brg_kode AS Kode, b.brgd_barcode AS Barcode, 
-                    TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS Nama,
-                    b.brgd_ukuran AS Ukuran, IF(b.brgd_hpp=0, 1, b.brgd_hpp) AS hpp,
-                    IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_tanggal < ? AND m.mst_brg_kode=b.brgd_kode AND m.mst_ukuran=b.brgd_ukuran), 0) AS showroom,
-                    IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstokso m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_tanggal < ? AND m.mst_brg_kode=b.brgd_kode AND m.mst_ukuran=b.brgd_ukuran), 0) AS pesan,
-                    IFNULL((SELECT SUM(u.hs_qty) FROM thitungstok u WHERE u.hs_proses="N" AND u.hs_cab=? AND u.hs_kode=b.brgd_kode AND u.hs_ukuran=b.brgd_ukuran), 0) AS hitung,
-                    IFNULL((SELECT CAST(GROUP_CONCAT(CONCAT(h.hs_lokasi,"=",h.hs_qty) SEPARATOR ", ") AS CHAR) FROM thitungstok h WHERE h.hs_proses="N" AND h.hs_cab=? AND h.hs_kode=b.brgd_kode AND h.hs_ukuran=b.brgd_ukuran), "") AS lokasi
-                FROM tbarangdc_dtl b
-                JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
-                WHERE a.brg_logstok="Y"
-            ) x
-            WHERE (x.showroom + x.pesan) <> 0 OR x.hitung <> 0
-        ) y
-        WHERE y.Selisih <> 0
-        ORDER BY y.Nama, RIGHT(y.barcode, 2)
-    `;
+            SELECT 
+                a.brg_kode AS Kode, b.brgd_barcode AS Barcode, 
+                TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS Nama,
+                b.brgd_ukuran AS Ukuran, IF(b.brgd_hpp=0, 1, b.brgd_hpp) AS hpp,
+                IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_tanggal < ? AND m.mst_brg_kode=b.brgd_kode AND m.mst_ukuran=b.brgd_ukuran), 0) AS showroom,
+                IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstokso m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_tanggal < ? AND m.mst_brg_kode=b.brgd_kode AND m.mst_ukuran=b.brgd_ukuran), 0) AS pesan,
+                IFNULL((SELECT SUM(u.hs_qty) FROM thitungstok u WHERE u.hs_proses="N" AND u.hs_cab=? AND u.hs_kode=b.brgd_kode AND u.hs_ukuran=b.brgd_ukuran), 0) AS hitung,
+                IFNULL((SELECT CAST(GROUP_CONCAT(CONCAT(h.hs_lokasi,"=",h.hs_qty) SEPARATOR ", ") AS CHAR) FROM thitungstok h WHERE h.hs_proses="N" AND h.hs_cab=? AND h.hs_kode=b.brgd_kode AND h.hs_ukuran=b.brgd_ukuran), "") AS lokasi
+            FROM tbarangdc_dtl b
+            JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
+            WHERE a.brg_logstok="Y"
+        ) x
+        -- Filter inner tetap ada agar barang yang benar-benar kosong di kedua sisi tidak tampil
+        WHERE (x.showroom + x.pesan) <> 0 OR x.hitung <> 0
+    ) y
+    -- [DIHAPUS] WHERE y.Selisih <> 0 (Agar semua data tampil sesuai program lama)
+    ORDER BY y.Nama, RIGHT(y.barcode, 2)
+  `;
 
   const params = [cabang, zsoptgl, cabang, zsoptgl, cabang, cabang];
   const [items] = await pool.query(query, params);
@@ -64,25 +65,27 @@ const getInitialData = async (user) => {
  */
 const saveData = async (payload, user) => {
   const { header, items } = payload;
-  const isEdit = !!header.nomor && header.nomor !== "<-- Kosong=Baru"; // Logika untuk mendeteksi mode edit
+  const targetCabang = header.gudang || user.cabang;
+  const isEdit = !!header.nomor && header.nomor !== "<-- Kosong=Baru";
   const connection = await pool.getConnection();
 
   try {
     await connection.beginTransaction();
 
     let sopNomor = header.nomor;
+    const formattedTanggal = header.tanggal.split("T")[0];
     if (!isEdit) {
-      // Panggil fungsi generate nomor baru jika mode 'Create'
       sopNomor = await generateNewNumber(
         connection,
-        user.cabang,
-        header.tanggal
+        targetCabang,
+        formattedTanggal,
       );
     }
 
-    // Siapkan data untuk tabel header
     const headerData = {
-      sop_tanggal: header.tanggal,
+      sop_nomor: sopNomor,
+      sop_tanggal: formattedTanggal,
+      sop_cab: targetCabang,
       sop_ket: header.keterangan,
     };
 
@@ -94,25 +97,35 @@ const saveData = async (payload, user) => {
         sopNomor,
       ]);
     } else {
-      headerData.sop_nomor = sopNomor;
       headerData.user_create = user.kode;
       headerData.date_create = new Date();
       await connection.query("INSERT INTO tsop_hdr SET ?", headerData);
     }
 
-    // Hapus detail lama (baik mode edit maupun create, sesuai logika Delphi)
     await connection.query("DELETE FROM tsop_dtl2 WHERE sopd_nomor = ?", [
       sopNomor,
     ]);
 
-    // Insert detail yang baru dari grid
     for (const item of items) {
-      // Validasi HPP dari Delphi
-      if (item.hpp === 0 || item.hpp === null) {
+      if (!item.hpp || item.hpp === 0) {
         throw new Error(
-          `HPP untuk barang ${item.Nama} (${item.Ukuran}) harus diisi.`
+          `HPP untuk barang ${item.Nama} (${item.Ukuran}) harus diisi.`,
         );
       }
+
+      // --- PERBAIKAN: Ambil lokasi gabungan dari thitungstok ---
+      // Menggunakan IFNULL agar hasil GROUP_CONCAT tidak null jika data tidak ditemukan
+      const [lokasiRows] = await connection.query(
+        `SELECT IFNULL(GROUP_CONCAT(CONCAT(hs_lokasi, "=", hs_qty) SEPARATOR ", "), '') AS lokasi_string
+         FROM thitungstok
+         WHERE hs_kode = ? AND hs_ukuran = ? AND hs_cab = ? AND hs_proses = 'N'
+         GROUP BY hs_kode, hs_ukuran`,
+        [item.Kode, item.Ukuran, targetCabang],
+      );
+
+      // Jika data ditemukan gunakan hasil query, jika tidak gunakan string kosong
+      const finalLokasi =
+        lokasiRows.length > 0 ? lokasiRows[0].lokasi_string : "";
 
       const detailData = {
         sopd_nomor: sopNomor,
@@ -122,8 +135,10 @@ const saveData = async (payload, user) => {
         sopd_jumlah: item.Jumlah,
         sopd_selisih: item.Selisih,
         sopd_hpp: item.hpp,
-        sopd_ket: item.Lokasi,
+        // Gunakan hasil lokasi dari thitungstok
+        sopd_ket: finalLokasi,
       };
+
       await connection.query("INSERT INTO tsop_dtl2 SET ?", detailData);
     }
 
@@ -158,7 +173,7 @@ const getDataForEdit = async (nomor) => {
   const [rows] = await pool.query(query, [nomor]);
   if (rows.length === 0) {
     throw new Error(
-      `Dokumen Stok Opname dengan nomor ${nomor} tidak ditemukan.`
+      `Dokumen Stok Opname dengan nomor ${nomor} tidak ditemukan.`,
     );
   }
 
@@ -245,11 +260,11 @@ const getDataFromStaging = async (user) => {
   // 1. Dapatkan tanggal stok opname yang aktif
   const [sopTanggalRows] = await pool.query(
     "SELECT st_tanggal FROM tsop_tanggal WHERE st_cab = ? AND st_transfer = 'N' LIMIT 1",
-    [cabang]
+    [cabang],
   );
   if (sopTanggalRows.length === 0) {
     throw new Error(
-      `Tidak ada tanggal stok opname yang aktif untuk cabang ${cabang}.`
+      `Tidak ada tanggal stok opname yang aktif untuk cabang ${cabang}.`,
     );
   }
   const zsoptgl = sopTanggalRows[0].st_tanggal;

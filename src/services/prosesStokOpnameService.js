@@ -71,7 +71,7 @@ const transferSop = async (nomor, pin, user) => {
     // Ambil data header untuk validasi
     const [headers] = await connection.query(
       "SELECT sop_nomor, sop_tanggal, sop_transfer, sop_cab as cabang FROM tsop_hdr WHERE sop_nomor = ?",
-      [nomor]
+      [nomor],
     );
     if (headers.length === 0) throw new Error("Dokumen tidak ditemukan.");
     const doc = headers[0];
@@ -90,41 +90,41 @@ const transferSop = async (nomor, pin, user) => {
     const ketSop = format(new Date(tanggalSop), "dd-MM-yyyy");
     await connection.query(
       'UPDATE tmasterstok SET mst_aktif="N", mst_ket = ? WHERE mst_aktif="Y" AND mst_cab = ? AND mst_tanggal < ?',
-      [ketSop, cabang, tanggalSop]
+      [ketSop, cabang, tanggalSop],
     );
     await connection.query(
       'UPDATE tmasterstokso SET mst_aktif="N", mst_ket = ? WHERE mst_aktif="Y" AND mst_cab = ? AND mst_tanggal < ?',
-      [ketSop, cabang, tanggalSop]
+      [ketSop, cabang, tanggalSop],
     );
 
     // 4. Salin data dari tsop_dtl2 ke tsop_dtl
     await connection.query(
       "INSERT INTO tsop_dtl SELECT * FROM tsop_dtl2 WHERE sopd_nomor = ?",
-      [nomor]
+      [nomor],
     );
 
     // 5. Update status transfer di tsop_hdr
     await connection.query(
       'UPDATE tsop_hdr SET sop_transfer="Y" WHERE sop_nomor = ?',
-      [nomor]
+      [nomor],
     );
 
     // 6. Update status proses di thitungstok
     await connection.query(
       'UPDATE thitungstok SET hs_proses="Y" WHERE hs_proses="N" AND hs_cab = ?',
-      [cabang]
+      [cabang],
     );
 
     // 7. Update tanggal SOP terakhir di tgudang
     await connection.query(
       "UPDATE tgudang SET gdg_lastSopOld = gdg_last_sop, gdg_last_sop = ? WHERE gdg_kode = ?",
-      [tanggalSop, cabang]
+      [tanggalSop, cabang],
     );
 
     // 8. Update status transfer di tsop_tanggal
     await connection.query(
       'UPDATE tsop_tanggal SET st_transfer="Y" WHERE st_cab = ? AND st_tanggal = ?',
-      [cabang, tanggalSop]
+      [cabang, tanggalSop],
     );
 
     await connection.commit();
@@ -162,40 +162,46 @@ const getDetails = async (nomor) => {
     // 1. Cek status transfer di header dulu
     const [headers] = await connection.query(
       "SELECT sop_transfer FROM tsop_hdr WHERE sop_nomor = ?",
-      [nomor]
+      [nomor],
     );
 
     if (headers.length === 0) return []; // Header tidak ditemukan
 
-    const isTransferred = headers[0].sop_transfer === 'Y';
-    
+    const isTransferred = headers[0].sop_transfer === "Y";
+
     // 2. Tentukan tabel sumber berdasarkan status transfer
     // Jika 'Y' (Sudah Transfer) -> pakai tsop_dtl
     // Jika 'N' (Belum Transfer) -> pakai tsop_dtl2
-    const tableName = isTransferred ? 'tsop_dtl' : 'tsop_dtl2';
+    const tableName = isTransferred ? "tsop_dtl" : "tsop_dtl2";
 
     const query = `
-      SELECT 
-        d.sopd_kode AS Kode,
-        COALESCE(b.brgd_barcode, '') AS Barcode,
-        CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna) AS Nama,
-        d.sopd_ukuran AS Ukuran,
-        d.sopd_stok AS Stok,    -- Perhatikan kapitalisasi kolom di DB biasanya lowercase (sopd_stok)
-        d.sopd_jumlah AS Jumlah,
-        d.sopd_selisih AS Selisih,
-        d.sopd_hpp AS Hpp,
-        (d.sopd_selisih * d.sopd_hpp) AS Nominal,
-        d.sopd_ket AS Lokasi
-      FROM ${tableName} d
-      LEFT JOIN tbarangdc a ON a.brg_kode = d.sopd_kode
-      LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sopd_kode AND b.brgd_ukuran = d.sopd_ukuran
-      WHERE d.sopd_nomor = ?
-      ORDER BY d.sopd_nomor, a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna, d.sopd_ukuran
-    `;
+  SELECT 
+    d.sopd_kode AS Kode,
+    COALESCE(b.brgd_barcode, '') AS Barcode,
+    CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna) AS Nama,
+    d.sopd_ukuran AS Ukuran,
+    d.sopd_stok AS Stok,
+    d.sopd_jumlah AS Jumlah,
+    d.sopd_selisih AS Selisih,
+    d.sopd_hpp AS Hpp,
+    (d.sopd_selisih * d.sopd_hpp) AS Nominal,
+    -- PERBAIKAN: Ambil lokasi dari thitungstok jika sopd_ket kosong
+    IFNULL(NULLIF(d.sopd_ket, ''), (
+      SELECT GROUP_CONCAT(CONCAT(ht.hs_lokasi, "=", ht.hs_qty) SEPARATOR ", ")
+      FROM thitungstok ht
+      WHERE ht.hs_kode = d.sopd_kode AND ht.hs_ukuran = d.sopd_ukuran 
+      AND ht.hs_cab = h.sop_cab AND ht.hs_proses = 'N'
+    )) AS Lokasi
+  FROM ${tableName} d
+  INNER JOIN tsop_hdr h ON h.sop_nomor = d.sopd_nomor -- Pastikan Join ke Header ada
+  LEFT JOIN tbarangdc a ON a.brg_kode = d.sopd_kode
+  LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sopd_kode AND b.brgd_ukuran = d.sopd_ukuran
+  WHERE d.sopd_nomor = ?
+  ORDER BY d.sopd_nomor, a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna, d.sopd_ukuran
+`;
 
     const [rows] = await connection.query(query, [nomor]);
     return rows;
-
   } finally {
     connection.release();
   }
@@ -250,7 +256,12 @@ const getExportDetails = async (filters) => {
           d.sopd_selisih AS 'Selisih',
           d.sopd_hpp AS 'HPP',
           (d.sopd_selisih * d.sopd_hpp) AS 'Nominal Selisih',
-          d.sopd_ket AS 'Lokasi',
+          (
+          SELECT GROUP_CONCAT(CONCAT(ht.hs_lokasi, "=", ht.hs_qty) SEPARATOR ", ")
+          FROM thitungstok ht
+          WHERE ht.hs_kode = d.sopd_kode AND ht.hs_ukuran = d.sopd_ukuran 
+          AND ht.hs_cab = h.sop_cab AND ht.hs_proses = 'N'
+        ) AS 'Lokasi',
           2 AS urutan_prioritas
         FROM tsop_dtl2 d
         INNER JOIN tsop_hdr h ON h.sop_nomor = d.sopd_nomor

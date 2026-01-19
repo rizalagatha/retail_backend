@@ -1,4 +1,38 @@
 const changelogs = {
+  "1.3.3": {
+    date: "2026-01-19",
+    changes: [
+      "Fitur BARU : Setting dan Penambahan limit sisa piutang untuk customer Prioritas atau KPR, jika sisa piutang berjalan melebihi limit saat membuat transaksi baru maka akan memerlukan Otorisasi",
+      "Baru : Pembuatan FSK dibatasi satu kali per hari, karena FSK merupakan tanda closing di hari tersebut maka pastikan dahulu bahwa seluruh transaksi Invoice maupun DP dari SO sudah masuk FSK pada hari tersebut sebelum membuat FSK.",
+      {
+        title: "Penambahan:",
+        items: [
+          "Penambahan kolom dan filter Average Sale pada Halaman Laporan Dead Stock",
+          "Penambahan Halaman Hitung Stok per Operator",
+          "Penambahan Filter Cabang pada Peminjaman Barang",
+          "Penambahan pada Lonceng Notifikasi untuk Peminjaman yang belum Pengembalian lebih dari 14 hari",
+          "Penambahan kolom No Invoice pada Terima SJ untuk KPR",
+        ],
+      },
+      {
+        title: "Perbaikan:",
+        items: [
+          "NIK belum terupdate ke kolom No HP Member setelah simpan invoice Karyawan Kencana Print",
+          "Perbaikan dan penyesuaian untuk Stok Opname",
+          "Perbaikan Terima STBJ, agar tidak generate otomatis nomor SJ Garmen",
+          "Perbaikan format file upload SO DTF (hanya .jpg)",
+          "Perbaikan untuk close SJ yang sudah di-Invoice untuk KPR",
+          "Ketika membuat permintaan barang, untuk KPR harus memilih customer dulu",
+          "Perbaikan diskon penawaran setelah berhasil otorisasi tereset saat dipanggil ke SO",
+          "Perbaikan kategori barang belum terambil ketika load penawaran di SO",
+          "Perbaikan Halaman Browse Minta Barang ke DC, karena sekarang dilewatkan ke Packing List dulu",
+          "Perbaikan duplikasi cetak DP (gunakan tombol hanya halaman ganjil/genap) atau cetak melalui halaman Setoran Pembayaran",
+          "Untuk user KDC sementara tidak memerlukan otorisasi saat menyimpan Peminjaman Barang",
+          "Perbaikan Browse Pelunasan Invoice",
+        ],
+      },
+    ],
+  },
   "1.3.2": {
     date: "2026-01-11",
     changes: [

@@ -49,7 +49,7 @@ const savePeminjaman = async (data, user) => {
       // Hapus detail lama jika mode edit (hanya jika masih WAIT)
       await connection.query(
         "DELETE FROM tpeminjaman_dtl WHERE pjd_nomor = ?",
-        [nomor]
+        [nomor],
       );
 
       for (const item of items) {
@@ -79,7 +79,17 @@ const savePeminjaman = async (data, user) => {
 };
 
 const getList = async (filters, user) => {
-  const { startDate, endDate } = filters;
+  const { startDate, endDate, cabang } = filters;
+
+  let branchFilter = "";
+  let params = [startDate, endDate];
+
+  // Jika cabang bukan 'ALL', tambahkan filter spesifik
+  if (cabang && cabang !== "ALL") {
+    branchFilter = " AND h.pj_cab = ? ";
+    params.push(cabang);
+  }
+
   const query = `
         SELECT 
             h.idrec, 
@@ -93,13 +103,13 @@ const getList = async (filters, user) => {
             h.pj_status_kembali AS statusKembali, 
             h.user_create AS userCreate,
             (SELECT SUM(pjd_qty) FROM tpeminjaman_dtl WHERE pjd_nomor = h.pj_nomor) AS totalQty,
-            /* Ambil nomor pengembalian jika sudah ada */
             (SELECT pk_nomor FROM tpengembalian_hdr WHERE pk_ref_pinjam = h.pj_nomor LIMIT 1) AS noKembali
         FROM tpeminjaman_hdr h
-        WHERE h.pj_cab = ? AND h.pj_tanggal BETWEEN ? AND ?
+        WHERE h.pj_tanggal BETWEEN ? AND ?
+        ${branchFilter}
         ORDER BY h.pj_nomor DESC`;
 
-  const [rows] = await pool.query(query, [user.cabang, startDate, endDate]);
+  const [rows] = await pool.query(query, params);
   return rows;
 };
 
@@ -123,7 +133,7 @@ async function generatePjNomor(cab, conn) {
   const prefix = `PJ.${cab}.${format(new Date(), "yyMM")}.`;
   const [rows] = await conn.query(
     "SELECT MAX(pj_nomor) as last FROM tpeminjaman_hdr WHERE pj_nomor LIKE ?",
-    [prefix + "%"]
+    [prefix + "%"],
   );
   const lastNo = rows[0].last ? parseInt(rows[0].last.split(".").pop()) : 0;
   return prefix + (lastNo + 1).toString().padStart(4, "0");

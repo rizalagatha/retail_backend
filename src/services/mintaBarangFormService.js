@@ -307,11 +307,14 @@ const save = async (data, user) => {
     (sum, item) => sum + (Number(item.jumlah) || 0),
     0
   );
-  if (totalQty > 120) {
+
+  // [LOGIKA BARU] Abaikan limit jika cabang user adalah KPR
+  if (user.cabang !== "KPR" && totalQty > 120) {
     throw new Error(
       `Gagal Simpan: Total permintaan (${totalQty}) melebihi batas maksimal 120 pcs.`
     );
   }
+  
   const connection = await pool.getConnection();
   await connection.beginTransaction();
 

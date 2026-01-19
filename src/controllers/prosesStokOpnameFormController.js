@@ -2,7 +2,9 @@ const service = require("../services/prosesStokOpnameFormService");
 
 const getInitialData = async (req, res) => {
   try {
-    const data = await service.getInitialData(req.user);
+    // Ambil parameter cabang dari query (misal: ?cabang=K02)
+    const { cabang } = req.query;
+    const data = await service.getInitialData(req.user, cabang);
     res.json(data);
   } catch (error) {
     res.status(404).json({ message: error.message });
@@ -43,23 +45,29 @@ const updateData = async (req, res) => {
 };
 
 const getProductDetails = async (req, res) => {
-    try {
-        const { barcode } = req.params;
-        const { cabang, tanggalSop } = req.query;
-        const data = await service.getProductDetailsForSop(barcode, cabang, tanggalSop);
-        res.json(data);
-    } catch (error) {
-        res.status(404).json({ message: error.message });
-    }
+  try {
+    const { barcode } = req.params;
+    const { cabang, tanggalSop } = req.query;
+    const data = await service.getProductDetailsForSop(
+      barcode,
+      cabang,
+      tanggalSop
+    );
+    res.json(data);
+  } catch (error) {
+    res.status(404).json({ message: error.message });
+  }
 };
 
 const getDataFromStaging = async (req, res) => {
-    try {
-        const data = await service.getDataFromStaging(req.user);
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
+  try {
+    // Tambahkan pengambilan parameter cabang juga untuk muat data staging
+    const { cabang } = req.query;
+    const data = await service.getDataFromStaging(req.user, cabang);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
 module.exports = {

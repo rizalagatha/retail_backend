@@ -100,13 +100,16 @@ const saveData = async (payload, user) => {
     }
 
     // --- [TAMBAHAN] 3. Update Status Minta Barang Menjadi Close ---
+    // 3. Update Status Minta Barang Menjadi Close agar tidak muncul lagi di pencarian
     if (header.permintaan) {
-      await connection.query(
-        `UPDATE retail.tmintabarang_hdr 
-         SET mt_close = 'Y', user_modified = ?, date_modified = NOW() 
-         WHERE mt_nomor = ?`,
-        [user.kode, header.permintaan]
-      );
+      const closeMintaSql = `
+        UPDATE tmintabarang_hdr 
+        SET mt_close = 'Y', 
+            user_modified = ?, 
+            date_modified = NOW() 
+        WHERE mt_nomor = ?
+      `;
+      await connection.query(closeMintaSql, [user.kode, header.permintaan]);
     }
 
     await connection.commit();
@@ -136,7 +139,7 @@ const loadForEdit = async (nomor) => {
       h.pl_ket AS keterangan,
       h.pl_status AS status
     FROM tpacking_list_hdr h
-    LEFT JOIN retail.tgudang g ON g.gdg_kode = h.pl_cab_tujuan
+    LEFT JOIN tgudang g ON g.gdg_kode = h.pl_cab_tujuan
     WHERE h.pl_nomor = ?
   `;
   const [headers] = await pool.query(headerQuery, [nomor]);
@@ -156,8 +159,8 @@ const loadForEdit = async (nomor) => {
            AND m.mst_brg_kode=d.pld_kode AND m.mst_ukuran=d.pld_ukuran
       ), 0) AS stok
     FROM tpacking_list_dtl d
-    LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.pld_kode
-    LEFT JOIN retail.tbarangdc_dtl b ON b.brgd_kode = d.pld_kode AND b.brgd_ukuran = d.pld_ukuran
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.pld_kode
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.pld_kode AND b.brgd_ukuran = d.pld_ukuran
     WHERE d.pld_nomor = ?
     ORDER BY d.pld_kode, d.pld_ukuran
   `;
@@ -191,9 +194,9 @@ const loadItemsFromRequest = async (nomorMinta) => {
            AND m.mst_ukuran=d.mtd_ukuran
       ), 0) AS stok
 
-    FROM retail.tmintabarang_dtl d
-    LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.mtd_kode
-    LEFT JOIN retail.tbarangdc_dtl b ON b.brgd_kode = d.mtd_kode AND b.brgd_ukuran = d.mtd_ukuran
+    FROM tmintabarang_dtl d
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.mtd_kode
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mtd_kode AND b.brgd_ukuran = d.mtd_ukuran
     WHERE d.mtd_nomor = ?
     ORDER BY d.mtd_kode, d.mtd_ukuran -- Urutkan biar rapi
   `;
@@ -204,7 +207,7 @@ const loadItemsFromRequest = async (nomorMinta) => {
   if (rows.length === 0) {
     // Cek apakah header ada? (Opsional untuk debug)
     const [cekHeader] = await pool.query(
-      "SELECT mt_nomor FROM retail.tmintabarang_hdr WHERE mt_nomor = ?",
+      "SELECT mt_nomor FROM tmintabarang_hdr WHERE mt_nomor = ?",
       [nomorMinta]
     );
     if (cekHeader.length === 0) {
@@ -234,8 +237,8 @@ const findByBarcode = async (barcode) => {
          WHERE m.mst_aktif='Y' AND m.mst_cab='KDC' 
            AND m.mst_brg_kode=d.brgd_kode AND m.mst_ukuran=d.brgd_ukuran
       ), 0) AS stok
-    FROM retail.tbarangdc_dtl d
-    LEFT JOIN retail.tbarangdc h ON h.brg_kode = d.brgd_kode
+    FROM tbarangdc_dtl d
+    LEFT JOIN tbarangdc h ON h.brg_kode = d.brgd_kode
     WHERE h.brg_aktif = 0 AND d.brgd_barcode = ?
   `;
   const [rows] = await pool.query(query, [barcode]);
@@ -265,8 +268,8 @@ const getPrintData = async (nomor) => {
       g_src.gdg_inv_telp AS perush_telp
 
     FROM tpacking_list_hdr h
-    LEFT JOIN retail.tgudang g_dest ON g_dest.gdg_kode = h.pl_cab_tujuan
-    LEFT JOIN retail.tgudang g_src ON g_src.gdg_kode = 'KDC' -- Default KDC
+    LEFT JOIN tgudang g_dest ON g_dest.gdg_kode = h.pl_cab_tujuan
+    LEFT JOIN tgudang g_src ON g_src.gdg_kode = 'KDC' -- Default KDC
     WHERE h.pl_nomor = ?
   `;
   const [headers] = await pool.query(headerQuery, [nomor]);
@@ -282,7 +285,7 @@ const getPrintData = async (nomor) => {
       d.pld_jumlah AS jumlah,
       d.pld_keterangan AS keterangan
     FROM tpacking_list_dtl d
-    LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.pld_kode
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.pld_kode
     WHERE d.pld_nomor = ?
     ORDER BY d.pld_kode, d.pld_ukuran
   `;

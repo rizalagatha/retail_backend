@@ -43,7 +43,8 @@ const getList = async (filters) => {
         h.sj_kecab AS Store,
         g.gdg_nama AS Nama_Store,
         h.sj_ket AS Keterangan,
-        IFNULL(t.tj_closing, "N") AS Closing
+        IFNULL(t.tj_closing, "N") AS Closing,
+        IFNULL((SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor_so = h.sj_nomor LIMIT 1), "") AS NoInvoice
     FROM tdc_sj_hdr h
     INNER JOIN tdc_sj_dtl d ON d.sjd_nomor = h.sj_nomor
     LEFT JOIN ttrm_sj_hdr t ON t.tj_nomor = h.sj_noterima

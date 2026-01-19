@@ -13,7 +13,7 @@ const generateNewSoNumber = async (connection, cabang, tanggal) => {
      FROM tso_hdr
      WHERE so_cab = ?
      AND so_nomor LIKE CONCAT(?, '%')`,
-    [cabang, prefix] // cabang = "K07", prefix = "K07.SO.2511"
+    [cabang, prefix], // cabang = "K07", prefix = "K07.SO.2511"
   );
   const nextNum = parseInt(rows[0].maxNum, 10) + 1;
   return `${prefix}.${String(10000 + nextNum).slice(1)}`;
@@ -27,7 +27,7 @@ const save = async (data, user) => {
   const { header, footer, details, dps, isNew } = data;
   const connection = await pool.getConnection();
   await connection.beginTransaction();
-  
+
   try {
     let soNomor = header.nomor;
     let idrec;
@@ -43,19 +43,19 @@ const save = async (data, user) => {
     const finalAktifStatus = header.isMarketplace
       ? "Y"
       : statusRaw === "AKTIF"
-      ? "Y"
-      : "N";
+        ? "Y"
+        : "N";
 
     // --- 2. QUERY HEADER ---
     if (isNew) {
       soNomor = await generateNewSoNumber(
         connection,
         header.gudang.kode,
-        header.tanggal
+        header.tanggal,
       );
       idrec = `${header.gudang.kode}SO${format(
         new Date(),
-        "yyyyMMddHHmmssSSS"
+        "yyyyMMddHHmmssSSS",
       )}`;
 
       const insertHeaderQuery = `
@@ -111,7 +111,7 @@ const save = async (data, user) => {
     } else {
       const [idrecRows] = await connection.query(
         "SELECT so_idrec FROM tso_hdr WHERE so_nomor = ?",
-        [soNomor]
+        [soNomor],
       );
       if (idrecRows.length === 0)
         throw new Error("Nomor SO untuk diupdate tidak ditemukan.");
@@ -203,7 +203,7 @@ const save = async (data, user) => {
           isCustom,
           isCustom === "Y" ? item.sod_custom_nama : null,
           customData,
-        ]
+        ],
       );
     }
 
@@ -226,7 +226,7 @@ const save = async (data, user) => {
         `UPDATE totorisasi 
              SET o_nomor = ?, o_transaksi = 'SO' 
              WHERE o_nomor = ?`,
-        [soNomor, nomorAuthLama]
+        [soNomor, nomorAuthLama],
       );
 
       // Selesai! Data otorisasi otomatis pindah ke nomor SO baru.
@@ -239,13 +239,13 @@ const save = async (data, user) => {
       // [LANGKAH A] Backup PIN Lama
       const [existingAuths] = await connection.query(
         "SELECT o_jenis, o_barcode, o_pin FROM totorisasi WHERE o_nomor = ? AND o_transaksi = 'SO'",
-        [soNomor]
+        [soNomor],
       );
 
       // [LANGKAH B] Hapus Data Lama (Agar bersih)
       await connection.query(
         "DELETE FROM totorisasi WHERE o_nomor = ? AND o_transaksi = 'SO'",
-        [soNomor]
+        [soNomor],
       );
 
       // [LANGKAH C] Insert Ulang (Merge)
@@ -254,7 +254,7 @@ const save = async (data, user) => {
         const old = existingAuths.find(
           (a) =>
             a.o_jenis === jenis &&
-            (barcodeOrKode ? a.o_barcode === barcodeOrKode : true)
+            (barcodeOrKode ? a.o_barcode === barcodeOrKode : true),
         );
         return old ? old.o_pin : null;
       };
@@ -271,7 +271,7 @@ const save = async (data, user) => {
           if (pinToUse) {
             await connection.query(
               'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_nominal) VALUES (?, "SO", "DISKON ITEM", ?, NOW(), ?, ?)',
-              [soNomor, itemCode, pinToUse, item.diskonPersen]
+              [soNomor, itemCode, pinToUse, item.diskonPersen],
             );
             processedBarcodes.add(itemCode);
           }
@@ -284,7 +284,7 @@ const save = async (data, user) => {
         if (pinToUse) {
           await connection.query(
             'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "SO", "DISKON FAKTUR", NOW(), ?, ?)',
-            [soNomor, pinToUse, footer.diskonPersen1]
+            [soNomor, pinToUse, footer.diskonPersen1],
           );
         }
       }
@@ -294,12 +294,12 @@ const save = async (data, user) => {
         const pinToUse = getPinToUse(
           "DISKON FAKTUR 2",
           null,
-          footer.pinDiskon2
+          footer.pinDiskon2,
         );
         if (pinToUse) {
           await connection.query(
             'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "SO", "DISKON FAKTUR 2", NOW(), ?, ?)',
-            [soNomor, pinToUse, footer.diskonPersen2]
+            [soNomor, pinToUse, footer.diskonPersen2],
           );
         }
       }
@@ -310,7 +310,7 @@ const save = async (data, user) => {
         if (pinToUse) {
           await connection.query(
             'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "SO", "TANPA DP", NOW(), ?, ?)',
-            [soNomor, pinToUse, footer.belumDibayar]
+            [soNomor, pinToUse, footer.belumDibayar],
           );
         }
       }
@@ -321,7 +321,7 @@ const save = async (data, user) => {
       const noSetoran = dps.map((dp) => dp.nomor);
       await connection.query(
         "UPDATE tsetor_hdr SET sh_so_nomor = ? WHERE sh_nomor IN (?)",
-        [soNomor, noSetoran]
+        [soNomor, noSetoran],
       );
     }
 
@@ -347,7 +347,7 @@ const getSoForEdit = async (nomor) => {
   try {
     const [invoiceRows] = await connection.query(
       "SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor_so = ?",
-      [nomor]
+      [nomor],
     );
     const isInvoiced = invoiceRows.length > 0;
 
@@ -640,6 +640,7 @@ const getPenawaranDetailsForSo = async (nomor, cabang) => {
         COALESCE(a.brg_jeniskain, ''), ' ',
         COALESCE(a.brg_warna, '')
     )) AS nama,
+    a.brg_ktgp AS kategori,
     d.pend_ukuran AS ukuran,
     IFNULL((
         SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
@@ -661,7 +662,7 @@ const getPenawaranDetailsForSo = async (nomor, cabang) => {
   WHERE d.pend_nomor = ? 
   ORDER BY d.pend_nourut
 `,
-    [cabang, nomor] // Masukkan cabang untuk filter tmasterstok
+    [cabang, nomor], // Masukkan cabang untuk filter tmasterstok
   );
 
   // 4. Kembalikan semua data
@@ -678,7 +679,7 @@ const getDefaultDiscount = async (
   gudang,
   hasPin,
   hasAcc,
-  penawaran
+  penawaran,
 ) => {
   let discount = 0;
 
@@ -823,7 +824,7 @@ const saveNewDp = async (dpData, user) => {
        FROM tsetor_hdr
        WHERE sh_cab = ?
          AND sh_nomor LIKE CONCAT(?, '%')`,
-      [cabang, prefix]
+      [cabang, prefix],
     );
 
     const lastNum = parseInt(maxRows[0].maxNum, 10);
@@ -1068,20 +1069,25 @@ const capitalize = (s) =>
  * @description Mengambil semua data yang diperlukan untuk mencetak Cash Receipt (DP).
  */
 const getDataForDpPrint = async (nomorSetoran) => {
-  // Query ini telah dibuat lebih aman dengan IFNULL
   const query = `
         SELECT 
-            h.sh_nomor, h.sh_tanggal, h.sh_nominal, h.sh_ket,
+            h.sh_nomor, h.sh_tanggal, h.sh_nominal, h.sh_ket, h.sh_jenis,
             IF(h.sh_jenis=0, 'TUNAI', IF(h.sh_jenis=1, 'TRANSFER', 'GIRO')) AS jenis_pembayaran,
-            c.cus_nama, c.cus_alamat, c.cus_telp,
+            c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
             h.sh_so_nomor,
             IFNULL(r.rek_nama, '') AS nama_akun, 
             IFNULL(r.rek_rekening, '') AS no_rekening,
             DATE_FORMAT(h.sh_tgltransfer, "%d-%m-%Y") AS tgl_transfer,
-            h.user_create
+            h.user_create,
+            -- AMBIL DARI TABEL GUDANG
+            g.gdg_inv_nama AS perush_nama,
+            g.gdg_inv_alamat AS perush_alamat,
+            g.gdg_inv_telp AS perush_telp
         FROM tsetor_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode = h.sh_cus_kode
         LEFT JOIN finance.trekening r ON r.rek_kode = h.sh_akun
+        -- JOIN KE GUDANG BERDASARKAN CABANG DOKUMEN
+        LEFT JOIN tgudang g ON g.gdg_kode = h.sh_cab
         WHERE h.sh_nomor = ?
     `;
   const [rows] = await pool.query(query, [nomorSetoran]);
@@ -1089,7 +1095,6 @@ const getDataForDpPrint = async (nomorSetoran) => {
 
   const data = rows[0];
 
-  // Tambahkan pengecekan keamanan sebelum memanggil terbilang
   const nominal = parseFloat(data.sh_nominal);
   if (!isNaN(nominal)) {
     data.terbilang = capitalize(terbilang(nominal)) + " Rupiah";
@@ -1165,7 +1170,7 @@ const hitungHarga = async ({ jenis, ukuran, titik, items }) => {
 const calculateHargaCustom = async (form) => {
   const totalJumlah = form.detailsUkuran.reduce(
     (a, b) => a + (b.jumlah || 0),
-    0
+    0,
   );
   const hargaPerCm = 500; // contoh hitungan awal per cm
   let totalHarga = 0;
@@ -1187,7 +1192,7 @@ const deleteDp = async (nomorSetoran) => {
   try {
     await connection.query(
       "UPDATE tsetor_hdr SET sh_so_nomor = '' WHERE sh_nomor = ?",
-      [nomorSetoran]
+      [nomorSetoran],
     );
     // 1. Hapus detail setoran jika ada
     await connection.query("DELETE FROM tsetor_dtl WHERE sd_sh_nomor = ?", [
@@ -1197,7 +1202,7 @@ const deleteDp = async (nomorSetoran) => {
     // 2. Hapus header setoran
     const [result] = await connection.query(
       "DELETE FROM tsetor_hdr WHERE sh_nomor = ? AND sh_otomatis = 'N'",
-      [nomorSetoran]
+      [nomorSetoran],
     );
 
     if (result.affectedRows === 0) {

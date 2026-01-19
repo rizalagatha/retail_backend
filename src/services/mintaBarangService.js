@@ -16,14 +16,33 @@ const getList = async (filters) => {
   else if (jenisPermintaan === "otomatis")
     jenisFilter = 'AND h.mt_otomatis = "Y"';
 
-  // Query ini telah dilengkapi dengan semua kolom yang Anda minta
   const query = `
     SELECT 
         h.mt_nomor AS Nomor,
         h.mt_tanggal AS Tanggal,
         h.mt_so AS NoSO,
-        IFNULL((SELECT j.sj_nomor FROM tdc_sj_hdr j WHERE j.sj_mt_nomor = h.mt_nomor ORDER BY j.sj_tanggal DESC LIMIT 1), "") AS NoSJ,
-        IFNULL((SELECT j.sj_noterima FROM tdc_sj_hdr j WHERE j.sj_mt_nomor = h.mt_nomor ORDER BY j.sj_tanggal DESC LIMIT 1), "") AS TerimaSJ,
+        -- 1. Ambil No. Packing List (Trigger status Hitam/Proses)
+        IFNULL((SELECT pl.pl_nomor FROM tpacking_list_hdr pl WHERE pl.pl_mt_nomor = h.mt_nomor LIMIT 1), "") AS NoPL,
+        
+        -- 2. Ambil No. SJ (Cek di Packing List dulu, jika tidak ada baru cek di SJ langsung)
+        IFNULL(
+            (SELECT pl.pl_sj_nomor FROM tpacking_list_hdr pl WHERE pl.pl_mt_nomor = h.mt_nomor AND pl.pl_sj_nomor <> '' LIMIT 1),
+            IFNULL((SELECT j.sj_nomor FROM tdc_sj_hdr j WHERE j.sj_mt_nomor = h.mt_nomor LIMIT 1), "")
+        ) AS NoSJ,
+        
+        -- 3. Ambil Status Terima (Berdasarkan NoSJ yang ditemukan di atas)
+        IFNULL(
+            (SELECT sj2.sj_noterima FROM tdc_sj_hdr sj2 
+             WHERE sj2.sj_nomor = (
+                SELECT COALESCE(NULLIF(pl2.pl_sj_nomor, ''), sj3.sj_nomor)
+                FROM tmintabarang_hdr h2
+                LEFT JOIN tpacking_list_hdr pl2 ON pl2.pl_mt_nomor = h2.mt_nomor
+                LEFT JOIN tdc_sj_hdr sj3 ON sj3.sj_mt_nomor = h2.mt_nomor
+                WHERE h2.mt_nomor = h.mt_nomor
+                LIMIT 1
+             ) LIMIT 1), 
+        "") AS TerimaSJ,
+        
         h.mt_cus AS KdCus,
         c.cus_nama AS Customer,
         h.mt_ket AS Keterangan,
@@ -35,8 +54,8 @@ const getList = async (filters) => {
     WHERE h.mt_tanggal BETWEEN ? AND ?
     ${branchFilter}
     ${jenisFilter}
-    ORDER BY h.mt_nomor
-    `;
+    ORDER BY h.mt_nomor DESC
+`;
   const [rows] = await pool.query(query, params);
   return rows;
 };
@@ -100,7 +119,7 @@ const remove = async (nomor, user) => {
     // 1. Ambil data untuk validasi
     const [rows] = await connection.query(
       "SELECT mt_otomatis, (SELECT sj_nomor FROM tdc_sj_hdr WHERE sj_mt_nomor = mt_nomor LIMIT 1) AS NoSJ, mt_closing FROM tmintabarang_hdr WHERE mt_nomor = ?",
-      [nomor]
+      [nomor],
     );
     if (rows.length === 0) {
       throw new Error("Data tidak ditemukan.");
@@ -118,8 +137,8 @@ const remove = async (nomor, user) => {
       throw new Error(
         `Anda tidak berhak menghapus data milik cabang ${nomor.substring(
           0,
-          3
-        )}.`
+          3,
+        )}.`,
       );
     }
     if (item.mt_closing === "Y") {

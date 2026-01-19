@@ -195,12 +195,12 @@ const uploadImage = async (req, res) => {
     );
 
     const cabang = nomor.substring(0, 3);
-    const fileExtension = path.extname(req.file.originalname);
+    const fileExtension = ".jpg";
     const imageUrl = `/images/${cabang}/${nomor}${fileExtension}`;
 
     res.status(200).json({
       success: true,
-      message: "Gambar berhasil diunggah.",
+      message: "Gambar berhasil diunggah dan dikonversi ke JPG.",
       filePath: finalPath,
       imageUrl: imageUrl,
       nomor: nomor,

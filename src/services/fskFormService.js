@@ -157,6 +157,28 @@ const saveData = async (payload, user) => {
     const idrec = `${user.cabang}FSK${timestamp}`;
 
     if (isNew) {
+      // --- VALIDASI LOCK: 1 FSK per Hari ---
+      const checkSql = `
+          SELECT fsk_nomor 
+          FROM tform_setorkasir_hdr 
+          WHERE LEFT(fsk_nomor, 3) = ? AND fsk_tanggal = ?
+      `;
+      const [existing] = await connection.query(checkSql, [
+        user.cabang,
+        header.tanggal,
+      ]);
+
+      if (existing.length > 0) {
+        throw new Error(
+          `Gagal: Cabang ${
+            user.cabang
+          } sudah membuat FSK untuk tanggal ${format(
+            new Date(header.tanggal),
+            "dd/MM/yyyy"
+          )} (${existing[0].fsk_nomor}).`
+        );
+      }
+      // --- AKHIR VALIDASI ---
       fskNomor = await generateNewFskNumber(user.cabang, header.tanggal);
       const headerSql = `
                 INSERT INTO tform_setorkasir_hdr (fsk_idrec, fsk_nomor, fsk_tanggal, user_create, date_create)

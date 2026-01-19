@@ -2,13 +2,22 @@ const service = require("../services/laporanDeadStokService");
 
 const getList = async (req, res) => {
   try {
-    // Tambahkan validasi filter
-    if (!req.query.minUmur) {
+    const { minUmur, avgPeriod } = req.query;
+
+    // 1. Validasi Umur Barang
+    if (!minUmur) {
       return res
         .status(400)
         .json({ message: 'Filter "Umur (Hari)" harus diisi.' });
     }
-    const data = await service.getList(req.query, req.user);
+
+    // 2. Set Default Periode jika tidak dikirim dari frontend
+    const filters = {
+      ...req.query,
+      avgPeriod: parseInt(avgPeriod) || 12, // Default 1 tahun jika kosong
+    };
+
+    const data = await service.getList(filters, req.user);
     res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });

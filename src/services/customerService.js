@@ -1,58 +1,66 @@
 // backend/src/services/customerService.js
 const pool = require("../config/database");
 
-const getAllCustomers = async (user) => {
+const getAllCustomers = async (filters, user) => {
+  const { term, page = 1, itemsPerPage = 15 } = filters;
+  const searchTerm = `%${term || ""}%`;
   const userCabang = user ? user.cabang : null;
 
-  let query = `
-    SELECT 
-        c.cus_kode AS kode,
-        c.cus_nama AS nama,
-        c.cus_alamat AS alamat,
-        c.cus_kota AS kota,
-        c.cus_telp AS telp,
-        c.cus_nama_kontak AS namaKontak,
-        IF(c.cus_aktif = 0, 'AKTIF', 'PASIF') AS status,
-        c.cus_tgllahir AS tglLahir,
-        c.cus_top AS top,
-        c.cus_limit AS limitTrans,
-        (
-            SELECT lvl.level_nama
-            FROM tcustomer_level_history h
-            LEFT JOIN tcustomer_level lvl ON h.clh_level = lvl.level_kode
-            WHERE h.clh_cus_kode = c.cus_kode
-            ORDER BY h.clh_tanggal DESC
-            LIMIT 1
-        ) AS level
-    FROM tcustomer c
-  `;
+  // 1. Kalkulasi Pagination
+  const limit = parseInt(itemsPerPage);
+  const offset = (parseInt(page) - 1) * limit;
+  // Jika itemsPerPage = -1 (Pilihan 'Semua'), hilangkan LIMIT
+  const paginationSql = limit === -1 ? "" : `LIMIT ${limit} OFFSET ${offset}`;
 
+  // 2. Query Dasar & Filter (Digunakan oleh Data & Count)
+  let whereClauses = ["1=1"];
   const params = [];
-  const whereClauses = [];
 
   if (userCabang) {
     const branch = userCabang.toUpperCase();
-
     if (branch === "KPR") {
-      // KHUSUS KPR: Tampilkan semua yang Franchise = 'Y'
-      // Tanpa filter prefix kode agar K01, K-, dll tetap muncul
       whereClauses.push(`c.cus_franchise = 'Y'`);
     } else if (branch !== "KDC") {
-      // CABANG LAIN (Selain KDC & KPR): Gunakan filter prefix kode cabang
       whereClauses.push(`LEFT(c.cus_kode, 3) = ?`);
       params.push(userCabang);
     }
-    // Jika KDC: whereClauses kosong, sehingga menampilkan semua data
   }
 
-  if (whereClauses.length > 0) {
-    query += ` WHERE ` + whereClauses.join(" AND ");
+  if (term) {
+    whereClauses.push(
+      `(c.cus_nama LIKE ? OR c.cus_kode LIKE ? OR c.cus_kota LIKE ?)`
+    );
+    params.push(searchTerm, searchTerm, searchTerm);
   }
 
-  query += ` ORDER BY c.cus_kode;`;
+  const whereSql = `WHERE ` + whereClauses.join(" AND ");
 
-  const [rows] = await pool.query(query, params);
-  return rows;
+  // 3. Query Ambil Data
+  const dataQuery = `
+    SELECT 
+        c.cus_kode AS kode, c.cus_nama AS nama, c.cus_alamat AS alamat, 
+        c.cus_kota AS kota, c.cus_telp AS telp, c.cus_nama_kontak AS namaKontak,
+        IF(c.cus_aktif = 0, 'AKTIF', 'PASIF') AS status, c.cus_tgllahir AS tglLahir,
+        c.cus_top AS top, c.cus_limit AS limitTrans,
+        (SELECT lvl.level_nama FROM tcustomer_level_history h 
+         LEFT JOIN tcustomer_level lvl ON h.clh_level = lvl.level_kode
+         WHERE h.clh_cus_kode = c.cus_kode ORDER BY h.clh_tanggal DESC LIMIT 1) AS level
+    FROM tcustomer c
+    ${whereSql}
+    ORDER BY c.cus_kode
+    ${paginationSql}
+  `;
+
+  // 4. Query Hitung Total (WAJIB agar muncul "of 1101")
+  const countQuery = `SELECT COUNT(*) as total FROM tcustomer c ${whereSql}`;
+
+  const [rows] = await pool.query(dataQuery, params);
+  const [totalRows] = await pool.query(countQuery, params);
+
+  return {
+    items: rows,
+    total: totalRows[0].total, // Ini yang akan mengirim angka 1101
+  };
 };
 
 /**

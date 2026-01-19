@@ -16,6 +16,7 @@ const searchWarehouses = async (filters) => {
     itemsPerPage: itemsPerPageStr,
     excludeBranch,
     onlyDc,
+    source, // Ambil parameter source
   } = filters;
 
   const page = parseInt(pageStr, 10) || 1;
@@ -23,23 +24,27 @@ const searchWarehouses = async (filters) => {
   const offset = (page - 1) * itemsPerPage;
   const searchTerm = `%${term || ""}%`;
 
+  // [FIX] Pastikan conversion boolean tepat dari string query
+  const isOnlyDc = onlyDc === true || onlyDc === "true";
+
   let whereConditions = [];
   let params = [];
 
-  // Terapkan filter utama berdasarkan parameter
-  if (onlyDc) {
-    // --- Logika untuk Koreksi Stok (hanya DC) ---
-    // Sesuai Delphi: WHERE gdg_dc <> 0
+  // --- LOGIKA FILTER BERDASARKAN SOURCE ---
+
+  if (source === "stok-opname") {
+    // [BARU] Untuk Stok Opname Admin: Tampilkan SEMUA (DC + Store + Bazar)
+    // Tanpa filter gdg_dc agar K01, K02, dsb muncul berdampingan dengan KBD/KDS
+  } else if (isOnlyDc) {
+    // Untuk Koreksi Stok (Hanya DC)
     whereConditions.push("gdg_dc <> 0");
   } else if (excludeBranch) {
-    // --- Logika untuk Mutasi Kirim (exclude cabang sendiri) ---
-    // Sesuai Delphi: WHERE gdg_dc = 0 AND gdg_kode <> ?
+    // Untuk Mutasi Kirim (Exclude cabang sendiri)
     whereConditions.push("gdg_dc = 0");
     whereConditions.push("gdg_kode <> ?");
     params.push(excludeBranch);
   } else {
-    // --- Logika Default (untuk Surat Jalan, dll.) ---
-    // Sesuai Delphi: gdg_dc = 0 ATAU gdg_dc = 3
+    // Logika Default (SJ, dsb)
     whereConditions.push("(gdg_dc = 0 OR gdg_dc = 3)");
   }
 
@@ -49,7 +54,8 @@ const searchWarehouses = async (filters) => {
     params.push(searchTerm, searchTerm);
   }
 
-  const whereClause = `WHERE ${whereConditions.join(" AND ")}`;
+  const whereClause =
+    whereConditions.length > 0 ? `WHERE ${whereConditions.join(" AND ")}` : "";
 
   const countQuery = `SELECT COUNT(*) as total FROM tgudang ${whereClause}`;
   const [countRows] = await pool.query(countQuery, params);
@@ -101,10 +107,11 @@ const getSoDtfBranchOptions = async (userCabang) => {
 };
 
 const getById = async (kode) => {
-    const query = "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ?";
-    const [rows] = await pool.query(query, [kode]);
-    // Kembalikan null jika tidak ditemukan agar frontend bisa menangani
-    return rows.length > 0 ? rows[0] : null; 
+  const query =
+    "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ?";
+  const [rows] = await pool.query(query, [kode]);
+  // Kembalikan null jika tidak ditemukan agar frontend bisa menangani
+  return rows.length > 0 ? rows[0] : null;
 };
 
 module.exports = {

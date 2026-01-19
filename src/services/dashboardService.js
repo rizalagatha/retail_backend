@@ -827,24 +827,49 @@ const getStockAlerts = async (user) => {
       AND rb_tanggal >= DATE_SUB(NOW(), INTERVAL 3 MONTH)
   `;
 
+  // 4. [BARU] Cek Peminjaman Overdue (> 14 hari belum kembali)
+  // KDC bisa melihat semua cabang, Store hanya cabangnya sendiri
+  let queryPinjam = "";
+  let paramsPinjam = [];
+
+  if (cabang === "KDC") {
+    queryPinjam = `
+      SELECT COUNT(*) AS total 
+      FROM tpeminjaman_hdr 
+      WHERE pj_status_kembali = 'N' 
+        AND DATEDIFF(NOW(), pj_tanggal) > 14
+    `;
+  } else {
+    queryPinjam = `
+      SELECT COUNT(*) AS total 
+      FROM tpeminjaman_hdr 
+      WHERE pj_cab = ? 
+        AND pj_status_kembali = 'N' 
+        AND DATEDIFF(NOW(), pj_tanggal) > 14
+    `;
+    paramsPinjam.push(cabang);
+  }
+
   // Jalankan Query secara paralel
-  const [rowsSj, rowsMutasi, rowsReturDc] = await Promise.all([
+  const [rowsSj, rowsMutasi, rowsReturDc, rowsPinjam] = await Promise.all([
     pool.query(querySj, [cabang]),
     pool.query(queryMutasi, [cabang]),
     pool.query(queryReturDc, [cabang]),
+    pool.query(queryPinjam, paramsPinjam),
   ]);
 
   return {
     sj_pending: rowsSj[0][0].total || 0,
     mutasi_pending: rowsMutasi[0][0].total || 0,
     retur_dc_pending: rowsReturDc[0][0].total || 0, // [BARU]
+    pinjam_overdue: rowsPinjam[0][0].total || 0,
   };
 };
 
 const getStokKosongReguler = async (
   user,
   searchTerm = "",
-  targetCabang = ""
+  targetCabang = "",
 ) => {
   // 1. Determine which branch to check
   // Default to the user's own branch
@@ -1157,8 +1182,8 @@ const getParetoDetails = async (req, res) => {
                 Number(b.stok) < row.buffer_base
                   ? "KRITIS"
                   : Number(b.stok) > row.buffer_base * 3
-                  ? "OVER"
-                  : "AMAN",
+                    ? "OVER"
+                    : "AMAN",
             }))
         : [];
 
