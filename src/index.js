@@ -115,6 +115,7 @@ const qckeGarmenRoutes = require("./routes/qckeGarmenRoutes");
 const qckeGarmenFormRoutes = require("./routes/qckeGarmenFormRoutes");
 const stokOpnameSettingRoutes = require("./routes/stokOpnameSettingRoutes");
 const hitungStokRoutes = require("./routes/hitungStokRoutes");
+const lokasiOpnameRoutes = require("./routes/lokasiOpnameRoutes");
 const hitungStokFormRoutes = require("./routes/hitungStokFormRoutes");
 const hitungStokLokasiRoutes = require("./routes/hitungStokLokasiRoutes");
 const hitungStokOperatorRoutes = require("./routes/hitungStokOperatorRoutes");
@@ -180,7 +181,7 @@ app.use(
     allowedHeaders: "Content-Type, Authorization",
     exposedHeaders: "Content-Disposition",
     credentials: true,
-  })
+  }),
 );
 app.use(express.json({ limit: "50mb" }));
 app.use(cookieParser());
@@ -189,7 +190,7 @@ app.use(
     limit: "50mb",
     extended: true,
     parameterLimit: 50000,
-  })
+  }),
 );
 app.use("/images", express.static(imageFolderPath));
 app.disable("etag");
@@ -279,7 +280,7 @@ app.use("/api/pengajuan-barcode", clientCertAuth, pengajuanBarcodeRoutes);
 app.use(
   "/api/pengajuan-barcode-form",
   clientCertAuth,
-  pengajuanBarcodeFormRoutes
+  pengajuanBarcodeFormRoutes,
 );
 app.use("/api/jenis-kain", clientCertAuth, jenisKainRoutes);
 app.use("/api/warna-kain", clientCertAuth, warnaKainRoutes);
@@ -305,7 +306,7 @@ app.use("/api/laporan-kartu-stok", clientCertAuth, laporanKartuStokRoutes);
 app.use(
   "/api/laporan-list-otorisasi",
   clientCertAuth,
-  laporanListOtorisasiRoutes
+  laporanListOtorisasiRoutes,
 );
 app.use("/api/potongan", clientCertAuth, potonganRoutes);
 app.use("/api/potongan-form", clientCertAuth, potonganFormRoutes);
@@ -316,9 +317,10 @@ app.use("/api/qc-ke-garmen-form", clientCertAuth, qckeGarmenFormRoutes);
 app.use(
   "/api/stok-opname/setting-tanggal",
   clientCertAuth,
-  stokOpnameSettingRoutes
+  stokOpnameSettingRoutes,
 );
 app.use("/api/hitung-stok", clientCertAuth, hitungStokRoutes);
+app.use("/api/lokasi-opname", clientCertAuth, lokasiOpnameRoutes);
 app.use("/api/hitung-stok-form", clientCertAuth, hitungStokFormRoutes);
 app.use("/api/hitung-stok-lokasi", clientCertAuth, hitungStokLokasiRoutes);
 app.use("/api/hitung-stok-operator", clientCertAuth, hitungStokOperatorRoutes);
@@ -327,7 +329,7 @@ app.use("/api/proses-stok-opname", clientCertAuth, prosesStokOpnameRoutes);
 app.use(
   "/api/proses-stok-opname-form",
   clientCertAuth,
-  prosesStokOpnameFormRoutes
+  prosesStokOpnameFormRoutes,
 );
 app.use("/api/pareto", clientCertAuth, paretoRoutes);
 app.use("/api/laporan-penjualan-pivot", laporanPenjualanPivotRoutes);
@@ -335,7 +337,7 @@ app.use("/api/sales-vs-target", clientCertAuth, salesTargetRoutes);
 app.use(
   "/api/monitoring-achievement",
   clientCertAuth,
-  monitoringAchievementRoutes
+  monitoringAchievementRoutes,
 );
 app.use("/api/laporan-stok-pivot", clientCertAuth, laporanStokPivotRoutes);
 app.use("/api/laporan-stok-stagnan", clientCertAuth, laporanStokStagnanRoutes);
@@ -345,23 +347,23 @@ app.use("/api/mutasi-antar-gudang", clientCertAuth, mutasiAntarGudangRoutes);
 app.use(
   "/api/mutasi-antar-gudang-form",
   clientCertAuth,
-  mutasiAntarGudangFormRoutes
+  mutasiAntarGudangFormRoutes,
 );
 app.use("/api/pengajuan-produksi", clientCertAuth, pengajuanProduksiRoutes);
 app.use(
   "/api/pengajuan-produksi-form",
   clientCertAuth,
-  pengajuanProduksiFormRoutes
+  pengajuanProduksiFormRoutes,
 );
 app.use(
   "/api/approve-pengajuan-produksi",
   clientCertAuth,
-  approvePengajuanProduksiRoutes
+  approvePengajuanProduksiRoutes,
 );
 app.use(
   "/api/approve-pengajuan-form",
   clientCertAuth,
-  approvePengajuanProduksiFormRoutes
+  approvePengajuanProduksiFormRoutes,
 );
 app.use("/api/barang-external", clientCertAuth, barangExternalRoutes);
 app.use("/api/barang-external-form", clientCertAuth, barangExternalFormRoutes);
@@ -376,7 +378,7 @@ app.use("/api/peminjaman-barang-form", clientCertAuth, peminjamanFormRoutes);
 app.use(
   "/api/pengembalian-barang-form",
   clientCertAuth,
-  pengembalianFormRoutes
+  pengembalianFormRoutes,
 );
 app.use("/api/laporan-stok-minus", clientCertAuth, laporanStokMinusRoutes);
 app.use("/api/whatsapp", clientCertAuth, whatsappRoutes);

@@ -1,12 +1,12 @@
 const express = require("express");
 const router = express.Router();
-const controller = require("../controllers/hitungStokController");
+const controller = require("../controllers/lokasiOpnameController");
 const {
   verifyToken,
   checkPermission,
 } = require("../middleware/authMiddleware");
 
-const MENU_ID = "23";
+const MENU_ID = "18";
 
 router.get(
   "/",
@@ -14,12 +14,23 @@ router.get(
   checkPermission(MENU_ID, "view"),
   controller.getList,
 );
-router.get("/cabang-options", verifyToken, controller.getCabangOptions);
+router.get(
+  "/master",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getMasterOptions,
+);
 router.post(
-  "/bulk-generate-locations",
+  "/generate",
   verifyToken,
   checkPermission(MENU_ID, "insert"),
-  controller.bulkGenerateLocations,
+  controller.bulkGenerate,
+);
+router.delete(
+  "/:id",
+  verifyToken,
+  checkPermission(MENU_ID, "delete"),
+  controller.remove,
 );
 
 module.exports = router;
