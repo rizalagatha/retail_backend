@@ -13,7 +13,7 @@ router.get(
   "/load-all-stock",
   verifyToken,
   checkPermission(MENU_ID, "insert"),
-  controller.loadAllStock
+  controller.loadAllStock,
 );
 
 // GET: Mengambil data retur yang sudah ada untuk mode ubah
@@ -21,7 +21,7 @@ router.get(
   "/:nomor",
   verifyToken,
   checkPermission(MENU_ID, "edit"),
-  controller.getForEdit
+  controller.getForEdit,
 );
 
 // POST: Menyimpan data retur baru atau yang diubah
@@ -32,7 +32,7 @@ router.get(
   "/lookup/product-details",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getProductDetails
+  controller.getProductDetails,
 );
 
 // GET: Lookup untuk mencari produk via scan barcode
@@ -40,21 +40,37 @@ router.get(
   "/lookup/by-barcode/:barcode",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.findByBarcode
+  controller.findByBarcode,
 );
 
 router.get(
   "/lookup/gudang-dc",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.lookupGudangDc
+  controller.lookupGudangDc,
+);
+
+// Lookup daftar nomor Retur Jual Online khusus KON
+router.get(
+  "/lookup/retur-jual-kon",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.lookupReturJualKON,
+);
+
+// Load detail item berdasarkan nomor RJ yang dipilih
+router.get(
+  "/load-from-rj/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "insert"),
+  controller.loadFromRJ,
 );
 
 router.get(
   "/print/:nomor",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getPrintData
+  controller.getPrintData,
 );
 
 module.exports = router;

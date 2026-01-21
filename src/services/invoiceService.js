@@ -303,7 +303,12 @@ const getList = async (filters) => {
     PiutangReal AS (
         SELECT 
             ph.ph_inv_nomor,
-            (SUM(pd.pd_debet) - SUM(pd.pd_kredit)) AS SaldoAkhir
+            (SUM(pd.pd_debet) - SUM(pd.pd_kredit)) AS SaldoAkhir,
+            -- Hitung kredit HANYA yang berupa uang (bukan adjustment retur)
+            SUM(CASE 
+                WHEN pd.pd_uraian NOT LIKE 'Retur Online%' 
+                 AND pd.pd_uraian <> 'Pembayaran Retur'
+                THEN pd.pd_kredit ELSE 0 END) AS TotalBayarUang
         FROM tpiutang_hdr ph
         INNER JOIN PagedInvoices pi ON pi.inv_nomor = ph.ph_inv_nomor
         JOIN tpiutang_dtl pd ON pd.pd_ph_nomor = ph.ph_nomor
@@ -362,14 +367,11 @@ const getList = async (filters) => {
         h.inv_mp_biaya_platform AS BiayaPlatform,
 
         -- [LOGIC BAYAR]
-        -- Formula: Total Tagihan - Sisa Saldo Piutang
-        (
-          (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm) 
-          - 
-          IF(COALESCE(PR.SaldoAkhir, 0) < 0, 0, COALESCE(PR.SaldoAkhir, (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm)))
-        ) AS Bayar,
+        -- Jangan gunakan (Total - Sisa) agar tidak salah saat Retur.
+        -- Langsung ambil jumlah uang yang dibayarkan di kartu piutang.
+        COALESCE(PR.TotalBayarUang, 0) AS Bayar,
 
-        -- [LOGIC SISA PIUTANG]
+        -- [LOGIC SISA PIUTANG] (Tetap, agar sisa jadi 0)
         IF(COALESCE(PR.SaldoAkhir, 0) < 0, 0, 
            COALESCE(PR.SaldoAkhir, (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0)))
         ) AS SisaPiutang,
@@ -548,7 +550,7 @@ const remove = async (nomor, user) => {
                    (SELECT COUNT(*) FROM finance.tjurnal WHERE jur_nomor = h.inv_nomor) AS posting_count
             FROM tinv_hdr h WHERE h.inv_nomor = ?
         `,
-      [nomor]
+      [nomor],
     );
 
     if (rows.length === 0) throw new Error("Data tidak ditemukan.");
@@ -906,7 +908,7 @@ const changePaymentMethod = async (payload, user) => {
     const [invRows] = await connection.query(
       `SELECT inv_nomor, inv_tanggal, inv_cus_kode, inv_bayar, inv_dp 
        FROM tinv_hdr WHERE inv_nomor = ?`,
-      [nomor]
+      [nomor],
     );
 
     if (invRows.length === 0) throw new Error("Invoice tidak ditemukan.");
@@ -915,11 +917,11 @@ const changePaymentMethod = async (payload, user) => {
     // 2. Cek Lock FSK (Form Setor Kasir)
     const [fskRows] = await connection.query(
       "SELECT 1 FROM tform_setorkasir_dtl WHERE fskd_inv = ? LIMIT 1",
-      [nomor]
+      [nomor],
     );
     if (fskRows.length > 0) {
       throw new Error(
-        "Invoice sudah disetor (FSK). Tidak bisa ubah pembayaran."
+        "Invoice sudah disetor (FSK). Tidak bisa ubah pembayaran.",
       );
     }
 
@@ -933,7 +935,7 @@ const changePaymentMethod = async (payload, user) => {
     const [oldSetor] = await connection.query(
       `SELECT sd_sh_nomor FROM tsetor_dtl 
        WHERE sd_inv = ? AND sd_ket = 'PEMBAYARAN DARI KASIR'`,
-      [nomor]
+      [nomor],
     );
 
     if (oldSetor.length > 0) {
@@ -941,7 +943,7 @@ const changePaymentMethod = async (payload, user) => {
       // Hapus Detail Setoran
       await connection.query(
         "DELETE FROM tsetor_dtl WHERE sd_sh_nomor IN (?)",
-        [listSetor]
+        [listSetor],
       );
       // Hapus Header Setoran
       await connection.query("DELETE FROM tsetor_hdr WHERE sh_nomor IN (?)", [
@@ -956,7 +958,7 @@ const changePaymentMethod = async (payload, user) => {
       `DELETE FROM tpiutang_dtl 
        WHERE pd_ph_nomor = ? 
          AND pd_uraian IN ('Bayar Tunai Langsung', 'Pembayaran Card', 'Bayar Voucher')`,
-      [piutangNomor]
+      [piutangNomor],
     );
 
     // =========================================================
@@ -1001,7 +1003,13 @@ const changePaymentMethod = async (payload, user) => {
       await connection.query(
         `INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur)
          VALUES (?, ?, 'Bayar Tunai Langsung', ?, ?, ?)`,
-        [piutangNomor, tglSql, nominalBayar, `Ubah ke Tunai (${alasan})`, idrec]
+        [
+          piutangNomor,
+          tglSql,
+          nominalBayar,
+          `Ubah ke Tunai (${alasan})`,
+          idrec,
+        ],
       );
     } else {
       // --- KASUS TRANSFER / EDC ---
@@ -1013,7 +1021,7 @@ const changePaymentMethod = async (payload, user) => {
       nomorSetoranBaru = await generateNewSetorNumber(
         connection,
         user.cabang,
-        inv.inv_tanggal
+        inv.inv_tanggal,
       );
       updateParams.push(nominalBayar, nomorSetoranBaru);
 
@@ -1034,7 +1042,7 @@ const changePaymentMethod = async (payload, user) => {
           noRek || "",
           tglSql,
           user.kode,
-        ]
+        ],
       );
 
       // 2. Insert tsetor_dtl (Link Invoice ke Setoran)
@@ -1042,14 +1050,14 @@ const changePaymentMethod = async (payload, user) => {
         `INSERT INTO tsetor_dtl (
            sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut
          ) VALUES (?, ?, ?, ?, ?, 'PEMBAYARAN DARI KASIR', ?, 1)`,
-        [idrec, nomorSetoranBaru, tglSql, nomor, nominalBayar, idrec]
+        [idrec, nomorSetoranBaru, tglSql, nomor, nominalBayar, idrec],
       );
 
       // 3. Insert tpiutang_dtl (Pelunasan via Transfer)
       await connection.query(
         `INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur)
          VALUES (?, ?, 'Pembayaran Card', ?, ?, ?)`,
-        [piutangNomor, tglSql, nominalBayar, nomorSetoranBaru, idrec]
+        [piutangNomor, tglSql, nominalBayar, nomorSetoranBaru, idrec],
       );
     }
 

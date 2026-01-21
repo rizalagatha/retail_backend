@@ -111,7 +111,7 @@ const save = async (payload, user) => {
       : (
           await connection.query(
             "SELECT rb_idrec FROM trbdc_hdr WHERE rb_nomor = ?",
-            [nomorDokumen]
+            [nomorDokumen],
           )
         )[0][0]?.rb_idrec;
 
@@ -150,19 +150,19 @@ const save = async (payload, user) => {
           header.gudangDc.kode,
           header.keterangan,
           user.kode,
-        ]
+        ],
       );
 
       // --- LOGIC UPDATE (EDIT) ---
     } else {
       const [checkRows] = await connection.query(
         "SELECT rb_nomor FROM trbdc_hdr WHERE rb_nomor = ? FOR UPDATE",
-        [nomorDokumen]
+        [nomorDokumen],
       );
 
       if (checkRows.length === 0) {
         throw new Error(
-          `Dokumen ${nomorDokumen} tidak ditemukan atau sudah dihapus.`
+          `Dokumen ${nomorDokumen} tidak ditemukan atau sudah dihapus.`,
         );
       }
 
@@ -178,7 +178,7 @@ const save = async (payload, user) => {
           header.keterangan,
           user.kode,
           nomorDokumen,
-        ]
+        ],
       );
 
       // Hapus detail lama
@@ -196,7 +196,7 @@ const save = async (payload, user) => {
         // Contoh: K01RB2023102500001.001
         const idrecDetail = `${idrecHeader}.${String(index + 1).padStart(
           3,
-          "0"
+          "0",
         )}`;
 
         return [
@@ -215,7 +215,7 @@ const save = async (payload, user) => {
         `INSERT INTO trbdc_dtl 
           (rbd_idrec, rbd_iddrec, rbd_nomor, rbd_kode, rbd_ukuran, rbd_jumlah) 
          VALUES ?`,
-        [itemValues]
+        [itemValues],
       );
     }
 
@@ -229,7 +229,7 @@ const save = async (payload, user) => {
     await connection.rollback();
     if (error.code === "ER_DUP_ENTRY") {
       throw new Error(
-        "Terjadi duplikasi nomor dokumen. Silakan coba simpan kembali."
+        "Terjadi duplikasi nomor dokumen. Silakan coba simpan kembali.",
       );
     }
     throw error;
@@ -325,6 +325,42 @@ const getPrintData = async (nomor) => {
   return { header, details };
 };
 
+const lookupReturJualKON = async (cabang) => {
+  // Hanya mencari retur jenis 'O' (Online) untuk cabang yang bersangkutan
+  const query = `
+    SELECT 
+        rj_nomor AS Nomor, 
+        rj_tanggal AS Tanggal, 
+        rj_inv AS Invoice,
+        (SELECT SUM(rjd_jumlah) FROM trj_dtl WHERE rjd_nomor = h.rj_nomor) AS Qty
+    FROM trj_hdr h
+    WHERE rj_cab = ? 
+      AND rj_jenis = 'O'
+      AND rj_nomor NOT IN (SELECT IFNULL(rb_ket, '') FROM trbdc_hdr WHERE rb_cab = ?)
+    ORDER BY rj_nomor DESC;
+  `;
+  const [rows] = await pool.query(query, [cabang, cabang]);
+  return rows;
+};
+
+const getItemsFromReturJual = async (nomorRetur, cabang) => {
+  const query = `
+    SELECT 
+        d.rjd_kode AS kode, 
+        b.brgd_barcode AS barcode,
+        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+        d.rjd_ukuran AS ukuran,
+        d.rjd_jumlah AS jumlah,
+        IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif='Y' AND m.mst_cab=? AND m.mst_brg_kode=d.rjd_kode AND m.mst_ukuran=d.rjd_ukuran), 0) AS stok
+    FROM trj_dtl d
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.rjd_kode
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.rjd_kode AND b.brgd_ukuran = d.rjd_ukuran
+    WHERE d.rjd_nomor = ?;
+  `;
+  const [rows] = await pool.query(query, [cabang, nomorRetur]);
+  return rows;
+};
+
 module.exports = {
   loadAllStock,
   save,
@@ -333,4 +369,6 @@ module.exports = {
   findByBarcode,
   lookupGudangDc,
   getPrintData,
+  lookupReturJualKON,
+  getItemsFromReturJual,
 };

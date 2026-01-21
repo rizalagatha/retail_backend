@@ -30,11 +30,11 @@ const getList = async (filters, user) => {
 
   if (cabang === "KDC") {
     whereClauses.push(
-      "h.rj_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)"
+      "h.rj_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)",
     );
   } else {
     whereClauses.push("h.rj_cab = ?");
-    params.push(cabang); // Pastikan parameter yang di-push adalah 'cabang' dari filter
+    params.push(cabang);
   }
 
   const query = `
@@ -42,7 +42,11 @@ const getList = async (filters, user) => {
         h.rj_nomor AS nomor,
         h.rj_tanggal AS tanggal,
         h.rj_inv AS invoice,
-        IF(h.rj_jenis = 'N', 'TUKAR BARANG', 'SALAH QTY') AS jenis,
+        CASE h.rj_jenis 
+          WHEN 'N' THEN 'TUKAR BARANG'
+          WHEN 'O' THEN 'RETUR ONLINE'
+          ELSE 'SALAH QTY'
+        END AS jenis,
         h.rj_ket AS keterangan,
         h.rj_closing AS closing,
         h.rj_cus_kode AS kdCus,
@@ -51,21 +55,39 @@ const getList = async (filters, user) => {
         c.cus_kota AS kota,
         h.user_create AS usr,
         h.date_create AS created,
+        /* 1. Hitung Nominal Retur */
         (
             SELECT ROUND(SUM(d.rjd_jumlah*(d.rjd_harga-d.rjd_diskon))-h.rj_disc+(h.rj_ppn/100*(SUM(d.rjd_jumlah*(d.rjd_harga-d.rjd_diskon))-h.rj_disc)))
             FROM trj_dtl d WHERE d.rjd_nomor = h.rj_nomor
         ) AS nominal,
-        IFNULL(p.link, 0) AS diBayarkan,
-        ((
-            SELECT ROUND(SUM(d.rjd_jumlah*(d.rjd_harga-d.rjd_diskon))-h.rj_disc+(h.rj_ppn/100*(SUM(d.rjd_jumlah*(d.rjd_harga-d.rjd_diskon))-h.rj_disc)))
-            FROM trj_dtl d WHERE d.rjd_nomor = h.rj_nomor
-        ) - IFNULL(p.link, 0)) AS sisa
+
+        /* 2. Hitung Dibayarkan: Cek ke tabel Retur DC jika jenis 'O' */
+        CASE 
+          WHEN h.rj_jenis = 'O' AND EXISTS (SELECT 1 FROM trbdc_hdr WHERE rb_ket LIKE CONCAT('%', h.rj_nomor, '%')) THEN
+            (SELECT ROUND(SUM(d.rjd_jumlah*(d.rjd_harga-d.rjd_diskon))-h.rj_disc+(h.rj_ppn/100*(SUM(d.rjd_jumlah*(d.rjd_harga-d.rjd_diskon))-h.rj_disc)))
+             FROM trj_dtl d WHERE d.rjd_nomor = h.rj_nomor)
+          ELSE IFNULL(p.link, 0)
+        END AS diBayarkan,
+
+        /* 3. Hitung Sisa */
+        (
+          (SELECT ROUND(SUM(d.rjd_jumlah*(d.rjd_harga-d.rjd_diskon))-h.rj_disc+(h.rj_ppn/100*(SUM(d.rjd_jumlah*(d.rjd_harga-d.rjd_diskon))-h.rj_disc)))
+           FROM trj_dtl d WHERE d.rjd_nomor = h.rj_nomor) 
+          - 
+          (CASE 
+            WHEN h.rj_jenis = 'O' AND EXISTS (SELECT 1 FROM trbdc_hdr WHERE rb_ket LIKE CONCAT('%', h.rj_nomor, '%')) THEN
+              (SELECT ROUND(SUM(d.rjd_jumlah*(d.rjd_harga-d.rjd_diskon))-h.rj_disc+(h.rj_ppn/100*(SUM(d.rjd_jumlah*(d.rjd_harga-d.rjd_diskon))-h.rj_disc)))
+               FROM trj_dtl d WHERE d.rjd_nomor = h.rj_nomor)
+            ELSE IFNULL(p.link, 0)
+          END)
+        ) AS sisa
+
     FROM trj_hdr h
     LEFT JOIN tcustomer c ON c.cus_kode = h.rj_cus_kode
     LEFT JOIN (
         SELECT pd_ket, SUM(pd_kredit) AS link 
         FROM tpiutang_dtl 
-        WHERE pd_uraian = 'Pembayaran Retur' 
+        WHERE pd_uraian IN ('Pembayaran Retur', 'Pembayaran Retur Online', 'Retur Online (Adjustment)') 
         GROUP BY pd_ket
     ) p ON p.pd_ket = h.rj_nomor
     WHERE ${whereClauses.join(" AND ")}
@@ -129,7 +151,7 @@ const remove = async (nomor, user) => {
             GROUP BY pd_ket
         ) p ON p.pd_ket = h.rj_nomor
         WHERE h.rj_nomor = ?`,
-      [nomor]
+      [nomor],
     );
 
     if (headerRows.length === 0)
@@ -151,7 +173,7 @@ const remove = async (nomor, user) => {
     if (header.rj_idrec) {
       await connection.query(
         "DELETE FROM tpiutang_dtl WHERE pd_sd_angsur = ?",
-        [header.rj_idrec]
+        [header.rj_idrec],
       );
     }
 
@@ -182,7 +204,7 @@ const getExportDetails = async (filters, user) => {
     } else {
       // Default KDC melihat semua data DC
       whereClauses.push(
-        "h.rj_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)"
+        "h.rj_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)",
       );
     }
   } else {

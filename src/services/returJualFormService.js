@@ -1,4 +1,5 @@
 const pool = require("../config/database");
+const { format } = require("date-fns");
 
 // --- [TAMBAHAN] Helper Generate IDREC ---
 const generateIdRec = (cabang) => {
@@ -66,46 +67,42 @@ const loadFromInvoice = async (nomorInvoice) => {
 };
 
 // Fungsi untuk menyimpan data Retur Jual
-// src/services/returJualFormService.js (atau file service yang relevan)
-
 const save = async (payload, user) => {
   const { header, items, footer, isNew } = payload;
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
 
+    // --- A. VALIDASI KHUSUS CABANG KON ---
+    if (header.jenis === "O" && user.cabang !== "KON") {
+      throw new Error(
+        "Tipe Retur Online hanya diizinkan untuk operasional cabang KON.",
+      );
+    }
+
     let nomorDokumen = header.nomor;
     let currentIdRec = "";
-    
+
     // --- 1. PROSES HEADER (INSERT / UPDATE) ---
     if (isNew) {
       const d = new Date(header.tanggal);
-      const year = String(d.getFullYear()).slice(2);
-      const month = String(d.getMonth() + 1).padStart(2, "0");
-      const yearMonth = `${year}${month}`;
+      const yearMonth = format(d, "yyMM");
       const prefix = `${header.cabangKode}.RJ.${yearMonth}.`;
 
-      const nomorQuery = `
-        SELECT IFNULL(MAX(CAST(RIGHT(rj_nomor, 4) AS UNSIGNED)), 0) + 1 AS next_num
-        FROM trj_hdr
-        WHERE rj_nomor LIKE CONCAT(?, '%')
-      `;
-      const [nomorRows] = await connection.query(nomorQuery, [prefix]);
+      const [nomorRows] = await connection.query(
+        "SELECT IFNULL(MAX(CAST(RIGHT(rj_nomor, 4) AS UNSIGNED)), 0) + 1 AS next_num FROM trj_hdr WHERE rj_nomor LIKE CONCAT(?, '%')",
+        [prefix],
+      );
       const nextNum = nomorRows[0].next_num || 1;
       nomorDokumen = `${prefix}${String(nextNum).padStart(4, "0")}`;
-
-      // Generate IDREC Baru
-      // Pastikan fungsi generateIdRec sudah diimport atau didefinisikan
-      currentIdRec = generateIdRec(header.cabangKode); 
+      currentIdRec = generateIdRec(header.cabangKode);
 
       const headerInsertQuery = `
         INSERT INTO trj_hdr (
             rj_nomor, rj_inv, rj_jenis, rj_tanggal, 
             rj_ppn, rj_disc, rj_cus_kode, rj_ket, 
-            rj_cab, rj_idrec, 
-            user_create, date_create
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            rj_cab, rj_idrec, user_create, date_create
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
       `;
 
       await connection.query(headerInsertQuery, [
@@ -118,119 +115,94 @@ const save = async (payload, user) => {
         header.customer.kode,
         header.keterangan,
         header.cabangKode,
-        currentIdRec, 
+        currentIdRec,
         user.kode,
       ]);
     } else {
-      // Ambil IDREC lama jika Edit
       const [existingHeader] = await connection.query(
         "SELECT rj_idrec FROM trj_hdr WHERE rj_nomor = ?",
-        [nomorDokumen]
+        [nomorDokumen],
       );
+      currentIdRec =
+        existingHeader.length > 0
+          ? existingHeader[0].rj_idrec
+          : generateIdRec(header.cabangKode);
 
-      if (existingHeader.length > 0) {
-        currentIdRec = existingHeader[0].rj_idrec;
-      } else {
-        currentIdRec = generateIdRec(header.cabangKode); // Fallback
-      }
-      
-      const headerUpdateQuery = `
-        UPDATE trj_hdr SET 
-            rj_tanggal = ?, rj_ppn = ?, rj_disc = ?, rj_ket = ?, 
-            user_modified = ?, date_modified = NOW() 
-        WHERE rj_nomor = ?
-      `;
-      await connection.query(headerUpdateQuery, [
-        header.tanggal,
-        header.ppnPersen,
-        footer.diskonRp,
-        header.keterangan,
-        user.kode,
-        nomorDokumen,
-      ]);
+      await connection.query(
+        `UPDATE trj_hdr SET rj_tanggal = ?, rj_ppn = ?, rj_disc = ?, rj_ket = ?, user_modified = ?, date_modified = NOW() WHERE rj_nomor = ?`,
+        [
+          header.tanggal,
+          header.ppnPersen,
+          footer.diskonRp,
+          header.keterangan,
+          user.kode,
+          nomorDokumen,
+        ],
+      );
     }
 
-    // --- 2. PROSES DETAIL (DELETE & INSERT) ---
-    // Hapus detail lama
+    // --- 2. PROSES DETAIL & STOK (INSERT ke trj_dtl & tmasterstok) ---
     await connection.query("DELETE FROM trj_dtl WHERE rjd_nomor = ?", [
       nomorDokumen,
     ]);
 
-    // Insert detail baru
-    if (items.length > 0) {
-      const itemValues = items.map((item, index) => {
-        const nourut = index + 1;
-        
-        return [
-          currentIdRec,  // rjd_idrec (Foreign Key ke Header)
-          nomorDokumen,  // rjd_nomor
-          item.kode,     // rjd_kode
-          item.ukuran,   // rjd_ukuran
-          item.jumlah,   // rjd_jumlah
-          item.harga,    // rjd_harga
-          item.disc,     // rjd_disc
-          item.diskon,   // rjd_diskon
-          nourut,        // rjd_nourut
-        ];
-      });
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index];
+      const nourut = index + 1;
 
-      // [PERBAIKAN] Menghapus kolom rjd_iddrec dari query
+      // a. Insert ke Detail Retur
       await connection.query(
-        `INSERT INTO trj_dtl (
-          rjd_idrec,
-          rjd_nomor,
-          rjd_kode,
-          rjd_ukuran,
-          rjd_jumlah,
-          rjd_harga,
-          rjd_disc,
-          rjd_diskon,
-          rjd_nourut
-        ) VALUES ?`,
-        [itemValues]
+        `INSERT INTO trj_dtl (rjd_idrec, rjd_nomor, rjd_kode, rjd_ukuran, rjd_jumlah, rjd_harga, rjd_disc, rjd_diskon, rjd_nourut) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          currentIdRec,
+          nomorDokumen,
+          item.kode,
+          item.ukuran,
+          item.jumlah,
+          item.harga,
+          item.disc,
+          item.diskon,
+          nourut,
+        ],
       );
     }
 
-    // --- 3. PROSES PIUTANG (Jika Jenis = Y / Salah Qty) ---
-    if (header.jenis === "Y") {
-      // Ambil ph_nomor PIUTANG untuk invoice ini
+    // --- 3. PROSES PIUTANG ---
+    if (["Y", "O"].includes(header.jenis)) {
       const [piutangRows] = await connection.query(
-        `SELECT ph_nomor 
-         FROM tpiutang_hdr 
-         WHERE ph_inv_nomor = ? 
-         LIMIT 1`,
-        [header.invoice]
+        "SELECT ph_nomor FROM tpiutang_hdr WHERE ph_inv_nomor = ? LIMIT 1",
+        [header.invoice],
       );
 
-      if (piutangRows.length === 0) {
-        throw new Error(
-          `Piutang untuk invoice ${header.invoice} tidak ditemukan`
-        );
+      if (piutangRows.length > 0) {
+        const ph_nomor = piutangRows[0].ph_nomor;
+        let kreditValue = footer.grandTotal;
+        let uraian = "Pembayaran Retur";
+
+        // Jika Retur Online, ambil sisa saldo untuk pelunasan (Adjustment)
+        if (header.jenis === "O") {
+          const [balance] = await connection.query(
+            "SELECT (SUM(pd_debet) - SUM(pd_kredit)) AS sisa FROM tpiutang_dtl WHERE pd_ph_nomor = ?",
+            [ph_nomor],
+          );
+          kreditValue = balance[0].sisa || 0;
+          uraian = "Retur Online (Adjustment)"; // Uraian berbeda agar tidak terhitung 'Bayar' di laporan
+        }
+
+        if (kreditValue > 0) {
+          await connection.query(
+            `INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket) 
+             VALUES (?, ?, ?, ?, ?)`,
+            [ph_nomor, header.tanggal, uraian, kreditValue, nomorDokumen],
+          );
+        }
       }
-
-      const piutangHeaderNomor = piutangRows[0].ph_nomor;
-
-      // Insert ke tpiutang_dtl sebagai Pembayaran Retur
-      // Menggunakan ON DUPLICATE KEY UPDATE agar aman jika dijalankan ulang (misal edit)
-      // Asumsi pd_uraian + pd_ph_nomor unik atau logika bisnis mengizinkan tumpuk
-      await connection.query(
-        `INSERT INTO tpiutang_dtl (
-          pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket
-         ) VALUES (?, ?, 'Pembayaran Retur', ?, ?)
-         ON DUPLICATE KEY UPDATE 
-         pd_kredit = VALUES(pd_kredit)`,
-        [
-          piutangHeaderNomor, 
-          header.tanggal,
-          payload.footer.grandTotal, // Nilai retur mengurangi piutang (Kredit)
-          nomorDokumen, 
-        ]
-      );
     }
 
     await connection.commit();
     return {
-      message: `Retur Jual berhasil disimpan dengan nomor ${nomorDokumen}`,
+      message: `Retur Jual ${header.jenis === "O" ? "Online" : ""} berhasil disimpan: ${nomorDokumen}`,
       nomor: nomorDokumen,
     };
   } catch (error) {
@@ -243,16 +215,18 @@ const save = async (payload, user) => {
 
 // Fungsi untuk lookup invoice (meniru F1 di edtinv)
 const lookupInvoices = async (cabang) => {
-  // [BARU] Tentukan interval berdasarkan cabang
-  // Jika K09, izinkan melihat invoice hingga 30 hari ke belakang agar bisa dicari
-  const dateInterval = cabang === "K09" ? "60 DAY" : "7 DAY";
+  // Hanya KON yang dibebaskan dari filter tanggal
+  const dateCondition =
+    cabang === "KON"
+      ? ""
+      : "AND h.inv_tanggal >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
 
   const query = `
     SELECT h.inv_nomor AS nomor, h.inv_tanggal AS tanggal, c.cus_nama
     FROM tinv_hdr h
     LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
     WHERE h.inv_cab = ? 
-        AND h.inv_tanggal >= DATE_SUB(NOW(), INTERVAL ${dateInterval})
+      ${dateCondition}
     ORDER BY h.inv_nomor DESC;
   `;
 
@@ -452,7 +426,7 @@ const getForEdit = async (nomorRetur) => {
     returnedItems.map((item) => [
       `${item.rjd_kode}-${item.rjd_ukuran}`,
       item.rjd_jumlah,
-    ])
+    ]),
   );
 
   // 4. Gabungkan data: Isi 'jumlah' retur dari data retur ke daftar item invoice

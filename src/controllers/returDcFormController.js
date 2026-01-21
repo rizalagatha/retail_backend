@@ -37,7 +37,7 @@ const save = async (req, res) => {
         // A. Ambil Header
         const [headerRows] = await pool.query(
           "SELECT * FROM trbdc_hdr WHERE rb_nomor = ?",
-          [nomorDokumen]
+          [nomorDokumen],
         );
 
         if (headerRows.length > 0) {
@@ -46,13 +46,13 @@ const save = async (req, res) => {
           // B. Ambil Detail (Gunakan rbd_nomor)
           const [detailRows] = await pool.query(
             "SELECT * FROM trbdc_dtl WHERE rbd_nomor = ? ORDER BY rbd_kode",
-            [nomorDokumen]
+            [nomorDokumen],
           );
 
           // C. Gabungkan
           oldData = {
             ...header,
-            items: detailRows
+            items: detailRows,
           };
         }
       } catch (e) {
@@ -74,7 +74,7 @@ const save = async (req, res) => {
       targetId,
       oldData, // Data Lama (Header + Items)
       payload, // Data Baru (Payload Form)
-      `${action === "CREATE" ? "Input" : "Edit"} Retur DC`
+      `${action === "CREATE" ? "Input" : "Edit"} Retur DC`,
     );
 
     res.status(201).json(result);
@@ -121,6 +121,26 @@ const getPrintData = async (req, res) => {
   }
 };
 
+const lookupReturJualKON = async (req, res) => {
+  try {
+    // Fungsi ini memanggil service untuk mencari RJ Online di cabang KON
+    const data = await service.lookupReturJualKON(req.user.cabang);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const loadFromRJ = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const data = await service.getItemsFromReturJual(nomor, req.user.cabang);
+    res.json(data);
+  } catch (error) {
+    res.status(404).json({ message: error.message });
+  }
+};
+
 module.exports = {
   loadAllStock,
   getForEdit,
@@ -129,4 +149,6 @@ module.exports = {
   findByBarcode,
   lookupGudangDc,
   getPrintData,
+  lookupReturJualKON,
+  loadFromRJ,
 };

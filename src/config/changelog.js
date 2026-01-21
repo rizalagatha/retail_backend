@@ -1,4 +1,26 @@
 const changelogs = {
+  "1.3.4": {
+    date: "2026-01-09",
+    changes: [
+      "Modul Baru : Peminjaman Barang, digunakan untuk memproses dan mendata peminjaman barang ke Store, dengan tenggat waktu pengembalian 14 hari",
+      "Fitur Baru : Inputan Diskon Pembulatan pada saat Pembayaran Invoice, untuk menangani kekurangan pembayaran dari customer dengan maksimal nominal Rp 500,-",
+      {
+        title: "Penambahan:",
+        items: [
+          "Retur Online untuk Penjualan Online/Marketplace",
+          "Retur Jual Salah Qty diubah menjadi Pengembalian",
+        ],
+      },
+      {
+        title: "Perbaikan:",
+        items: [
+          "Disable Hapus pada beberapa Halaman",
+          "Lock Terima Surat Jalan di Web, agar Store Terima SJ lewat aplikasi Kaosan Mobile. Pengecualian sementara untuk K01 karena belum ada fasilitas scanner",
+          "Perbaikan Simpan Terima STBJ untuk DC, dan tampilannya",
+        ],
+      },
+    ],
+  },
   "1.3.3": {
     date: "2026-01-19",
     changes: [
