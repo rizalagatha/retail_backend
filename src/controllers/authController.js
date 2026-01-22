@@ -7,7 +7,7 @@ const checkAndLogSuspiciousLogin = (req, user, cabang) => {
   if (!user) return;
 
   // 2. Pengecualian Cabang KDC
-  if (cabang === "KDC") return;
+  if (cabang === "KDC" || cabang === "KPR") return;
 
   // 3. Pengecualian Admin/Developer
   const username = (
@@ -22,7 +22,7 @@ const checkAndLogSuspiciousLogin = (req, user, cabang) => {
   // Ubah waktu server ke waktu Jakarta
   const serverTime = new Date();
   const jakartaTime = new Date(
-    serverTime.toLocaleString("en-US", { timeZone: "Asia/Jakarta" })
+    serverTime.toLocaleString("en-US", { timeZone: "Asia/Jakarta" }),
   );
 
   const hours = jakartaTime.getHours();
@@ -55,7 +55,7 @@ const checkAndLogSuspiciousLogin = (req, user, cabang) => {
       targetId,
       null,
       null,
-      `Login di luar jam operasional (Pukul ${timeString})`
+      `Login di luar jam operasional (Pukul ${timeString})`,
     );
   }
 };
@@ -90,7 +90,7 @@ const selectBranch = async (req, res) => {
     // Finalize login akan mengembalikan token valid dan data user
     const result = await authService.finalizeLoginWithBranch(
       tempToken,
-      selectedCabang
+      selectedCabang,
     );
 
     // [PERBAIKAN UTAMA DISINI JUGA]
