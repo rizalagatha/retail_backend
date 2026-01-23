@@ -2,8 +2,7 @@ const changelogs = {
   "1.3.4": {
     date: "2026-01-09",
     changes: [
-      "Modul Baru : Peminjaman Barang, digunakan untuk memproses dan mendata peminjaman barang ke Store, dengan tenggat waktu pengembalian 14 hari",
-      "Fitur Baru : Inputan Diskon Pembulatan pada saat Pembayaran Invoice, untuk menangani kekurangan pembayaran dari customer dengan maksimal nominal Rp 500,-",
+      "Pembaruan halaman Laporan Stok Minus, kini dengan format header-detail. Penggabungan Laporan Stok Real Time dengan Laporan Kartu Stok",
       {
         title: "Penambahan:",
         items: [

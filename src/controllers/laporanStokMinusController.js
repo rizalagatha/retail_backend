@@ -1,5 +1,3 @@
-// src/controllers/laporanStokMinusController.js
-
 const laporanStokMinusService = require("../services/laporanStokMinusService");
 
 const getLaporan = async (req, res) => {
@@ -9,6 +7,25 @@ const getLaporan = async (req, res) => {
       cabang: req.query.cabang,
     };
     const data = await laporanStokMinusService.getLaporanStokMinus(filters);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * [TAMBAHAN] Mengambil detail histori transaksi per barang
+ * Digunakan untuk pengelompokan detail berdasarkan size
+ */
+const getDetails = async (req, res) => {
+  try {
+    const { kode, cabang, tanggal } = req.query;
+    // Memanggil service getDetailStokMinus dengan parameter yang sesuai
+    const data = await laporanStokMinusService.getDetailStokMinus(
+      kode,
+      cabang,
+      tanggal,
+    );
     res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -26,5 +43,6 @@ const getCabangOptions = async (req, res) => {
 
 module.exports = {
   getLaporan,
+  getDetails, // Export fungsi baru
   getCabangOptions,
 };
