@@ -88,14 +88,14 @@ const remove = async (nomor) => {
     // Cek Status dulu
     const [headers] = await connection.query(
       "SELECT pl_status, pl_sj_nomor FROM tpacking_list_hdr WHERE pl_nomor = ?",
-      [nomor]
+      [nomor],
     );
 
     if (headers.length === 0) throw new Error("Data tidak ditemukan.");
 
     if (headers[0].pl_status === "C" || headers[0].pl_sj_nomor) {
       throw new Error(
-        `Packing List sudah diproses menjadi SJ Final (${headers[0].pl_sj_nomor}). Tidak bisa dihapus.`
+        `Packing List sudah diproses menjadi SJ Final (${headers[0].pl_sj_nomor}). Tidak bisa dihapus.`,
       );
     }
 
@@ -104,7 +104,7 @@ const remove = async (nomor) => {
     ]);
     await connection.query(
       "DELETE FROM tpacking_list_dtl WHERE pld_nomor = ?",
-      [nomor]
+      [nomor],
     );
 
     await connection.commit();
@@ -172,17 +172,18 @@ const exportDetails = async (filters) => {
 
 // Ambil list cabang untuk filter (reuse logic existing SJ)
 const getCabangList = async (user) => {
-  // ... Gunakan logika yang sama dengan suratJalanService ...
-  // Query SELECT gdg_kode, gdg_nama FROM tgudang...
-  // Silakan copy paste dari suratJalanService Anda
   let query = "";
   const params = [];
-  if (user.cabang === "KDC") {
+
+  // Izinkan KDC dan KBS untuk melihat daftar semua gudang
+  if (user.cabang === "KDC" || user.cabang === "KBS") {
     query = `SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang ORDER BY gdg_kode`;
   } else {
+    // Cabang lain hanya bisa melihat cabangnya sendiri
     query = `SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ? ORDER BY gdg_kode`;
     params.push(user.cabang);
   }
+
   const [rows] = await pool.query(query, params);
   return rows;
 };
