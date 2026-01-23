@@ -26,6 +26,7 @@ const getList = async (filters) => {
     SELECT 
         h.pl_nomor AS Nomor,
         h.pl_tanggal AS Tanggal,
+        LEFT(h.pl_nomor, 3) AS Cabang_Asal,
         h.pl_cab_tujuan AS Store,
         g.gdg_nama AS Nama_Store,
         h.pl_mt_nomor AS NoMinta,
@@ -143,6 +144,7 @@ const exportDetails = async (filters) => {
     SELECT 
       h.pl_nomor AS "No. Packing List",
       DATE_FORMAT(h.pl_tanggal, "%Y-%m-%d") AS "Tanggal",
+      LEFT(h.pl_nomor, 3) AS "Cabang Asal",
       h.pl_cab_tujuan AS "Kode Store",
       g.gdg_nama AS "Nama Store",
       h.pl_mt_nomor AS "No. Minta Barang",
