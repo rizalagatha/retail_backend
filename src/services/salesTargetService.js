@@ -8,21 +8,32 @@ const getList = async (filters) => {
         -- [BASE 1] Penjualan Bersih (Sama seperti v_nominal di Delphi)
         -- Logika: Sales Kotor - Diskon Faktur - Biaya MP - PPN - Retur
         InvoiceNetto AS (
-            SELECT 
-                LEFT(h.inv_nomor, 3) AS cabang,
-                YEAR(h.inv_tanggal) AS tahun,
-                MONTH(h.inv_tanggal) AS bulan,
-                SUM(d.invd_jumlah) AS qty,
-                (
-                    SUM((d.invd_harga - d.invd_diskon) * d.invd_jumlah) 
-                    - COALESCE(h.inv_disc, 0)
-                    - COALESCE(h.inv_mp_biaya_platform, 0)
-                ) AS nominal_sales
-            FROM tinv_hdr h
-            JOIN tinv_dtl d ON h.inv_nomor = d.invd_inv_nomor
-            WHERE h.inv_sts_pro = 0
-            GROUP BY LEFT(h.inv_nomor, 3), YEAR(h.inv_tanggal), MONTH(h.inv_tanggal)
-        ),
+    SELECT 
+        cabang,
+        tahun,
+        bulan,
+        SUM(qty_inv) as qty,
+        SUM(netto_inv) as nominal_sales
+    FROM (
+        SELECT 
+            LEFT(h.inv_nomor, 3) AS cabang,
+            YEAR(h.inv_tanggal) AS tahun,
+            MONTH(h.inv_tanggal) AS bulan,
+            h.inv_nomor,
+            SUM(d.invd_jumlah) AS qty_inv,
+            -- Hitung Netto per 1 nomor invoice secara utuh
+            (
+                SUM((d.invd_harga - d.invd_diskon) * d.invd_jumlah) 
+                - COALESCE(h.inv_disc, 0)
+                - COALESCE(h.inv_mp_biaya_platform, 0)
+            ) AS netto_inv
+        FROM tinv_hdr h
+        JOIN tinv_dtl d ON h.inv_nomor = d.invd_inv_nomor
+        WHERE h.inv_sts_pro = 0
+        GROUP BY h.inv_nomor -- Group by invoice dulu agar h.inv_disc terpotong semua
+    ) AS PerInvoice
+    GROUP BY cabang, tahun, bulan
+),
         ReturNetto AS (
             SELECT 
                 LEFT(rh.rj_nomor, 3) AS cabang,
