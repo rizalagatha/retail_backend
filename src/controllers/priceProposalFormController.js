@@ -14,7 +14,7 @@ const getNextNumber = async (req, res) => {
     }
     const nextNumber = await priceProposalFormService.generateNewProposalNumber(
       cabang,
-      tanggal
+      tanggal,
     );
     res.json({ nextNumber });
   } catch (error) {
@@ -27,7 +27,7 @@ const searchTshirtTypes = async (req, res) => {
     const { term, custom } = req.query;
     const types = await priceProposalFormService.searchTshirtTypes(
       term,
-      custom
+      custom,
     );
     res.json(types);
   } catch (error) {
@@ -45,7 +45,7 @@ const getTshirtTypeDetails = async (req, res) => {
     }
     const details = await priceProposalFormService.getTshirtTypeDetails(
       jenisKaos,
-      custom
+      custom,
     );
     res.json(details);
   } catch (error) {
@@ -68,7 +68,7 @@ const uploadImage = async (req, res) => {
 
     const finalPath = await priceProposalFormService.renameProposalImage(
       req.file.path,
-      nomor
+      nomor,
     );
 
     const cabang = nomor.substring(0, 3);
@@ -110,9 +110,8 @@ const getDiscount = async (req, res) => {
 const searchProductsByType = async (req, res) => {
   try {
     const { jenisKaos } = req.query;
-    const products = await priceProposalFormService.searchProductsByType(
-      jenisKaos
-    );
+    const products =
+      await priceProposalFormService.searchProductsByType(jenisKaos);
     res.json(products);
   } catch (error) {
     res.status(500).json({ message: "Gagal mencari produk." });
@@ -143,79 +142,11 @@ const save = async (req, res) => {
   try {
     const payload = req.body;
 
-    // 1. DETEKSI: Apakah ini Update?
-    const isUpdate = payload.isNew === false;
-    const nomorDokumen = payload.header?.nomor || payload.nomor;
-
-    let oldData = null;
-
-    // 2. SNAPSHOT: Ambil data lama LENGKAP jika Update
-    if (isUpdate && nomorDokumen) {
-      try {
-        // A. Ambil Header
-        const [headerRows] = await pool.query(
-          "SELECT * FROM tpengajuanharga WHERE ph_nomor = ?",
-          [nomorDokumen]
-        );
-
-        if (headerRows.length > 0) {
-          const header = headerRows[0];
-
-          // B. Ambil Detail Bordir
-          const [bordirRows] = await pool.query(
-            "SELECT * FROM tpengajuanharga_bordir WHERE phb_nomor = ?",
-            [nomorDokumen]
-          );
-
-          // C. Ambil Detail DTF
-          const [dtfRows] = await pool.query(
-            "SELECT * FROM tpengajuanharga_dtf WHERE phd_nomor = ?",
-            [nomorDokumen]
-          );
-
-          // D. Ambil Detail Size
-          const [sizeRows] = await pool.query(
-            "SELECT * FROM tpengajuanharga_size WHERE phs_nomor = ?",
-            [nomorDokumen]
-          );
-
-          // E. Ambil Detail Tambahan
-          const [tambahanRows] = await pool.query(
-            "SELECT * FROM tpengajuanharga_tambahan WHERE pht_nomor = ?",
-            [nomorDokumen]
-          );
-
-          // F. Gabungkan
-          oldData = {
-            ...header,
-            bordir: bordirRows,
-            dtf: dtfRows,
-            sizes: sizeRows,
-            tambahan: tambahanRows
-          };
-        }
-      } catch (e) {
-        console.warn("Gagal snapshot oldData save price proposal:", e.message);
-      }
-    }
-
-    // 3. PROSES: Simpan ke Database
+    // Inject user info ke payload
     payload.user = req.user;
+
+    // Langsung eksekusi simpan tanpa log aktivitas
     const result = await priceProposalFormService.saveProposal(payload);
-
-    // 4. AUDIT: Catat Log
-    const targetId = result.nomor || nomorDokumen || "UNKNOWN";
-    const action = isUpdate ? "UPDATE" : "CREATE";
-
-    auditService.logActivity(
-      req,
-      action,
-      "PENGAJUAN_HARGA",
-      targetId,
-      oldData, // Data Lama (Header + All Details)
-      payload, // Data Baru (Payload Form)
-      `${action === "CREATE" ? "Input" : "Edit"} Pengajuan Harga (Jenis: ${payload.header?.jenisKaos})`
-    );
 
     res.status(payload.isNew ? 201 : 200).json(result);
   } catch (error) {

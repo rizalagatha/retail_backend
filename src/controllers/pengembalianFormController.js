@@ -1,6 +1,6 @@
 const service = require("../services/pengembalianFormService");
-const auditService = require("../services/auditService"); // Import Audit
-const pool = require("../config/database"); // Import Pool untuk Snapshot
+const auditService = require("../services/auditService");
+const pool = require("../config/database");
 
 const getPinjamanData = async (req, res) => {
   try {
@@ -12,64 +12,51 @@ const getPinjamanData = async (req, res) => {
   }
 };
 
-// [AUDIT TRAIL APPLIED HERE]
+/**
+ * [CLEANUP] Fungsi saveReturn dengan Audit Trail Kondisional.
+ * Hanya mencatat log jika pengembalian melebihi deadline (14 hari).
+ */
 const saveReturn = async (req, res) => {
   try {
     const payload = req.body;
+    const refPinjam = payload.header?.pk_ref_pinjam;
 
-    // 1. DETECT: Apakah ini Update?
-    const isUpdate = payload.isNew === false;
-    const nomorDokumen = payload.header?.pk_nomor || payload.pk_nomor;
+    // 1. DETEKSI ANOMALI: Cek Deadline dari data Peminjaman asli
+    let isOverdue = false;
+    let deadlineDate = null;
 
-    let oldData = null;
+    if (refPinjam) {
+      const [loan] = await pool.query(
+        "SELECT pj_deadline FROM tpeminjaman_hdr WHERE pj_nomor = ?",
+        [refPinjam],
+      );
 
-    // 2. SNAPSHOT: Ambil data lama jika ini adalah Update (Header + Detail)
-    if (isUpdate && nomorDokumen) {
-      try {
-        // A. Ambil Header Pengembalian
-        const [headerRows] = await pool.query(
-          "SELECT * FROM tpengembalian_hdr WHERE pk_nomor = ?",
-          [nomorDokumen]
-        );
+      if (loan.length > 0) {
+        deadlineDate = new Date(loan[0].pj_deadline);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0); // Reset jam untuk perbandingan tanggal saja
 
-        if (headerRows.length > 0) {
-          const header = headerRows[0];
-
-          // B. Ambil Detail Pengembalian (pkd_nomor)
-          const [detailRows] = await pool.query(
-            "SELECT * FROM tpengembalian_dtl WHERE pkd_nomor = ?",
-            [nomorDokumen]
-          );
-
-          // C. Gabungkan untuk data audit
-          oldData = {
-            ...header,
-            items: detailRows,
-          };
+        if (today > deadlineDate) {
+          isOverdue = true;
         }
-      } catch (e) {
-        console.warn("Gagal snapshot oldData pengembalian:", e.message);
       }
     }
 
-    // 3. PROCESS: Jalankan fungsi simpan di service
+    // 2. PROSES: Simpan Data
     const result = await service.saveData(payload, req.user);
 
-    // 4. AUDIT: Catat aktivitas
-    const targetId = result.nomor || nomorDokumen || "UNKNOWN";
-    const action = isUpdate ? "UPDATE" : "CREATE";
-
-    auditService.logActivity(
-      req,
-      action,
-      "PENGEMBALIAN_BARANG",
-      targetId,
-      oldData, // Data lama (null jika CREATE)
-      payload, // Data baru
-      `${
-        action === "CREATE" ? "Input" : "Edit"
-      } Pengembalian Barang (Ref Pinjam: ${payload.header?.pk_ref_pinjam})`
-    );
+    // 3. AUDIT: Hanya catat jika pengembalian terlambat (Anomali)
+    if (isOverdue) {
+      auditService.logActivity(
+        req,
+        "ANOMALY_RETURN_OVERDUE",
+        "PENGEMBALIAN_BARANG",
+        result.nomor || "UNKNOWN",
+        null, // Snapshot lama dihapus untuk efisiensi
+        payload,
+        `⚠️ PENGEMBALIAN TERLAMBAT: Melebihi batas 14 hari (Deadline: ${deadlineDate.toISOString().split("T")[0]})`,
+      );
+    }
 
     res.json(result);
   } catch (error) {

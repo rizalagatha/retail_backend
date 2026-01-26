@@ -1,5 +1,6 @@
 const authService = require("../services/authService");
 const auditService = require("../services/auditService"); // Import Audit Service
+const jwt = require("jsonwebtoken");
 
 // Helper lokal untuk cek waktu dan catat log
 const checkAndLogSuspiciousLogin = (req, user, cabang) => {
@@ -65,12 +66,14 @@ const login = async (req, res) => {
     const { kodeUser, password } = req.body;
     const result = await authService.loginUser(kodeUser, password);
 
-    // [PERBAIKAN UTAMA DISINI]
-    // Kita cari object user dimanapun dia berada (di root atau di dalam .data)
+    // 1. Cek interupsi ganti password (Wajib 3 Bulan)
+    if (result.requiresPasswordChange) {
+      return res.json(result);
+    }
+
+    // 2. Logic Audit & Response Normal
     const actualUser = result.user || (result.data && result.data.user);
     const actualCabang = actualUser ? actualUser.cabang : null;
-
-    // Cek token: bisa di root (result.token) atau di data (result.data.token)
     const hasToken = result.token || (result.data && result.data.token);
 
     if (hasToken && actualUser) {
@@ -80,6 +83,48 @@ const login = async (req, res) => {
     res.json(result);
   } catch (error) {
     res.status(401).json({ message: error.message });
+  }
+};
+
+/**
+ * Controller untuk menangani pembaruan password yang expired
+ */
+const changeExpiredPassword = async (req, res) => {
+  try {
+    const { tempToken, newPassword } = req.body;
+
+    // 1. Verifikasi token temporer ganti password
+    const decoded = jwt.verify(tempToken, process.env.JWT_SECRET);
+    if (!decoded.isChangingPassword) {
+      return res
+        .status(403)
+        .json({ message: "Token tidak valid untuk ganti password." });
+    }
+
+    // 2. Eksekusi update di database via service
+    const result = await authService.updateExpiredPassword(
+      decoded.kode,
+      newPassword,
+    );
+
+    // 3. Catat aktivitas ke Audit Trail
+    auditService.logActivity(
+      req,
+      "CHANGE_PASSWORD_EXPIRED",
+      "USER",
+      decoded.kode,
+      null,
+      null,
+      "User melakukan pembaruan password wajib (siklus 3 bulan)",
+    );
+
+    res.json(result);
+  } catch (error) {
+    const message =
+      error.name === "JsonWebTokenError"
+        ? "Sesi habis, silakan login ulang."
+        : error.message;
+    res.status(400).json({ message });
   }
 };
 
@@ -113,4 +158,5 @@ const selectBranch = async (req, res) => {
 module.exports = {
   login,
   selectBranch,
+  changeExpiredPassword,
 };

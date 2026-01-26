@@ -1,6 +1,4 @@
 const sjFormService = require("../services/suratJalanFormService");
-const auditService = require("../services/auditService"); // Import Audit
-const pool = require("../config/database"); // Import Pool untuk Snapshot
 
 const getItemsForLoad = async (req, res) => {
   try {
@@ -15,63 +13,15 @@ const getItemsForLoad = async (req, res) => {
   }
 };
 
-// [AUDIT TRAIL DITERAPKAN DI SINI]
+/**
+ * [CLEANUP] Fungsi Save tanpa Audit Trail dan Snapshot Database.
+ */
 const save = async (req, res) => {
   try {
     const payload = req.body;
 
-    // 1. DETEKSI: Apakah ini Update?
-    const isUpdate = payload.isNew === false;
-    const nomorDokumen = payload.header?.nomor;
-
-    let oldData = null;
-
-    // 2. SNAPSHOT: Ambil data lama LENGKAP jika Update
-    if (isUpdate && nomorDokumen) {
-      try {
-        // A. Ambil Header
-        const [headerRows] = await pool.query(
-          "SELECT * FROM tdc_sj_hdr WHERE sj_nomor = ?",
-          [nomorDokumen]
-        );
-
-        if (headerRows.length > 0) {
-          const header = headerRows[0];
-
-          // B. Ambil Detail (Gunakan sjd_nomor)
-          const [detailRows] = await pool.query(
-            "SELECT * FROM tdc_sj_dtl WHERE sjd_nomor = ? ORDER BY sjd_kode",
-            [nomorDokumen]
-          );
-
-          // C. Gabungkan
-          oldData = {
-            ...header,
-            items: detailRows
-          };
-        }
-      } catch (e) {
-        console.warn("Gagal snapshot oldData save SJ:", e.message);
-      }
-    }
-
-    // 3. PROSES: Simpan ke Database
+    // Langsung eksekusi simpan ke database melalui service
     const result = await sjFormService.saveData(payload, req.user);
-
-    // 4. AUDIT: Catat Log
-    const targetId = result.nomor || nomorDokumen || "UNKNOWN";
-    const action = isUpdate ? "UPDATE" : "CREATE";
-    const refDoc = payload.header?.permintaan || payload.header?.packingList || "";
-
-    auditService.logActivity(
-      req,
-      action,
-      "SURAT_JALAN",
-      targetId,
-      oldData, // Data Lama (Header + Items)
-      payload, // Data Baru (Payload Form)
-      `${action === "CREATE" ? "Input" : "Edit"} Surat Jalan (Ref: ${refDoc})`
-    );
 
     res.json(result);
   } catch (error) {
@@ -96,7 +46,7 @@ const searchStores = async (req, res) => {
       term,
       page,
       itemsPerPage,
-      excludeBranch
+      excludeBranch,
     );
     res.json(data);
   } catch (error) {
@@ -114,7 +64,7 @@ const searchPermintaan = async (req, res) => {
       term,
       Number(page),
       Number(itemsPerPage),
-      storeKode
+      storeKode,
     );
     res.json(result);
   } catch (error) {
@@ -129,7 +79,7 @@ const searchTerimaRb = async (req, res) => {
       term,
       Number(page),
       Number(itemsPerPage),
-      req.user
+      req.user,
     );
     res.json(result);
   } catch (error) {

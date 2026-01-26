@@ -1,6 +1,7 @@
 const soFormService = require("../services/soFormService");
 const auditService = require("../services/auditService"); // Import Audit
 const pool = require("../config/database"); // Import Pool untuk Snapshot
+const { differenceInDays, parseISO } = require("date-fns");
 
 const getForEdit = async (req, res) => {
   try {
@@ -20,60 +21,67 @@ const getForEdit = async (req, res) => {
 const save = async (req, res) => {
   try {
     const payload = req.body;
-
-    // 1. DETEKSI: Apakah ini Update?
     const isUpdate = payload.isNew === false;
     const nomorDokumen = payload.header?.nomor;
-
     let oldData = null;
+    let anomalyDetected = false;
+    let anomalyNote = "";
 
-    // 2. SNAPSHOT: Ambil data lama LENGKAP jika Update
+    // 1. SNAPSHOT & DETEKSI PERUBAHAN BARANG (Hanya saat Update)
     if (isUpdate && nomorDokumen) {
-      try {
-        // A. Ambil Header
-        const [headerRows] = await pool.query(
-          "SELECT * FROM tso_hdr WHERE so_nomor = ?",
-          [nomorDokumen]
-        );
+      const [headerRows] = await pool.query(
+        "SELECT * FROM tso_hdr WHERE so_nomor = ?",
+        [nomorDokumen],
+      );
+      const [detailRows] = await pool.query(
+        "SELECT * FROM tso_dtl WHERE sod_so_nomor = ?",
+        [nomorDokumen],
+      );
 
-        if (headerRows.length > 0) {
-          const header = headerRows[0];
+      if (headerRows.length > 0) {
+        oldData = { ...headerRows[0], items: detailRows };
 
-          // B. Ambil Detail (Gunakan sod_so_nomor)
-          const [detailRows] = await pool.query(
-            "SELECT * FROM tso_dtl WHERE sod_so_nomor = ? ORDER BY sod_nourut",
-            [nomorDokumen]
-          );
+        // Cek apakah ada perubahan pada daftar barang (Kode, Qty, atau Harga)
+        const oldItems = oldData.items;
+        const newItems = payload.details || [];
 
-          // C. Gabungkan
-          oldData = {
-            ...header,
-            items: detailRows,
-          };
+        if (oldItems.length !== newItems.length) {
+          anomalyDetected = true;
+          anomalyNote += "Jumlah baris item berubah. ";
+        } else {
+          for (let i = 0; i < oldItems.length; i++) {
+            const match = newItems.find(
+              (ni) => ni.kode === oldItems[i].sod_kode,
+            );
+            if (
+              !match ||
+              match.jumlah != oldItems[i].sod_jumlah ||
+              match.harga != oldItems[i].sod_harga
+            ) {
+              anomalyDetected = true;
+              anomalyNote += `Perubahan data pada barang ${oldItems[i].sod_kode}. `;
+              break;
+            }
+          }
         }
-      } catch (e) {
-        console.warn("Gagal snapshot oldData save SO:", e.message);
       }
     }
 
-    // 3. PROSES: Simpan ke Database
+    // 2. PROSES SIMPAN
     const result = await soFormService.save(payload, req.user);
 
-    // 4. AUDIT: Catat Log
-    const targetId = result.nomor || nomorDokumen || "UNKNOWN";
-    const action = isUpdate ? "UPDATE" : "CREATE";
-
-    auditService.logActivity(
-      req,
-      action,
-      "SURAT_PESANAN",
-      targetId,
-      oldData, // Data Lama (Header + Items)
-      payload, // Data Baru (Payload Form)
-      `${action === "CREATE" ? "Input" : "Edit"} SO (Customer: ${
-        payload.header?.customer?.nama
-      })`
-    );
+    // 3. AUDIT: Hanya catat jika ini CREATE atau ada Anomali pada UPDATE
+    if (!isUpdate || anomalyDetected) {
+      auditService.logActivity(
+        req,
+        anomalyDetected ? "ANOMALY_UPDATE" : "CREATE",
+        "SURAT_PESANAN",
+        result.nomor || nomorDokumen,
+        oldData,
+        payload,
+        anomalyDetected ? `⚠️ ANOMALI: ${anomalyNote}` : `Input SO Baru`,
+      );
+    }
 
     res.status(payload.isNew ? 201 : 200).json(result);
   } catch (error) {
@@ -93,14 +101,44 @@ const searchPenawaran = async (req, res) => {
 const getPenawaranDetails = async (req, res) => {
   try {
     const { nomor } = req.params;
-    const { cabang } = req.query; // Ambil cabang dari parameter URL (?cabang=K01)
+    const { cabang } = req.query;
 
-    const result = await soFormService.getPenawaranDetailsForSo(
-      nomor,
-      cabang
-    );
+    const result = await soFormService.getPenawaranDetailsForSo(nomor, cabang);
+
+    // --- PERBAIKAN LOGIKA TANGGAL ---
+    const rawDate = result.header.pen_tanggal;
+    let tglPenawaran;
+
+    if (rawDate instanceof Date) {
+      // Jika sudah berupa objek Date, gunakan langsung
+      tglPenawaran = rawDate;
+    } else if (typeof rawDate === "string") {
+      // Jika string, baru gunakan parseISO
+      tglPenawaran = parseISO(rawDate);
+    } else {
+      tglPenawaran = new Date();
+    }
+
+    // Hitung selisih hari untuk audit
+    const hariIni = new Date();
+    const selisihHari = differenceInDays(hariIni, tglPenawaran);
+
+    if (selisihHari > 20) {
+      auditService.logActivity(
+        req,
+        "ANOMALY_OLD_OFFER",
+        "PENAWARAN",
+        nomor,
+        null,
+        { selisihHari },
+        `⚠️ ANOMALI: Menarik penawaran berumur ${selisihHari} hari (Batas 20 hari)`,
+      );
+    }
+
+    // Kirim hasil ke frontend
     res.json(result);
   } catch (error) {
+    console.error("getPenawaranDetails Error:", error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -108,11 +146,15 @@ const getPenawaranDetails = async (req, res) => {
 const getDefaultDiscount = async (req, res) => {
   try {
     const { level, total, gudang } = req.query;
-    const levelCode = level ? level.split(" - ")[0] : "";
+
+    // Pastikan 'level' adalah string sebelum split
+    const levelStr = String(level || "");
+    const levelCode = levelStr ? levelStr.split(" - ")[0] : "";
+
     const result = await soFormService.getDefaultDiscount(
       levelCode,
       total,
-      gudang
+      gudang,
     );
     res.json(result);
   } catch (error) {

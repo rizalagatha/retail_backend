@@ -3,6 +3,7 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const speakeasy = require("speakeasy");
 const qrcode = require("qrcode");
+const { differenceInDays } = require("date-fns");
 
 /**
  * Mengambil hak akses (permissions) untuk seorang user.
@@ -42,7 +43,7 @@ const getPermissions = async (userKode) => {
 const generateFinalPayload = async (user, selectedCabang) => {
   const [gudangRows] = await pool.query(
     "SELECT gdg_nama FROM tgudang WHERE gdg_kode = ?",
-    [selectedCabang]
+    [selectedCabang],
   );
   const cabangNama = gudangRows.length > 0 ? gudangRows[0].gdg_nama : "";
 
@@ -52,7 +53,7 @@ const generateFinalPayload = async (user, selectedCabang) => {
   const isWarehouseUser = warehouseUsers.includes(userKodeUpper);
 
   // [LOGIC BARU] Daftar User Finance
-  const financeUsers = ["DARUL", "LIA", "HANI", "DEVI"];  
+  const financeUsers = ["DARUL", "LIA", "HANI", "DEVI"];
   // Cek apakah user termasuk Finance
   const isFinance = financeUsers.includes(userKodeUpper);
 
@@ -91,8 +92,8 @@ const generateFinalPayload = async (user, selectedCabang) => {
 const loginUser = async (kodeUser, password) => {
   // 1. Verifikasi user dan password
   const [users] = await pool.query(
-    "SELECT * FROM tuser WHERE user_kode = ? AND user_password = ?",
-    [kodeUser, password]
+    "SELECT * FROM tuser WHERE user_kode = ? AND BINARY user_password = ?",
+    [kodeUser, password],
   );
 
   if (users.length === 0) {
@@ -104,13 +105,34 @@ const loginUser = async (kodeUser, password) => {
     throw new Error("User ini sudah tidak aktif.");
   }
 
+  // --- [LOGIC BARU: CEK USIA PASSWORD] ---
+  const lastUpdate = firstUser.user_pass_last_update || firstUser.date_create;
+  const daysSinceUpdate = differenceInDays(new Date(), new Date(lastUpdate));
+
+  // Jika lebih dari 90 hari (3 bulan), interupsi login
+  if (daysSinceUpdate >= 90) {
+    const tempToken = jwt.sign(
+      { kode: kodeUser, isChangingPassword: true },
+      process.env.JWT_SECRET,
+      { expiresIn: "10m" }, // Token pendek khusus ganti password
+    );
+
+    return {
+      requiresPasswordChange: true,
+      message:
+        "Password Anda sudah lebih dari 3 bulan. Harap perbarui password Anda.",
+      tempToken,
+    };
+  }
+  // --- [AKHIR LOGIC BARU] ---
+
   // 2. Cek jumlah cabang
   if (users.length > 1) {
     // User punya banyak cabang, minta frontend untuk memilih
     const branchCodes = users.map((user) => user.user_cab);
     const [gudangRows] = await pool.query(
       "SELECT gdg_kode, gdg_nama FROM tgudang WHERE gdg_kode IN (?)",
-      [branchCodes]
+      [branchCodes],
     );
 
     const branchMap = new Map(gudangRows.map((g) => [g.gdg_kode, g.gdg_nama]));
@@ -123,7 +145,7 @@ const loginUser = async (kodeUser, password) => {
     const tempToken = jwt.sign(
       { kode: kodeUser, password },
       process.env.JWT_SECRET,
-      { expiresIn: "5m" }
+      { expiresIn: "5m" },
     );
 
     return {
@@ -135,7 +157,7 @@ const loginUser = async (kodeUser, password) => {
     // User hanya punya satu cabang, langsung login
     const finalPayload = await generateFinalPayload(
       firstUser,
-      firstUser.user_cab
+      firstUser.user_cab,
     );
     return {
       requiresBranchSelection: false,
@@ -164,7 +186,7 @@ const finalizeLoginWithBranch = async (tempToken, selectedCabang) => {
   // 2. Ambil data user spesifik untuk cabang yang dipilih
   const [userRows] = await pool.query(
     "SELECT * FROM tuser WHERE user_kode = ? AND user_password = ? AND user_cab = ?",
-    [kode, password, selectedCabang]
+    [kode, password, selectedCabang],
   );
 
   if (userRows.length === 0) {
@@ -176,7 +198,47 @@ const finalizeLoginWithBranch = async (tempToken, selectedCabang) => {
   return await generateFinalPayload(user, selectedCabang);
 };
 
+/**
+ * Service untuk update password dengan validasi Case-Insensitive
+ */
+const updateExpiredPassword = async (kodeUser, newPassword) => {
+  const cleanNewPassword = String(newPassword || "").trim();
+
+  if (cleanNewPassword.length < 4) {
+    throw new Error("Password baru minimal 4 karakter.");
+  }
+
+  // 1. Ambil password saat ini
+  const [currentRows] = await pool.query(
+    "SELECT user_password FROM tuser WHERE user_kode = ? LIMIT 1",
+    [kodeUser],
+  );
+
+  if (currentRows.length > 0) {
+    const oldPassword = String(currentRows[0].user_password || "").trim();
+
+    // 2. Validasi Case-Insensitive: Ubah keduanya ke huruf kecil saat dibanding
+    if (cleanNewPassword.toLowerCase() === oldPassword.toLowerCase()) {
+      throw new Error(
+        "Password baru tidak boleh sama dengan password lama (meskipun beda huruf besar/kecil).",
+      );
+    }
+  }
+
+  // 3. Simpan password baru (Tetap pertahankan casing asli saat menyimpan ke DB)
+  const query = `
+    UPDATE tuser 
+    SET user_password = ?, user_pass_last_update = NOW() 
+    WHERE user_kode = ?
+  `;
+
+  await pool.query(query, [cleanNewPassword, kodeUser]);
+
+  return { message: "Password berhasil diperbarui. Silakan login kembali." };
+};
+
 module.exports = {
   loginUser,
   finalizeLoginWithBranch,
+  updateExpiredPassword,
 };

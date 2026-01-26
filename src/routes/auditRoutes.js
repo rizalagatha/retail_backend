@@ -14,27 +14,33 @@ router.get(
   "/",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getLogs
+  controller.getLogs,
+);
+router.get(
+  "/:id",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getLogById,
 );
 router.get(
   "/modules",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getModules
+  controller.getModules,
 );
 
 router.get(
   "/actions",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getActions
+  controller.getActions,
 );
 
 router.get(
   "/cabang",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getCabangList
+  controller.getCabangList,
 );
 
 module.exports = router;

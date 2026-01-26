@@ -562,115 +562,107 @@ const searchAvailablePenawaran = async (filters) => {
  * @description Mengambil semua data dari Penawaran (DAN CUSTOMER) untuk diimpor ke SO.
  */
 const getPenawaranDetailsForSo = async (nomor, cabang) => {
-  // 1. Ambil Header, Customer, dan Level Info
-  const headerQuery = `
-    SELECT 
-      h.pen_nomor, h.pen_top, h.pen_ket, h.pen_ppn, h.pen_bkrm, 
-      h.pen_disc, h.pen_disc1, h.pen_disc2,
-      
-      -- Mengambil data Customer
-      c.cus_kode, c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp, 
-      c.cus_top AS customer_top, c.cus_franchise,
-      
-      -- Mengambil data Level (dari join)
-      IFNULL(lvl.clh_level, '') AS level_kode,
-      IFNULL(lvl.level_nama, '') AS level_nama,
-      
-      -- Mengambil data Discount Rule (dari join)
-      IFNULL(rule.level_nominal, 0) AS nominal,
-      IFNULL(rule.level_diskon, 0) AS diskon1,
-      IFNULL(rule.level_diskon2, 0) AS diskon2
+  const connection = await pool.getConnection();
+  try {
+    // 1. DEFINISIKAN QUERY HEADER [PENTING!]
+    const headerQuery = `
+      SELECT h.*, 
+             DATE_FORMAT(h.pen_tanggal, '%Y-%m-%d') as pen_tanggal_db,
+             c.cus_kode, c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp, 
+             c.cus_top AS customer_top, c.cus_franchise,
+             lvl.level_nama, lvl.level_kode,
+             rule.level_nominal, rule.level_diskon, rule.level_diskon2
+      FROM tpenawaran_hdr h
+      LEFT JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
+      LEFT JOIN (
+          SELECT v.clh_cus_kode, v.clh_level AS level_kode, l.level_nama
+          FROM tcustomer_level_history v
+          LEFT JOIN tcustomer_level l ON l.level_kode = v.clh_level
+          WHERE v.clh_cus_kode = (SELECT pen_cus_kode FROM tpenawaran_hdr WHERE pen_nomor = ?)
+          ORDER BY v.clh_tanggal DESC LIMIT 1
+      ) lvl ON lvl.clh_cus_kode = c.cus_kode
+      LEFT JOIN tcustomer_level rule ON rule.level_kode = lvl.level_kode
+      WHERE h.pen_nomor = ?
+    `;
 
-    FROM tpenawaran_hdr h
-    
-    -- Join untuk Customer
-    LEFT JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
-    
-    -- Join untuk Level (Subquery untuk histori level terakhir)
-    LEFT JOIN (
-        SELECT v.clh_cus_kode, v.clh_level, l.level_nama
-        FROM tcustomer_level_history v
-        LEFT JOIN tcustomer_level l ON l.level_kode = v.clh_level
-        -- Subquery ini harus menggunakan 'nomor' juga
-        WHERE v.clh_cus_kode = (SELECT pen_cus_kode FROM tpenawaran_hdr WHERE pen_nomor = ?)
-        ORDER BY v.clh_tanggal DESC LIMIT 1
-    ) lvl ON lvl.clh_cus_kode = c.cus_kode
-    
-    -- Join untuk Aturan Diskon
-    LEFT JOIN tcustomer_level rule ON rule.level_kode = lvl.clh_level
+    // Ambil data header
+    const [headerRows] = await connection.query(headerQuery, [nomor, nomor]);
+    if (headerRows.length === 0) throw new Error("Penawaran tidak ditemukan.");
+    const penHeader = headerRows[0];
 
-    WHERE h.pen_nomor = ?
-  `;
+    // DEFINISIKAN FORMAT TANGGAL
+    const formattedTanggal = penHeader.pen_tanggal_db;
 
-  // 'nomor' dilempar 2x: 1x untuk subquery level, 1x untuk query utama
-  const [headerRows] = await pool.query(headerQuery, [nomor, nomor]);
+    // Gunakan cabang dari parameter, jika kosong ambil dari cabang asli penawaran
+    const activeBranch = cabang || penHeader.pen_cab;
 
-  if (headerRows.length === 0)
-    throw new Error("Data Penawaran tidak ditemukan.");
+    // 2. Ambil Detail dengan Kategori & Stok yang diperbaiki
+    const [detailRows] = await connection.query(
+      `
+      SELECT d.*, 
+             IF(d.pend_custom = 'Y', d.pend_custom_nama, 
+                TRIM(CONCAT(
+                  COALESCE(a.brg_jeniskaos,''),' ',COALESCE(a.brg_tipe,''),' ',
+                  COALESCE(a.brg_lengan,''),' ',COALESCE(a.brg_jeniskain,''),' ',
+                  COALESCE(a.brg_warna,'')
+                ))) AS nama_barang,
+             
+             -- Kategori Otomatis: PESANAN untuk Custom, REGULER untuk Stok
+             IF(d.pend_custom = 'Y', 'PESANAN', IFNULL(a.brg_ktgp, 'REGULER')) AS kategori,
 
-  const penawaranHeader = headerRows[0];
+             b.brgd_barcode AS barcode,
 
-  // 2. Buat objek customer baru dari hasil query
-  const customerData = {
-    kode: penawaranHeader.cus_kode,
-    nama: penawaranHeader.cus_nama,
-    alamat: penawaranHeader.cus_alamat,
-    kota: penawaranHeader.cus_kota,
-    telp: penawaranHeader.cus_telp,
-    top: penawaranHeader.customer_top, // Ambil top dari customer, bukan penawaran
-    franchise: penawaranHeader.cus_franchise,
-    level_kode: penawaranHeader.level_kode,
-    level_nama: penawaranHeader.level_nama,
-    discountRule: {
-      nominal: penawaranHeader.nominal,
-      diskon1: penawaranHeader.diskon1,
-      diskon2: penawaranHeader.diskon2,
-    },
-  };
+             -- Subquery Stok Real-time berdasarkan Cabang aktif
+             IFNULL((
+                SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
+                FROM tmasterstok m 
+                WHERE m.mst_aktif = "Y" 
+                  AND m.mst_cab = ? 
+                  AND m.mst_brg_kode = d.pend_kode 
+                  AND TRIM(m.mst_ukuran) = TRIM(d.pend_ukuran)
+             ), 0) AS stok
+      FROM tpenawaran_dtl d
+      LEFT JOIN tbarangdc a ON a.brg_kode = d.pend_kode
+      LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.pend_kode AND b.brgd_ukuran = d.pend_ukuran
+      WHERE d.pend_nomor = ? 
+      ORDER BY d.pend_nourut
+    `,
+      [activeBranch, nomor],
+    );
 
-  // 3. Ambil Detail (Query lama Anda sudah benar)
-  const [detailRows] = await pool.query(
-    `
-  SELECT 
-    d.pend_kode AS kode,
-    TRIM(CONCAT(
-        COALESCE(a.brg_jeniskaos, ''), ' ',
-        COALESCE(a.brg_tipe, ''), ' ',
-        COALESCE(a.brg_lengan, ''), ' ',
-        COALESCE(a.brg_jeniskain, ''), ' ',
-        COALESCE(a.brg_warna, '')
-    )) AS nama,
-    a.brg_ktgp AS kategori,
-    d.pend_ukuran AS ukuran,
-    IFNULL((
-        SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
-        FROM tmasterstok m 
-        WHERE m.mst_aktif = "Y" AND m.mst_cab = ? AND m.mst_brg_kode = d.pend_kode AND m.mst_ukuran = d.pend_ukuran
-      ), 0) AS stok,
-    d.pend_jumlah AS jumlah,
-    d.pend_harga AS harga,
-    d.pend_disc AS diskonPersen,
-    d.pend_diskon AS diskonRp,
-    (d.pend_jumlah * (d.pend_harga - d.pend_diskon)) AS total,
-    b.brgd_barcode AS barcode,
-    d.pend_sd_nomor AS noSoDtf,
-    d.pend_ph_nomor AS noPengajuanHarga
-  FROM tpenawaran_dtl d
-  LEFT JOIN tbarangdc a ON a.brg_kode = d.pend_kode
-  LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.pend_kode AND b.brgd_ukuran = d.pend_ukuran
-  LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.pend_kode
-  WHERE d.pend_nomor = ? 
-  ORDER BY d.pend_nourut
-`,
-    [cabang, nomor], // Masukkan cabang untuk filter tmasterstok
-  );
+    // 3. Ambil Rincian DP yang sudah ada di Penawaran
+    const [dpRows] = await connection.query(
+      `
+      SELECT sk.sh_nomor AS nomor, 
+             CASE WHEN sk.sh_jenis = 0 THEN 'TUNAI' WHEN sk.sh_jenis = 1 THEN 'TRANSFER' ELSE 'GIRO' END AS jenis, 
+             sk.sh_nominal AS nominal, 'BELUM' as posting, '' as fsk
+      FROM tpenawaran_dp link
+      JOIN tsetor_hdr sk ON sk.sh_nomor = link.pnd_nomor_dp
+      WHERE link.pnd_nomor_pen = ?
+    `,
+      [nomor],
+    );
 
-  // 4. Kembalikan semua data
-  return {
-    header: penawaranHeader,
-    details: detailRows,
-    customer: customerData, // <-- DATA CUSTOMER DITAMBAHKAN DI SINI
-  };
+    return {
+      header: penHeader,
+      pen_tanggal: formattedTanggal,
+      details: detailRows,
+      dps: dpRows,
+      customer: {
+        kode: penHeader.cus_kode,
+        nama: penHeader.cus_nama,
+        level_kode: penHeader.level_kode,
+        level_nama: penHeader.level_nama,
+        top: penHeader.customer_top,
+        alamat: penHeader.cus_alamat,
+        kota: penHeader.cus_kota,
+        telp: penHeader.cus_telp,
+        franchise: penHeader.cus_franchise,
+      },
+    };
+  } finally {
+    connection.release();
+  }
 };
 
 const getDefaultDiscount = async (

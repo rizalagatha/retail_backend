@@ -30,7 +30,7 @@ const getOfferDetails = async (req, res) => {
   } catch (error) {
     console.error(
       `Error fetching details for offer ${req.params.nomor}:`,
-      error
+      error,
     );
     res.status(500).json({ message: "Terjadi kesalahan di server." });
   }
@@ -57,7 +57,7 @@ const getExportDetails = async (req, res) => {
     const details = await offerService.getExportDetails(
       startDate,
       endDate,
-      cabang
+      cabang,
     );
     res.json(details);
   } catch (error) {
@@ -92,7 +92,7 @@ const deleteOffer = async (req, res) => {
       // A. Ambil Header
       const [headerRows] = await pool.query(
         "SELECT * FROM tpenawaran_hdr WHERE pen_nomor = ?",
-        [nomor]
+        [nomor],
       );
 
       if (headerRows.length > 0) {
@@ -101,13 +101,13 @@ const deleteOffer = async (req, res) => {
         // B. Ambil Detail (Gunakan pend_nomor)
         const [detailRows] = await pool.query(
           "SELECT * FROM tpenawaran_dtl WHERE pend_nomor = ? ORDER BY pend_nourut",
-          [nomor]
+          [nomor],
         );
 
         // C. Gabungkan
         oldData = {
           ...header,
-          items: detailRows
+          items: detailRows,
         };
       }
     } catch (e) {
@@ -121,12 +121,12 @@ const deleteOffer = async (req, res) => {
     if (oldData) {
       auditService.logActivity(
         req,
-        "DELETE",            // Action
-        "PENAWARAN",         // Module
-        nomor,               // Target ID
-        oldData,             // Data Lama (Header + Items)
-        null,                // Data Baru (Null karena dihapus)
-        `Menghapus Penawaran Customer: ${oldData.pen_cus_kode || "Unknown"}`
+        "DELETE", // Action
+        "PENAWARAN", // Module
+        nomor, // Target ID
+        oldData, // Data Lama (Header + Items)
+        null, // Data Baru (Null karena dihapus)
+        `Menghapus Penawaran Customer: ${oldData.pen_cus_kode || "Unknown"}`,
       );
     }
 
@@ -144,35 +144,8 @@ const closeOffer = async (req, res) => {
       return res.status(400).json({ message: "Nomor dan alasan diperlukan." });
     }
 
-    // 1. SNAPSHOT: Ambil data sebelum diclose (untuk history status sebelumnya)
-    let oldData = null;
-    try {
-      const [headerRows] = await pool.query(
-        "SELECT * FROM tpenawaran_hdr WHERE pen_nomor = ?",
-        [nomor]
-      );
-      if (headerRows.length > 0) {
-        // Untuk close, mungkin detail barang tidak terlalu krusial, tapi boleh diambil jika mau
-        // Di sini kita ambil Header saja dulu agar ringan, karena yang berubah hanya status
-        oldData = headerRows[0]; 
-      }
-    } catch (e) {
-      console.warn("Gagal snapshot oldData close offer:", e.message);
-    }
-
-    // 2. PROSES: Close Offer
+    // Langsung proses tanpa snapshot dan tanpa logActivity
     const result = await offerService.closeOffer(nomor, alasan);
-
-    // 3. AUDIT: Catat Log Update (Closing)
-    auditService.logActivity(
-      req,
-      "UPDATE",            // Action (anggap update karena mengubah status/alasan)
-      "PENAWARAN",         // Module
-      nomor,               // Target ID
-      oldData,             // Data Lama
-      { alasan_close: alasan, status: "CLOSED" }, // Data Baru (yang diinput user)
-      `Close Penawaran (Alasan: ${alasan})`
-    );
 
     res.json(result);
   } catch (error) {

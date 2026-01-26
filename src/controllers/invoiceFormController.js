@@ -2,6 +2,51 @@ const service = require("../services/invoiceFormService");
 const auditService = require("../services/auditService"); // Import Audit
 const pool = require("../config/database"); // Import Pool untuk Snapshot
 
+const detectQtyAnomaly = async (soNomor, invoiceItems) => {
+  if (!soNomor || !Array.isArray(invoiceItems)) return null;
+
+  try {
+    // Ambil detail Qty dari SO asli
+    const [soDetails] = await pool.query(
+      "SELECT sod_kode, SUM(sod_jumlah) as total_so FROM tso_dtl WHERE sod_so_nomor = ? GROUP BY sod_kode",
+      [soNomor],
+    );
+
+    const soMap = new Map(
+      soDetails.map((d) => [d.sod_kode, Number(d.total_so)]),
+    );
+    let anomalyNote = "";
+
+    invoiceItems.forEach((item) => {
+      const qtySo = soMap.get(item.kode) || 0;
+      const qtyInv = Number(item.jumlah);
+
+      if (qtyInv !== qtySo) {
+        anomalyNote += `Barang ${item.kode}: SO(${qtySo}) vs Inv(${qtyInv}). `;
+      }
+    });
+
+    return anomalyNote || null;
+  } catch (e) {
+    console.warn("Gagal cek anomali Qty SO:", e.message);
+    return null;
+  }
+};
+
+const checkSoDeadline = (dateline) => {
+  if (!dateline) return null;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0); // Reset jam untuk perbandingan tanggal saja
+  const deadlineDate = new Date(dateline);
+  deadlineDate.setHours(0, 0, 0, 0);
+
+  if (today > deadlineDate) {
+    return `SO Melebihi Batas Waktu (${dateline.toISOString().split("T")[0]})`;
+  }
+  return null;
+};
+
 const loadForEdit = async (req, res) => {
   try {
     const { nomor } = req.params;
@@ -15,56 +60,33 @@ const loadForEdit = async (req, res) => {
 // [AUDIT TRAIL DITERAPKAN DI SINI]
 const save = async (req, res) => {
   try {
-    // 1. DETEKSI: Apakah ini Create Baru atau Update?
-    const isUpdate = req.body.nomor && req.body.nomor !== "AUTO";
-    let oldData = null;
+    const payload = req.body;
+    const soNomor = payload.so_nomor || payload.header?.so_nomor;
+    const dateline = payload.header?.dateline; // Pastikan dikirim dari frontend
 
-    if (isUpdate) {
-      try {
-        // A. SNAPSHOT HEADER
-        const [headerRows] = await pool.query(
-          "SELECT * FROM tinv_hdr WHERE inv_nomor = ?",
-          [req.body.nomor]
-        );
-
-        if (headerRows.length > 0) {
-          const header = headerRows[0];
-
-          // B. SNAPSHOT DETAIL [DITAMBAHKAN]
-          // Mengambil item barang yang ada di invoice tersebut
-          const [detailRows] = await pool.query(
-            "SELECT * FROM tinv_dtl WHERE invd_inv_nomor = ? ORDER BY invd_nourut",
-            [req.body.nomor]
-          );
-
-          // C. GABUNGKAN
-          // Masukkan detail ke dalam properti 'items' agar sejajar dengan struktur req.body
-          oldData = {
-            ...header,
-            items: detailRows,
-          };
-        }
-      } catch (e) {
-        console.warn("Gagal snapshot oldData save invoice:", e.message);
-      }
-    }
+    // 1. Deteksi Anomali (Qty & Dateline)
+    const qtyAnomaly = await detectQtyAnomaly(soNomor, payload.items);
+    const dateAnomaly = checkSoDeadline(dateline);
 
     // 2. PROSES: Simpan ke DB
-    const result = await service.saveData(req.body, req.user);
+    const result = await service.saveData(payload, req.user);
 
-    // 3. AUDIT: Catat Log
-    const targetId = result.nomor || req.body.nomor || "UNKNOWN";
-    const action = oldData ? "UPDATE" : "CREATE"; // Cek oldData bukan isUpdate agar lebih akurat
+    // 3. AUDIT: Catat jika ada anomali Qty atau Tanggal
+    if (qtyAnomaly || dateAnomaly) {
+      let finalNote = "";
+      if (qtyAnomaly) finalNote += `SELISIH QTY: ${qtyAnomaly} `;
+      if (dateAnomaly) finalNote += `DEADLINE TERLEWATI: ${dateAnomaly}`;
 
-    auditService.logActivity(
-      req,
-      action,
-      "INVOICE",
-      targetId,
-      oldData, // Data lama (Header + Items)
-      req.body, // Data baru (Payload Form)
-      `${action === "CREATE" ? "Input" : "Edit"} Transaksi Penjualan`
-    );
+      auditService.logActivity(
+        req,
+        "ANOMALY_INVOICE_FROM_SO",
+        "INVOICE",
+        result.nomor || "UNKNOWN",
+        null,
+        payload,
+        `⚠️ ANOMALI PROSES SO: ${finalNote.trim()}`,
+      );
+    }
 
     res.json(result);
   } catch (error) {
@@ -80,7 +102,7 @@ const searchSo = async (req, res) => {
       term,
       Number(page),
       Number(itemsPerPage),
-      req.user
+      req.user,
     );
     res.json(data);
   } catch (error) {
@@ -92,6 +114,12 @@ const getSoDetailsForGrid = async (req, res) => {
   try {
     const { soNomor } = req.params;
     const data = await service.getSoDetailsForGrid(soNomor, req.user);
+
+    // Deteksi keterlambatan untuk info di UI
+    const overdueNote = checkSoDeadline(data.header.dateline);
+    data.header.isOverdue = !!overdueNote;
+    data.header.overdueNote = overdueNote;
+
     res.json(data);
   } catch (error) {
     res.status(404).json({ message: error.message });
@@ -144,18 +172,7 @@ const getMemberByHp = async (req, res) => {
 const saveMember = async (req, res) => {
   try {
     const result = await service.saveMember(req.body, req.user);
-
-    // Audit sederhana untuk Member
-    auditService.logActivity(
-      req,
-      "SAVE", // Bisa Create atau Update (Upsert)
-      "MEMBER",
-      result.kode || result.nama, // Target ID
-      null, // Kita skip snapshot lama demi performa
-      req.body, // Data baru
-      `Input/Update Member via Kasir: ${result.nama}`
-    );
-
+    // Log Activity dihapus karena tindakan rutin
     res.json({
       message: `Member ${result.nama} berhasil disimpan.`,
       savedMember: result,
@@ -211,7 +228,7 @@ const searchProducts = async (req, res) => {
     const { page = 1, itemsPerPage = 10 } = req.query;
     const result = await service.searchProducts(
       { ...req.query, page: Number(page), itemsPerPage: Number(itemsPerPage) },
-      req.user
+      req.user,
     );
     res.json(result);
   } catch (error) {
@@ -381,44 +398,11 @@ const updateInvoiceHeaderOnly = async (req, res) => {
     const nomor = req.params.nomor;
     const body = req.body;
 
-    if (!body.customer) {
-      return res.status(400).json({ message: "Customer tidak boleh kosong." });
-    }
-    if (!body.tanggal) {
-      return res.status(400).json({ message: "Tanggal tidak boleh kosong." });
-    }
-
-    // 1. Snapshot Old Data
-    let oldData = null;
-    try {
-      const [rows] = await pool.query(
-        "SELECT * FROM tinv_hdr WHERE inv_nomor = ?",
-        [nomor]
-      );
-      if (rows.length > 0) oldData = rows[0];
-    } catch (e) {
-      console.warn("Gagal snapshot oldData update header:", e.message);
-    }
-
-    // 2. Proses Update
+    // Snapshot oldData dihapus untuk efisiensi
     const result = await service.updateHeaderOnly(nomor, body, req.user);
-
-    // 3. Audit Log
-    if (oldData) {
-      auditService.logActivity(
-        req,
-        "UPDATE",
-        "INVOICE",
-        nomor,
-        oldData,
-        body,
-        "Koreksi Header Invoice (Admin)"
-      );
-    }
-
+    // Log Activity dihapus karena tindakan rutin admin [cite: 2025-09-06]
     res.json(result);
   } catch (error) {
-    console.error("[updateInvoiceHeaderOnly]", error);
     res.status(500).json({ message: error.message });
   }
 };

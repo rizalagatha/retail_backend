@@ -30,53 +30,10 @@ const getCabangList = async (req, res) => {
   }
 };
 
-// [AUDIT TRAIL DITERAPKAN DI SINI]
 const close = async (req, res) => {
   try {
-    const { nomor, alasan } = req.body;
-
-    // 1. SNAPSHOT: Ambil data sebelum update (Header + Detail)
-    let oldData = null;
-    try {
-      // A. Ambil Header
-      const [headerRows] = await pool.query(
-        "SELECT * FROM tso_hdr WHERE so_nomor = ?",
-        [nomor]
-      );
-
-      if (headerRows.length > 0) {
-        const header = headerRows[0];
-
-        // B. Ambil Detail (Opsional untuk Close, tapi bagus untuk history)
-        const [detailRows] = await pool.query(
-          "SELECT * FROM tso_dtl WHERE sod_so_nomor = ? ORDER BY sod_nourut",
-          [nomor]
-        );
-
-        // C. Gabungkan
-        oldData = {
-          ...header,
-          items: detailRows
-        };
-      }
-    } catch (e) {
-      console.warn("Gagal snapshot oldData close SO:", e.message);
-    }
-
-    // 2. PROSES: Close SO
+    // Langsung eksekusi proses tanpa snapshot data lama
     const result = await soService.close({ ...req.body, user: req.user.kode });
-
-    // 3. AUDIT: Catat Log Update (Closing)
-    auditService.logActivity(
-      req,
-      "UPDATE",            // Action
-      "SURAT_PESANAN",     // Module
-      nomor,               // Target ID
-      oldData,             // Data Lama
-      { so_close: 2, so_alasan: alasan }, // Data Baru (Status Diclose)
-      `Close Manual SO (Alasan: ${alasan})`
-    );
-
     res.json(result);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -94,7 +51,7 @@ const remove = async (req, res) => {
       // A. Ambil Header
       const [headerRows] = await pool.query(
         "SELECT * FROM tso_hdr WHERE so_nomor = ?",
-        [nomor]
+        [nomor],
       );
 
       if (headerRows.length > 0) {
@@ -103,13 +60,13 @@ const remove = async (req, res) => {
         // B. Ambil Detail (Gunakan sod_so_nomor)
         const [detailRows] = await pool.query(
           "SELECT * FROM tso_dtl WHERE sod_so_nomor = ? ORDER BY sod_nourut",
-          [nomor]
+          [nomor],
         );
 
         // C. Gabungkan
         oldData = {
           ...header,
-          items: detailRows
+          items: detailRows,
         };
       }
     } catch (e) {
@@ -123,12 +80,12 @@ const remove = async (req, res) => {
     if (oldData) {
       auditService.logActivity(
         req,
-        "DELETE",            // Action
-        "SURAT_PESANAN",     // Module
-        nomor,               // Target ID
-        oldData,             // Data Lama (Header + Items)
-        null,                // Data Baru
-        `Menghapus SO Customer: ${oldData.so_cus_kode || "Unknown"}`
+        "DELETE", // Action
+        "SURAT_PESANAN", // Module
+        nomor, // Target ID
+        oldData, // Data Lama (Header + Items)
+        null, // Data Baru
+        `Menghapus SO Customer: ${oldData.so_cus_kode || "Unknown"}`,
       );
     }
 

@@ -5,12 +5,13 @@ const getLogs = async (req, res) => {
     const {
       startDate,
       endDate,
-      module: moduleName,
+      module: mod,
       user,
       action,
       cabang,
       page = 1,
       itemsPerPage = 20,
+      isAnomaly,
     } = req.query;
 
     const offset = (Number(page) - 1) * Number(itemsPerPage);
@@ -19,8 +20,15 @@ const getLogs = async (req, res) => {
     let conditions = ["1=1"];
     let params = [];
 
+    // [OPTIMASI 1] Filter khusus anomali
+    if (isAnomaly === "true") {
+      conditions.push("action LIKE 'ANOMALY_%'");
+    } else if (action && action !== "ALL") {
+      conditions.push("action = ?");
+      params.push(action);
+    }
+
     if (startDate && endDate) {
-      // [FIX] Gunakan log_date
       conditions.push("DATE(log_date) BETWEEN ? AND ?");
       params.push(startDate, endDate);
     }
@@ -49,34 +57,47 @@ const getLogs = async (req, res) => {
 
     // [FIX] Select log_date, Order by log_date
     const dataQuery = `
-      SELECT id, user_id, user_cabang, action, module, target_id, note, 
-             old_values, new_values, 
-             ip_address, user_agent, log_date
+      SELECT id, log_date, user_id, user_nama, user_cabang, action, module, target_id, note 
       FROM taudit_log
       ${whereClause}
       ORDER BY log_date DESC
       LIMIT ? OFFSET ?
     `;
 
-    const countQuery = `SELECT COUNT(*) as total FROM taudit_log ${whereClause}`;
-
     const [rows] = await pool.query(dataQuery, [...params, limit, offset]);
-    const [countResult] = await pool.query(countQuery, params);
+    const [countResult] = await pool.query(
+      `SELECT COUNT(*) as total FROM taudit_log ${whereClause}`,
+      params,
+    );
 
-    res.json({
-      items: rows,
-      total: countResult[0].total,
-    });
+    res.json({ items: rows, total: countResult[0].total });
   } catch (error) {
-    console.error("Audit Log Error:", error);
-    res.status(500).json({ message: "Gagal mengambil data audit log." });
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getLogById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    // Di sini kita SELECT * termasuk old_values dan new_values
+    const [rows] = await pool.query("SELECT * FROM taudit_log WHERE id = ?", [
+      id,
+    ]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "Log tidak ditemukan." });
+    }
+
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
 };
 
 const getModules = async (req, res) => {
   try {
     const [rows] = await pool.query(
-      "SELECT DISTINCT module FROM taudit_log ORDER BY module"
+      "SELECT DISTINCT module FROM taudit_log ORDER BY module",
     );
     res.json(rows.map((r) => r.module));
   } catch (error) {
@@ -88,7 +109,7 @@ const getActions = async (req, res) => {
   try {
     // Mengambil distinct action agar dropdown sesuai isi database
     const [rows] = await pool.query(
-      "SELECT DISTINCT action FROM taudit_log ORDER BY action"
+      "SELECT DISTINCT action FROM taudit_log ORDER BY action",
     );
     res.json(rows.map((r) => r.action));
   } catch (error) {
@@ -113,4 +134,4 @@ const getCabangList = async (req, res) => {
   }
 };
 
-module.exports = { getLogs, getModules, getActions, getCabangList };
+module.exports = { getLogs, getLogById, getModules, getActions, getCabangList };

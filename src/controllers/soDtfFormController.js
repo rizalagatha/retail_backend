@@ -4,6 +4,27 @@ const pool = require("../config/database"); // Import Pool untuk Snapshot
 const fs = require("fs");
 const path = require("path");
 
+const checkSizeAnomaly = (details) => {
+  if (!details || !Array.isArray(details)) return null;
+
+  const map = new Map();
+  let notes = "";
+
+  details.forEach((item) => {
+    const size = item.ukuran || item.sdd_ukuran;
+    const itemName = item.sdd_nama_barang || "";
+
+    if (size && itemName) {
+      if (map.has(size) && map.get(size) !== itemName) {
+        notes += `Ukuran ${size} bentrok: '${map.get(size)}' vs '${itemName}'. `;
+      }
+      map.set(size, itemName);
+    }
+  });
+
+  return notes || null;
+};
+
 const getById = async (req, res) => {
   try {
     const { nomor } = req.params;
@@ -24,23 +45,22 @@ const getById = async (req, res) => {
 const create = async (req, res) => {
   try {
     const user = req.user;
+    const anomalyNote = checkSizeAnomaly(req.body.details); // [NEW] Deteksi anomali
 
-    // 1. PROSES: Simpan Baru
     const newData = await soDtfFormService.create(req.body, user);
 
-    // 2. AUDIT: Catat Log Create
-    const targetId = newData.header?.sd_nomor || "UNKNOWN";
-    const refSO = req.body.header?.soNomor || "UNKNOWN";
-
-    auditService.logActivity(
-      req,
-      "CREATE",
-      "SO_DTF",
-      targetId,
-      null, // Old Data
-      req.body, // New Data (Payload Form sudah lengkap Header + 2 Details)
-      `Input SO DTF Baru (Ref SO: ${refSO})`
-    );
+    // AUDIT: Hanya catat jika ada anomali ukuran ganda
+    if (anomalyNote) {
+      auditService.logActivity(
+        req,
+        "ANOMALY_SIZE_CONFLICT",
+        "SO_DTF",
+        newData.header?.sd_nomor || "UNKNOWN",
+        null,
+        req.body,
+        `⚠️ ANOMALI INPUT: ${anomalyNote}`,
+      );
+    }
 
     res.status(201).json(newData);
   } catch (error) {
@@ -48,65 +68,29 @@ const create = async (req, res) => {
   }
 };
 
-// [AUDIT TRAIL DITERAPKAN DI SINI]
 const update = async (req, res) => {
   try {
     const { nomor } = req.params;
     const user = req.user;
+    const anomalyNote = checkSizeAnomaly(req.body.details); // [NEW] Deteksi anomali
 
-    // 1. SNAPSHOT: Ambil data lama LENGKAP sebelum update
-    let oldData = null;
-    try {
-      // A. Ambil Header
-      const [headerRows] = await pool.query(
-        "SELECT * FROM tsodtf_hdr WHERE sd_nomor = ?",
-        [nomor]
-      );
-
-      if (headerRows.length > 0) {
-        const header = headerRows[0];
-
-        // B. Ambil Detail 1
-        const [detail1Rows] = await pool.query(
-          "SELECT * FROM tsodtf_dtl WHERE sdd_nomor = ? ORDER BY sdd_nourut",
-          [nomor]
-        );
-
-        // C. Ambil Detail 2
-        const [detail2Rows] = await pool.query(
-          "SELECT * FROM tsodtf_dtl2 WHERE sdd2_nomor = ? ORDER BY sdd2_nourut",
-          [nomor]
-        );
-
-        // D. Gabungkan
-        oldData = {
-          ...header,
-          items: detail1Rows,
-          titikCetak: detail2Rows
-        };
-      }
-    } catch (e) {
-      console.warn("Gagal snapshot oldData update SO DTF:", e.message);
-    }
-
-    // 2. PROSES: Update Data
+    // [CLEANUP] Snapshot lama dihapus karena modul sudah stabil
     const updatedData = await soDtfFormService.update(nomor, req.body, user);
 
-    // 3. AUDIT: Catat Log Update
-    auditService.logActivity(
-      req,
-      "UPDATE",
-      "SO_DTF",
-      nomor, // Target ID
-      oldData, // Old Data (Header + 2 Details)
-      req.body, // New Data (Payload Form)
-      `Update SO DTF`
-    );
+    // AUDIT: Hanya catat jika ada anomali ukuran ganda saat update
+    if (anomalyNote) {
+      auditService.logActivity(
+        req,
+        "ANOMALY_SIZE_CONFLICT_UPDATE",
+        "SO_DTF",
+        nomor,
+        null,
+        req.body,
+        `⚠️ ANOMALI UPDATE: ${anomalyNote}`,
+      );
+    }
 
-    res.json({
-      message: "Data berhasil diperbarui",
-      data: updatedData,
-    });
+    res.json({ message: "Data berhasil diperbarui", data: updatedData });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -118,7 +102,7 @@ const searchSales = async (req, res) => {
     const data = await soDtfFormService.searchSales(
       term,
       parseInt(page),
-      parseInt(itemsPerPage)
+      parseInt(itemsPerPage),
     );
     res.json(data);
   } catch (error) {
@@ -142,7 +126,7 @@ const searchJenisKain = async (req, res) => {
     const data = await soDtfFormService.searchJenisKain(
       term,
       parseInt(page),
-      parseInt(itemsPerPage)
+      parseInt(itemsPerPage),
     );
     res.json(data);
   } catch (error) {
@@ -191,7 +175,7 @@ const uploadImage = async (req, res) => {
 
     const finalPath = await soDtfFormService.processSoDtfImage(
       req.file.path,
-      nomor
+      nomor,
     );
 
     const cabang = nomor.substring(0, 3);
@@ -242,7 +226,7 @@ const getUkuranSodtfDetail = async (req, res) => {
     }
     const data = await soDtfFormService.getUkuranSodtfDetail(
       jenisOrder,
-      ukuran
+      ukuran,
     );
     res.json(data);
   } catch (error) {
@@ -258,7 +242,7 @@ const calculateDtgPrice = async (req, res) => {
     }
     const harga = await soDtfFormService.calculateDtgPrice(
       detailsTitik,
-      totalJumlahKaos
+      totalJumlahKaos,
     );
     res.json({ harga });
   } catch (error) {
@@ -304,7 +288,7 @@ const searchSoForDtf = async (req, res) => {
       term,
       cabang,
       Number(page),
-      Number(itemsPerPage)
+      Number(itemsPerPage),
     );
 
     res.json({

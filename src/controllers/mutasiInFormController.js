@@ -1,63 +1,15 @@
 const service = require("../services/mutasiInFormService");
-const auditService = require("../services/auditService"); // Import Audit
-const pool = require("../config/database"); // Import Pool untuk Snapshot
 
-// [AUDIT TRAIL DITERAPKAN DI SINI]
+/**
+ * [CLEANUP] Fungsi Save Penerimaan Mutasi.
+ * Menghilangkan snapshot dan logging aktivitas rutin untuk meningkatkan performa.
+ */
 const save = async (req, res) => {
   try {
     const payload = req.body;
 
-    // 1. DETEKSI: Apakah ini Update?
-    const isUpdate = payload.isNew === false;
-    const nomorDokumen = payload.header?.nomor || payload.nomor;
-
-    let oldData = null;
-
-    // 2. SNAPSHOT: Ambil data lama LENGKAP jika Update
-    if (isUpdate && nomorDokumen) {
-      try {
-        // A. Ambil Header
-        const [headerRows] = await pool.query(
-          "SELECT * FROM tmutasiin_hdr WHERE mi_nomor = ?",
-          [nomorDokumen]
-        );
-
-        if (headerRows.length > 0) {
-          const header = headerRows[0];
-
-          // B. Ambil Detail (Gunakan mid_nomor)
-          const [detailRows] = await pool.query(
-            "SELECT * FROM tmutasiin_dtl WHERE mid_nomor = ?", 
-            [nomorDokumen]
-          );
-
-          // C. Gabungkan
-          oldData = {
-            ...header,
-            items: detailRows
-          };
-        }
-      } catch (e) {
-        console.warn("Gagal snapshot oldData save mutasi in:", e.message);
-      }
-    }
-
-    // 3. PROSES: Simpan ke Database
+    // Langsung eksekusi simpan ke database melalui service
     const result = await service.saveData(payload, req.user);
-
-    // 4. AUDIT: Catat Log
-    const targetId = result.nomor || nomorDokumen || "UNKNOWN";
-    const action = isUpdate ? "UPDATE" : "CREATE";
-
-    auditService.logActivity(
-      req,
-      action,
-      "MUTASI_IN",
-      targetId,
-      oldData, // Data Lama (Header + Items)
-      payload, // Data Baru (Payload Form sudah lengkap header+items)
-      `${action === "CREATE" ? "Input" : "Edit"} Penerimaan Mutasi`
-    );
 
     res.json(result);
   } catch (error) {
@@ -100,7 +52,7 @@ const searchMutasiOut = async (req, res) => {
       term,
       Number(page),
       Number(itemsPerPage),
-      req.user
+      req.user,
     );
     res.json(result);
   } catch (error) {

@@ -180,6 +180,7 @@ const getSoDetailsForGrid = async (soNomor, user) => {
     headerQuery = `
             SELECT 
                 h.so_nomor AS nomorSo, h.so_tanggal AS tanggal,
+                h.so_dateline AS dateline,
                 h.so_cus_kode AS kode, c.cus_nama AS nama, c.cus_alamat AS alamat, c.cus_kota AS kota, c.cus_telp AS telp,
                 h.so_top AS top, DATE_ADD(h.so_tanggal, INTERVAL h.so_top DAY) AS tanggalTempo,
                 h.so_sc AS salesCounter,

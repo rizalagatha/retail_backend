@@ -13,7 +13,7 @@ const getNextNumber = async (req, res) => {
     const nextNumber = await offerFormService.generateNewOfferNumber(
       pool, // Pass pool connection
       cabang,
-      tanggal
+      tanggal,
     );
     res.json({ nextNumber });
   } catch (error) {
@@ -39,7 +39,7 @@ const searchCustomers = async (req, res) => {
       gudang,
       pageNumber,
       limit,
-      isInvoice
+      isInvoice,
     );
 
     res.json(result);
@@ -72,68 +72,51 @@ const saveOffer = async (req, res) => {
   try {
     const payload = req.body;
 
-    // 1. DETEKSI: Apakah ini Update?
-    const isUpdate = payload.isNew === false;
-    const nomorDokumen = payload.header?.nomor || payload.nomor;
-
-    let oldData = null;
-
-    // 2. SNAPSHOT: Ambil data lama LENGKAP jika Update
-    if (isUpdate && nomorDokumen) {
-      try {
-        // A. Ambil Header
-        const [headerRows] = await pool.query(
-          "SELECT * FROM tpenawaran_hdr WHERE pen_nomor = ?",
-          [nomorDokumen]
-        );
-
-        if (headerRows.length > 0) {
-          const header = headerRows[0];
-
-          // B. Ambil Detail (Gunakan pend_nomor)
-          const [detailRows] = await pool.query(
-            "SELECT * FROM tpenawaran_dtl WHERE pend_nomor = ? ORDER BY pend_nourut",
-            [nomorDokumen]
-          );
-
-          // C. Gabungkan
-          oldData = {
-            ...header,
-            items: detailRows,
-          };
-        }
-      } catch (e) {
-        console.warn("Gagal snapshot oldData save offer:", e.message);
-      }
-    }
-
-    // 3. PROSES: Simpan ke Database
     // Inject user info ke payload agar service bisa membacanya
     payload.user = req.user;
 
+    // Langsung eksekusi simpan tanpa snapshot oldData dan logActivity
     const result = await offerFormService.saveOffer(payload);
-
-    // 4. AUDIT: Catat Log
-    const targetId = result.nomor || nomorDokumen || "UNKNOWN";
-    const action = isUpdate ? "UPDATE" : "CREATE";
-
-    auditService.logActivity(
-      req,
-      action,
-      "PENAWARAN",
-      targetId,
-      oldData, // Data Lama (Header + Items)
-      payload, // Data Baru (Payload Form)
-      `${action === "CREATE" ? "Input" : "Edit"} Penawaran`
-    );
 
     const statusCode = payload.isNew ? 201 : 200;
     res.status(statusCode).json(result);
   } catch (error) {
     console.error("Error saving offer:", error);
-    res
-      .status(500)
-      .json({ message: error.message || "Gagal menyimpan penawaran." });
+    res.status(500).json({
+      message: error.message || "Gagal menyimpan penawaran.",
+    });
+  }
+};
+
+const saveDp = async (req, res) => {
+  try {
+    const payload = { ...req.body, user: req.user };
+    const result = await offerFormService.saveOfferDp(payload);
+    res.status(201).json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const deleteDp = async (req, res) => {
+  try {
+    const { nomor } = req.body;
+    const result = await offerFormService.deleteOfferDp(nomor);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getDpPrintData = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const data = await offerFormService.getDpPrintData(nomor);
+    if (!data)
+      return res.status(404).json({ message: "Data DP tidak ditemukan." });
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -144,7 +127,7 @@ const getDefaultDiscount = async (req, res) => {
     const result = await offerFormService.getDefaultDiscount(
       level,
       parseFloat(total),
-      gudang
+      gudang,
     );
 
     res.status(200).json(result);
@@ -220,12 +203,10 @@ const getPriceProposalDetails = async (req, res) => {
 const getPrintData = async (req, res) => {
   try {
     const { nomor } = req.params;
+    // Pastikan memanggil getDataForPrinting (dengan 'ing')
     const data = await offerFormService.getDataForPrint(nomor);
-    if (!data) {
-      return res
-        .status(404)
-        .json({ message: "Data penawaran tidak ditemukan." });
-    }
+    if (!data)
+      return res.status(404).json({ message: "Data tidak ditemukan." });
     res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -251,6 +232,9 @@ module.exports = {
   searchCustomers,
   getCustomerDetails,
   saveOffer,
+  saveDp,
+  deleteDp,
+  getDpPrintData,
   getDefaultDiscount,
   getDetailsForEdit,
   searchSoDtf,

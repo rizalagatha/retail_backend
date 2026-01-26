@@ -1,6 +1,4 @@
 const service = require("../services/mutasiKirimFormService");
-const auditService = require("../services/auditService"); // Import Audit
-const pool = require("../config/database"); // Import Pool untuk Snapshot
 
 const getForEdit = async (req, res) => {
   try {
@@ -14,62 +12,15 @@ const getForEdit = async (req, res) => {
   }
 };
 
-// [AUDIT TRAIL DITERAPKAN DI SINI]
+/**
+ * [CLEANUP] Fungsi Save tanpa Audit Trail dan Snapshot Database.
+ */
 const save = async (req, res) => {
   try {
     const payload = req.body;
 
-    // 1. DETEKSI: Apakah ini Update?
-    // Menggunakan logika payload.nomor ada dan bukan "AUTO"
-    const isUpdate = payload.nomor && payload.nomor !== "AUTO";
-    
-    let oldData = null;
-
-    // 2. SNAPSHOT: Ambil data lama LENGKAP jika Update
-    if (isUpdate) {
-      try {
-        // A. Ambil Header
-        const [headerRows] = await pool.query(
-          "SELECT * FROM tmsk_hdr WHERE msk_nomor = ?",
-          [payload.nomor]
-        );
-
-        if (headerRows.length > 0) {
-          const header = headerRows[0];
-
-          // B. Ambil Detail (Gunakan mskd_nomor)
-          const [detailRows] = await pool.query(
-            "SELECT * FROM tmsk_dtl WHERE mskd_nomor = ? ORDER BY mskd_kode",
-            [payload.nomor]
-          );
-
-          // C. Gabungkan
-          oldData = {
-            ...header,
-            items: detailRows
-          };
-        }
-      } catch (e) {
-        console.warn("Gagal snapshot oldData save mutasi kirim:", e.message);
-      }
-    }
-
-    // 3. PROSES: Simpan ke Database
+    // Langsung eksekusi simpan ke database melalui service
     const result = await service.save(payload, req.user);
-
-    // 4. AUDIT: Catat Log
-    const targetId = result.nomor || payload.nomor || "UNKNOWN";
-    const action = isUpdate ? "UPDATE" : "CREATE";
-
-    auditService.logActivity(
-      req,
-      action,
-      "MUTASI_KIRIM",
-      targetId,
-      oldData, // Data Lama (Header + Items)
-      payload, // Data Baru (Payload Form)
-      `${action === "CREATE" ? "Input" : "Edit"} Pengiriman Barang (Mutasi Out)`
-    );
 
     res.status(201).json(result);
   } catch (error) {
@@ -106,11 +57,10 @@ const findByBarcode = async (req, res, next) => {
   try {
     const { barcode } = req.params;
     const { gudang } = req.query;
-    if (!gudang) throw new Error("Parameter gudang diperlukan"); // Disederhanakan error throw-nya
+    if (!gudang) throw new Error("Parameter gudang diperlukan");
     const data = await service.findByBarcode(barcode, gudang);
     res.json(data);
   } catch (error) {
-    // Sesuaikan handling error agar konsisten (pakai next atau res.json)
     if (res.headersSent) return next(error);
     res.status(400).json({ message: error.message });
   }

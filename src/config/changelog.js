@@ -1,8 +1,16 @@
 const changelogs = {
   "1.3.4": {
-    date: "2026-01-09",
+    date: "2026-01-26",
     changes: [
-      "Pembaruan halaman Laporan Stok Minus, kini dengan format header-detail. Penggabungan Laporan Stok Real Time dengan Laporan Kartu Stok",
+      {
+        title: "Pembaruan:",
+        items: [
+          "Halaman Penawaran dapat input DP jika customer ingin keep pembayaran dan jenis order untuk estimasi biaya custom",
+          "User diwajibkan untuk mengganti password akun Retailnya tiap 3 bulan sekali, terhitung mulai hari ini",
+          "Pembaruan halaman Laporan Stok Minus, kini dengan format header-detail. Penggabungan Laporan Stok Real Time dengan Laporan Kartu Stok",
+          "Pembaruan halaman Laporan List Otorisasi, dengan format header-detail",
+        ],
+      },
       {
         title: "Penambahan:",
         items: [
@@ -12,11 +20,7 @@ const changelogs = {
       },
       {
         title: "Perbaikan:",
-        items: [
-          "Disable Hapus pada beberapa Halaman",
-          "Lock Terima Surat Jalan di Web, agar Store Terima SJ lewat aplikasi Kaosan Mobile. Pengecualian sementara untuk K01 karena belum ada fasilitas scanner",
-          "Perbaikan Simpan Terima STBJ untuk DC, dan tampilannya",
-        ],
+        items: ["Perbaikan halaman Cetak Barcode", ""],
       },
     ],
   },

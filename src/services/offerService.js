@@ -76,100 +76,162 @@ const getOffers = async (startDate, endDate, cabang) => {
 };
 
 const getOfferDetails = async (nomor) => {
-  // Query ini adalah adaptasi dari query detail di Delphi Anda
   const query = `
-        SELECT
-            d.pend_kode AS kode,
-            IFNULL(b.brgd_barcode, "") AS barcode,
-            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) AS Nama,
-            d.pend_ukuran AS ukuran,
-            d.pend_jumlah AS qty,
-            d.pend_harga AS harga,
-            d.pend_diskon AS diskon,
-            (d.pend_jumlah * (d.pend_harga - d.pend_diskon)) AS total
-        FROM tpenawaran_dtl d
-        LEFT JOIN tpenawaran_hdr h ON h.pen_nomor = d.pend_nomor
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.pend_kode
-        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.pend_kode AND b.brgd_ukuran = d.pend_ukuran
-        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.pend_kode
-        WHERE d.pend_nomor = ?
-        ORDER BY d.pend_nourut;
-    `;
+    SELECT
+        d.pend_kode AS kode,
+        IFNULL(b.brgd_barcode, "") AS barcode,
+        -- Prioritaskan nama custom, lalu nama SO DTF, lalu nama barang reguler
+        CASE 
+            WHEN d.pend_custom = 'Y' AND NULLIF(d.pend_custom_nama, '') IS NOT NULL 
+                THEN d.pend_custom_nama 
+            WHEN f.sd_nama IS NOT NULL 
+                THEN f.sd_nama
+            ELSE IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), "Barang Umum")
+        END AS Nama,
+        d.pend_ukuran AS ukuran,
+        d.pend_jumlah AS qty,
+        d.pend_harga AS harga,
+        d.pend_diskon AS diskon,
+        (d.pend_jumlah * (d.pend_harga - d.pend_diskon)) AS total,
+        d.pend_custom,
+        d.pend_custom_data
+    FROM tpenawaran_dtl d
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.pend_kode
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.pend_kode AND b.brgd_ukuran = d.pend_ukuran
+    LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.pend_sd_nomor
+    WHERE d.pend_nomor = ?
+    ORDER BY d.pend_nourut;
+  `;
+
   const [rows] = await pool.query(query, [nomor]);
-  return rows;
+
+  // Proses ukuran di JavaScript agar kompatibel dengan versi MariaDB lama
+  return rows.map((item) => {
+    let displayUkuran = item.ukuran;
+
+    if (
+      (!displayUkuran || displayUkuran === "") &&
+      item.pend_custom === "Y" &&
+      item.pend_custom_data
+    ) {
+      try {
+        const customObj =
+          typeof item.pend_custom_data === "string"
+            ? JSON.parse(item.pend_custom_data)
+            : item.pend_custom_data;
+
+        if (customObj.ukuranKaos && Array.isArray(customObj.ukuranKaos)) {
+          displayUkuran = [
+            ...new Set(customObj.ukuranKaos.map((u) => u.ukuran)),
+          ].join(", ");
+        }
+      } catch (e) {
+        console.error("Gagal parse ukuran detail browse:", e);
+      }
+    }
+
+    return {
+      kode: item.kode,
+      barcode: item.barcode,
+      Nama: item.Nama,
+      ukuran: displayUkuran,
+      qty: item.qty,
+      harga: item.harga,
+      diskon: item.diskon,
+      total: item.total,
+    };
+  });
 };
 
 const getDataForPrinting = async (nomor) => {
-  // 1. Ambil data Header dan Customer
-  const headerQuery = `
-        SELECT h.*, c.* FROM tpenawaran_hdr h
+  const connection = await pool.getConnection();
+  try {
+    // 1. Ambil Header + Customer + Info Jenis Order
+    const [headerRows] = await connection.query(
+      `
+        SELECT h.*, c.cus_nama, c.cus_alamat, c.cus_telp,
+               h.pen_jenis_order_nama -- Ambil Nama Jenis Order
+        FROM tpenawaran_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
-        WHERE h.pen_nomor = ?;
-    `;
-  const [headerRows] = await pool.query(headerQuery, [nomor]);
-  if (headerRows.length === 0) {
-    throw { status: 404, message: "Data penawaran tidak ditemukan." };
+        WHERE h.pen_nomor = ?
+    `,
+      [nomor],
+    );
+
+    if (headerRows.length === 0) return null;
+    const header = headerRows[0];
+
+    // 2. Ambil Info Gudang untuk Header Cetakan
+    const [gudangRows] = await connection.query(
+      `SELECT gdg_inv_nama, gdg_inv_alamat, gdg_inv_kota, gdg_inv_telp, gdg_akun, gdg_transferbank 
+       FROM tgudang WHERE gdg_kode = ?`,
+      [header.pen_cab],
+    );
+    const gudang = gudangRows[0];
+
+    // 3. Ambil Detail (Utamakan pend_custom_nama jika ada)
+    const [details] = await connection.query(
+      `
+    SELECT 
+        d.pend_kode AS kode, 
+        -- Gunakan COALESCE & NULLIF agar jika string kosong tetap lari ke ELSE
+        CASE 
+            WHEN d.pend_custom = 'Y' AND NULLIF(d.pend_custom_nama, '') IS NOT NULL 
+                THEN d.pend_custom_nama 
+            WHEN f.sd_nama IS NOT NULL 
+                THEN f.sd_nama
+            ELSE IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), "Jasa Cetak")
+        END AS nama_barang,
+        d.pend_ukuran AS ukuran, d.pend_jumlah AS qty, d.pend_harga AS harga,
+        d.pend_diskon AS diskon, (d.pend_jumlah * (d.pend_harga - d.pend_diskon)) as total
+    FROM tpenawaran_dtl d
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.pend_kode
+    LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.pend_sd_nomor
+    WHERE d.pend_nomor = ? 
+    ORDER BY d.pend_nourut
+`,
+      [nomor],
+    );
+
+    // 4. Ambil Rincian DP (Uang Muka)
+    const [dps] = await connection.query(
+      `
+        SELECT sk.sh_nomor AS nomor, 
+               CASE WHEN sk.sh_jenis = 0 THEN 'TUNAI' WHEN sk.sh_jenis = 1 THEN 'TRANSFER' ELSE 'GIRO' END AS jenis, 
+               sk.sh_nominal AS nominal
+        FROM tpenawaran_dp link
+        JOIN tsetor_hdr sk ON sk.sh_nomor = link.pnd_nomor_dp
+        WHERE link.pnd_nomor_pen = ?
+    `,
+      [nomor],
+    );
+
+    // 5. Kalkulasi Total
+    const total = details.reduce((sum, item) => sum + Number(item.total), 0);
+    const total_dp = dps.reduce((sum, dp) => sum + Number(dp.nominal), 0);
+
+    return {
+      header: {
+        ...header,
+        ...gudang,
+        total: total,
+        diskon: Number(header.pen_disc || 0),
+        ppn: (header.pen_ppn / 100) * (total - Number(header.pen_disc || 0)),
+        biaya_kirim: Number(header.pen_bkrm || 0),
+        grand_total:
+          total -
+          Number(header.pen_disc || 0) +
+          (header.pen_ppn / 100) * (total - Number(header.pen_disc || 0)) +
+          Number(header.pen_bkrm || 0),
+        total_dp: total_dp,
+        belum_dibayar: total - Number(header.pen_disc || 0) - total_dp,
+      },
+      details,
+      dps: dps || [], // [PENTING] Pastikan selalu mengembalikan array meskipun kosong
+    };
+  } finally {
+    connection.release();
   }
-  let header = headerRows[0]; // Gunakan let agar bisa ditambah properti
-
-  // 2. Ambil data Gudang
-  // SELECT * akan mengambil gdg_akun & gdg_transferbank juga
-  const gudangQuery = `SELECT * FROM tgudang WHERE gdg_kode = ?;`;
-  const [gudangRows] = await pool.query(gudangQuery, [
-    header.pen_nomor.substring(0, 3),
-  ]);
-  const gudang = gudangRows[0];
-
-  // 3. Ambil data Detail
-  const detailsQuery = `
-        SELECT 
-            d.pend_kode AS kode, 
-            IFNULL(b.brgd_barcode, "") AS barcode,
-            -- Gunakan alias 'nama_barang' agar konsisten dengan frontend
-            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) AS nama_barang,
-            d.pend_ukuran AS ukuran, 
-            d.pend_jumlah AS qty, 
-            d.pend_harga AS harga,
-            d.pend_diskon AS diskon,
-            (d.pend_jumlah * (d.pend_harga - d.pend_diskon)) as total
-        FROM tpenawaran_dtl d
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.pend_kode
-        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.pend_kode AND b.brgd_ukuran = d.pend_ukuran
-        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.pend_kode -- Join ke SO DTF jika perlu nama dari sana
-        WHERE d.pend_nomor = ? 
-        ORDER BY d.pend_nourut;
-    `;
-  const [details] = await pool.query(detailsQuery, [nomor]);
-
-  // 4. Kalkulasi Footer
-  const total = details.reduce((sum, item) => sum + Number(item.total), 0);
-  const diskon_faktur = Number(header.pen_disc || 0);
-  const netto = total - diskon_faktur;
-  const ppn = header.pen_ppn ? netto * (header.pen_ppn / 100) : 0;
-  const biaya_kirim = Number(header.pen_bkrm || 0);
-  const grand_total = netto + ppn + biaya_kirim;
-
-  // 5. MERGE DATA KE HEADER (Flattening)
-  // Ini kunci agar frontend Anda jalan tanpa ubah template
-  header = {
-    ...header,
-    // Info Gudang
-    gdg_inv_alamat: gudang?.gdg_inv_alamat,
-    gdg_inv_kota: gudang?.gdg_inv_kota,
-    gdg_inv_telp: gudang?.gdg_inv_telp,
-    gdg_akun: gudang?.gdg_akun,
-    gdg_transferbank: gudang?.gdg_transferbank,
-
-    // Info Footer Kalkulasi
-    total: total,
-    diskon: diskon_faktur,
-    ppn: ppn,
-    biaya_kirim: biaya_kirim,
-    grand_total: grand_total,
-  };
-
-  // Kembalikan struktur sederhana: header & details
-  return { header, details };
 };
 
 const getExportDetails = async (startDate, endDate, cabang) => {

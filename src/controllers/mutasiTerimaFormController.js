@@ -1,5 +1,4 @@
 const service = require("../services/mutasiTerimaFormService");
-const auditService = require("../services/auditService"); // Import Audit
 
 const loadFromKirim = async (req, res) => {
   try {
@@ -10,28 +9,16 @@ const loadFromKirim = async (req, res) => {
   }
 };
 
-// [AUDIT TRAIL DITERAPKAN DI SINI]
+/**
+ * [CLEANUP] Fungsi Save tanpa Audit Trail.
+ * Berfokus pada eksekusi simpan data untuk performa yang lebih ringan.
+ */
 const save = async (req, res) => {
   try {
     const payload = req.body;
 
-    // 1. PROSES: Simpan ke Database
+    // Langsung eksekusi simpan ke database melalui service
     const result = await service.save(payload, req.user);
-
-    // 2. AUDIT: Catat Log (Action: CREATE)
-    // Target ID adalah nomor Terima yang baru digenerate oleh service
-    const targetId = result.nomor || "UNKNOWN";
-    const refKirim = payload.header?.nomorKirim || "UNKNOWN";
-
-    auditService.logActivity(
-      req,
-      "CREATE",           // Action selalu CREATE karena ini penerimaan baru
-      "MUTASI_TERIMA",    // Module
-      targetId,           // Nomor Terima (MST...)
-      null,               // Old Value (Null karena Create)
-      payload,            // New Value (Payload Form sudah lengkap Header + Items)
-      `Input Penerimaan Barang (Ref Kirim: ${refKirim})` // Note informatif
-    );
 
     res.status(201).json(result);
   } catch (error) {

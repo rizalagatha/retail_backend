@@ -871,74 +871,57 @@ const getStokKosongReguler = async (
   searchTerm = "",
   targetCabang = "",
 ) => {
-  // 1. Determine which branch to check
-  // Default to the user's own branch
-  let branchToCheck = user.cabang;
+  // 1. Tentukan Cabang: Jika KDC pilih ALL, kita akan tarik data global
+  let branchToCheck =
+    user.cabang === "KDC" && targetCabang ? targetCabang : user.cabang;
+  const searchPattern = `%${searchTerm}%`;
 
-  // If user is KDC and they selected a specific branch (and it's not empty), use that
-  if (user.cabang === "KDC" && targetCabang) {
-    branchToCheck = targetCabang;
+  // Buat filter dinamis untuk cabang
+  let branchFilter = "";
+  const params = [];
+
+  if (branchToCheck !== "ALL") {
+    branchFilter = "AND m.mst_cab = ?";
+    params.push(branchToCheck);
   }
 
-  const searchPattern = `%${searchTerm}%`;
+  // Masukkan parameter pencarian
+  params.push(searchPattern, searchPattern, searchPattern);
 
   const query = `
     SELECT 
-    b.brgd_kode AS kode,
-    b.brgd_barcode AS barcode,
-    TRIM(CONCAT(
-        a.brg_jeniskaos, ' ',
-        a.brg_tipe, ' ',
-        a.brg_lengan, ' ',
-        a.brg_jeniskain, ' ',
-        a.brg_warna
-    )) AS nama_barang,
-    b.brgd_ukuran AS ukuran,
-    a.brg_ktgp AS kategori,
-    IFNULL(SUM(m.mst_stok_in - m.mst_stok_out), 0) AS stok_akhir
-FROM tbarangdc_dtl b
-JOIN tbarangdc a 
-    ON a.brg_kode = b.brgd_kode
-LEFT JOIN tmasterstok m
-    ON m.mst_brg_kode = b.brgd_kode
-   AND m.mst_ukuran   = b.brgd_ukuran
-   AND m.mst_cab      = ?
-   AND m.mst_aktif    = 'Y'
-WHERE a.brg_aktif = 0
-  AND a.brg_ktgp = 'REGULER'
-  AND (
-      b.brgd_kode LIKE ?
-      OR b.brgd_barcode LIKE ?
-      OR CONCAT(
-          a.brg_jeniskaos, ' ',
-          a.brg_tipe, ' ',
-          a.brg_lengan, ' ',
-          a.brg_jeniskain, ' ',
-          a.brg_warna
-      ) LIKE ?
-  )
-GROUP BY
-    b.brgd_kode,
-    b.brgd_barcode,
-    b.brgd_ukuran,
-    a.brg_jeniskaos,
-    a.brg_tipe,
-    a.brg_lengan,
-    a.brg_jeniskain,
-    a.brg_warna,
-    a.brg_ktgp
-HAVING stok_akhir <= 0
-ORDER BY nama_barang, ukuran
-LIMIT 100;
+        b.brgd_kode AS kode,
+        b.brgd_barcode AS barcode,
+        TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) AS nama_barang,
+        b.brgd_ukuran AS ukuran,
+        a.brg_ktgp AS kategori,
+        /* Jika ALL, ini adalah total stok gabungan seluruh toko */
+        IFNULL(SUM(m.mst_stok_in - m.mst_stok_out), 0) AS stok_akhir
+    FROM tbarangdc_dtl b
+    JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
+    LEFT JOIN tmasterstok m ON m.mst_brg_kode = b.brgd_kode 
+        AND m.mst_ukuran = b.brgd_ukuran 
+        AND m.mst_aktif = 'Y'
+        ${branchFilter}
+    WHERE a.brg_aktif = 0
+      AND a.brg_ktgp = 'REGULER'
+      AND b.brgd_ukuran IN ('S', 'M', 'L', 'XL', '2XL') 
+      AND (
+          b.brgd_kode LIKE ? OR b.brgd_barcode LIKE ? OR 
+          CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna) LIKE ?
+      )
+    GROUP BY b.brgd_kode, b.brgd_barcode, b.brgd_ukuran, a.brg_ktgp, a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna
+    HAVING stok_akhir <= 0
+    ORDER BY nama_barang, ukuran;
   `;
 
-  // Params order:
-  // 1. Branch for subquery
-  // 2-4. Search patterns
-  const params = [branchToCheck, searchPattern, searchPattern, searchPattern];
+  const [allRows] = await pool.query(query, params);
 
-  const [rows] = await pool.query(query, params);
-  return rows;
+  // 2. Berikan hasil dengan total asli dan data terbatas untuk performa UI
+  return {
+    data: allRows.slice(0, 250), // Hanya kirim 250 untuk list agar enteng
+    totalCount: allRows.length, // Kirim angka asli (misal 800) untuk label chip
+  };
 };
 
 const getParetoStockHealth = async (req, res) => {

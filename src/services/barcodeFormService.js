@@ -4,7 +4,7 @@ const getNextBarcodeNumber = async (cabang, tanggal) => {
   // Meniru logika getmaxnomor dari Delphi
   const prefix = `${cabang}BCD${tanggal.substring(2, 4)}${tanggal.substring(
     5,
-    7
+    7,
   )}`;
   const query = `
         SELECT IFNULL(MAX(RIGHT(bch_nomor, 5)), 0) as lastNum 
@@ -23,7 +23,7 @@ const searchProducts = async (
   gudang,
   page,
   itemsPerPage,
-  source
+  source,
 ) => {
   const offset = (page - 1) * itemsPerPage;
 
@@ -156,23 +156,35 @@ const getProductDetails = async (productCode) => {
 };
 
 const saveBarcode = async (data) => {
-  const { header, details, user } = data;
+  const { header, details, user, isNew } = data; // Ambil flag isNew
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
 
-    // 1. Simpan Header
-    await connection.query(
-      "INSERT INTO tbarcode_hdr (bch_nomor, bch_tanggal, user_create, date_create) VALUES (?, ?, ?, NOW())",
-      [header.nomor, header.tanggal, user.kode]
-    );
+    if (isNew) {
+      // 1A. Simpan Header Baru
+      await connection.query(
+        "INSERT INTO tbarcode_hdr (bch_nomor, bch_tanggal, user_create, date_create) VALUES (?, ?, ?, NOW())",
+        [header.nomor, header.tanggal, user.kode],
+      );
+    } else {
+      // 1B. Update Header Lama
+      await connection.query(
+        "UPDATE tbarcode_hdr SET bch_tanggal = ?, user_edit = ?, date_edit = NOW() WHERE bch_nomor = ?",
+        [header.tanggal, user.kode, header.nomor],
+      );
+      // Hapus detail lama agar bisa diganti yang baru (Logika Refresh Detail)
+      await connection.query("DELETE FROM tbarcode_dtl WHERE bcd_nomor = ?", [
+        header.nomor,
+      ]);
+    }
 
-    // 2. Simpan Detail
+    // 2. Simpan Detail (Berlaku untuk Baru maupun Edit)
     for (const [index, detail] of details.entries()) {
-      if (detail.kode && detail.jumlah > 0) {
+      if (detail.kode && (detail.jumlah || 0) > 0) {
         await connection.query(
           "INSERT INTO tbarcode_dtl (bcd_nomor, bcd_kode, bcd_ukuran, bcd_jumlah, bcd_nourut) VALUES (?, ?, ?, ?, ?)",
-          [header.nomor, detail.kode, detail.ukuran, detail.jumlah, index + 1]
+          [header.nomor, detail.kode, detail.ukuran, detail.jumlah, index + 1],
         );
       }
     }
@@ -184,13 +196,11 @@ const saveBarcode = async (data) => {
     };
   } catch (error) {
     await connection.rollback();
-    console.error("Error saving barcode:", error);
-    throw new Error("Gagal menyimpan data barcode.");
+    throw error;
   } finally {
     connection.release();
   }
 };
-
 const searchMaster = async (term, page, itemsPerPage) => {
   const offset = (page - 1) * itemsPerPage;
 
@@ -269,7 +279,6 @@ const searchMaster = async (term, page, itemsPerPage) => {
 
   return { items, total };
 };
-
 
 const findByBarcode = async (barcode) => {
   const query = `

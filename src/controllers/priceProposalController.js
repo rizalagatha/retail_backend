@@ -48,7 +48,7 @@ const remove = async (req, res) => {
       // A. Ambil Header
       const [headerRows] = await pool.query(
         "SELECT * FROM tpengajuanharga WHERE ph_nomor = ?",
-        [nomor]
+        [nomor],
       );
 
       if (headerRows.length > 0) {
@@ -57,25 +57,25 @@ const remove = async (req, res) => {
         // B. Ambil Detail Bordir
         const [bordirRows] = await pool.query(
           "SELECT * FROM tpengajuanharga_bordir WHERE phb_nomor = ?",
-          [nomor]
+          [nomor],
         );
 
         // C. Ambil Detail DTF
         const [dtfRows] = await pool.query(
           "SELECT * FROM tpengajuanharga_dtf WHERE phd_nomor = ?",
-          [nomor]
+          [nomor],
         );
 
         // D. Ambil Detail Size
         const [sizeRows] = await pool.query(
           "SELECT * FROM tpengajuanharga_size WHERE phs_nomor = ?",
-          [nomor]
+          [nomor],
         );
 
         // E. Ambil Detail Tambahan
         const [tambahanRows] = await pool.query(
           "SELECT * FROM tpengajuanharga_tambahan WHERE pht_nomor = ?",
-          [nomor]
+          [nomor],
         );
 
         // F. Gabungkan
@@ -84,7 +84,7 @@ const remove = async (req, res) => {
           bordir: bordirRows,
           dtf: dtfRows,
           sizes: sizeRows,
-          tambahan: tambahanRows
+          tambahan: tambahanRows,
         };
       }
     } catch (e) {
@@ -98,12 +98,12 @@ const remove = async (req, res) => {
     if (oldData) {
       auditService.logActivity(
         req,
-        "DELETE",            // Action
-        "PENGAJUAN_HARGA",   // Module
-        nomor,               // Target ID
-        oldData,             // Data Lama (Header + All Details)
-        null,                // Data Baru (Null)
-        `Menghapus Pengajuan Harga Customer: ${oldData.ph_kd_cus || "Unknown"}`
+        "DELETE", // Action
+        "PENGAJUAN_HARGA", // Module
+        nomor, // Target ID
+        oldData, // Data Lama (Header + All Details)
+        null, // Data Baru (Null)
+        `Menghapus Pengajuan Harga Customer: ${oldData.ph_kd_cus || "Unknown"}`,
       );
     }
 
