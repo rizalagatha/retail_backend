@@ -5,7 +5,7 @@ const getLogs = async (req, res) => {
     const {
       startDate,
       endDate,
-      module: mod,
+      module: mod, // Alias dari 'module' adalah 'mod'
       user,
       action,
       cabang,
@@ -20,7 +20,7 @@ const getLogs = async (req, res) => {
     let conditions = ["1=1"];
     let params = [];
 
-    // [OPTIMASI 1] Filter khusus anomali
+    // Filter khusus anomali
     if (isAnomaly === "true") {
       conditions.push("action LIKE 'ANOMALY_%'");
     } else if (action && action !== "ALL") {
@@ -33,15 +33,13 @@ const getLogs = async (req, res) => {
       params.push(startDate, endDate);
     }
 
-    if (moduleName && moduleName !== "ALL") {
+    // [FIXED] Menggunakan variabel 'mod' yang sudah didefinisikan di atas
+    if (mod && mod !== "ALL") {
       conditions.push("module = ?");
-      params.push(moduleName);
+      params.push(mod);
     }
 
-    if (action && action !== "ALL") {
-      conditions.push("action = ?");
-      params.push(action);
-    }
+    // (Filter 'action' yang duplikat sudah dihapus karena sudah ditangani di blok isAnomaly)
 
     if (user) {
       conditions.push("user_id LIKE ?");
@@ -55,7 +53,6 @@ const getLogs = async (req, res) => {
 
     const whereClause = "WHERE " + conditions.join(" AND ");
 
-    // [FIX] Select log_date, Order by log_date
     const dataQuery = `
       SELECT id, log_date, user_id, user_nama, user_cabang, action, module, target_id, note 
       FROM taudit_log
