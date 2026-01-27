@@ -344,6 +344,13 @@ const saveOffer = async (data) => {
       }
     }
 
+    // [TAMBAHKAN INI] 3.5. Hapus data otorisasi lama untuk penawaran ini sebelum simpan ulang
+    // Ini mencegah error Duplicate Entry saat mode EDIT
+    await connection.query(
+      'DELETE FROM totorisasi WHERE o_nomor = ? AND o_transaksi = "PENAWARAN"',
+      [nomorPenawaran],
+    );
+
     // 4. Simpan Otorisasi Per ITEM
     const processedBarcodes = new Set(); // Opsional: Cegah duplikat jika item sama muncul 2x
     for (const item of details) {
