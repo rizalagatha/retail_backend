@@ -156,30 +156,32 @@ const getProductDetails = async (productCode) => {
 };
 
 const saveBarcode = async (data) => {
-  const { header, details, user, isNew } = data; // Ambil flag isNew
+  const { header, details, user, isNew } = data;
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
 
     if (isNew) {
-      // 1A. Simpan Header Baru
+      // 1A. Simpan Header Baru (Tambahkan bch_cab agar data lengkap)
       await connection.query(
-        "INSERT INTO tbarcode_hdr (bch_nomor, bch_tanggal, user_create, date_create) VALUES (?, ?, ?, NOW())",
-        [header.nomor, header.tanggal, user.kode],
+        "INSERT INTO tbarcode_hdr (bch_nomor, bch_tanggal, bch_cab, user_create, date_create) VALUES (?, ?, ?, ?, NOW())",
+        [header.nomor, header.tanggal, user.cabang, user.kode],
       );
     } else {
       // 1B. Update Header Lama
+      // Perbaikan: user_edit -> user_modified, date_edit -> date_modified
       await connection.query(
-        "UPDATE tbarcode_hdr SET bch_tanggal = ?, user_edit = ?, date_edit = NOW() WHERE bch_nomor = ?",
+        "UPDATE tbarcode_hdr SET bch_tanggal = ?, user_modified = ?, date_modified = NOW() WHERE bch_nomor = ?",
         [header.tanggal, user.kode, header.nomor],
       );
-      // Hapus detail lama agar bisa diganti yang baru (Logika Refresh Detail)
+
+      // Hapus detail lama agar bisa diganti yang baru
       await connection.query("DELETE FROM tbarcode_dtl WHERE bcd_nomor = ?", [
         header.nomor,
       ]);
     }
 
-    // 2. Simpan Detail (Berlaku untuk Baru maupun Edit)
+    // 2. Simpan Detail
     for (const [index, detail] of details.entries()) {
       if (detail.kode && (detail.jumlah || 0) > 0) {
         await connection.query(
@@ -196,11 +198,13 @@ const saveBarcode = async (data) => {
     };
   } catch (error) {
     await connection.rollback();
+    console.error("Error saving barcode:", error); // Tambahkan log error untuk debugging
     throw error;
   } finally {
     connection.release();
   }
 };
+
 const searchMaster = async (term, page, itemsPerPage) => {
   const offset = (page - 1) * itemsPerPage;
 
