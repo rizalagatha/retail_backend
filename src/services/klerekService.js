@@ -5,9 +5,11 @@ const { isDate, format, parseISO } = require("date-fns");
 const generateNewInvNomor = async (connection, tanggal, cabang) => {
   const ayymm = format(new Date(tanggal), "yyMM");
   const prefix = `${cabang}.INV.${ayymm}.`;
+
+  // Perbaikan: Gunakan LIKE dan CAST ke UNSIGNED untuk akurasi
   const [rows] = await connection.query(
-    "SELECT IFNULL(MAX(RIGHT(inv_nomor, 4)), 0) as max_nomor FROM tinv_hdr WHERE LEFT(inv_nomor, 12) = ?",
-    [prefix],
+    "SELECT IFNULL(MAX(CAST(RIGHT(inv_nomor, 4) AS UNSIGNED)), 0) as max_nomor FROM tinv_hdr WHERE inv_nomor LIKE ?",
+    [`${prefix}%`],
   );
   const nextNum = parseInt(rows[0].max_nomor, 10) + 1;
   return `${prefix}${String(nextNum).padStart(4, "0")}`;
@@ -17,9 +19,11 @@ const generateNewInvNomor = async (connection, tanggal, cabang) => {
 const generateNewSetorNomor = async (connection, tanggal, cabang) => {
   const ayymm = format(new Date(tanggal), "yyMM");
   const prefix = `${cabang}.STR.${ayymm}.`;
+
+  // Perbaikan: Gunakan LIKE dan CAST
   const [rows] = await connection.query(
-    "SELECT IFNULL(MAX(RIGHT(sh_nomor, 4)), 0) as max_nomor FROM tsetor_hdr WHERE LEFT(sh_nomor, 12) = ?",
-    [prefix],
+    "SELECT IFNULL(MAX(CAST(RIGHT(sh_nomor, 4) AS UNSIGNED)), 0) as max_nomor FROM tsetor_hdr WHERE sh_nomor LIKE ?",
+    [`${prefix}%`],
   );
   const nextNum = parseInt(rows[0].max_nomor, 10) + 1;
   return `${prefix}${String(nextNum).padStart(4, "0")}`;
@@ -75,7 +79,6 @@ const prosesKlerek = async (items, cabang, user) => {
 
   try {
     await connection.beginTransaction();
-
     if (!items || items.length === 0) return { message: "Tidak ada data." };
 
     const tglGrup = items[0].tanggal;
@@ -84,19 +87,19 @@ const prosesKlerek = async (items, cabang, user) => {
       "yyMM",
     );
 
-    // 1. Ambil MAX nomor invoice
+    // 1. Perbaikan Query MAX Invoice (Gunakan LIKE)
     const invPrefix = `${cabang}.INV.${ayymm}.`;
     const [maxInvRows] = await connection.query(
-      "SELECT IFNULL(MAX(RIGHT(inv_nomor, 4)), 0) as max_nomor FROM tinv_hdr WHERE LEFT(inv_nomor, 12) = ? FOR UPDATE",
-      [invPrefix],
+      "SELECT IFNULL(MAX(CAST(RIGHT(inv_nomor, 4) AS UNSIGNED)), 0) as max_nomor FROM tinv_hdr WHERE inv_nomor LIKE ? FOR UPDATE",
+      [`${invPrefix}%`],
     );
     let nextInvNum = parseInt(maxInvRows[0].max_nomor, 10) + 1;
 
-    // 2. Ambil MAX nomor setoran (jika ada pembayaran non-tunai)
+    // 2. Perbaikan Query MAX Setoran (Gunakan LIKE)
     const setorPrefix = `${cabang}.STR.${ayymm}.`;
     const [maxSetorRows] = await connection.query(
-      "SELECT IFNULL(MAX(RIGHT(sh_nomor, 4)), 0) as max_nomor FROM tsetor_hdr WHERE LEFT(sh_nomor, 12) = ? FOR UPDATE",
-      [setorPrefix],
+      "SELECT IFNULL(MAX(CAST(RIGHT(sh_nomor, 4) AS UNSIGNED)), 0) as max_nomor FROM tsetor_hdr WHERE sh_nomor LIKE ? FOR UPDATE",
+      [`${setorPrefix}%`],
     );
     let nextSetorNum = parseInt(maxSetorRows[0].max_nomor, 10) + 1;
 
