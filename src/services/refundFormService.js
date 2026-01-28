@@ -76,7 +76,7 @@ const generateNewNomor = async (connection, cabang, tanggal) => {
 const getSetorHeaderId = async (connection, nomorSetor) => {
   const [rows] = await connection.query(
     "SELECT sh_idrec FROM tsetor_hdr WHERE sh_nomor = ?",
-    [nomorSetor]
+    [nomorSetor],
   );
   return rows[0]?.sh_idrec;
 };
@@ -245,19 +245,19 @@ const saveData = async (data, user) => {
         .padStart(3, "0");
       cidrec = `${user.cabang}RF${format(
         new Date(),
-        "yyyyMMddHHmmssSSS"
+        "yyyyMMddHHmmssSSS",
       )}${randomSuffix}`;
 
       rfNomor = await generateNewNomor(connection, user.cabang, header.tanggal);
 
       await connection.query(
         "INSERT INTO trefund_hdr (rf_idrec, rf_nomor, rf_tanggal, user_create, date_create) VALUES (?, ?, ?, ?, NOW())",
-        [cidrec, rfNomor, header.tanggal, user.kode]
+        [cidrec, rfNomor, header.tanggal, user.kode],
       );
     } else {
       const [hdr] = await connection.query(
         "SELECT rf_idrec FROM trefund_hdr WHERE rf_nomor = ?",
-        [rfNomor]
+        [rfNomor],
       );
       cidrec = hdr[0].rf_idrec;
 
@@ -283,42 +283,43 @@ const saveData = async (data, user) => {
       await connection.query("DELETE FROM trefund_dtl WHERE rfd_nomor = ?", [
         rfNomor,
       ]);
-     for (const [index, item] of details.entries()) {
-       if (item.nomor) {
-         // PERBAIKAN 2: Tambahkan kolom rfd_refund agar input user tersimpan
-         await connection.query(
-           "INSERT INTO trefund_dtl (rfd_idrec, rfd_iddrec, rfd_nomor, rfd_notrs, rfd_cus_kode, rfd_nominal, rfd_refund, rfd_ket, rfd_nourut) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-           [
-             cidrec,
-             item.iddrec,
-             rfNomor,
-             item.nomor,
-             item.kdcus,
-             item.nominal,
-             item.refund || 0, // [FIX] Simpan nilai refund inputan user
-             item.ket,
-             index + 1,
-           ]
-         );
-       }
-     }
+      for (const [index, item] of details.entries()) {
+        if (item.nomor) {
+          // PERBAIKAN 2: Tambahkan kolom rfd_refund agar input user tersimpan
+          await connection.query(
+            "INSERT INTO trefund_dtl (rfd_idrec, rfd_iddrec, rfd_nomor, rfd_notrs, rfd_cus_kode, rfd_nominal, rfd_refund, rfd_ket, rfd_nourut) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+              cidrec,
+              item.iddrec,
+              rfNomor,
+              item.nomor,
+              item.kdcus,
+              item.nominal,
+              item.refund || 0, // [FIX] Simpan nilai refund inputan user
+              item.ket,
+              index + 1,
+            ],
+          );
+        }
+      }
     } else {
       // Jika APPROVER, update detail dan proses piutang/setoran
       for (const item of details) {
         if (item.iddrec) {
+          const finalRefundAmount = item.apv ? item.refund : 0;
           await connection.query(
             "UPDATE trefund_dtl SET rfd_bank = ?, rfd_norek = ?, rfd_atasnama = ?, rfd_refund = ? WHERE rfd_idrec = ? AND rfd_iddrec = ?",
             [
               item.bank,
               item.norek,
               item.atasnama,
-              cStatus === "APPROVE" ? item.refund : 0,
+              finalRefundAmount,
               cidrec,
               item.iddrec,
-            ]
+            ],
           );
 
-          if (cStatus === "APPROVE" && item.refund > 0) {
+          if (cStatus === "APPROVE" && finalRefundAmount > 0) {
             if (item.nomor.includes(".INV.")) {
               // Proses Piutang
               await connection.query(
@@ -332,7 +333,7 @@ const saveData = async (data, user) => {
                   rfNomor,
                   item.iddrec,
                   item.refund * -1,
-                ]
+                ],
               );
             } else if (item.nomor.includes(".STR.")) {
               // Proses Setoran
@@ -348,7 +349,7 @@ const saveData = async (data, user) => {
                   rfNomor,
                   item.iddrec,
                   item.refund,
-                ]
+                ],
               );
             }
           }
@@ -375,7 +376,7 @@ const getPrintData = async (nomor, user) => {
   const signaturePath = path.join(
     __dirname,
     "../../public/images/signatures",
-    `${user.kode}.jpg`
+    `${user.kode}.jpg`,
   ); // Sesuaikan path jika perlu
   const userSignature = fs.existsSync(signaturePath) ? user.kode : "NO";
 
@@ -420,7 +421,7 @@ const getPrintData = async (nomor, user) => {
   // Hitung total
   const totalRefund = details.reduce(
     (sum, item) => sum + (item.rfd_refund || item.rfd_nominal || 0),
-    0
+    0,
   );
   header.totalRefund = totalRefund;
   header.terbilang = terbilang(totalRefund);

@@ -1,4 +1,17 @@
 const changelogs = {
+  "1.3.5": {
+    date: "2026-01-28",
+    changes: [
+      {
+        title: "Perbaikan:",
+        items: [
+          "Perbaikan Halaman Refund",
+          "Diskon bulanan dapat langsung diterapkan pada SO/Surat Pesanan",
+          "Perbaikan bug tanggal transfer mundur",
+        ],
+      },
+    ],
+  },
   "1.3.4": {
     date: "2026-01-26",
     changes: [
