@@ -468,20 +468,31 @@ const getList = async (filters) => {
 const getDetails = async (nomor) => {
   const query = `
     SELECT 
-      d.invd_kode AS Kode,
-      IFNULL(b.brgd_barcode, "") AS Barcode,
+      -- 1. Deteksi apakah invd_kode adalah barcode (kasus klerek)
+      -- Jika ada di tbarangdc_dtl.brgd_barcode, gunakan brgd_kode aslinya.
+      COALESCE(bk.brgd_kode, d.invd_kode) AS Kode,
+      
+      -- 2. Ambil Barcode yang benar
+      -- Jika data klerek, barcode-nya ada di invd_kode. Jika reguler, ambil dari b.
+      IFNULL(bk.brgd_barcode, b.brgd_barcode) AS Barcode,
+
       IF(
         d.invd_pro_nomor = "",
-        IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama),
+        IFNULL(
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), 
+            f.sd_nama
+        ),
         TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna, " #BONUS"))
       ) AS Nama,
-      d.invd_ukuran AS Ukuran,
-      d.invd_jumlah AS Jumlah,
 
-      -- harga asli per pcs
+      -- 3. Ambil Ukuran
+      -- Pada klerek, kolom invd_ukuran sering kosong, jadi kita ambil dari detail barcode
+      COALESCE(NULLIF(d.invd_ukuran, ''), bk.brgd_ukuran) AS Ukuran,
+
+      d.invd_jumlah AS Jumlah,
       d.invd_harga AS HargaAsli,
 
-      -- harga setelah diskon (per pcs)
+      -- Logika Harga, Diskon, dan Total tetap sama, tapi join-nya diperbaiki
       CASE
         WHEN (SELECT p.pro_lipat FROM tpromo p WHERE p.pro_nomor = h.inv_pro_nomor LIMIT 1) = 'N'
               AND (
@@ -495,7 +506,6 @@ const getDetails = async (nomor) => {
           ELSE (d.invd_harga - d.invd_diskon)
       END AS Harga,
 
-      -- diskon aktif per pcs
       CASE
         WHEN (SELECT p.pro_lipat FROM tpromo p WHERE p.pro_nomor = h.inv_pro_nomor LIMIT 1) = 'N'
               AND (
@@ -509,10 +519,8 @@ const getDetails = async (nomor) => {
         ELSE d.invd_diskon
       END AS DiskonAktif,
 
-      -- diskon persentase (asli dari kolom)
       d.invd_disc AS \`Dis%\`,
 
-      -- total nilai item setelah logika diskon
       CASE
         WHEN (SELECT p.pro_lipat FROM tpromo p WHERE p.pro_nomor = h.inv_pro_nomor LIMIT 1) = 'N'
             AND (
@@ -528,8 +536,17 @@ const getDetails = async (nomor) => {
 
     FROM tinv_dtl d
     LEFT JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
-    LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
-    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.invd_kode AND b.brgd_ukuran = d.invd_ukuran
+    
+    -- [PENTING] Join khusus untuk mendeteksi barcode (klerek)
+    LEFT JOIN tbarangdc_dtl bk ON bk.brgd_barcode = d.invd_kode
+    
+    -- Gunakan COALESCE agar join ke tabel barang selalu menggunakan KODE asli, bukan barcode
+    LEFT JOIN tbarangdc a ON a.brg_kode = COALESCE(bk.brgd_kode, d.invd_kode)
+    
+    -- Join detail reguler juga menggunakan kode hasil deteksi
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = COALESCE(bk.brgd_kode, d.invd_kode) 
+         AND b.brgd_ukuran = COALESCE(NULLIF(d.invd_ukuran, ''), bk.brgd_ukuran)
+         
     LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
     WHERE d.invd_inv_nomor = ?
     ORDER BY d.invd_nourut;
