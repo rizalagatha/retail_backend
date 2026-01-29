@@ -25,6 +25,14 @@ const generateNewSoNumber = async (connection, cabang, tanggal) => {
 // Fungsi utama untuk menyimpan data
 const save = async (data, user) => {
   const { header, footer, details, dps, isNew } = data;
+  // --- VALIDASI TANGGAL SERVER (SO) ---
+  const serverDate = format(new Date(), "yyyy-MM-dd");
+  if (header.tanggal !== serverDate) {
+    throw new Error(
+      `Gagal Simpan: Tanggal SO (${header.tanggal}) harus hari ini (${serverDate}).`,
+    );
+  }
+  // ------------------------------------------------
   const connection = await pool.getConnection();
   await connection.beginTransaction();
 
@@ -798,6 +806,15 @@ const saveNewDp = async (dpData, user) => {
     giroData,
     nomorSo, // DP SELALU UNTUK SO
   } = dpData;
+
+  // --- VALIDASI TANGGAL SERVER (DP) ---
+  const serverDate = format(new Date(), "yyyy-MM-dd");
+  if (tanggal !== serverDate) {
+    throw new Error(
+      `Gagal Simpan: Tanggal DP (${tanggal}) harus hari ini (${serverDate}).`,
+    );
+  }
+  // ------------------------------------------------
 
   const soNomor = nomorSo || "";
 

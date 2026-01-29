@@ -80,6 +80,14 @@ const getItemsForLoad = async (nomor, gudang) => {
  */
 const saveData = async (payload, user) => {
   const { header, items, isNew } = payload;
+  // --- VALIDASI TANGGAL SERVER ---
+  const serverDate = format(new Date(), "yyyy-MM-dd");
+  if (header.tanggal !== serverDate) {
+    throw new Error(
+      `Gagal Simpan: Tanggal Surat Jalan (${header.tanggal}) tidak sesuai dengan tanggal server (${serverDate}).`,
+    );
+  }
+  // --------------------------------------------
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -167,7 +175,7 @@ const saveData = async (payload, user) => {
         `UPDATE tpacking_list_hdr 
          SET pl_status = 'C', pl_sj_nomor = ? 
          WHERE pl_nomor = ?`,
-        [sjNomor, header.permintaan]
+        [sjNomor, header.permintaan],
       );
     }
 

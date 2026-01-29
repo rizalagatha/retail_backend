@@ -26,27 +26,21 @@ const getList = async (filters) => {
 
   const query = `
     SELECT 
-        y.Nomor, y.Tanggal, y.Dateline, y.Penawaran, y.Top, y.Nominal, y.Diskon, y.Dp, 
-        y.QtySO, y.QtyInv, y.Belum, y.AlasanClose, y.StatusKirim,
-        y.kdcus, y.Nama, y.Alamat, y.Kota, y.Level, y.Keterangan, y.Aktif, y.SC,
-        y.DipakaiDTF,
-
-        y.MpPesanan, y.MpResi,
-
+        y.*,
         (CASE
+            -- 1. Jika sudah di-close manual atau sistem (so_close != 0)
+            WHEN y.sts <> 0 THEN "DICLOSE"
             WHEN y.DipakaiDTF = 'Y' AND y.Belum = 0 THEN 'CLOSE'
-            WHEN y.sts = 2 THEN "DICLOSE"
             WHEN y.StatusKirim = "TERKIRIM" THEN "CLOSE"
+            -- 2. Definisi OPEN: Belum kirim, belum ada mutasi keluar, belum ada minta barang, belum ada stok dipesan
             WHEN y.StatusKirim = "BELUM" AND y.keluar = 0 AND y.minta = "" AND y.pesan = 0 THEN "OPEN"
             WHEN y.StatusKirim = "BELUM" AND y.QtySO = y.pesan THEN "JADI"
             ELSE "PROSES"
         END) AS Status
-
     FROM (
         SELECT 
             x.*,
             IF(x.QtyInv = 0, "BELUM", IF(x.QtyInv >= x.QtySO, "TERKIRIM", "SEBAGIAN")) AS StatusKirim,
-
             IFNULL((
                 SELECT SUM(m.mst_stok_out)
                 FROM tmasterstok m 
@@ -55,97 +49,55 @@ const getList = async (filters) => {
                 )
                 AND MID(m.mst_noreferensi, 4, 3) NOT IN ("MSO","MSI")
             ), 0) AS keluar,
-
-            IFNULL((
-                SELECT m.mt_nomor 
-                FROM tmintabarang_hdr m 
-                WHERE m.mt_so = x.Nomor 
-                LIMIT 1
-            ), "") AS minta,
-
+            IFNULL((SELECT m.mt_nomor FROM tmintabarang_hdr m WHERE m.mt_so = x.Nomor LIMIT 1), "") AS minta,
             IFNULL((
                 SELECT SUM(m.mst_stok_in - m.mst_stok_out)
                 FROM tmasterstokso m
                 WHERE m.mst_aktif = "Y" AND m.mst_nomor_so = x.Nomor
             ), 0) AS pesan
-
         FROM (
             SELECT 
-                h.so_nomor AS Nomor,
-                h.so_pen_nomor AS Penawaran,
-                h.so_dateline AS Dateline,
-                h.so_tanggal AS Tanggal,
-                h.so_top AS Top,
-                h.so_disc AS Diskon,
-                h.so_dp AS Dp,
-                h.user_modified AS UserModified,
-                h.date_modified AS DateModified,
-                h.so_mp_nomor_pesanan AS MpPesanan,
-                h.so_mp_resi AS MpResi,
+                h.so_nomor AS Nomor, h.so_pen_nomor AS Penawaran, h.so_dateline AS Dateline,
+                h.so_tanggal AS Tanggal, h.so_top AS Top, h.so_disc AS Diskon, h.so_dp AS Dp,
+                h.so_close AS sts, h.so_aktif AS Aktif, h.so_alasan AS AlasanClose, h.so_sc AS SC,
+                h.so_mp_nomor_pesanan AS MpPesanan, h.so_mp_resi AS MpResi,
+                
+                -- Perhitungan Nominal
+                (SELECT ROUND(SUM(dd.sod_jumlah * (dd.sod_harga - dd.sod_diskon)) - h.so_disc + (h.so_ppn / 100 * (SUM(dd.sod_jumlah * (dd.sod_harga - dd.sod_diskon)) - h.so_disc)) + h.so_bkrm)
+                 FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor) AS Nominal,
 
-                (SELECT ROUND(
-                    SUM(dd.sod_jumlah * (dd.sod_harga - dd.sod_diskon))
-                    - hh.so_disc 
-                    + (hh.so_ppn / 100 * (SUM(dd.sod_jumlah * (dd.sod_harga - dd.sod_diskon)) - hh.so_disc))
-                    + hh.so_bkrm
-                )
-                FROM tso_dtl dd 
-                JOIN tso_hdr hh ON hh.so_nomor = dd.sod_so_nomor 
-                WHERE hh.so_nomor = h.so_nomor) AS Nominal,
+                -- Qty SO
+                IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
 
-                IFNULL((SELECT SUM(dd.sod_jumlah)
-                        FROM tso_dtl dd
-                        WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
+                -- Qty Invoice (Mengecualikan invoice batal/sts_pro=1)
+                IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor 
+                        WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0) AS QtyInv,
 
-                IFNULL((SELECT SUM(dd.invd_jumlah)
-                        FROM tinv_hdr hh 
-                        JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor 
-                        WHERE hh.inv_sts_pro = 0 
-                        AND hh.inv_nomor_so = h.so_nomor), 0) AS QtyInv,
+                -- Sisa Belum Terkirim
+                (IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) -
+                 IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor 
+                        WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0)) AS Belum,
 
-                (IFNULL((SELECT SUM(dd.sod_jumlah)
-                         FROM tso_dtl dd 
-                         WHERE dd.sod_so_nomor = h.so_nomor), 0)
-                 -
-                 IFNULL((SELECT SUM(dd.invd_jumlah)
-                         FROM tinv_hdr hh 
-                         JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor 
-                         WHERE hh.inv_sts_pro = 0 
-                         AND hh.inv_nomor_so = h.so_nomor), 0)
-                ) AS Belum,
-
-                h.so_cus_kode AS kdcus,
-                s.cus_nama AS Nama,
-                s.cus_alamat AS Alamat,
-                s.cus_kota AS Kota,
-                CONCAT(h.so_cus_level, " - ", l.level_nama) AS Level,
-                h.so_ket AS Keterangan,
-
-                h.so_close AS sts,
-                h.so_aktif AS Aktif,
-                h.so_alasan AS AlasanClose,
-                h.so_sc AS SC,
-                (
-  SELECT 'Y'
-  FROM tsodtf_hdr d
-  WHERE d.sd_nomor IN (
-      SELECT DISTINCT sod_sd_nomor
-      FROM tso_dtl dd
-      WHERE dd.sod_so_nomor = h.so_nomor
-  )
-  LIMIT 1
-) AS DipakaiDTF
+                s.cus_nama AS Nama, s.cus_alamat AS Alamat, s.cus_kota AS Kota, h.so_cus_kode AS kdcus,
+                CONCAT(h.so_cus_level, " - ", l.level_nama) AS Level, h.so_ket AS Keterangan,
+                
+                (SELECT 'Y' FROM tsodtf_hdr d WHERE d.sd_nomor IN (SELECT DISTINCT sod_sd_nomor FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor) LIMIT 1) AS DipakaiDTF
 
             FROM tso_hdr h
             LEFT JOIN tcustomer s ON s.cus_kode = h.so_cus_kode
             LEFT JOIN tcustomer_level l ON l.level_kode = h.so_cus_level
             WHERE h.so_tanggal BETWEEN ? AND ?
-            ${branchFilter}
+              ${branchFilter}
+              -- Filter Pengaman: Pastikan SO Aktif & tidak ada di Invoice (Sinkron dengan Dashboard)
+              AND h.so_aktif = 'Y'
+              AND h.so_close = 0
+              AND h.so_nomor NOT IN (
+                  SELECT DISTINCT inv_nomor_so FROM tinv_hdr 
+                  WHERE inv_nomor_so IS NOT NULL AND inv_nomor_so <> ''
+              )
         ) x
     ) y
-
     ${statusFilter}
-
     ORDER BY y.Tanggal, y.Nomor;
   `;
 
@@ -435,7 +387,7 @@ const remove = async (nomor, user) => {
   // 1. Ambil data SO untuk validasi
   const [rows] = await pool.query(
     "SELECT so_nomor, so_close FROM tso_hdr WHERE so_nomor = ?",
-    [nomor]
+    [nomor],
   );
   if (rows.length === 0) {
     throw new Error("Surat Pesanan tidak ditemukan.");
@@ -452,7 +404,7 @@ const remove = async (nomor, user) => {
   const cabangSo = nomor.substring(0, 3);
   if (user.cabang !== "KDC" && user.cabang !== cabangSo) {
     throw new Error(
-      `Anda tidak berhak menghapus data milik cabang ${cabangSo}.`
+      `Anda tidak berhak menghapus data milik cabang ${cabangSo}.`,
     );
   }
 

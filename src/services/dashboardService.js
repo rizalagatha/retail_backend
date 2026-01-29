@@ -235,33 +235,42 @@ const getPendingActions = async (user) => {
 
   // --- 3. SO OPEN (tso_hdr -> so_cab) ---
   const soOpenQuery = `
-        SELECT COUNT(*) as count FROM (
-            SELECT 
-                (CASE
-                    WHEN y.sts = 2 THEN "DICLOSE"
-                    WHEN y.StatusKirim = "TERKIRIM" THEN "CLOSE"
-                    WHEN y.StatusKirim = "BELUM" AND y.keluar = 0 AND y.minta = "" AND y.pesan = 0 THEN "OPEN"
-                    ELSE "PROSES"
-                END) AS StatusFinal
-            FROM (
-                SELECT x.*,
-                    IF(x.QtyInv = 0, "BELUM", IF(x.QtyInv >= x.QtySO, "TERKIRIM", "SEBAGIAN")) AS StatusKirim,
-                    IFNULL((SELECT SUM(m.mst_stok_out) FROM tmasterstok m WHERE m.mst_noreferensi IN (SELECT o.mo_nomor FROM tmutasiout_hdr o WHERE o.mo_so_nomor = x.Nomor)), 0) AS keluar,
-                    IFNULL((SELECT m.mt_nomor FROM tmintabarang_hdr m WHERE m.mt_so = x.Nomor LIMIT 1), "") AS minta,
-                    IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstokso m WHERE m.mst_aktif = "Y" AND m.mst_nomor_so = x.Nomor), 0) AS pesan
-                FROM (
-                    SELECT 
-                        h.so_nomor AS Nomor, h.so_close AS sts,
-                        IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
-                        IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0) AS QtyInv
-                    FROM tso_hdr h
-                    WHERE h.so_tanggal >= ? AND h.so_aktif = 'Y' 
-                    ${getBranchFilter("h.so_cab")} -- Menggunakan kolom so_cab
-                ) x
-            ) y
-        ) z
-        WHERE z.StatusFinal = 'OPEN';
-    `;
+      SELECT COUNT(*) as count FROM (
+          SELECT 
+              (CASE
+                  -- Jika so_close bukan 0, otomatis dianggap DICLOSE
+                  WHEN y.sts <> 0 THEN "DICLOSE"
+                  WHEN y.StatusKirim = "TERKIRIM" THEN "CLOSE"
+                  WHEN y.StatusKirim = "BELUM" AND y.keluar = 0 AND y.minta = "" AND y.pesan = 0 THEN "OPEN"
+                  ELSE "PROSES"
+              END) AS StatusFinal
+          FROM (
+              SELECT x.*,
+                  IF(x.QtyInv = 0, "BELUM", IF(x.QtyInv >= x.QtySO, "TERKIRIM", "SEBAGIAN")) AS StatusKirim,
+                  IFNULL((SELECT SUM(m.mst_stok_out) FROM tmasterstok m WHERE m.mst_noreferensi IN (SELECT o.mo_nomor FROM tmutasiout_hdr o WHERE o.mo_so_nomor = x.Nomor)), 0) AS keluar,
+                  IFNULL((SELECT m.mt_nomor FROM tmintabarang_hdr m WHERE m.mt_so = x.Nomor LIMIT 1), "") AS minta,
+                  IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstokso m WHERE m.mst_aktif = "Y" AND m.mst_nomor_so = x.Nomor), 0) AS pesan
+              FROM (
+                  SELECT 
+                      h.so_nomor AS Nomor, h.so_close AS sts,
+                      IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
+                      IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0) AS QtyInv
+                  FROM tso_hdr h
+                  WHERE h.so_tanggal >= ? 
+                    AND h.so_aktif = 'Y' 
+                    AND h.so_close = 0 -- Tambahan: Hanya ambil yang belum di-close
+                    -- Tambahan filter: Pastikan SO belum terdaftar di Invoice
+                    AND h.so_nomor NOT IN (
+                        SELECT DISTINCT inv_nomor_so 
+                        FROM tinv_hdr 
+                        WHERE inv_nomor_so IS NOT NULL AND inv_nomor_so <> ''
+                    )
+                    ${getBranchFilter("h.so_cab")}
+              ) x
+          ) y
+      ) z
+      WHERE z.StatusFinal = 'OPEN';
+  `;
 
   // --- 4. SISA PIUTANG (tpiutang_hdr -> ph_cab / ph_kecab) ---
   // PENTING: Cek tabel tpiutang_hdr. Jika error, ganti 'u.ph_cab' jadi 'u.ph_kecab'
@@ -281,7 +290,10 @@ const getPendingActions = async (user) => {
   const soDtfOpenQuery = `
         SELECT COUNT(*) as count 
         FROM tsodtf_hdr h
-        WHERE h.sd_stok = "" AND h.sd_tanggal >= ? 
+        WHERE h.sd_stok = "" 
+          AND h.sd_tanggal >= ? 
+          -- TAMBAHKAN FILTER INI: Abaikan yang sudah di-close
+          AND h.sd_closing <> 'Y' 
           AND NOT EXISTS (SELECT 1 FROM tinv_dtl dd WHERE dd.invd_sd_nomor = h.sd_nomor)
           ${getBranchFilter("h.sd_cab")};
     `;

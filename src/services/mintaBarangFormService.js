@@ -75,7 +75,7 @@ const getSoDetailsForGrid = async (soNomor, user) => {
       LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
       WHERE h.so_nomor = ?
       `,
-      [user.cabang, user.cabang, soNomor]
+      [user.cabang, user.cabang, soNomor],
     );
 
     const customer =
@@ -167,7 +167,7 @@ const getProductDetailsForGrid = async (filters, user) => {
     const [rows] = await connection.query(query, params);
     if (rows.length === 0) {
       throw new Error(
-        "Detail produk tidak ditemukan atau tidak valid untuk cabang ini."
+        "Detail produk tidak ditemukan atau tidak valid untuk cabang ini.",
       );
     }
 
@@ -303,18 +303,30 @@ const getBufferStokItems = async (user) => {
  */
 const save = async (data, user) => {
   const { header, items, isNew } = data;
+
+  // --- VALIDASI TANGGAL (WAKTU SERVER) ---
+  const serverDate = format(new Date(), "yyyy-MM-dd");
+  const inputDate = format(new Date(header.tanggal), "yyyy-MM-dd");
+
+  if (inputDate !== serverDate) {
+    throw new Error(
+      `Gagal Simpan: Tanggal transaksi (${inputDate}) tidak sesuai dengan tanggal server (${serverDate}).`,
+    );
+  }
+  // ----------------------------------------------------
+
   const totalQty = items.reduce(
     (sum, item) => sum + (Number(item.jumlah) || 0),
-    0
+    0,
   );
 
   // [LOGIKA BARU] Abaikan limit jika cabang user adalah KPR
   if (user.cabang !== "KPR" && totalQty > 120) {
     throw new Error(
-      `Gagal Simpan: Total permintaan (${totalQty}) melebihi batas maksimal 120 pcs.`
+      `Gagal Simpan: Total permintaan (${totalQty}) melebihi batas maksimal 120 pcs.`,
     );
   }
-  
+
   const connection = await pool.getConnection();
   await connection.beginTransaction();
 
@@ -330,11 +342,11 @@ const save = async (data, user) => {
       // Logika getmaxnomor dari Delphi
       const prefix = `${user.cabang}MT${format(
         new Date(header.tanggal),
-        "yyMM"
+        "yyMM",
       )}`;
       const [maxRows] = await connection.query(
         `SELECT IFNULL(MAX(RIGHT(mt_nomor, 4)), 0) as maxNum FROM tmintabarang_hdr WHERE LEFT(mt_nomor, 9) = ?`,
-        [prefix]
+        [prefix],
       );
       const nextNum = parseInt(maxRows[0].maxNum, 10) + 1;
       mtNomor = `${prefix}${String(10000 + nextNum).slice(1)}`;
@@ -358,7 +370,7 @@ const save = async (data, user) => {
     } else {
       const [idrecRows] = await connection.query(
         "SELECT mt_idrec FROM tmintabarang_hdr WHERE mt_nomor = ?",
-        [mtNomor]
+        [mtNomor],
       );
       if (idrecRows.length === 0)
         throw new Error("Nomor Minta Barang tidak ditemukan.");
@@ -391,12 +403,12 @@ const save = async (data, user) => {
     ]);
 
     const validItems = items.filter(
-      (item) => item.kode && (item.jumlah || 0) > 0
+      (item) => item.kode && (item.jumlah || 0) > 0,
     );
     for (const item of validItems) {
       await connection.query(
         "INSERT INTO tmintabarang_dtl (mtd_idrec, mtd_nomor, mtd_kode, mtd_ukuran, mtd_jumlah) VALUES (?, ?, ?, ?, ?)",
-        [idrec, mtNomor, item.kode, item.ukuran, item.jumlah]
+        [idrec, mtNomor, item.kode, item.ukuran, item.jumlah],
       );
     }
 

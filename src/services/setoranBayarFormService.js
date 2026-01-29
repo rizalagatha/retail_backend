@@ -64,6 +64,16 @@ const calculateMinDp = async (nomorSo) => {
 
 const saveData = async (payload, user) => {
   const { header, items, isNew } = payload;
+  // --- VALIDASI TANGGAL SERVER ---
+  const serverDate = format(new Date(), "yyyy-MM-dd");
+  const inputDate = format(new Date(header.tanggal), "yyyy-MM-dd");
+
+  if (inputDate !== serverDate) {
+    throw new Error(
+      `Gagal Simpan: Tanggal Setoran (${inputDate}) tidak sesuai dengan tanggal server (${serverDate}).`,
+    );
+  }
+  // -------------------------------
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -83,7 +93,7 @@ const saveData = async (payload, user) => {
       if (header.nominal < minDp) {
         const formattedMinDp = new Intl.NumberFormat("id-ID").format(minDp);
         throw new Error(
-          `Setoran ini untuk DP SO ${header.nomorSo}. Nominal tidak boleh kurang dari Rp ${formattedMinDp}`
+          `Setoran ini untuk DP SO ${header.nomorSo}. Nominal tidak boleh kurang dari Rp ${formattedMinDp}`,
         );
       }
     }
@@ -130,7 +140,7 @@ const saveData = async (payload, user) => {
       if (header.nomorSo) {
         await connection.query(
           `UPDATE tsetor_hdr SET sh_so_nomor = ? WHERE sh_nomor = ?`,
-          [header.nomorSo, shNomor]
+          [header.nomorSo, shNomor],
         );
       }
     }
@@ -144,7 +154,7 @@ const saveData = async (payload, user) => {
       WHERE sd_sh_nomor = ?
         AND sd_ket NOT LIKE 'DP LINK DARI INV'
     `,
-      [shNomor]
+      [shNomor],
     );
     // ===============================
     // PATCH: hapus hanya pembayaran, bukan DP
@@ -160,11 +170,11 @@ const saveData = async (payload, user) => {
         OR pd_uraian LIKE 'Pembayaran Card%'
       )
     `,
-      [shNomor]
+      [shNomor],
     );
 
     const validItems = items.filter(
-      (item) => item.invoice && (item.bayar || 0) > 0
+      (item) => item.invoice && (item.bayar || 0) > 0,
     );
     if (validItems.length > 0) {
       const detailSql = `
@@ -182,7 +192,7 @@ const saveData = async (payload, user) => {
       validItems.forEach((item, index) => {
         const angsurId = `${user.cabang}SD${format(
           new Date(),
-          "yyyyMMddHHmmssSSS"
+          "yyyyMMddHHmmssSSS",
         )}${index}`;
         detailValues.push([
           idrec,
@@ -245,7 +255,7 @@ const searchUnpaidInvoices = async (
   page,
   itemsPerPage,
   customerKode,
-  user
+  user,
 ) => {
   const offset = (page - 1) * itemsPerPage;
   const searchTerm = `%${term || ""}%`;
@@ -323,7 +333,7 @@ const loadForEdit = async (nomor, user) => {
   const [headerRows] = await pool.query(headerQuery, [nomor, user.cabang]);
   if (headerRows.length === 0)
     throw new Error(
-      "Data Setoran tidak ditemukan atau bukan milik cabang Anda."
+      "Data Setoran tidak ditemukan atau bukan milik cabang Anda.",
     );
 
   // 2. Ambil data detail
@@ -569,7 +579,7 @@ const getSoDetails = async (nomorSo, user) => {
         SELECT cus_kode, cus_nama, cus_alamat, cus_kota, cus_telp
         FROM tcustomer WHERE cus_kode = ?
       `,
-        [so.cus_kode]
+        [so.cus_kode],
       );
 
       if (crows.length > 0) {
@@ -586,13 +596,13 @@ const getSoDetails = async (nomorSo, user) => {
     // --- CEK CUSTOM atau DTF ---
     const [customRows] = await connection.query(
       `SELECT COUNT(*) AS cnt FROM tso_dtl WHERE sod_so_nomor = ? AND sod_custom = 'Y'`,
-      [nomorSo]
+      [nomorSo],
     );
     const containsCustom = customRows[0].cnt > 0;
 
     const [dtfRows] = await connection.query(
       `SELECT COUNT(*) AS cnt FROM tso_dtl WHERE sod_so_nomor = ? AND IFNULL(sod_sd_nomor,'') <> ''`,
-      [nomorSo]
+      [nomorSo],
     );
     const containsDtf = dtfRows[0].cnt > 0;
 
@@ -612,7 +622,7 @@ const getSoDetails = async (nomorSo, user) => {
       FROM tsetor_hdr
       WHERE sh_so_nomor = ?
     `,
-      [nomorSo]
+      [nomorSo],
     );
 
     const totalDp = Number(dpRows[0].totalDp || 0);
@@ -625,7 +635,7 @@ const getSoDetails = async (nomorSo, user) => {
       `
       SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor_so = ? LIMIT 1
     `,
-      [nomorSo]
+      [nomorSo],
     );
 
     const isInvoiced = invRows.length > 0;
@@ -695,7 +705,7 @@ const activateSoIfDpEnough = async (connection, nomorSo, shNomor, user) => {
   // 3. Ambil status SO saat ini
   const [soRows] = await connection.query(
     `SELECT so_aktif FROM tso_hdr WHERE so_nomor = ? LIMIT 1`,
-    [nomorSo]
+    [nomorSo],
   );
   if (soRows.length === 0) return;
 
@@ -713,7 +723,7 @@ const activateSoIfDpEnough = async (connection, nomorSo, shNomor, user) => {
         so_dp = ?          -- total DP yang sudah dibayar
       WHERE so_nomor = ?;
       `,
-      [shNomor, user.kode, totalDp, nomorSo]
+      [shNomor, user.kode, totalDp, nomorSo],
     );
   }
 };

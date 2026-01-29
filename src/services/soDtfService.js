@@ -14,11 +14,10 @@ const getSoDtfList = async (filters) => {
 
   let statusFilter = "";
   if (status === "belum_invoice") {
-    // 'NoINV' adalah alias yang dihitung di subquery 'x', jadi filter di luar
-    statusFilter = " WHERE x.NoINV = ''"; // <-- Filter WHERE di query terluar
+    // [PERBAIKAN] Tambahkan kondisi Close <> 'Y' agar sinkron dengan dashboard
+    statusFilter = " WHERE x.NoINV = '' AND x.Close <> 'Y'";
   }
 
-  // Query ini meniru query kompleks dari Delphi Anda
   const query = `
         SELECT 
             x.Nomor, DATE_FORMAT(x.Tanggal, '%d-%m-%Y') AS Tanggal, DATE_FORMAT(x.TglPengerjaan, '%d-%m-%Y') AS TglPengerjaan, x.DatelineCus, x.NamaDTF, x.Jumlah, x.Titik, 
@@ -48,6 +47,7 @@ const getSoDtfList = async (filters) => {
         ${statusFilter}
         ORDER BY x.Tanggal, x.Nomor;
     `;
+
   if (cabang !== "ALL") {
     params.push(cabang);
   }
@@ -114,8 +114,8 @@ const remove = async (nomor, user) => {
       throw new Error(
         `Anda tidak berhak menghapus data milik cabang ${record.sd_nomor.substring(
           0,
-          3
-        )}.`
+          3,
+        )}.`,
       );
     }
     if (record.NoSO) {
@@ -144,7 +144,7 @@ const remove = async (nomor, user) => {
       "images",
       "sodtf",
       cabang,
-      `${nomor}.jpg`
+      `${nomor}.jpg`,
     );
     if (fs.existsSync(imagePath)) {
       fs.unlinkSync(imagePath);

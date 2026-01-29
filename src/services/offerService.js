@@ -5,7 +5,11 @@ const getOffers = async (startDate, endDate, cabang) => {
   let params = [startDate, endDate];
   let branchFilter = "";
 
-  if (cabang === "KDC") {
+  // Penyesuaian filter cabang
+  if (cabang === "ALL") {
+    // Jika ALL, branchFilter dikosongkan agar menarik data semua cabang
+    branchFilter = "";
+  } else if (cabang === "KDC") {
     branchFilter =
       "AND h.pen_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)";
   } else {
