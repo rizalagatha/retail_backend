@@ -83,10 +83,16 @@ const saveData = async (payload, user) => {
   const { header, items, isNew } = payload;
   // --- VALIDASI TANGGAL SERVER ---
   const serverDate = format(new Date(), "yyyy-MM-dd");
-  if (header.tanggal !== serverDate) {
-    throw new Error(
-      `Gagal Simpan: Tanggal Surat Jalan (${header.tanggal}) tidak sesuai dengan tanggal server (${serverDate}).`,
-    );
+  if (isNew) {
+    // Hanya validasi jika SO Baru
+    const serverDate = format(new Date(), "yyyy-MM-dd");
+    const inputDate = format(new Date(header.tanggal), "yyyy-MM-dd");
+
+    if (inputDate !== serverDate) {
+      throw new Error(
+        `Gagal Simpan: Tanggal SO (${inputDate}) harus hari ini (${serverDate}).`,
+      );
+    }
   }
   // --------------------------------------------
   const connection = await pool.getConnection();
