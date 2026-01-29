@@ -160,7 +160,7 @@ const getDailyData = async (filters) => {
           WHERE inv_nomor_so IS NOT NULL AND inv_nomor_so <> ''
       )
       ${cabang !== "ALL" ? "AND h.so_cab = ?" : ""}
-) AS so_open_accum
+) AS so_open_accum,
 
         -- [UPDATE] 4. Sisa Piutang (Hari Ini) - Mengambil dari CTE CleanPiutang
         (
