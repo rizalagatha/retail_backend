@@ -145,15 +145,22 @@ const getDailyData = async (filters) => {
               ${cabang !== "ALL" ? "AND h.so_cab = ?" : ""}
         ) AS so_open_30days,
 
-        -- 3. Open SO (Akumulasi)
-        (
-            SELECT IFNULL(SUM(d.sod_jumlah * d.sod_harga), 0)
-            FROM tso_hdr h
-            JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor
-            WHERE h.so_tanggal <= dr.tanggal
-              AND h.so_aktif = 'Y' AND h.so_close = 0
-              ${cabang !== "ALL" ? "AND h.so_cab = ?" : ""}
-        ) AS so_open_accum,
+        -- 3. Open SO (Akumulasi) yang benar-benar belum ter-Invoice
+(
+    SELECT IFNULL(SUM(d.sod_jumlah * d.sod_harga), 0)
+    FROM tso_hdr h
+    JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor
+    WHERE h.so_tanggal <= dr.tanggal
+      AND h.so_aktif = 'Y' 
+      AND h.so_close = 0
+      -- Tambahan filter: Pastikan SO belum ada di tabel invoice
+      AND h.so_nomor NOT IN (
+          SELECT DISTINCT inv_nomor_so 
+          FROM tinv_hdr 
+          WHERE inv_nomor_so IS NOT NULL AND inv_nomor_so <> ''
+      )
+      ${cabang !== "ALL" ? "AND h.so_cab = ?" : ""}
+) AS so_open_accum
 
         -- [UPDATE] 4. Sisa Piutang (Hari Ini) - Mengambil dari CTE CleanPiutang
         (
@@ -486,7 +493,7 @@ const saveTarget = async (payload, user) => {
     // 1. Ambil Nama Gudang
     const [gudangRows] = await connection.query(
       "SELECT gdg_nama FROM tgudang WHERE gdg_kode = ?",
-      [kode_gudang]
+      [kode_gudang],
     );
     const nama_gudang = gudangRows.length > 0 ? gudangRows[0].gdg_nama : "";
 
@@ -494,7 +501,7 @@ const saveTarget = async (payload, user) => {
     await connection.query(
       `DELETE FROM kpi.ttarget_kaosan 
        WHERE tahun = ? AND bulan = ? AND kode_gudang = ?`,
-      [tahun, bulan, kode_gudang]
+      [tahun, bulan, kode_gudang],
     );
 
     // 3. Insert Target Baru (LOGIKA 4 MINGGU)
@@ -524,10 +531,10 @@ const saveTarget = async (payload, user) => {
       }
 
       const startDate = `${tahun}-${String(bulan).padStart(2, "0")}-${String(
-        startDay
+        startDay,
       ).padStart(2, "0")}`;
       const endDate = `${tahun}-${String(bulan).padStart(2, "0")}-${String(
-        endDay
+        endDay,
       ).padStart(2, "0")}`;
 
       await connection.query(
@@ -543,7 +550,7 @@ const saveTarget = async (payload, user) => {
           nominal,
           startDate,
           endDate,
-        ]
+        ],
       );
     }
 
