@@ -215,9 +215,13 @@ const save = async (payload, user) => {
 
 // Fungsi untuk lookup invoice (meniru F1 di edtinv)
 const lookupInvoices = async (cabang) => {
-  // Hanya KON yang dibebaskan dari filter tanggal
+  // Tentukan batas waktu: 2 hari dari sekarang (Jan 29 s/d Jan 30)
+  // Akses akan ditutup otomatis pada tanggal 31 Januari 2026
+  const isTemporaryOpenK10 =
+    cabang === "K10" && new Date() < new Date("2026-01-31");
+
   const dateCondition =
-    cabang === "KON"
+    cabang === "KON" || isTemporaryOpenK10
       ? ""
       : "AND h.inv_tanggal >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
 
