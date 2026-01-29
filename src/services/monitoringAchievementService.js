@@ -125,25 +125,37 @@ const getDailyData = async (filters) => {
           ${cabang !== "ALL" ? "AND LEFT(rh.rj_nomor, 3) = ?" : ""}
         ) AS retur_jual,
 
-        -- 1. Open SO (Per Hari Ini)
-        (
-            SELECT IFNULL(SUM(d.sod_jumlah * d.sod_harga), 0)
-            FROM tso_hdr h
-            JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor
-            WHERE DATE(h.so_tanggal) = dr.tanggal
-              AND h.so_aktif = 'Y' AND h.so_close = 0
-              ${cabang !== "ALL" ? "AND h.so_cab = ?" : ""}
-        ) AS so_open_today,
+        -- 1. Open SO (Per Hari Ini) yang benar-benar belum ter-Invoice
+(
+    SELECT IFNULL(SUM(d.sod_jumlah * d.sod_harga), 0)
+    FROM tso_hdr h
+    JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor
+    WHERE DATE(h.so_tanggal) = dr.tanggal
+      AND h.so_aktif = 'Y' AND h.so_close = 0
+      -- Filter pengunci: Pastikan SO belum terdaftar di Invoice
+      AND h.so_nomor NOT IN (
+          SELECT DISTINCT inv_nomor_so 
+          FROM tinv_hdr 
+          WHERE inv_nomor_so IS NOT NULL AND inv_nomor_so <> ''
+      )
+      ${cabang !== "ALL" ? "AND h.so_cab = ?" : ""}
+) AS so_open_today,
 
-        -- 2. Open SO (30 Hari Terakhir)
-        (
-            SELECT IFNULL(SUM(d.sod_jumlah * d.sod_harga), 0)
-            FROM tso_hdr h
-            JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor
-            WHERE h.so_tanggal BETWEEN DATE_SUB(dr.tanggal, INTERVAL 29 DAY) AND dr.tanggal
-              AND h.so_aktif = 'Y' AND h.so_close = 0
-              ${cabang !== "ALL" ? "AND h.so_cab = ?" : ""}
-        ) AS so_open_30days,
+-- 2. Open SO (30 Hari Terakhir) yang benar-benar belum ter-Invoice
+(
+    SELECT IFNULL(SUM(d.sod_jumlah * d.sod_harga), 0)
+    FROM tso_hdr h
+    JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor
+    WHERE h.so_tanggal BETWEEN DATE_SUB(dr.tanggal, INTERVAL 29 DAY) AND dr.tanggal
+      AND h.so_aktif = 'Y' AND h.so_close = 0
+      -- Filter pengunci: Pastikan SO belum terdaftar di Invoice
+      AND h.so_nomor NOT IN (
+          SELECT DISTINCT inv_nomor_so 
+          FROM tinv_hdr 
+          WHERE inv_nomor_so IS NOT NULL AND inv_nomor_so <> ''
+      )
+      ${cabang !== "ALL" ? "AND h.so_cab = ?" : ""}
+) AS so_open_30days,
 
         -- 3. Open SO (Akumulasi) yang benar-benar belum ter-Invoice
 (
