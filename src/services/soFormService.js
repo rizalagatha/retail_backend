@@ -26,11 +26,13 @@ const generateNewSoNumber = async (connection, cabang, tanggal) => {
 const save = async (data, user) => {
   const { header, footer, details, dps, isNew } = data;
   // --- VALIDASI TANGGAL SERVER (SO) ---
-  const serverDate = format(new Date(), "yyyy-MM-dd");
-  if (header.tanggal !== serverDate) {
-    throw new Error(
-      `Gagal Simpan: Tanggal SO (${header.tanggal}) harus hari ini (${serverDate}).`,
-    );
+  if (isNew) {
+    const serverDate = format(new Date(), "yyyy-MM-dd");
+    if (header.tanggal !== serverDate) {
+      throw new Error(
+        `Gagal Simpan: Tanggal SO (${header.tanggal}) harus hari ini (${serverDate}).`,
+      );
+    }
   }
   // ------------------------------------------------
   const connection = await pool.getConnection();
