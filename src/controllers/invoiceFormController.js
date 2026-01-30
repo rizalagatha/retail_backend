@@ -37,12 +37,19 @@ const checkSoDeadline = (dateline) => {
   if (!dateline) return null;
 
   const today = new Date();
-  today.setHours(0, 0, 0, 0); // Reset jam untuk perbandingan tanggal saja
+  today.setHours(0, 0, 0, 0);
+
+  // Konversi string ke objek Date
   const deadlineDate = new Date(dateline);
+
+  if (isNaN(deadlineDate.getTime())) return null;
+
   deadlineDate.setHours(0, 0, 0, 0);
 
   if (today > deadlineDate) {
-    return `SO Melebihi Batas Waktu (${dateline.toISOString().split("T")[0]})`;
+    // GUNAKAN deadlineDate (Objek), BUKAN dateline (String)
+    const dateString = deadlineDate.toISOString().split("T")[0];
+    return `SO Melebihi Batas Waktu (${dateString})`;
   }
   return null;
 };
