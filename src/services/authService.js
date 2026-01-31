@@ -70,9 +70,15 @@ const generateFinalPayload = async (user, selectedCabang) => {
     canApprovePrice: isFinance,
   };
 
+  // --- LOGIKA EXPIRATION TOKEN KHUSUS ---
+  // Jika user adalah SETYO, berikan masa aktif 30 hari ('30d').
+  // User lainnya tetap menggunakan standar 12 jam ('12h').
+  const tokenExpiry = userKodeUpper === "SETYO" ? "30d" : "12h";
+
   const token = jwt.sign(userForToken, process.env.JWT_SECRET, {
-    expiresIn: "12h",
+    expiresIn: tokenExpiry, // Menggunakan variabel dinamis
   });
+
   const permissions = await getPermissions(user.user_kode);
 
   return {
@@ -140,6 +146,26 @@ const loginUser = async (kodeUser, password) => {
       kode: user.user_cab,
       nama: branchMap.get(user.user_cab) || user.user_cab,
     }));
+
+    // --- LOGIC PRIORITAS CABANG ---
+    const priorityUsers = ["LUTFI", "ADIN"];
+    const userUpper = kodeUser.toUpperCase();
+
+    if (priorityUsers.includes(userUpper)) {
+      detailedBranches.sort((a, b) => {
+        // Tentukan kriteria prioritas (KDC atau Nama mengandung DC PUSAT)
+        const isAPriority =
+          a.kode === "KDC" || a.nama.toUpperCase().includes("DC PUSAT");
+        const isBPriority =
+          b.kode === "KDC" || b.nama.toUpperCase().includes("DC PUSAT");
+
+        // Geser ke atas jika memenuhi kriteria
+        if (isAPriority && !isBPriority) return -1;
+        if (!isAPriority && isBPriority) return 1;
+        return 0;
+      });
+    }
+    // ------------------------------------------
 
     // Buat token temporer
     const tempToken = jwt.sign(

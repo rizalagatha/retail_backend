@@ -20,13 +20,15 @@ const getList = async (filters) => {
 
   const params = [cabang];
 
-  // Tambahkan kondisi jika filter jenis dipilih
   if (jenis && jenis !== "ALL" && jenis !== "SEMUA JENIS") {
     query += ` AND lo.lo_jenis_nama = ?`;
     params.push(jenis);
   }
 
-  query += ` ORDER BY lo.lo_lokasi ASC`;
+  // --- PERBAIKAN SORTING DI SINI ---
+  // Kita urutkan berdasarkan panjang teks dulu, baru teksnya.
+  // Hasilnya: BX1 (3 char) akan muncul sebelum BX10 (4 char).
+  query += ` ORDER BY LENGTH(lo.lo_lokasi) ASC, lo.lo_lokasi ASC`;
 
   const [rows] = await pool.query(query, params);
   return rows;
