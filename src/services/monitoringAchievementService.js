@@ -116,13 +116,30 @@ const getDailyData = async (filters) => {
         IFNULL(dt.target, 0) AS target,
         (SELECT bulan_total FROM MonthlyTarget LIMIT 1) AS target_bulanan,
         
-        -- Retur Jual
+        -- Retur Jual (Achievement Mode: Menghitung Kerugian Omset Riil)
         (
-          SELECT IFNULL(SUM(rd.rjd_jumlah * (rd.rjd_harga - rd.rjd_diskon)), 0)
+          SELECT IFNULL(SUM(
+            CASE 
+              -- 1. TUKAR BARANG (N): Kerugian = Nilai Barang Retur - Nilai yang Dipakai Belanja Lagi
+              WHEN rh.rj_jenis = 'N' THEN (
+                SELECT GREATEST(0, 
+                    IFNULL(SUM(rd.rjd_jumlah * (rd.rjd_harga - rd.rjd_diskon)), 0) - 
+                    IFNULL((SELECT SUM(inv_rj_rp) FROM tinv_hdr WHERE inv_rj_nomor = rh.rj_nomor), 0)
+                )
+                FROM trj_dtl rd WHERE rd.rjd_nomor = rh.rj_nomor
+              )
+              -- 2. PENGEMBALIAN (Y): Kerugian = Nominal Cash Out yang tercatat di Refund
+              WHEN rh.rj_jenis = 'Y' THEN (
+                SELECT IFNULL(SUM(rfd_refund), 0) 
+                FROM trefund_dtl 
+                WHERE rfd_notrs = rh.rj_inv -- Menghubungkan Invoice Asal ke data Refund
+              )
+              ELSE 0
+            END
+          ), 0)
           FROM trj_hdr rh
-          JOIN trj_dtl rd ON rd.rjd_nomor = rh.rj_nomor
           WHERE DATE(rh.rj_tanggal) = dr.tanggal
-          ${cabang !== "ALL" ? "AND LEFT(rh.rj_nomor, 3) = ?" : ""}
+          ${cabang !== "ALL" ? "AND rh.rj_cab = ?" : ""}
         ) AS retur_jual,
 
         -- 1. Open SO (Per Hari Ini) yang benar-benar belum ter-Invoice

@@ -450,12 +450,30 @@ const getBranchPerformance = async (user) => {
             WHERE tahun = ? AND bulan = ?
             GROUP BY cabang
         ),
+        -- [PERBAIKAN] Hitung Retur Berdasarkan Jenis (Achievement Mode)
         MonthlyReturns AS (
             SELECT 
                 rh.rj_cab AS cabang,
-                SUM(rd.rjd_jumlah * (rd.rjd_harga - rd.rjd_diskon)) AS total_retur
+                SUM(
+                    CASE 
+                        -- Tukar Barang: Selisih antara barang balik vs barang keluar baru
+                        WHEN rh.rj_jenis = 'N' THEN (
+                            SELECT GREATEST(0, 
+                                IFNULL(SUM(rd.rjd_jumlah * (rd.rjd_harga - rd.rjd_diskon)), 0) - 
+                                IFNULL((SELECT SUM(inv_rj_rp) FROM tinv_hdr WHERE inv_rj_nomor = rh.rj_nomor), 0)
+                            )
+                            FROM trj_dtl rd WHERE rd.rjd_nomor = rh.rj_nomor
+                        )
+                        -- Refund: Nominal uang yang benar-benar keluar ke customer
+                        WHEN rh.rj_jenis = 'Y' THEN (
+                            SELECT IFNULL(SUM(rfd_refund), 0) 
+                            FROM trefund_dtl 
+                            WHERE rfd_notrs = rh.rj_inv -- Link via No. Invoice Asal
+                        )
+                        ELSE 0
+                    END
+                ) AS total_retur
             FROM trj_hdr rh
-            JOIN trj_dtl rd ON rd.rjd_nomor = rh.rj_nomor
             WHERE YEAR(rh.rj_tanggal) = ? AND MONTH(rh.rj_tanggal) = ?
             GROUP BY rh.rj_cab
         ),

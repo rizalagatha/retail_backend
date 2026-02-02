@@ -1,4 +1,16 @@
 const changelogs = {
+  "1.3.6": {
+    date: "2026-02-02",
+    changes: [
+      "Setting Promo Kaosan Februari 2026",
+      {
+        title: "Perbaikan:",
+        items: [
+          "Perbaikan Perhitungan Retur Jual pada Laporan Monitoring Achievement",
+        ],
+      },
+    ],
+  },
   "1.3.5": {
     date: "2026-01-28",
     changes: [
