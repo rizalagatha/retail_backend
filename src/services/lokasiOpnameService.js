@@ -12,7 +12,15 @@ const getList = async (filters) => {
       lo.lo_jenis_nama, 
       lo.user_create, 
       lo.date_create,
-      g.gdg_nama as cab_nama
+      g.gdg_nama as cab_nama,
+      -- Tambahkan subquery untuk menghitung stok yang sudah diinput
+      IFNULL((
+        SELECT SUM(h.hs_qty) 
+        FROM thitungstok h 
+        WHERE h.hs_cab = lo.lo_cab 
+          AND h.hs_lokasi = lo.lo_lokasi 
+          AND h.hs_proses = 'N'
+      ), 0) as total_hitung
     FROM tlokasi_opname lo
     LEFT JOIN tgudang g ON lo.lo_cab = g.gdg_kode
     WHERE lo.lo_cab = ?
@@ -25,9 +33,6 @@ const getList = async (filters) => {
     params.push(jenis);
   }
 
-  // --- PERBAIKAN SORTING DI SINI ---
-  // Kita urutkan berdasarkan panjang teks dulu, baru teksnya.
-  // Hasilnya: BX1 (3 char) akan muncul sebelum BX10 (4 char).
   query += ` ORDER BY LENGTH(lo.lo_lokasi) ASC, lo.lo_lokasi ASC`;
 
   const [rows] = await pool.query(query, params);
