@@ -100,7 +100,7 @@ const getTshirtTypeDetails = async (jenisKaos, custom) => {
   } catch (error) {
     // Tambahkan log yang lebih detail di sini untuk debugging di masa depan
     console.error(
-      `[ERROR] Gagal getTshirtTypeDetails untuk jenisKaos: "${jenisKaos}", custom: "${custom}"`
+      `[ERROR] Gagal getTshirtTypeDetails untuk jenisKaos: "${jenisKaos}", custom: "${custom}"`,
     );
     console.error(error); // Cetak error SQL yang sebenarnya ke konsol backend
     throw error; // Lemparkan kembali error agar controller bisa menangkapnya
@@ -166,7 +166,6 @@ const searchAdditionalCosts = async () => {
             bt_tambahan AS tambahan,
             bt_harga AS harga 
         FROM tbiayatambahan 
-        WHERE bt_harga <> 0 
         ORDER BY bt_tambahan
     `;
   const [rows] = await pool.query(query);
@@ -194,7 +193,7 @@ const getProposalForEdit = async (nomor) => {
     "public",
     "images",
     cabang,
-    `${nomor}.jpg`
+    `${nomor}.jpg`,
   );
   let imageUrl = null;
 
@@ -258,7 +257,7 @@ const renameProposalImage = async (tempFilePath, nomor) => {
       process.cwd(),
       "public",
       "images",
-      cabang
+      cabang,
     );
 
     // Buat folder cabang jika belum ada
@@ -280,7 +279,7 @@ const renameProposalImage = async (tempFilePath, nomor) => {
           if (copyErr) {
             console.error("Gagal copy file:", copyErr);
             return reject(
-              new Error("Gagal memproses file gambar: " + copyErr.message)
+              new Error("Gagal memproses file gambar: " + copyErr.message),
             );
           }
 
@@ -289,7 +288,7 @@ const renameProposalImage = async (tempFilePath, nomor) => {
             if (unlinkErr) {
               console.warn(
                 "Warning: Could not delete temp file:",
-                tempFilePath
+                tempFilePath,
               );
             }
           });
@@ -372,7 +371,7 @@ const saveProposal = async (data) => {
     // 2. Hapus detail sizes lama & Simpan detail sizes baru
     await connection.query(
       `DELETE FROM tpengajuanharga_size WHERE phs_nomor = ?`,
-      [nomor]
+      [nomor],
     );
 
     if (details && details.length > 0) {
@@ -397,7 +396,7 @@ const saveProposal = async (data) => {
     // 3. Hapus biaya tambahan lama & Simpan biaya tambahan baru
     await connection.query(
       `DELETE FROM tpengajuanharga_tambahan WHERE pht_nomor = ?`,
-      [nomor]
+      [nomor],
     );
 
     if (additionalCostItems && additionalCostItems.length > 0) {
@@ -415,11 +414,11 @@ const saveProposal = async (data) => {
     // 4. Hapus bordir lama & Simpan bordir baru HANYA JIKA ADA DATA
     await connection.query(
       `DELETE FROM tpengajuanharga_bordir WHERE phb_nomor = ?`,
-      [nomor]
+      [nomor],
     );
     // Cek jika ada item bordir yang diisi (p atau l > 0)
     const hasBordirData = bordirItems.some(
-      (item) => (item.p || 0) > 0 || (item.l || 0) > 0
+      (item) => (item.p || 0) > 0 || (item.l || 0) > 0,
     );
     if (hasBordirData || biayaPerCmBordir > 0 || bordirCost > 0) {
       const bordirQuery = `
@@ -453,11 +452,11 @@ const saveProposal = async (data) => {
     // 5. Hapus DTF lama & Simpan DTF baru HANYA JIKA ADA DATA
     await connection.query(
       `DELETE FROM tpengajuanharga_dtf WHERE phd_nomor = ?`,
-      [nomor]
+      [nomor],
     );
     // Cek jika ada item DTF yang diisi (p atau l > 0)
     const hasDtfData = dtfItems.some(
-      (item) => (item.p || 0) > 0 || (item.l || 0) > 0
+      (item) => (item.p || 0) > 0 || (item.l || 0) > 0,
     );
     if (hasDtfData || biayaPerCmDtf > 0 || dtfCost > 0) {
       const dtfQuery = `
