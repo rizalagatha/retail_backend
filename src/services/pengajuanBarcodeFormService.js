@@ -205,7 +205,38 @@ const save = async (payload, user) => {
         );
       }
 
-      // (Opsional: Tambahkan logika serupa untuk tpengajuanbarcode_sticker jika tabelnya punya kolom idrec)
+      // == PROSES STIKER (Wajib dijalankan baik mode Approve maupun Simpan Biasa) ==
+      // 1. Hapus stiker lama berdasarkan nomor dokumen
+      await connection.query(
+        "DELETE FROM tpengajuanbarcode_sticker WHERE pcs_nomor = ?",
+        [nomorDokumen],
+      );
+
+      // 2. Insert stiker baru jika ada dalam list
+      if (stickers && stickers.length > 0) {
+        const stickerValues = stickers.map((s, i) => {
+          // Buat IDREC unik untuk stiker (opsional, sesuaikan dengan struktur tabel Anda)
+          const stickerTime = new Date(now.getTime() + i + 500); // offset agar beda dengan detail
+          const pcs_idrec = `${user.cabang}ST${format(stickerTime, "yyyyMMddHHmmss.SSS")}`;
+
+          return [
+            pcs_idrec, // Pastikan tabel Anda punya kolom idrec, jika tidak hapus baris ini
+            nomorDokumen, // pcs_nomor
+            s.kode, // pcs_kode (Kode Kaos Induk)
+            s.kodes, // pcs_kodes (Kode Stiker)
+            s.ukuran, // pcs_ukuran
+            s.jumlah, // pcs_jumlah
+          ];
+        });
+
+        // Pastikan urutan kolom di bawah ini SAMA dengan urutan di array stickerValues
+        await connection.query(
+          `INSERT INTO tpengajuanbarcode_sticker 
+         (pcs_idrec, pcs_nomor, pcs_kode, pcs_kodes, pcs_ukuran, pcs_jumlah) 
+         VALUES ?`,
+          [stickerValues],
+        );
+      }
     }
 
     await connection.commit();
