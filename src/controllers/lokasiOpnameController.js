@@ -1,5 +1,15 @@
 const service = require("../services/lokasiOpnameService");
 
+const getSoDates = async (req, res) => {
+  try {
+    const { cabang } = req.query;
+    const data = await service.getSoDates(cabang);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const getList = async (req, res) => {
   try {
     const data = await service.getList(req.query);
@@ -55,4 +65,10 @@ const remove = async (req, res) => {
   }
 };
 
-module.exports = { getList, getMasterOptions, bulkGenerate, remove };
+module.exports = {
+  getSoDates,
+  getList,
+  getMasterOptions,
+  bulkGenerate,
+  remove,
+};

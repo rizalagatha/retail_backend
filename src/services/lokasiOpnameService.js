@@ -1,6 +1,20 @@
 const pool = require("../config/database");
 const { format } = require("date-fns");
 
+const getSoDates = async (cabang) => {
+  let query = "SELECT st_tanggal FROM tsop_tanggal";
+  const params = [];
+
+  if (cabang && cabang !== "ALL") {
+    query += " WHERE st_cab = ?";
+    params.push(cabang);
+  }
+
+  query += " ORDER BY st_tanggal DESC";
+  const [rows] = await pool.query(query, params);
+  return rows;
+};
+
 const getList = async (filters) => {
   const { cabang, jenis } = filters;
 
@@ -86,4 +100,10 @@ const deleteLocation = async (idrec) => {
   return { message: "Lokasi berhasil dihapus." };
 };
 
-module.exports = { getList, getMasterOptions, bulkGenerate, deleteLocation };
+module.exports = {
+  getSoDates,
+  getList,
+  getMasterOptions,
+  bulkGenerate,
+  deleteLocation,
+};

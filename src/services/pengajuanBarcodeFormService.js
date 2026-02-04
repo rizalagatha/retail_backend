@@ -27,7 +27,10 @@ const getForEdit = async (nomor, userCabang) => {
     WHERE d.pcd_nomor = ?;
   `;
 
-  const headerCab = headerRows[0].pc_cab;
+  // [FIX] Gunakan alias 'cabang' sesuai query di atas, bukan 'pc_cab'
+  const headerCab = headerRows[0].cabang;
+
+  // Parameter headerCab sekarang valid (misal: 'K08'), sehingga query stok akan berjalan benar
   const [items] = await pool.query(itemsQuery, [headerCab, nomor]);
 
   // --- PERBAIKAN PENTING: Lakukan pengecekan fisik file gambar ---
@@ -76,7 +79,7 @@ const save = async (payload, user) => {
       : (
           await connection.query(
             "SELECT pc_idrec FROM tpengajuanbarcode_hdr WHERE pc_nomor = ?",
-            [nomorDokumen]
+            [nomorDokumen],
           )
         )[0][0]?.pc_idrec;
 
@@ -97,7 +100,7 @@ const save = async (payload, user) => {
         `INSERT INTO tpengajuanbarcode_hdr 
          (pc_idrec, pc_nomor, pc_tanggal, pc_cab, user_create, date_create) 
          VALUES (?, ?, ?, ?, ?, NOW())`,
-        [pc_idrec, nomorDokumen, header.tanggal, user.cabang, user.kode]
+        [pc_idrec, nomorDokumen, header.tanggal, user.cabang, user.kode],
       );
     }
 
@@ -106,7 +109,7 @@ const save = async (payload, user) => {
       // 1. Update header dengan status ACC
       await connection.query(
         "UPDATE tpengajuanbarcode_hdr SET pc_acc = ?, date_acc = NOW() WHERE pc_nomor = ?",
-        [user.kode, nomorDokumen]
+        [user.kode, nomorDokumen],
       );
 
       for (const [index, item] of items.entries()) {
@@ -118,7 +121,7 @@ const save = async (payload, user) => {
           // Insert/Update Master Produk
           await connection.query(
             'INSERT INTO tbarangdc (brg_kode, brg_ktgp, brg_aktif, brg_logstok, brg_kelompok, brg_warna, user_create, date_create) VALUES (?, ?, 0, "Y", "C", ?, ?, NOW()) ON DUPLICATE KEY UPDATE brg_ktgp=VALUES(brg_ktgp), brg_warna=VALUES(brg_warna)',
-            [newProductCode, item.jenis, newProductName, user.kode]
+            [newProductCode, item.jenis, newProductName, user.kode],
           );
 
           await connection.query(
@@ -129,7 +132,7 @@ const save = async (payload, user) => {
               item.ukuran,
               item.hpp,
               item.hargabaru,
-            ]
+            ],
           );
 
           // --- GENERATE IDREC DETAIL 2 ---
@@ -156,7 +159,7 @@ const save = async (payload, user) => {
               item.ukuran,
               item.diskon,
               item.hargabaru,
-            ]
+            ],
           );
         }
       }
@@ -164,13 +167,13 @@ const save = async (payload, user) => {
       // == ALUR SIMPAN BIASA ==
       await connection.query(
         "UPDATE tpengajuanbarcode_hdr SET pc_tanggal = ?, user_modified = ?, date_modified = NOW() WHERE pc_nomor = ?",
-        [header.tanggal, user.kode, nomorDokumen]
+        [header.tanggal, user.kode, nomorDokumen],
       );
 
       // Hapus detail lama
       await connection.query(
         "DELETE FROM tpengajuanbarcode_dtl WHERE pcd_nomor = ?",
-        [nomorDokumen]
+        [nomorDokumen],
       );
 
       // Insert Detail Baru dengan IDREC
@@ -198,7 +201,7 @@ const save = async (payload, user) => {
           `INSERT INTO tpengajuanbarcode_dtl 
            (pcd_idrec, pcd_nomor, pcd_kode, pcd_ukuran, pcd_jumlah, pcd_jenis, pcd_ket, pcd_nourut) 
            VALUES ?`,
-          [itemValues]
+          [itemValues],
         );
       }
 
@@ -269,7 +272,7 @@ const lookupProducts = async (filters) => {
 
 const getJenisReject = async () => {
   const [rows] = await pool.query(
-    "SELECT jenis FROM tjenisreject ORDER BY jenis"
+    "SELECT jenis FROM tjenisreject ORDER BY jenis",
   );
   return rows.map((r) => r.jenis);
 };
@@ -377,7 +380,7 @@ const getDataForBarcodePrint = async (nomor) => {
 
   if (rows.length === 0) {
     throw new Error(
-      "Tidak ada data barcode baru yang sudah di-approve untuk dicetak pada dokumen ini."
+      "Tidak ada data barcode baru yang sudah di-approve untuk dicetak pada dokumen ini.",
     );
   }
   return rows;
@@ -408,7 +411,7 @@ const processItemImage = async (tempFilePath, nomor, itemKode, itemUkuran) => {
     // Update database
     await pool.query(
       "UPDATE tpengajuanbarcode_dtl SET pcd_gambar_url = ? WHERE pcd_nomor = ? AND pcd_kode = ? AND pcd_ukuran = ?",
-      [imageUrl, nomor, itemKode, itemUkuran]
+      [imageUrl, nomor, itemKode, itemUkuran],
     );
 
     return { imageUrl };

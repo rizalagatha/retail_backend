@@ -15,6 +15,12 @@ router.get(
   controller.getList,
 );
 router.get(
+  "/so-dates",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getSoDates,
+);
+router.get(
   "/master",
   verifyToken,
   checkPermission(MENU_ID, "view"),
