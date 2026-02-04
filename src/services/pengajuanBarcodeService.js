@@ -9,7 +9,7 @@ const getList = async (filters, user) => {
   // Logika filter cabang dari Delphi
   if (user.cabang === "KDC") {
     whereClauses.push(
-      'h.pc_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_kode NOT IN ("KBS", "KPS"))'
+      'h.pc_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_kode NOT IN ("KBS", "KPS"))',
     );
   } else {
     whereClauses.push("h.pc_cab = ?");
@@ -33,7 +33,8 @@ const getList = async (filters, user) => {
 };
 
 const getDetails = async (nomor) => {
-  const query = `
+  // 1. Ambil Data Kaos (Query yang sudah ada)
+  const itemsQuery = `
     SELECT 
       d.pcd_kode AS kode,
       TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
@@ -42,15 +43,32 @@ const getDetails = async (nomor) => {
       b.brgd_harga AS harga,
       IFNULL(e.pcd2_kodein, "") AS barcodeBaru
     FROM tpengajuanbarcode_dtl d
-    INNER JOIN tpengajuanbarcode_hdr h ON d.pcd_nomor = h.pc_nomor
     LEFT JOIN tbarangdc a ON a.brg_kode = d.pcd_kode
     LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.pcd_kode AND b.brgd_ukuran = d.pcd_ukuran
     LEFT JOIN tpengajuanbarcode_dtl2 e ON e.pcd2_nomor = d.pcd_nomor AND e.pcd2_kode = d.pcd_kode AND e.pcd2_ukuran = d.pcd_ukuran
     WHERE d.pcd_nomor = ?
     ORDER BY d.pcd_nourut;
   `;
-  const [rows] = await pool.query(query, [nomor]);
-  return rows;
+  const [items] = await pool.query(itemsQuery, [nomor]);
+
+  // 2. [BARU] Ambil Data Stiker
+  const stickersQuery = `
+    SELECT
+      s.pcs_kode AS parent_kode,
+      s.pcs_kodes AS kode,
+      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+      s.pcs_ukuran AS ukuran,
+      s.pcs_jumlah AS jumlah,
+      b.brgd_harga AS harga
+    FROM tpengajuanbarcode_sticker s
+    LEFT JOIN tbarangdc a ON a.brg_kode = s.pcs_kodes
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = s.pcs_kodes AND b.brgd_ukuran = s.pcs_ukuran
+    WHERE s.pcs_nomor = ?;
+  `;
+  const [stickers] = await pool.query(stickersQuery, [nomor]);
+
+  // Gabungkan hasil
+  return { items, stickers };
 };
 
 const remove = async (nomor, user) => {
@@ -59,7 +77,7 @@ const remove = async (nomor, user) => {
     await connection.beginTransaction();
     const [rows] = await connection.query(
       "SELECT pc_acc, pc_closing, pc_cab AS cabang FROM tpengajuanbarcode_hdr WHERE pc_nomor = ?",
-      [nomor]
+      [nomor],
     );
     if (rows.length === 0) throw new Error("Dokumen tidak ditemukan.");
     const doc = rows[0];
@@ -72,11 +90,11 @@ const remove = async (nomor, user) => {
 
     await connection.query(
       "DELETE FROM tpengajuanbarcode_dtl WHERE pcd_nomor = ?",
-      [nomor]
+      [nomor],
     );
     await connection.query(
       "DELETE FROM tpengajuanbarcode_hdr WHERE pc_nomor = ?",
-      [nomor]
+      [nomor],
     );
 
     await connection.commit();
@@ -117,7 +135,7 @@ const getExportDetails = async (filters, user) => {
       params.push(cabang);
     } else {
       whereClauses.push(
-        'h.pc_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_kode NOT IN ("KBS", "KPS"))'
+        'h.pc_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_kode NOT IN ("KBS", "KPS"))',
       );
     }
   } else {
