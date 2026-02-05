@@ -304,16 +304,21 @@ const getBufferStokItems = async (user) => {
 const save = async (data, user) => {
   const { header, items, isNew } = data;
 
-  // --- VALIDASI TANGGAL (WAKTU SERVER) ---
-  const serverDate = format(new Date(), "yyyy-MM-dd");
-  const inputDate = format(new Date(header.tanggal), "yyyy-MM-dd");
+  // [FIX 1] Hanya validasi tanggal hari ini jika data BARU
+  if (isNew) {
+    const serverDate = format(new Date(), "yyyy-MM-dd");
+    // [FIX 2] Ambil 10 karakter pertama untuk menghindari pergeseran timezone (mundur sehari)
+    const inputDate =
+      typeof header.tanggal === "string"
+        ? header.tanggal.substring(0, 10)
+        : format(new Date(header.tanggal), "yyyy-MM-dd");
 
-  if (inputDate !== serverDate) {
-    throw new Error(
-      `Gagal Simpan: Tanggal transaksi (${inputDate}) tidak sesuai dengan tanggal server (${serverDate}).`,
-    );
+    if (inputDate !== serverDate) {
+      throw new Error(
+        `Gagal Simpan: Tanggal transaksi (${inputDate}) harus hari ini (${serverDate}).`,
+      );
+    }
   }
-  // ----------------------------------------------------
 
   const totalQty = items.reduce(
     (sum, item) => sum + (Number(item.jumlah) || 0),
