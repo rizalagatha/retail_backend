@@ -215,8 +215,8 @@ const saveOffer = async (data) => {
         INSERT INTO tpenawaran_hdr 
         (pen_idrec, pen_nomor, pen_tanggal, pen_top, pen_ppn, pen_disc, pen_disc1, pen_disc2, 
         pen_bkrm, pen_cus_kode, pen_cus_level, pen_ket, pen_cab, user_create, date_create,
-        pen_jenis_order_kode, pen_jenis_order_nama, pen_nama_dtf) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?)
+        pen_jenis_order_kode, pen_jenis_order_nama, pen_nama_dtf, pen_promo_nomor) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?)
       `;
       await connection.query(insertHeaderQuery, [
         idrec,
@@ -236,6 +236,7 @@ const saveOffer = async (data) => {
         header.jenisOrderKode || null,
         header.jenisOrderNama || null,
         header.namaDtf || null,
+        header.nomorPromo || null,
       ]);
     } else {
       const [idrecRows] = await connection.query(
@@ -250,7 +251,7 @@ const saveOffer = async (data) => {
         UPDATE tpenawaran_hdr SET
         pen_tanggal = ?, pen_top = ?, pen_ppn = ?, pen_disc = ?, pen_disc1 = ?, pen_disc2 = ?, pen_bkrm = ?,
         pen_cus_kode = ?, pen_cus_level = ?, pen_ket = ?, user_modified = ?, date_modified = NOW(),
-        pen_jenis_order_kode = ?, pen_jenis_order_nama = ?, pen_nama_dtf = ?
+        pen_jenis_order_kode = ?, pen_jenis_order_nama = ?, pen_nama_dtf = ?, pen_promo_nomor = ?
         WHERE pen_nomor = ?
       `;
       await connection.query(updateHeaderQuery, [
@@ -268,6 +269,7 @@ const saveOffer = async (data) => {
         header.jenisOrderKode || null,
         header.jenisOrderNama || null,
         header.namaDtf || null,
+        header.nomorPromo || null,
         nomorPenawaran,
       ]);
     }
@@ -613,7 +615,7 @@ const getOfferForEdit = async (nomor) => {
         h.pen_nomor AS nomor, h.pen_tanggal AS tanggal, h.pen_top AS top, 
         h.pen_ppn AS ppnPersen, h.pen_ket AS keterangan, 
         h.pen_disc1, h.pen_disc2, h.pen_disc, h.pen_bkrm,
-        h.pen_jenis_order_kode, h.pen_jenis_order_nama, h.pen_nama_dtf,
+        h.pen_jenis_order_kode, h.pen_jenis_order_nama, h.pen_nama_dtf, h.pen_promo_nomor,
         c.cus_kode, c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
         (
           SELECT IFNULL(CONCAT(clh_level, " - " ,level_nama), "")
@@ -653,6 +655,7 @@ const getOfferForEdit = async (nomor) => {
       jenisOrderKode: h.pen_jenis_order_kode,
       jenisOrderNama: h.pen_jenis_order_nama,
       namaDtf: h.pen_nama_dtf,
+      nomorPromo: h.pen_promo_nomor,
     };
 
     // 2. Ambil data Detail (Items) - Perbaiki Nama untuk item CUSTOM
