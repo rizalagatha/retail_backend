@@ -31,7 +31,9 @@ const getInitialData = async (user, targetCabang = null) => {
 
   const query = `
     SELECT y.Kode, y.Barcode, y.Nama, y.Ukuran, y.hpp, y.lokasi,
-           (y.showroom + y.pesan) AS Stok, y.hitung AS Jumlah, y.Selisih
+           (y.showroom + y.pesan) AS Stok, y.hitung AS Jumlah, y.Selisih,
+           ((y.showroom + y.pesan) * y.hpp) AS valueSistem,
+           (y.hitung * y.hpp) AS valueFisik
     FROM (
         SELECT x.*, (x.hitung - (x.showroom + x.pesan)) AS Selisih
         FROM (
@@ -162,7 +164,8 @@ const getDataForEdit = async (nomor) => {
             h.sop_nomor, h.sop_tanggal, h.sop_ket, g.gdg_nama, d.sopd_kode,
             TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS Nama,
             d.sopd_ukuran, d.sopd_stok, d.sopd_jumlah, d.sopd_selisih, d.sopd_hpp, d.sopd_ket,
-            (d.sopd_selisih * d.sopd_hpp) AS Nominal, b.brgd_barcode
+            (d.sopd_selisih * d.sopd_hpp) AS Nominal, b.brgd_barcode, (d.sopd_stok * d.sopd_hpp) AS valueSistem,
+            (d.sopd_jumlah * d.sopd_hpp) AS valueFisik
         FROM tsop_hdr h
         INNER JOIN tsop_dtl2 d ON d.sopd_nomor = h.sop_nomor
         LEFT JOIN tgudang g ON h.sop_cab = g.gdg_kode
@@ -197,6 +200,8 @@ const getDataForEdit = async (nomor) => {
     Total: row.Nominal,
     Lokasi: row.sopd_ket,
     Barcode: row.brgd_barcode,
+    valueSistem: row.valueSistem,
+    valueFisik: row.valueFisik,
   }));
 
   return { header, items };
@@ -281,6 +286,8 @@ const getDataFromStaging = async (user) => {
             y.jumlah AS Jumlah,
             (y.jumlah - y.stok_awal) AS Selisih,
             ((y.jumlah - y.stok_awal) * y.hpp) AS Total,
+            (y.stok_awal * y.hpp) AS valueSistem,
+            (y.jumlah * y.hpp) AS valueFisik
             '' AS Lokasi -- Kolom lokasi tidak tersedia di tsop_data, diisi string kosong
         FROM (
             SELECT

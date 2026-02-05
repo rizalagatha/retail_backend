@@ -38,26 +38,33 @@ const getForEdit = async (nomor) => {
   `;
   const [headerRows] = await pool.query(headerQuery, [nomor]);
   if (headerRows.length === 0) throw new Error("Dokumen tidak ditemukan.");
+
+  // [FIX] Gunakan headerRows[0] alih-alih variabel 'row' yang tidak didefinisikan
+  const row = headerRows[0];
   const header = {
     nomor: row.nomor,
     tanggal: row.tanggal,
     gudangAsal: { kode: row.rb_cab, nama: row.asal_nama },
+    // Pastikan ini objek {kode, nama} agar sinkron dengan v-model di frontend
     gudangDc: { kode: row.rb_kecab, nama: row.tujuan_nama },
     keterangan: row.keterangan,
   };
 
-  const gudangAsal = nomor.substring(0, 3);
+  const gudangAsal = row.rb_cab;
   const itemsQuery = `
     SELECT
       d.rbd_kode AS kode, b.brgd_barcode AS barcode,
       TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
       d.rbd_ukuran AS ukuran,
       d.rbd_jumlah AS jumlah,
-        (IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif='Y' AND m.mst_cab=? AND m.mst_brg_kode=d.rbd_kode AND m.mst_ukuran=d.rbd_ukuran), 0) + d.rbd_jumlah) AS stok
-      FROM trbdc_dtl d
-      LEFT JOIN tbarangdc a ON a.brg_kode = d.rbd_kode
-      LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.rbd_kode AND b.brgd_ukuran = d.rbd_ukuran
-      WHERE d.rbd_nomor = ?`;
+      -- Stok saat ini + jumlah yang sedang diretur (untuk validasi edit)
+      (IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif='Y' AND m.mst_cab=? AND m.mst_brg_kode=d.rbd_kode AND m.mst_ukuran=d.rbd_ukuran), 0) + d.rbd_jumlah) AS stok
+    FROM trbdc_dtl d
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.rbd_kode
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.rbd_kode AND b.brgd_ukuran = d.rbd_ukuran
+    WHERE d.rbd_nomor = ?
+    ORDER BY d.rbd_iddrec ASC`; // Tambahkan order agar urutan tidak berubah saat simpan
+
   const [items] = await pool.query(itemsQuery, [gudangAsal, nomor]);
 
   return { header, items };

@@ -13,21 +13,29 @@ const getList = async (filters) => {
       h.sop_nomor AS nomor,
       h.sop_tanggal AS tanggal,
       h.sop_transfer AS transfer,
-      
-      -- Hitung Selisih Qty
+
+      -- 1. Hitung Selisih Qty (Tetap)
       CASE 
-        WHEN h.sop_transfer = 'Y' THEN 
-          (SELECT COALESCE(SUM(d.sopd_selisih), 0) FROM tsop_dtl d WHERE d.sopd_nomor = h.sop_nomor)
-        ELSE 
-          (SELECT COALESCE(SUM(d2.sopd_selisih), 0) FROM tsop_dtl2 d2 WHERE d2.sopd_nomor = h.sop_nomor)
+        WHEN h.sop_transfer = 'Y' THEN (SELECT COALESCE(SUM(d.sopd_selisih), 0) FROM tsop_dtl d WHERE d.sopd_nomor = h.sop_nomor)
+        ELSE (SELECT COALESCE(SUM(d2.sopd_selisih), 0) FROM tsop_dtl2 d2 WHERE d2.sopd_nomor = h.sop_nomor)
       END AS selisih_qty,
 
-      -- Hitung Nominal
+      -- 2. Hitung Value Sistem (WAJIB CASE WHEN)
       CASE 
-        WHEN h.sop_transfer = 'Y' THEN 
-          (SELECT COALESCE(SUM(d.sopd_selisih * d.sopd_hpp), 0) FROM tsop_dtl d WHERE d.sopd_nomor = h.sop_nomor)
-        ELSE 
-          (SELECT COALESCE(SUM(d2.sopd_selisih * d2.sopd_hpp), 0) FROM tsop_dtl2 d2 WHERE d2.sopd_nomor = h.sop_nomor)
+        WHEN h.sop_transfer = 'Y' THEN (SELECT COALESCE(SUM(d.sopd_stok * d.sopd_hpp), 0) FROM tsop_dtl d WHERE d.sopd_nomor = h.sop_nomor)
+        ELSE (SELECT COALESCE(SUM(d2.sopd_stok * d2.sopd_hpp), 0) FROM tsop_dtl2 d2 WHERE d2.sopd_nomor = h.sop_nomor)
+      END AS value_sistem,
+
+      -- 3. Hitung Value Fisik (WAJIB CASE WHEN)
+      CASE 
+        WHEN h.sop_transfer = 'Y' THEN (SELECT COALESCE(SUM(d.sopd_jumlah * d.sopd_hpp), 0) FROM tsop_dtl d WHERE d.sopd_nomor = h.sop_nomor)
+        ELSE (SELECT COALESCE(SUM(d2.sopd_jumlah * d2.sopd_hpp), 0) FROM tsop_dtl2 d2 WHERE d2.sopd_nomor = h.sop_nomor)
+      END AS value_fisik,
+
+      -- 4. Hitung Nominal Selisih (Pastikan sama sumbernya)
+      CASE 
+        WHEN h.sop_transfer = 'Y' THEN (SELECT COALESCE(SUM(d.sopd_selisih * d.sopd_hpp), 0) FROM tsop_dtl d WHERE d.sopd_nomor = h.sop_nomor)
+        ELSE (SELECT COALESCE(SUM(d2.sopd_selisih * d2.sopd_hpp), 0) FROM tsop_dtl2 d2 WHERE d2.sopd_nomor = h.sop_nomor)
       END AS nominal,
 
       h.sop_ket AS keterangan 
@@ -182,6 +190,8 @@ const getDetails = async (nomor) => {
     d.sopd_ukuran AS Ukuran,
     d.sopd_stok AS Stok,
     d.sopd_jumlah AS Jumlah,
+    (d.sopd_stok * d.sopd_hpp) AS ValueSistem, -- [BARU]
+    (d.sopd_jumlah * d.sopd_hpp) AS ValueFisik, -- [BARU]
     d.sopd_selisih AS Selisih,
     d.sopd_hpp AS Hpp,
     (d.sopd_selisih * d.sopd_hpp) AS Nominal,
@@ -225,7 +235,10 @@ const getExportDetails = async (filters) => {
           CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna) AS 'Nama Barang',
           d.sopd_ukuran AS 'Ukuran',
           d.sopd_stok AS 'Stok Sistem',
+          (d.sopd_stok * d.sopd_hpp) AS 'Value Sistem', -- [BARU]
           d.sopd_jumlah AS 'Jumlah Fisik',
+          (d.sopd_jumlah * d.sopd_hpp) AS 'Value Fisik', -- [BARU]
+          d.sopd_stok AS 'Stok Sistem',
           d.sopd_selisih AS 'Selisih',
           d.sopd_hpp AS 'HPP',
           (d.sopd_selisih * d.sopd_hpp) AS 'Nominal Selisih',
