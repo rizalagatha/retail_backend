@@ -9,7 +9,10 @@ const getAll = async (req, res) => {
         .status(400)
         .json({ message: "Parameter filter tidak lengkap." });
     }
-    const data = await soDtfService.getSoDtfList(req.query);
+
+    // [FIX] Tambahkan req.user sebagai parameter kedua
+    const data = await soDtfService.getSoDtfList(req.query, req.user);
+
     res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -111,7 +114,8 @@ const remove = async (req, res) => {
 
 const exportHeader = async (req, res) => {
   try {
-    const data = await soDtfService.exportHeader(req.query);
+    // [FIX] Tambahkan req.user agar fungsi internal getSoDtfList di service tidak error
+    const data = await soDtfService.exportHeader(req.query, req.user);
     res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });

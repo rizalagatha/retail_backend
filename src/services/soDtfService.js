@@ -4,29 +4,46 @@ const fs = require("fs");
 const path = require("path");
 const ExcelJS = require("exceljs");
 
-const getSoDtfList = async (filters) => {
+const getSoDtfList = async (filters, user) => {
   const { startDate, endDate, cabang, filterDateType, status } = filters;
+  const userCabang = user?.cabang || "";
   let params = [startDate, endDate];
 
-  // Menentukan kolom tanggal yang akan difilter berdasarkan pilihan user
   const dateColumn =
     filterDateType === "pengerjaan" ? "h.sd_datekerja" : "h.sd_tanggal";
 
-  let statusFilter = "";
-  if (status === "belum_invoice") {
-    // [PERBAIKAN] Tambahkan kondisi Close <> 'Y' agar sinkron dengan dashboard
-    statusFilter = " WHERE x.NoINV = '' AND x.Close <> 'Y'";
+  // --- LOGIKA FILTER KHUSUS K06 (Kecualikan K06 sendiri) ---
+  let branchQuery = "";
+
+  if (userCabang === "K06") {
+    if (cabang === "ALL") {
+      // Tampilkan kiriman dari SEMUA cabang lain ke workshop K06
+      // Kecualikan yang dibuat oleh K06 sendiri (h.sd_cab <> 'K06')
+      branchQuery = "AND h.sd_Workshop = 'K06' AND h.sd_cab <> 'K06'";
+    } else {
+      // Tampilkan kiriman dari cabang spesifik yang dipilih ke workshop K06
+      // (K06 tidak akan muncul karena pilihan 'cabang' di dropdown pasti cabang lain)
+      branchQuery = "AND h.sd_cab = ? AND h.sd_Workshop = 'K06'";
+      params.push(cabang);
+    }
+  } else if (userCabang === "KDC") {
+    // Admin Pusat tetap bisa lihat sesuai pilihan dropdown
+    if (cabang !== "ALL") {
+      branchQuery = "AND h.sd_cab = ?";
+      params.push(cabang);
+    }
+  } else {
+    // Cabang standar hanya lihat miliknya sendiri
+    branchQuery = "AND h.sd_cab = ?";
+    params.push(userCabang);
   }
 
   const query = `
-        SELECT 
-            x.Nomor, DATE_FORMAT(x.Tanggal, '%d-%m-%Y') AS Tanggal, DATE_FORMAT(x.TglPengerjaan, '%d-%m-%Y') AS TglPengerjaan, x.DatelineCus, x.NamaDTF, x.Jumlah, x.Titik, 
-            (x.jumlah * x.titik) AS TotalTitik, IFNULL(x.LHK, 0) AS LHK,
-            x.NoSO, x.NoINV, x.Sales, x.BagDesain, x.KdCus, x.Customer, x.Kain, 
-            x.Finishing, x.Workshop, x.Keterangan, x.AlasanClose, x.Created, x.Close
-        FROM (
+        SELECT x.* FROM (
             SELECT 
-                h.sd_nomor AS Nomor, h.sd_tanggal AS Tanggal, h.sd_datekerja AS TglPengerjaan, 
+                h.sd_nomor AS Nomor, 
+                DATE_FORMAT(h.sd_tanggal, '%d-%m-%Y') AS Tanggal, 
+                DATE_FORMAT(h.sd_datekerja, '%d-%m-%Y') AS TglPengerjaan, 
                 h.sd_dateline AS DatelineCus, h.sd_nama AS NamaDTF,
                 IFNULL((SELECT SUM(i.sdd_jumlah) FROM tsodtf_dtl i WHERE i.sdd_nomor = h.sd_nomor), 0) AS Jumlah,
                 IFNULL((SELECT COUNT(*) FROM tsodtf_dtl2 i WHERE i.sdd2_nomor = h.sd_nomor), 0) AS Titik,
@@ -37,20 +54,17 @@ const getSoDtfList = async (filters) => {
                 h.sd_cus_kode AS KdCus, c.cus_nama AS Customer, h.sd_kain AS Kain, h.sd_finishing AS Finishing,
                 h.sd_ket AS Keterangan, h.sd_alasan AS AlasanClose,
                 h.user_create AS Created, h.user_modified AS UserModified,
-                h.date_modified AS DateModified, h.sd_closing AS Close
+                h.date_modified AS DateModified, h.sd_closing AS Close,
+                h.sd_cab -- Tambahkan kolom ini untuk identifikasi asal cabang
             FROM tsodtf_hdr h
             LEFT JOIN tcustomer c ON c.cus_kode = h.sd_cus_kode
             LEFT JOIN kencanaprint.tsales s ON s.sal_kode = h.sd_sal_kode
             WHERE h.sd_stok = "" AND ${dateColumn} BETWEEN ? AND ?
-            ${cabang !== "ALL" ? "AND h.sd_cab = ?" : ""}
+            ${branchQuery} 
         ) x
-        ${statusFilter}
+        ${status === "belum_invoice" ? " WHERE x.NoINV = '' AND x.Close <> 'Y'" : ""}
         ORDER BY x.Tanggal, x.Nomor;
     `;
-
-  if (cabang !== "ALL") {
-    params.push(cabang);
-  }
 
   const [rows] = await pool.query(query, params);
   return rows;
@@ -159,9 +173,9 @@ const remove = async (nomor, user) => {
   }
 };
 
-const exportHeader = async (filters) => {
-  // Fungsi ini sekarang hanya mengembalikan data JSON dari browse
-  return await getSoDtfList(filters);
+const exportHeader = async (filters, user) => {
+  // Teruskan 'user' ke getSoDtfList agar pengecekan cabang K06 jalan
+  return await getSoDtfList(filters, user);
 };
 
 const exportDetail = async (filters) => {
