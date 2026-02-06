@@ -105,20 +105,20 @@ const save = async (payload, user) => {
     }
 
     if (isApproved) {
-      // == ALUR APPROVAL ==
-      // 1. Update header dengan status ACC
       await connection.query(
         "UPDATE tpengajuanbarcode_hdr SET pc_acc = ?, date_acc = NOW() WHERE pc_nomor = ?",
         [user.kode, nomorDokumen],
       );
 
       for (const [index, item] of items.entries()) {
-        if (item.hargabaru > 0) {
+        // [FIX] Validasi hargabaru agar tidak skip item yang sedang di-approve
+        if (Number(item.hargabaru) > 0) {
           const newProductCode =
             item.kodebaru || (await generateNewProductCode(connection));
           const newProductName = `${item.nama} #${item.jenis.substring(0, 1)}`;
+          const pcd2_nomorin = `${nomorDokumen.substring(0, 3)}RJT${newProductCode}`; // [FIX] Sesuai Delphi
 
-          // Insert/Update Master Produk
+          // 1. Insert/Update Master Produk
           await connection.query(
             'INSERT INTO tbarangdc (brg_kode, brg_ktgp, brg_aktif, brg_logstok, brg_kelompok, brg_warna, user_create, date_create) VALUES (?, ?, 0, "Y", "C", ?, ?, NOW()) ON DUPLICATE KEY UPDATE brg_ktgp=VALUES(brg_ktgp), brg_warna=VALUES(brg_warna)',
             [newProductCode, item.jenis, newProductName, user.kode],
@@ -135,28 +135,28 @@ const save = async (payload, user) => {
             ],
           );
 
-          // --- GENERATE IDREC DETAIL 2 ---
-          // Format: K06PC20250908194748.697
-          const detailTime = new Date(now.getTime() + index);
-          const timestampDetail = format(detailTime, "yyyyMMddHHmmss.SSS");
+          // 2. Insert ke Detail 2 (Hasil Approval) [FIX KOLOM]
+          const timestampDetail = format(
+            new Date(now.getTime() + index),
+            "yyyyMMddHHmmss.SSS",
+          );
           const pcd2_idrec = `${user.cabang}PC${timestampDetail}`;
-
-          // Format: K06PC20250908194748.6971 (tambah digit index)
-          // Catatan: index dimulai dari 0, tambah 1 agar digit belakang min 1
           const pcd2_iddrec = `${pcd2_idrec}${index + 1}`;
 
           await connection.query(
             `INSERT INTO tpengajuanbarcode_dtl2 
-             (pcd2_idrec, pcd2_iddrec, pcd2_nomor, pcd2_kode, pcd2_kodein, pcd2_ukuran, pcd2_diskon, pcd2_harga) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?) 
-             ON DUPLICATE KEY UPDATE pcd2_diskon=VALUES(pcd2_diskon), pcd2_harga=VALUES(pcd2_harga)`,
+         (pcd2_idrec, pcd2_iddrec, pcd2_nomor, pcd2_nomorin, pcd2_kode, pcd2_kodein, pcd2_ukuran, pcd2_jumlah, pcd2_diskon, pcd2_harga) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
+         ON DUPLICATE KEY UPDATE pcd2_diskon=VALUES(pcd2_diskon), pcd2_harga=VALUES(pcd2_harga)`,
             [
               pcd2_idrec,
               pcd2_iddrec,
               nomorDokumen,
+              pcd2_nomorin, // [BARU]
               item.kode,
               newProductCode,
               item.ukuran,
+              item.jumlah, // [BARU]
               item.diskon,
               item.hargabaru,
             ],
