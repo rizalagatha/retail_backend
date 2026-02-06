@@ -39,7 +39,21 @@ const getSoDtfList = async (filters, user) => {
   }
 
   const query = `
-        SELECT x.* FROM (
+        SELECT 
+            x.Nomor, 
+            x.Tanggal, 
+            x.TglPengerjaan, 
+            x.DatelineCus, 
+            x.NamaDTF, 
+            x.Jumlah, 
+            x.Titik, 
+            -- [FIX] Gunakan Nama Kolom yang Sesuai (Case Sensitive)
+            (x.Jumlah * x.Titik) AS TotalTitik, 
+            -- [FIX] Pastikan LHK yang null menjadi 0
+            IFNULL(x.LHK_Raw, 0) AS LHK,
+            x.NoSO, x.NoINV, x.Sales, x.BagDesain, x.KdCus, x.Customer, x.Kain, 
+            x.Finishing, x.Workshop, x.Keterangan, x.AlasanClose, x.Created, x.Close
+        FROM (
             SELECT 
                 h.sd_nomor AS Nomor, 
                 DATE_FORMAT(h.sd_tanggal, '%d-%m-%Y') AS Tanggal, 
@@ -47,7 +61,8 @@ const getSoDtfList = async (filters, user) => {
                 h.sd_dateline AS DatelineCus, h.sd_nama AS NamaDTF,
                 IFNULL((SELECT SUM(i.sdd_jumlah) FROM tsodtf_dtl i WHERE i.sdd_nomor = h.sd_nomor), 0) AS Jumlah,
                 IFNULL((SELECT COUNT(*) FROM tsodtf_dtl2 i WHERE i.sdd2_nomor = h.sd_nomor), 0) AS Titik,
-                (SELECT SUM(f.depan + f.belakang + f.lengan + f.variasi + f.saku) FROM tdtf f WHERE f.sodtf = h.sd_nomor) AS LHK,
+                -- [FIX] Beri alias berbeda agar bisa di-IFNULL di luar
+                (SELECT SUM(f.depan + f.belakang + f.lengan + f.variasi + f.saku) FROM tdtf f WHERE f.sodtf = h.sd_nomor) AS LHK_Raw,
                 IFNULL((SELECT dd.sod_so_nomor FROM tso_dtl dd WHERE dd.sod_sd_nomor = h.sd_nomor GROUP BY dd.sod_so_nomor LIMIT 1), "") AS NoSO,
                 IFNULL((SELECT dd.invd_inv_nomor FROM tinv_dtl dd WHERE dd.invd_sd_nomor = h.sd_nomor GROUP BY dd.invd_inv_nomor LIMIT 1), "") AS NoINV,
                 s.sal_nama AS Sales, h.sd_desain AS BagDesain, h.sd_Workshop AS Workshop,
@@ -55,7 +70,7 @@ const getSoDtfList = async (filters, user) => {
                 h.sd_ket AS Keterangan, h.sd_alasan AS AlasanClose,
                 h.user_create AS Created, h.user_modified AS UserModified,
                 h.date_modified AS DateModified, h.sd_closing AS Close,
-                h.sd_cab -- Tambahkan kolom ini untuk identifikasi asal cabang
+                h.sd_cab
             FROM tsodtf_hdr h
             LEFT JOIN tcustomer c ON c.cus_kode = h.sd_cus_kode
             LEFT JOIN kencanaprint.tsales s ON s.sal_kode = h.sd_sal_kode
