@@ -34,7 +34,14 @@ const getList = async (filters) => {
         WHERE h.hs_cab = lo.lo_cab 
           AND h.hs_lokasi = lo.lo_lokasi 
           AND h.hs_proses = 'N'
-      ), 0) as total_hitung
+      ), 0) as total_hitung,
+      IFNULL((
+        SELECT GROUP_CONCAT(DISTINCT h.hs_operator SEPARATOR ', ')
+        FROM thitungstok h
+        WHERE h.hs_cab = lo.lo_cab 
+          AND h.hs_lokasi = lo.lo_lokasi 
+          AND h.hs_proses = 'N'
+      ), '-') as operator_hitung
     FROM tlokasi_opname lo
     LEFT JOIN tgudang g ON lo.lo_cab = g.gdg_kode
     WHERE lo.lo_cab = ?
