@@ -235,10 +235,9 @@ const getExportDetails = async (filters) => {
           CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna) AS 'Nama Barang',
           d.sopd_ukuran AS 'Ukuran',
           d.sopd_stok AS 'Stok Sistem',
-          (d.sopd_stok * d.sopd_hpp) AS 'Value Sistem', -- [BARU]
+          (d.sopd_stok * d.sopd_hpp) AS 'Value Sistem',
           d.sopd_jumlah AS 'Jumlah Fisik',
-          (d.sopd_jumlah * d.sopd_hpp) AS 'Value Fisik', -- [BARU]
-          d.sopd_stok AS 'Stok Sistem',
+          (d.sopd_jumlah * d.sopd_hpp) AS 'Value Fisik',
           d.sopd_selisih AS 'Selisih',
           d.sopd_hpp AS 'HPP',
           (d.sopd_selisih * d.sopd_hpp) AS 'Nominal Selisih',
@@ -249,7 +248,6 @@ const getExportDetails = async (filters) => {
         LEFT JOIN tbarangdc a ON a.brg_kode = d.sopd_kode
         LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sopd_kode AND b.brgd_ukuran = d.sopd_ukuran
         WHERE 
-            -- [FIX 1] Gunakan DATE()
             DATE(h.sop_tanggal) BETWEEN ? AND ?
             AND h.sop_cab = ?
             AND h.sop_transfer = 'Y'
@@ -265,23 +263,24 @@ const getExportDetails = async (filters) => {
           CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna) AS 'Nama Barang',
           d.sopd_ukuran AS 'Ukuran',
           d.sopd_stok AS 'Stok Sistem',
+          (d.sopd_stok * d.sopd_hpp) AS 'Value Sistem', -- [DITAMBAHKAN]
           d.sopd_jumlah AS 'Jumlah Fisik',
+          (d.sopd_jumlah * d.sopd_hpp) AS 'Value Fisik',  -- [DITAMBAHKAN]
           d.sopd_selisih AS 'Selisih',
           d.sopd_hpp AS 'HPP',
           (d.sopd_selisih * d.sopd_hpp) AS 'Nominal Selisih',
           (
-          SELECT GROUP_CONCAT(CONCAT(ht.hs_lokasi, "=", ht.hs_qty) SEPARATOR ", ")
-          FROM thitungstok ht
-          WHERE ht.hs_kode = d.sopd_kode AND ht.hs_ukuran = d.sopd_ukuran 
-          AND ht.hs_cab = h.sop_cab AND ht.hs_proses = 'N'
-        ) AS 'Lokasi',
+            SELECT GROUP_CONCAT(CONCAT(ht.hs_lokasi, "=", ht.hs_qty) SEPARATOR ", ")
+            FROM thitungstok ht
+            WHERE ht.hs_kode = d.sopd_kode AND ht.hs_ukuran = d.sopd_ukuran 
+            AND ht.hs_cab = h.sop_cab AND ht.hs_proses = 'N'
+          ) AS 'Lokasi',
           2 AS urutan_prioritas
         FROM tsop_dtl2 d
         INNER JOIN tsop_hdr h ON h.sop_nomor = d.sopd_nomor
         LEFT JOIN tbarangdc a ON a.brg_kode = d.sopd_kode
         LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sopd_kode AND b.brgd_ukuran = d.sopd_ukuran
         WHERE 
-            -- [FIX 2] Gunakan DATE() juga di sini
             DATE(h.sop_tanggal) BETWEEN ? AND ?
             AND h.sop_cab = ?
             AND (h.sop_transfer = 'N' OR h.sop_transfer = '' OR h.sop_transfer IS NULL)
@@ -294,10 +293,8 @@ const getExportDetails = async (filters) => {
     `;
 
   const params = [startDate, endDate, cabang, startDate, endDate, cabang];
-
   const [rows] = await pool.query(query, params);
 
-  // Hapus kolom helper
   const cleanRows = rows.map((row) => {
     const { urutan_prioritas, ...rest } = row;
     return rest;
