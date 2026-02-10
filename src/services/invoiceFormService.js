@@ -1418,6 +1418,23 @@ const saveData = async (payload, user) => {
       ]);
     }
 
+    // =========================================================================
+    // [BARU] HUBUNGKAN NOMOR OTORISASI (AUTH) DENGAN NO. INVOICE RIIL
+    // =========================================================================
+    // Ambil nomor AUTH yang dikirim frontend (misal: K01.AUTH.2602.0001)
+    const authNomorRef =
+      header.nomorPromoAuth || header.nomorAuth || header.referensiAuth;
+
+    if (authNomorRef && authNomorRef.includes("AUTH")) {
+      // Update record otorisasi yang sudah ada agar link ke Invoice riil
+      const updateAuthSql = `
+        UPDATE totorisasi 
+        SET o_transaksi = ? 
+        WHERE o_nomor = ?
+      `;
+      await connection.query(updateAuthSql, [invNomor, authNomorRef]);
+    }
+
     await handlePromotions(
       connection,
       { header, totals, user },
@@ -1712,15 +1729,15 @@ const getPrintData = async (nomor) => {
 
   const header = { ...rows[0] };
 
-  // 2. Map Rows ke Object
-  let details = rows.map((row) => ({
+  // 1. Map Rows ke Object Detail
+  const details = rows.map((row) => ({
     invd_kode: row.invd_kode,
     nama_barang: row.nama_barang,
     invd_ukuran: row.invd_ukuran,
     invd_jumlah: row.invd_jumlah,
     invd_harga: row.invd_harga,
     invd_diskon: row.invd_diskon,
-    total: row.total,
+    total: row.total, // Ini adalah Net Total per baris
   }));
 
   // 3. LOGIKA SORTING JAVASCRIPT (Nama Barang ASC -> Ukuran ASC)
@@ -1752,12 +1769,30 @@ const getPrintData = async (nomor) => {
   const dpDipakai = applyRoundingPolicy(dpRows?.[0]?.dpDipakai || 0);
 
   // =============== SUMMARY CALC ===============
-  const subTotal = applyRoundingPolicy(
-    details.reduce((s, it) => s + it.total, 0),
+  // 2. Hitung Akumulasi Diskon
+  // Total Diskon dari semua baris (Qty * Diskon per Item)
+  const totalDiskonItem = details.reduce(
+    (sum, it) =>
+      sum + Number(it.invd_diskon || 0) * Number(it.invd_jumlah || 0),
+    0,
   );
-  const diskonFaktur = header.inv_disc || 0;
-  const netto = applyRoundingPolicy(subTotal - diskonFaktur);
-  const ppn = applyRoundingPolicy((Number(header.inv_ppn) / 100) * netto);
+
+  // Subtotal Kotor (Qty * Harga sebelum diskon) agar hitungan summary sinkron
+  const grossSubTotal = details.reduce(
+    (sum, it) => sum + Number(it.invd_harga || 0) * Number(it.invd_jumlah || 0),
+    0,
+  );
+
+  const diskonFaktur = Number(header.inv_disc || 0);
+
+  // Akumulasi Diskon Keseluruhan
+  const totalDiskonKeseluruhan = applyRoundingPolicy(
+    totalDiskonItem + diskonFaktur,
+  );
+
+  // =============== SUMMARY CALC REVISED ===============
+  const netto = applyRoundingPolicy(grossSubTotal - totalDiskonKeseluruhan);
+  const ppn = applyRoundingPolicy((Number(header.inv_ppn) || 0 / 100) * netto);
   const grandTotal = applyRoundingPolicy(netto + ppn + (header.inv_bkrm || 0));
 
   const bayarTunai = Number(header.inv_rptunai || 0);
@@ -1773,8 +1808,8 @@ const getPrintData = async (nomor) => {
   );
 
   header.summary = {
-    subTotal,
-    diskon: diskonFaktur,
+    subTotal: grossSubTotal,
+    diskon: totalDiskonKeseluruhan,
     netto,
     ppn,
     biayaKirim: header.inv_bkrm || 0,

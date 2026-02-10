@@ -293,7 +293,10 @@ const getList = async (filters) => {
     DetailCalc AS (
         SELECT 
           d.invd_inv_nomor,
-          SUM((d.invd_jumlah * d.invd_harga) - (d.invd_jumlah * d.invd_diskon)) as TotalItemNetto
+          -- Netto item (Sudah dipotong diskon baris)
+          SUM((d.invd_jumlah * d.invd_harga) - (d.invd_jumlah * d.invd_diskon)) as TotalItemNetto,
+          -- Akumulasi potongan harga per item
+          SUM(d.invd_jumlah * d.invd_diskon) as TotalItemDiscount
         FROM tinv_dtl d
         INNER JOIN PagedInvoices pi ON pi.inv_nomor = d.invd_inv_nomor
         GROUP BY d.invd_inv_nomor
@@ -351,7 +354,7 @@ const getList = async (filters) => {
         DATE_FORMAT(DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY), "%d/%m/%Y") AS Tempo,
         
         h.inv_disc1 AS \`Dis%\`,
-        h.inv_disc AS Diskon,
+        (COALESCE(DC.TotalItemDiscount, 0) + COALESCE(h.inv_disc, 0)) AS Diskon,
         h.inv_dp AS Dp,
         h.inv_bkrm AS Biayakirim,
 
