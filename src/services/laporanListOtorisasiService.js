@@ -9,6 +9,7 @@ const getListOtorisasi = async (filters) => {
   const query = `
     SELECT 
       o.o_nomor AS nomor,
+      o.o_transaksi AS transaksi_riil,
       o.o_jenis AS jenis,
       o.o_nominal AS nominal,
       COALESCE(

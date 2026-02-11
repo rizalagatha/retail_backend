@@ -333,15 +333,24 @@ const saveOffer = async (data) => {
     }
 
     // 3. SIMPAN LINK DP (Uang Muka)
-    await connection.query(
-      "DELETE FROM tpenawaran_dp WHERE pnd_nomor_pen = ?",
-      [nomorPenawaran],
-    );
+    // [FIX 2] Simpan Link DP ke Penawaran agar bisa di-load di SO
     if (dps && dps.length > 0) {
+      // Bersihkan link lama jika mode update
+      await connection.query(
+        "DELETE FROM tpenawaran_dp WHERE pnd_nomor_pen = ?",
+        [penNomor],
+      );
+
       for (const dp of dps) {
         await connection.query(
           "INSERT INTO tpenawaran_dp (pnd_nomor_pen, pnd_nomor_dp) VALUES (?, ?)",
-          [nomorPenawaran, dp.nomor],
+          [penNomor, dp.nomor],
+        );
+
+        // Update juga agar DP tahu dia milik penawaran ini (opsional untuk audit)
+        await connection.query(
+          "UPDATE tsetor_hdr SET sh_so_nomor = ? WHERE sh_nomor = ?",
+          [penNomor, dp.nomor],
         );
       }
     }
@@ -353,14 +362,28 @@ const saveOffer = async (data) => {
       [nomorPenawaran],
     );
 
-    // 4. Simpan Otorisasi Per ITEM
-    const processedBarcodes = new Set(); // Opsional: Cegah duplikat jika item sama muncul 2x
+    // ========================================================================
+    // [BARU] 3.6. UPDATE TRANSAKSI RIIL PADA AUTH DARI HP MANAGER
+    // ========================================================================
+    const authNomorRef = header.nomorAuth || header.referensiAuth;
+    if (authNomorRef && authNomorRef.includes("AUTH")) {
+      // Hubungkan nomor AUTH dengan nomor Penawaran riil
+      await connection.query(
+        `UPDATE totorisasi SET o_transaksi = ? WHERE o_nomor = ?`,
+        [nomorPenawaran, authNomorRef],
+      );
+    }
+
+    // 4. Simpan Otorisasi Per ITEM (Manual PIN)
+    const processedBarcodes = new Set();
     for (const item of details) {
       if (item.pin && !processedBarcodes.has(item.barcode)) {
+        // [FIX] Ganti "PENAWARAN" menjadi nomorPenawaran
         const pinItemQuery =
-          'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_nominal) VALUES (?, "PENAWARAN", "DISKON ITEM", ?, NOW(), ?, ?)';
+          'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_nominal) VALUES (?, ?, "DISKON ITEM", ?, NOW(), ?, ?)';
         await connection.query(pinItemQuery, [
           nomorPenawaran,
+          nomorPenawaran, // Kolom o_transaksi berisi nomor penawaran riil
           item.barcode,
           item.pin,
           item.diskonPersen,
@@ -369,23 +392,27 @@ const saveOffer = async (data) => {
       }
     }
 
-    // 5. Simpan Otorisasi DISKON FAKTUR 1
+    // 5. Simpan Otorisasi DISKON FAKTUR 1 (Manual PIN)
     if (footer.pinDiskon1) {
+      // [FIX] Ganti "PENAWARAN" menjadi nomorPenawaran
       const pinFaktur1Query =
-        'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "PENAWARAN", "DISKON FAKTUR", NOW(), ?, ?)';
+        'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, ?, "DISKON FAKTUR", NOW(), ?, ?)';
       await connection.query(pinFaktur1Query, [
         nomorPenawaran,
+        nomorPenawaran, // o_transaksi
         footer.pinDiskon1,
         footer.diskonPersen1,
       ]);
     }
 
-    // 6. Simpan Otorisasi DISKON FAKTUR 2
+    // 6. Simpan Otorisasi DISKON FAKTUR 2 (Manual PIN)
     if (footer.pinDiskon2) {
+      // [FIX] Ganti "PENAWARAN" menjadi nomorPenawaran
       const pinFaktur2Query =
-        'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "PENAWARAN", "DISKON FAKTUR 2", NOW(), ?, ?)';
+        'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, ?, "DISKON FAKTUR 2", NOW(), ?, ?)';
       await connection.query(pinFaktur2Query, [
         nomorPenawaran,
+        nomorPenawaran, // o_transaksi
         footer.pinDiskon2,
         footer.diskonPersen2,
       ]);

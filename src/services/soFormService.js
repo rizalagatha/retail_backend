@@ -221,44 +221,36 @@ const save = async (data, user) => {
     // --- 4. SIMPAN OTORISASI (PIN) ---
     // ========================================================================
 
-    // Cek apakah Frontend mengirimkan Nomor Referensi Auth? (Misal: K06.AUTH.2512.0006)
-    // Pastikan di frontend (Vue), Anda mengirim properti ini di dalam object 'header'
     const nomorAuthLama = header.nomorAuth || header.referensiAuth;
 
-    if (isNew && nomorAuthLama && nomorAuthLama.includes("AUTH")) {
+    if (nomorAuthLama && nomorAuthLama.includes("AUTH")) {
       // ============================================================
-      // SKENARIO 1: SO BARU DARI HASIL APPROVAL (AUTH)
-      // Solusi: JANGAN INSERT BARU, CUKUP GANTI NAMANYA
+      // SKENARIO 1: UPDATE TRANSAKSI RIIL PADA AUTH DARI HP MANAGER
       // ============================================================
-
-      // Ubah pemilik record dari 'K06.AUTH.xxx' menjadi 'K06.SO.xxx'
+      // [FIX] Isi o_transaksi dengan soNomor, JANGAN ubah o_nomor agar
+      // identitas AUTH tetap terjaga untuk audit laporan.
       await connection.query(
         `UPDATE totorisasi 
-             SET o_nomor = ?, o_transaksi = 'SO' 
-             WHERE o_nomor = ?`,
+         SET o_transaksi = ? 
+         WHERE o_nomor = ?`,
         [soNomor, nomorAuthLama],
       );
-
-      // Selesai! Data otorisasi otomatis pindah ke nomor SO baru.
     } else {
       // ============================================================
-      // SKENARIO 2: EDIT SO ATAU SO BARU TANPA AUTH SEBELUMNYA
-      // Solusi: Logic Backup -> Delete -> Insert (Seperti sebelumnya)
+      // SKENARIO 2: PIN MANUAL / EDIT SO
       // ============================================================
 
-      // [LANGKAH A] Backup PIN Lama
+      // A. Backup & Clean data lama
       const [existingAuths] = await connection.query(
-        "SELECT o_jenis, o_barcode, o_pin FROM totorisasi WHERE o_nomor = ? AND o_transaksi = 'SO'",
-        [soNomor],
+        "SELECT o_jenis, o_barcode, o_pin FROM totorisasi WHERE o_nomor = ? AND o_transaksi = ?",
+        [soNomor, soNomor],
       );
 
-      // [LANGKAH B] Hapus Data Lama (Agar bersih)
       await connection.query(
-        "DELETE FROM totorisasi WHERE o_nomor = ? AND o_transaksi = 'SO'",
-        [soNomor],
+        "DELETE FROM totorisasi WHERE o_nomor = ? AND o_transaksi = ?",
+        [soNomor, soNomor],
       );
 
-      // [LANGKAH C] Insert Ulang (Merge)
       const getPinToUse = (jenis, barcodeOrKode, pinBaru) => {
         if (pinBaru) return pinBaru;
         const old = existingAuths.find(
@@ -271,6 +263,8 @@ const save = async (data, user) => {
 
       const processedBarcodes = new Set();
 
+      // [FIX] Update semua query INSERT di bawah agar o_transaksi berisi soNomor
+
       // 1. Otorisasi Per ITEM
       for (const item of details) {
         if (item.diskonPersen > 0 || item.diskonRp > 0) {
@@ -280,8 +274,8 @@ const save = async (data, user) => {
           const pinToUse = getPinToUse("DISKON ITEM", itemCode, item.pin);
           if (pinToUse) {
             await connection.query(
-              'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_nominal) VALUES (?, "SO", "DISKON ITEM", ?, NOW(), ?, ?)',
-              [soNomor, itemCode, pinToUse, item.diskonPersen],
+              'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_nominal) VALUES (?, ?, "DISKON ITEM", ?, NOW(), ?, ?)',
+              [soNomor, soNomor, itemCode, pinToUse, item.diskonPersen], // o_transaksi diisi soNomor
             );
             processedBarcodes.add(itemCode);
           }
@@ -293,8 +287,8 @@ const save = async (data, user) => {
         const pinToUse = getPinToUse("DISKON FAKTUR", null, footer.pinDiskon1);
         if (pinToUse) {
           await connection.query(
-            'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "SO", "DISKON FAKTUR", NOW(), ?, ?)',
-            [soNomor, pinToUse, footer.diskonPersen1],
+            'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, ?, "DISKON FAKTUR", NOW(), ?, ?)',
+            [soNomor, soNomor, pinToUse, footer.diskonPersen1], // o_transaksi diisi soNomor
           );
         }
       }
@@ -308,19 +302,19 @@ const save = async (data, user) => {
         );
         if (pinToUse) {
           await connection.query(
-            'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "SO", "DISKON FAKTUR 2", NOW(), ?, ?)',
-            [soNomor, pinToUse, footer.diskonPersen2],
+            'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, ?, "DISKON FAKTUR 2", NOW(), ?, ?)',
+            [soNomor, soNomor, pinToUse, footer.diskonPersen2],
           );
         }
       }
 
       // 4. Otorisasi TANPA DP
-      if (footer.belumDibayar > 0) {
+      if (footer.belumDibayar > 0 && footer.pinTanpaDp) {
         const pinToUse = getPinToUse("TANPA DP", null, footer.pinTanpaDp);
         if (pinToUse) {
           await connection.query(
-            'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, "SO", "TANPA DP", NOW(), ?, ?)',
-            [soNomor, pinToUse, footer.belumDibayar],
+            'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, ?, "TANPA DP", NOW(), ?, ?)',
+            [soNomor, soNomor, pinToUse, footer.belumDibayar],
           );
         }
       }
@@ -578,6 +572,7 @@ const getPenawaranDetailsForSo = async (nomor, cabang) => {
     const headerQuery = `
       SELECT h.*, 
              DATE_FORMAT(h.pen_tanggal, '%Y-%m-%d') as pen_tanggal_db,
+             h.pen_promo_nomor, h.pen_nama_dtf,
              c.cus_kode, c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp, 
              c.cus_top AS customer_top, c.cus_franchise,
              lvl.level_nama, lvl.level_kode,

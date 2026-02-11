@@ -50,7 +50,7 @@ const getSoDtfList = async (filters, user) => {
             -- [FIX] Gunakan Nama Kolom yang Sesuai (Case Sensitive)
             (x.Jumlah * x.Titik) AS TotalTitik, 
             -- [FIX] Pastikan LHK yang null menjadi 0
-            IFNULL(x.LHK_Raw, 0) AS LHK,
+            IFNULL(x.LHK_Count, 0) AS LHK,
             x.NoSO, x.NoINV, x.Sales, x.BagDesain, x.KdCus, x.Customer, x.Kain, 
             x.Finishing, x.Workshop, x.Keterangan, x.AlasanClose, x.Created, x.Close
         FROM (
@@ -62,7 +62,7 @@ const getSoDtfList = async (filters, user) => {
                 IFNULL((SELECT SUM(i.sdd_jumlah) FROM tsodtf_dtl i WHERE i.sdd_nomor = h.sd_nomor), 0) AS Jumlah,
                 IFNULL((SELECT COUNT(*) FROM tsodtf_dtl2 i WHERE i.sdd2_nomor = h.sd_nomor), 0) AS Titik,
                 -- [FIX] Beri alias berbeda agar bisa di-IFNULL di luar
-                (SELECT SUM(f.depan + f.belakang + f.lengan + f.variasi + f.saku) FROM tdtf f WHERE f.sodtf = h.sd_nomor) AS LHK_Raw,
+                (SELECT COUNT(*) FROM tdtf f WHERE f.sodtf = h.sd_nomor) AS LHK_Count,
                 IFNULL((SELECT dd.sod_so_nomor FROM tso_dtl dd WHERE dd.sod_sd_nomor = h.sd_nomor GROUP BY dd.sod_so_nomor LIMIT 1), "") AS NoSO,
                 IFNULL((SELECT dd.invd_inv_nomor FROM tinv_dtl dd WHERE dd.invd_sd_nomor = h.sd_nomor GROUP BY dd.invd_inv_nomor LIMIT 1), "") AS NoINV,
                 s.sal_nama AS Sales, h.sd_desain AS BagDesain, h.sd_Workshop AS Workshop,

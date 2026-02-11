@@ -9,12 +9,12 @@ const getList = async (filters) => {
   // Langkah 1: Dapatkan tanggal stok opname
   const [sopTanggalRows] = await pool.query(
     "SELECT st_tanggal FROM tsop_tanggal WHERE st_cab = ? AND st_transfer = 'N' LIMIT 1",
-    [cabang]
+    [cabang],
   );
 
   if (sopTanggalRows.length === 0) {
     throw new Error(
-      `Tidak ada tanggal stok opname yang aktif untuk cabang ${cabang}. Silakan setting terlebih dahulu.`
+      `Tidak ada tanggal stok opname yang aktif untuk cabang ${cabang}. Silakan setting terlebih dahulu.`,
     );
   }
   const zsoptgl = sopTanggalRows[0].st_tanggal;
@@ -70,13 +70,20 @@ const getList = async (filters) => {
   const params = [zsoptgl, cabang, zsoptgl, cabang, zsoptgl, cabang, cabang];
 
   // Wrapper Query untuk Filter
-  let query = `SELECT * FROM (${baseSubQuery}) AS FinalResult`;
+  let query = `
+    SELECT *, 
+    CASE 
+      WHEN Nama = 'STICKER DTF' OR Nama = 'STICKER DTF PREMIUM' THEN 'Sticker' 
+      ELSE 'Utama' 
+    END AS Kategori
+    FROM (${baseSubQuery}) AS FinalResult
+  `;
 
   // Tambahkan Logika Search
   if (search) {
+    // Nama: mengandung kata (fuzzy), Kode & Barcode: harus diawali dengan kata tersebut
     query += ` WHERE Nama LIKE ? OR Kode LIKE ? OR Barcode LIKE ?`;
-    const searchTerm = `%${search}%`;
-    params.push(searchTerm, searchTerm, searchTerm);
+    params.push(`%${search}%`, `${search}%`, `${search}%`);
   }
 
   query += ` ORDER BY Nama, RIGHT(Barcode, 2)`;

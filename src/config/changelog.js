@@ -1,4 +1,18 @@
 const changelogs = {
+  "1.3.7": {
+    date: "2026-02-11",
+    changes: [
+      {
+        title: "Pembaruan:",
+        items: [
+          "LHK SO DTF diubah menjadi LHK Jasa, dengan mekanisme inputan dan browse diperbarui",
+          "Penambahan Customer Form pada halaman Penawaran untuk membuat Customer baru",
+          "Penambahan tombol Simpan dan Jadikan SO pada halaman Penawaran",
+          "Perbaikan Diskon Review Google Maps pada Surat Pesanan, melalui input Diskon % 2",
+        ],
+      },
+    ],
+  },
   "1.3.6": {
     date: "2026-02-02",
     changes: [
