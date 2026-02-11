@@ -10,7 +10,7 @@ const generateBkNumber = async (cabang, tanggal) => {
   const prefix = `${cabang}.BK${period}`;
   const [rows] = await pool.query(
     "SELECT IFNULL(MAX(RIGHT(bk_nomor, 4)), 0) AS last FROM tbiayakirim WHERE LEFT(bk_nomor, 10) = ?",
-    [prefix]
+    [prefix],
   );
   return `${prefix}${String(parseInt(rows[0].last) + 1).padStart(4, "0")}`;
 };
@@ -59,7 +59,7 @@ const lookupInvoice = async (term, user, customerKode = null) => {
     LEFT JOIN tpiutang_hdr p ON p.ph_inv_nomor = h.inv_nomor
     LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
     WHERE h.inv_cab = ? AND (h.inv_nomor LIKE ? OR c.cus_nama LIKE ?)
-    ORDER BY h.inv_nomor DESC LIMIT 50
+    ORDER BY h.inv_nomor DESC
   `;
   const [rows] = await pool.query(queryInv, [
     user.cabang,
@@ -151,4 +151,30 @@ const getPrintData = async (nomor) => {
   };
 };
 
-module.exports = { lookupInvoice, getInvoiceDetails, saveData, getPrintData };
+/**
+ * Mengambil data Biaya Kirim lengkap untuk Edit (Load for Edit)
+ */
+const loadForEdit = async (nomor) => {
+  const query = `
+    SELECT 
+        k.bk_nomor, k.bk_tanggal, k.bk_inv_nomor, k.bk_nominal, k.bk_ket,
+        h.inv_tanggal, 
+        IFNULL(p.ph_nominal, 0) AS nominal_inv,
+        c.cus_kode, c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp
+    FROM tbiayakirim k
+    LEFT JOIN tinv_hdr h ON h.inv_nomor = k.bk_inv_nomor
+    LEFT JOIN tpiutang_hdr p ON p.ph_inv_nomor = h.inv_nomor
+    LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+    WHERE k.bk_nomor = ?
+  `;
+  const [rows] = await pool.query(query, [nomor]);
+  return rows[0];
+};
+
+module.exports = {
+  lookupInvoice,
+  getInvoiceDetails,
+  saveData,
+  getPrintData,
+  loadForEdit,
+};
