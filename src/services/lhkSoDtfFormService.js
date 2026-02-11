@@ -41,7 +41,8 @@ const getSoDtfSpecs = async (nomorSo) => {
     const isDTFModul =
       nomorSo.includes(".SD.") ||
       nomorSo.includes(".DP.") ||
-      nomorSo.includes(".SB.");
+      nomorSo.includes(".SB.") ||
+      nomorSo.includes(".BR."); // <-- Tambahkan ini
 
     const isSOReg = nomorSo.includes(".SO."); // SO Reguler (Custom Item JSON)
 
