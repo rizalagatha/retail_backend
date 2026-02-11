@@ -59,6 +59,7 @@ const getTshirtTypeDetails = async (jenisKaos, custom) => {
         SELECT 
             u.ukuran,
             CASE
+                WHEN u.ukuran = "XS" THEN k.jk_xs
                 WHEN u.ukuran = "S" THEN k.jk_s WHEN u.ukuran = "M" THEN k.jk_m
                 WHEN u.ukuran = "L" THEN k.jk_l WHEN u.ukuran = "XL" THEN k.jk_xl
                 WHEN u.ukuran = "2XL" THEN k.jk_2xl WHEN u.ukuran = "3XL" THEN k.jk_3xl
@@ -67,7 +68,7 @@ const getTshirtTypeDetails = async (jenisKaos, custom) => {
             END AS hargaPcs
         FROM tukuran u
         JOIN tjeniskaos k ON k.jk_Jenis = ? AND k.jk_custom = ?
-        WHERE u.kategori = "" AND u.kode >= 2 AND u.kode <= 16
+        WHERE u.kategori = "" AND u.kode >= 1 AND u.kode <= 16 
         ORDER BY u.kode;
     `;
   const costsQuery = `
