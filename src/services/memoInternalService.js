@@ -9,7 +9,9 @@ const getAllMemos = async () => {
   // Tambahkan URL lengkap untuk iframe frontend
   return rows.map((r) => ({
     ...r,
-    url: `${process.env.BASE_URL || "http://localhost:8000"}/memos/${r.filename}`,
+    // Gunakan path relatif. Browser akan memanggil: http://localhost:5173/memos/...
+    // Lalu diproxy oleh Vite ke http://localhost:8000/memos/...
+    url: `/memos/${r.filename}`,
   }));
 };
 

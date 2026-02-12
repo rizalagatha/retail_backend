@@ -16,6 +16,7 @@ const auditRoutes = require("./routes/auditRoutes");
 const userActivityRoutes = require("./routes/userActivityRoutes");
 const salesCounterRoutes = require("./routes/salesCounterRoute");
 const historyUpdateRoutes = require("./routes/historyUpdateRoutes");
+const memoInternalRoutes = require("./routes/memoInternalRoutes");
 const versionRoutes = require("./routes/versionRoutes");
 const bufferStockRoutes = require("./routes/bufferStockRoutes");
 const dataProcessRoutes = require("./routes/dataProcessRoutes");
@@ -159,10 +160,12 @@ const allowedOrigins = [
   "https://103.94.238.252",
 ];
 const imageFolderPath = path.join(process.cwd(), "public", "images");
+const memoFolderPath = path.join(process.cwd(), "public", "memos");
 const requiredDirs = [
   path.join(process.cwd(), "temp"),
   path.join(process.cwd(), "public"),
   path.join(process.cwd(), "public", "images"),
+  path.join(process.cwd(), "public", "memos"),
 ];
 
 // Middleware
@@ -193,12 +196,33 @@ app.use(
   }),
 );
 app.use("/images", express.static(imageFolderPath));
+app.use("/memos", (req, res, next) => {
+  console.log(`[DEBUG MEMO] Mencari file: ${req.url}`);
+  console.log(`[DEBUG MEMO] Path Fisik: ${path.join(memoFolderPath, req.url)}`);
+
+  // Cek apakah filenya benar-benar ada di disk saat direquest
+  const fullPath = path.join(memoFolderPath, req.url);
+  if (fs.existsSync(fullPath)) {
+    console.log("✅ File ditemukan di disk!");
+  } else {
+    console.error("❌ File TIDAK ditemukan di disk!");
+  }
+  next();
+});
+app.use("/memos", express.static(memoFolderPath));
 app.disable("etag");
 requiredDirs.forEach((dir) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
     console.log("Created directory:", dir);
   }
+});
+app.use((req, res, next) => {
+  // Izinkan iframe dari domain yang sama
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  // Content Security Policy untuk mengizinkan PDF plugin
+  res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
+  next();
 });
 
 // Menggunakan Rute
@@ -209,6 +233,7 @@ app.use("/api/audit-logs", clientCertAuth, auditRoutes);
 app.use("/api/activity", clientCertAuth, userActivityRoutes);
 app.use("/api/sales-counters", clientCertAuth, salesCounterRoutes);
 app.use("/api/history-updates", clientCertAuth, historyUpdateRoutes);
+app.use("/api/memo-internal", clientCertAuth, memoInternalRoutes);
 app.use("/api/version", clientCertAuth, versionRoutes);
 app.use("/api/buffer-stock", clientCertAuth, bufferStockRoutes);
 app.use("/api/data-process", clientCertAuth, dataProcessRoutes);
