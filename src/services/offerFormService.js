@@ -333,24 +333,24 @@ const saveOffer = async (data) => {
     }
 
     // 3. SIMPAN LINK DP (Uang Muka)
-    // [FIX 2] Simpan Link DP ke Penawaran agar bisa di-load di SO
+    // [FIX] Ubah penNomor menjadi nomorPenawaran agar sesuai dengan deklarasi di atas
     if (dps && dps.length > 0) {
       // Bersihkan link lama jika mode update
       await connection.query(
         "DELETE FROM tpenawaran_dp WHERE pnd_nomor_pen = ?",
-        [penNomor],
+        [nomorPenawaran], // <-- Perbaikan di sini
       );
 
       for (const dp of dps) {
         await connection.query(
           "INSERT INTO tpenawaran_dp (pnd_nomor_pen, pnd_nomor_dp) VALUES (?, ?)",
-          [penNomor, dp.nomor],
+          [nomorPenawaran, dp.nomor], // <-- Perbaikan di sini
         );
 
-        // Update juga agar DP tahu dia milik penawaran ini (opsional untuk audit)
+        // Update juga agar DP tahu dia milik penawaran ini
         await connection.query(
           "UPDATE tsetor_hdr SET sh_so_nomor = ? WHERE sh_nomor = ?",
-          [penNomor, dp.nomor],
+          [nomorPenawaran, dp.nomor], // <-- Perbaikan di sini
         );
       }
     }
