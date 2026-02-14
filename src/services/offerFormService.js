@@ -358,8 +358,8 @@ const saveOffer = async (data) => {
     // [TAMBAHKAN INI] 3.5. Hapus data otorisasi lama untuk penawaran ini sebelum simpan ulang
     // Ini mencegah error Duplicate Entry saat mode EDIT
     await connection.query(
-      'DELETE FROM totorisasi WHERE o_nomor = ? AND o_transaksi = "PENAWARAN"',
-      [nomorPenawaran],
+      "DELETE FROM totorisasi WHERE o_nomor = ? AND o_transaksi = ?",
+      [nomorPenawaran, nomorPenawaran], // Gunakan nomor penawaran untuk kedua parameter
     );
 
     // ========================================================================
@@ -367,7 +367,6 @@ const saveOffer = async (data) => {
     // ========================================================================
     const authNomorRef = header.nomorAuth || header.referensiAuth;
     if (authNomorRef && authNomorRef.includes("AUTH")) {
-      // Hubungkan nomor AUTH dengan nomor Penawaran riil
       await connection.query(
         `UPDATE totorisasi SET o_transaksi = ? WHERE o_nomor = ?`,
         [nomorPenawaran, authNomorRef],
@@ -377,14 +376,14 @@ const saveOffer = async (data) => {
     // 4. Simpan Otorisasi Per ITEM (Manual PIN)
     const processedBarcodes = new Set();
     for (const item of details) {
+      // Pastikan pin ada dan belum diproses untuk barcode ini
       if (item.pin && !processedBarcodes.has(item.barcode)) {
-        // [FIX] Ganti "PENAWARAN" menjadi nomorPenawaran
         const pinItemQuery =
           'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_nominal) VALUES (?, ?, "DISKON ITEM", ?, NOW(), ?, ?)';
         await connection.query(pinItemQuery, [
           nomorPenawaran,
-          nomorPenawaran, // Kolom o_transaksi berisi nomor penawaran riil
-          item.barcode,
+          nomorPenawaran, // o_transaksi diisi nomor riil
+          item.barcode || "", // Pastikan tidak null jika kolom adalah PK
           item.pin,
           item.diskonPersen,
         ]);
@@ -394,28 +393,28 @@ const saveOffer = async (data) => {
 
     // 5. Simpan Otorisasi DISKON FAKTUR 1 (Manual PIN)
     if (footer.pinDiskon1) {
-      // [FIX] Ganti "PENAWARAN" menjadi nomorPenawaran
-      const pinFaktur1Query =
-        'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, ?, "DISKON FAKTUR", NOW(), ?, ?)';
-      await connection.query(pinFaktur1Query, [
-        nomorPenawaran,
-        nomorPenawaran, // o_transaksi
-        footer.pinDiskon1,
-        footer.diskonPersen1,
-      ]);
+      await connection.query(
+        'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_nominal) VALUES (?, ?, "DISKON FAKTUR", "", NOW(), ?, ?)',
+        [
+          nomorPenawaran,
+          nomorPenawaran,
+          footer.pinDiskon1,
+          footer.diskonPersen1,
+        ],
+      );
     }
 
     // 6. Simpan Otorisasi DISKON FAKTUR 2 (Manual PIN)
     if (footer.pinDiskon2) {
-      // [FIX] Ganti "PENAWARAN" menjadi nomorPenawaran
-      const pinFaktur2Query =
-        'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_created, o_pin, o_nominal) VALUES (?, ?, "DISKON FAKTUR 2", NOW(), ?, ?)';
-      await connection.query(pinFaktur2Query, [
-        nomorPenawaran,
-        nomorPenawaran, // o_transaksi
-        footer.pinDiskon2,
-        footer.diskonPersen2,
-      ]);
+      await connection.query(
+        'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_nominal) VALUES (?, ?, "DISKON FAKTUR 2", "", NOW(), ?, ?)',
+        [
+          nomorPenawaran,
+          nomorPenawaran,
+          footer.pinDiskon2,
+          footer.diskonPersen2,
+        ],
+      );
     }
 
     await connection.commit();
