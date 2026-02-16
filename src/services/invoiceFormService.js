@@ -155,6 +155,7 @@ const getSoDetailsForGrid = async (soNomor, user) => {
                 IFNULL(i.sod_harga, b.brgd_harga) AS harga,
                 IFNULL(i.sod_diskon, 0) AS diskonRp,
                 IFNULL(i.sod_disc, 0) AS diskonPersen,
+                i.sod_ph_nomor AS noPengajuanHarga,
                 b.brgd_hpp AS hpp, a.brg_logstok AS logstok,
                 IFNULL(
                   (SELECT SUM(m.mst_stok_in - m.mst_stok_out)
@@ -215,6 +216,7 @@ const getSoDetailsForGrid = async (soNomor, user) => {
     d.sod_harga AS harga,
     d.sod_diskon AS diskonRp,
     d.sod_disc AS diskonPersen,
+    d.sod_ph_nomor AS noPengajuanHarga,
     d.sod_sd_nomor AS noSoDtf,
     a.brg_ktgp AS kategori,
     b.brgd_hpp AS hpp,
