@@ -24,6 +24,7 @@ const getList = async (filters, user) => {
             brg_ktgp AS 'KtgProduk', brg_ktg AS 'KtgBarang',
             a.Kelompok AS 'Kelompok Barang', a.JenisKain AS 'Jenis Kain', -- 👈 Tambahkan ini
             a.kode AS 'Kode Barang', a.nama AS 'Nama Barang', a.ukuran AS 'Ukuran', a.stok AS 'Stok', 
+            IFNULL(sls.total_sales, 0) AS 'RealSales',
             IFNULL(sls.avg_sales, 0) AS 'AvgSales',
             b.last_tstbj AS 'Last Terima STBJ/Tanggal', b.last_nomor_tstbj AS 'No STBJ/SJ',
             DATEDIFF(CURDATE(), b.last_tstbj) AS 'Umur (Hari)',
@@ -58,6 +59,7 @@ const getList = async (filters, user) => {
         LEFT JOIN (
             SELECT 
                 h.inv_cab, d.invd_kode, d.invd_ukuran,
+                SUM(d.invd_jumlah) AS total_sales,
                 (SUM(d.invd_jumlah) / ?) AS avg_sales
             FROM tinv_dtl d
             JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
