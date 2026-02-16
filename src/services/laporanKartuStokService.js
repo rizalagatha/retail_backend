@@ -11,7 +11,7 @@ const resolvePeriode = async (gudang, startDate) => {
 
   const [rows] = await pool.query(
     "SELECT gdg_last_sop, gdg_lastSopOld FROM tgudang WHERE gdg_kode = ?",
-    [gudang]
+    [gudang],
   );
 
   if (rows.length > 0) {
@@ -81,13 +81,13 @@ const getProductList = async (filters) => {
   // Samakan logika periode dengan Delphi
   const { jenis, dawal, startDateEff } = await resolvePeriode(
     gudang,
-    startDate
+    startDate,
   );
 
   const dawalPlus1 = format(addDays(new Date(dawal), 1), "yyyy-MM-dd");
   const startDateMinus1 = format(
     subDays(new Date(startDateEff), 1),
-    "yyyy-MM-dd"
+    "yyyy-MM-dd",
   );
 
   // Hanya implementasi STORE (gdg_dc = 0 / 3) sesuai Delphi bagian pertama
@@ -395,7 +395,7 @@ LEFT JOIN (
     gudang,
     kodeBarang,
     startDateEff,
-    endDate
+    endDate,
   );
 
   // Filter barang (kode wajib = satu barang, sama seperti Delphi pakai edtkode)
@@ -460,7 +460,7 @@ LEFT JOIN (
       returJual +
       terimaSJ +
       mutStoreTerima +
-      mutInPesan -
+      mutInPesan +
       mutInProduksi -
       (invoice + returKeDC + mutStoreKirim + mutOutPesan + mutOutProduksi);
 
@@ -487,7 +487,7 @@ const getKartuDetails = async (filters) => {
   // Samakan periode dengan Delphi juga
   const { jenis, dawal, startDateEff } = await resolvePeriode(
     gudang,
-    startDate
+    startDate,
   );
 
   const start = parseISO(startDateEff);
@@ -635,7 +635,12 @@ const getKartuDetails = async (filters) => {
     ORDER BY tanggal, nomor
   `;
 
-  const params = [...stokAwalParams, ...mutasiParams, ...mutasiPesananParams, ...sopParams];
+  const params = [
+    ...stokAwalParams,
+    ...mutasiParams,
+    ...mutasiPesananParams,
+    ...sopParams,
+  ];
 
   const [rows] = await pool.query(fullQuery, params);
 
@@ -672,7 +677,7 @@ const getMutationDetails = async (filters) => {
   if (gudang && gudang !== "ALL") {
     const [gudangRows] = await pool.query(
       "SELECT gdg_last_sop, gdg_lastSopOld FROM tgudang WHERE gdg_kode = ?",
-      [gudang]
+      [gudang],
     );
     if (gudangRows.length > 0) {
       const { gdg_last_sop, gdg_lastSopOld } = gudangRows[0];

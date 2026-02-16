@@ -358,9 +358,13 @@ const saveData = async (payload, user) => {
 
   try {
     const lhkNomor = await generateLhkNumber(connection, cabang);
+
+    const lebarFilm = cabang === "K02" ? 30 : 60;
+
     const isDTF = (jenisOrder?.nama || "").toUpperCase().includes("DTF");
+
     const luasRiilGlobal = isDTF
-      ? (Number(panjang || 0) + Number(buangan || 0)) * 60
+      ? (Number(panjang || 0) + Number(buangan || 0)) * lebarFilm
       : 0;
 
     for (const item of items) {
