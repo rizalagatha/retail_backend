@@ -24,7 +24,7 @@ const getList = async (filters, user) => {
             brg_ktgp AS 'KtgProduk', brg_ktg AS 'KtgBarang',
             a.Kelompok AS 'Kelompok Barang', a.JenisKain AS 'Jenis Kain', -- 👈 Tambahkan ini
             a.Warna AS 'Warna',
-            a.kode AS 'Kode Barang', a.nama AS 'Nama Barang', a.ukuran AS 'Ukuran', a.stok AS 'Stok', 
+            a.kode AS 'Kode Barang', a.barcode AS 'Barcode', a.nama AS 'Nama Barang', a.ukuran AS 'Ukuran', a.stok AS 'Stok', 
             IFNULL(sls.total_sales, 0) AS 'RealSales',
             IFNULL(sls.avg_sales, 0) AS 'AvgSales',
             b.last_tstbj AS 'Last Terima STBJ/Tanggal', b.last_nomor_tstbj AS 'No STBJ/SJ',
@@ -36,6 +36,7 @@ const getList = async (filters, user) => {
                 x.cabang, x.kode, brg_ktgp, brg_ktg,
                 a.brg_lengan AS Kelompok, a.brg_jeniskain AS JenisKain, -- 👈 Ambil dari tbarangdc
                 a.brg_warna AS Warna,
+                dtl.brgd_barcode AS barcode,
                 TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) AS Nama,
                 x.Ukuran, x.Stok
             FROM (
@@ -47,6 +48,7 @@ const getList = async (filters, user) => {
                 GROUP BY m.mst_cab, m.mst_brg_kode, m.mst_ukuran
             ) x
             LEFT JOIN tbarangdc a ON a.brg_kode = x.kode
+            LEFT JOIN tbarangdc_dtl dtl ON dtl.brgd_kode = x.kode AND dtl.brgd_ukuran = x.ukuran
             WHERE x.stok <> 0 AND a.brg_logstok = 'Y'
         ) a
         LEFT JOIN (
