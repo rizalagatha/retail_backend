@@ -13,7 +13,6 @@ const getList = async (filters, user) => {
     params.push(cabang);
   }
 
-  // Params untuk: pembagi sales, interval sales, minUmur
   const finalParams = [...params, avgPeriod, avgPeriod, minUmur];
 
   const query = `
@@ -27,9 +26,11 @@ const getList = async (filters, user) => {
             IFNULL(sls.avg_sales, 0) AS 'AvgSales',
             IFNULL(b.last_tstbj, '0000-00-00') AS 'Last Terima STBJ/Tanggal', 
             IFNULL(b.last_nomor_tstbj, '-') AS 'No STBJ/SJ',
-            -- Jika belum pernah ada STBJ, kita anggap umurnya sangat tua (999 hari) agar muncul
+            
+            -- [FIX 1] Gunakan IFNULL agar kolom tidak kosong jika data NULL
             IFNULL(DATEDIFF(CURDATE(), b.last_tstbj), 999) AS 'Umur (Hari)',
-            IFNULL(FLOOR(DATEDIFF(CURDATE(), b.last_tstbj) / 30), 99) AS 'Umur (Bulan)'
+            IFNULL(FLOOR(DATEDIFF(CURDATE(), b.last_tstbj) / 30), 33) AS 'Umur (Bulan)',
+            IFNULL(FLOOR(DATEDIFF(CURDATE(), b.last_tstbj) / 365), 2) AS 'Umur (Tahun)'
         FROM (
             SELECT 
                 x.cabang, x.kode, brg_ktgp, brg_ktg,
@@ -43,7 +44,6 @@ const getList = async (filters, user) => {
                     m.mst_cab AS Cabang, m.mst_brg_kode AS Kode, m.mst_ukuran AS Ukuran,
                     SUM(m.mst_stok_in - m.mst_stok_out) AS Stok
                 FROM (
-                    -- [FIX 1] Gabungkan tabel Showroom dan Pesanan agar sinkron dengan Real Time
                     SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_aktif FROM tmasterstok
                     UNION ALL
                     SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_aktif FROM tmasterstokso
@@ -53,7 +53,12 @@ const getList = async (filters, user) => {
             ) x
             LEFT JOIN tbarangdc a ON a.brg_kode = x.kode
             LEFT JOIN tbarangdc_dtl dtl ON dtl.brgd_kode = x.kode AND dtl.brgd_ukuran = x.ukuran
-            WHERE x.stok <> 0 AND a.brg_logstok = 'Y' AND a.brg_aktif = 0
+            WHERE x.stok <> 0 
+              AND a.brg_logstok = 'Y' 
+              AND a.brg_aktif = 0
+              -- [FIX 2] Kecualikan Sticker DTF (fokus ke kaos)
+              AND a.brg_jeniskaos NOT LIKE '%STICKER%'
+              AND a.brg_jeniskaos NOT LIKE '%STIKER%'
         ) a
         LEFT JOIN (
             SELECT 
@@ -75,7 +80,6 @@ const getList = async (filters, user) => {
             GROUP BY 1, 2, 3
         ) sls ON (sls.inv_cab = a.cabang AND sls.invd_kode = a.kode AND sls.invd_ukuran = a.ukuran)
         LEFT JOIN tgudang c ON (c.gdg_kode = a.cabang)
-        -- [FIX 2] Gunakan COALESCE pada HAVING agar nilai NULL (barang baru) tetap lolos filter
         HAVING COALESCE(\`Umur (Hari)\`, 999) >= ?
         ORDER BY \`Umur (Hari)\` DESC, a.cabang, a.nama;
     `;
