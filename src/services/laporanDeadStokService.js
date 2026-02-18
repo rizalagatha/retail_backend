@@ -33,7 +33,7 @@ const getList = async (filters, user) => {
             FLOOR(DATEDIFF(CURDATE(), b.last_tstbj) / 360) AS 'Umur (Tahun)'
         FROM (
             SELECT 
-                x.Cabang, x.Kode, brg_ktgp, brg_ktg,
+                x.cabang, x.kode, brg_ktgp, brg_ktg,
                 a.brg_lengan AS Kelompok, a.brg_jeniskain AS JenisKain, -- 👈 Ambil dari tbarangdc
                 a.brg_warna AS Warna,
                 TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) AS Nama,
@@ -45,7 +45,7 @@ const getList = async (filters, user) => {
                 FROM tmasterstok m
                 WHERE m.mst_aktif = 'Y' ${branchFilter}
                 GROUP BY m.mst_cab, m.mst_brg_kode, m.mst_ukuran
-            ) X
+            ) x
             LEFT JOIN tbarangdc a ON a.brg_kode = x.kode
             WHERE x.stok <> 0 AND a.brg_logstok = 'Y'
         ) a
