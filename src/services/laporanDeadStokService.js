@@ -23,6 +23,7 @@ const getList = async (filters, user) => {
             a.cabang, c.gdg_nama AS 'Nama Cabang',
             brg_ktgp AS 'KtgProduk', brg_ktg AS 'KtgBarang',
             a.Kelompok AS 'Kelompok Barang', a.JenisKain AS 'Jenis Kain', -- 👈 Tambahkan ini
+            a.Warna AS 'Warna',
             a.kode AS 'Kode Barang', a.nama AS 'Nama Barang', a.ukuran AS 'Ukuran', a.stok AS 'Stok', 
             IFNULL(sls.total_sales, 0) AS 'RealSales',
             IFNULL(sls.avg_sales, 0) AS 'AvgSales',
@@ -34,6 +35,7 @@ const getList = async (filters, user) => {
             SELECT 
                 x.Cabang, x.Kode, brg_ktgp, brg_ktg,
                 a.brg_lengan AS Kelompok, a.brg_jeniskain AS JenisKain, -- 👈 Ambil dari tbarangdc
+                a.brg_warna AS Warna,
                 TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) AS Nama,
                 x.Ukuran, x.Stok
             FROM (
