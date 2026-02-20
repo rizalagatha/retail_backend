@@ -80,6 +80,7 @@ const getRealTimeStock = async (filters) => {
     const query = `
         SELECT
             a.brg_kode AS KODE,
+            a.brg_ktgp AS KATEGORI,
             TRIM(CONCAT_WS(' ', a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna)) AS NAMA
             
             ${dynamicColumns}  -- <--- INI BAGIAN DINAMISNYA
@@ -97,7 +98,7 @@ const getRealTimeStock = async (filters) => {
             GROUP BY m.mst_brg_kode, m.mst_ukuran
         ) s ON a.brg_kode = s.mst_brg_kode
         WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y' ${kodeBarangFilter}
-        GROUP BY a.brg_kode, NAMA
+        GROUP BY a.brg_kode, a.brg_ktgp, NAMA
         ${havingClause}
         ORDER BY NAMA;
     `;
@@ -255,6 +256,7 @@ const getRealTimeStockExport = async (filters) => {
     const query = `
         SELECT
             a.brg_kode AS KODE,
+            a.brg_ktgp AS KATEGORI,
             b.brgd_barcode AS BARCODE,
             TRIM(CONCAT_WS(' ', a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna)) AS NAMA,
             b.brgd_ukuran AS UKURAN,
