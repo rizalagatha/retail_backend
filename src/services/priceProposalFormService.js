@@ -199,10 +199,11 @@ const getProposalForEdit = async (nomor) => {
   let imageUrl = null;
 
   if (fs.existsSync(imagePath)) {
-    // Bangun URL yang benar, sertakan subfolder cabang
-    imageUrl = `${
-      process.env.BASE_URL || "http://192.168.1.73:8000"
-    }/images/${cabang}/${nomor}.jpg`;
+    // SEBELUMNYA:
+    // imageUrl = `${process.env.BASE_URL || "http://192.168.1.73:8000"}/images/${cabang}/${nomor}.jpg`;
+
+    // PERBAIKAN: Gunakan path relatif agar mengikuti protokol HTTPS halaman saat ini
+    imageUrl = `/images/${cabang}/${nomor}.jpg`;
   }
 
   // 2. Ambil data detail ukuran/size
