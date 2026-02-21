@@ -169,7 +169,8 @@ const loadData = async (nomorLhk) => {
       d.luas_sistem, 
       d.luas_riil,
       d.keterangan AS ket,
-      d.cab -- Tambahkan kolom cab agar frontend tahu cabangnya
+      d.cab, -- Tambahkan kolom cab agar frontend tahu cabangnya
+      d.jo_kode
     FROM tdtf d
     LEFT JOIN tsodtf_hdr h ON h.sd_nomor = d.sodtf
     WHERE d.lhk_nomor = ? -- [FIX] Filter berdasarkan Nomor LHK unik
