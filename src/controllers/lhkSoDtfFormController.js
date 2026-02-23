@@ -55,18 +55,31 @@ const searchSoPo = async (req, res) => {
 const saveData = async (req, res) => {
   try {
     const result = await lhkSoDtfFormService.saveData(req.body, req.user);
-    res.status(201).json(result);
+
+    // Opsional: Gunakan status 200 jika update, 201 jika data baru
+    const statusCode = req.body.isEdit ? 200 : 201;
+    res.status(statusCode).json(result);
   } catch (error) {
+    console.error("❌ Error saveData LHK:", error);
     res.status(500).json({ message: error.message });
   }
 };
 
 const removeData = async (req, res) => {
   try {
-    const { tanggal, cabang } = req.params;
-    const result = await lhkSoDtfFormService.removeData(tanggal, cabang);
+    // Ambil nomorLhk dari parameter URL (misal: DELETE /:nomorLhk)
+    const { nomorLhk } = req.params;
+
+    if (!nomorLhk) {
+      return res
+        .status(400)
+        .json({ message: "Nomor LHK diperlukan untuk penghapusan." });
+    }
+
+    const result = await lhkSoDtfFormService.removeData(nomorLhk);
     res.json(result);
   } catch (error) {
+    console.error("❌ Error removeData LHK:", error);
     res.status(400).json({ message: error.message });
   }
 };

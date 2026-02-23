@@ -353,12 +353,29 @@ const searchSpk = async (term, page = 1, limit = 50) => {
 };
 
 const saveData = async (payload, user) => {
-  const { tanggal, cabang, items, panjang, buangan, jenisOrder } = payload;
+  const {
+    tanggal,
+    cabang,
+    items,
+    panjang,
+    buangan,
+    jenisOrder,
+    isEdit,
+    lhkNomor,
+  } = payload;
   const connection = await pool.getConnection();
   await connection.beginTransaction();
 
   try {
-    const lhkNomor = await generateLhkNumber(connection, cabang);
+    const lhkNomorFinal = isEdit
+      ? lhkNomor
+      : await generateLhkNumber(connection, cabang);
+
+    if (isEdit) {
+      await connection.query("DELETE FROM tdtf WHERE lhk_nomor = ?", [
+        lhkNomorFinal,
+      ]);
+    }
 
     const lebarFilm = cabang === "K02" ? 30 : 60;
 
