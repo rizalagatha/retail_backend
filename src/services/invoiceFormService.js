@@ -2511,34 +2511,26 @@ const searchSoDtf = async (filters, user) => {
 
   const CUTOFF_DATE = "2026-02-23";
 
-  // [FIX] Tentukan apakah filter LHK perlu diterapkan atau tidak
-  const needsLhkFilter = userCabang !== "K01" && userCabang !== "K03";
-
+  // Kita tidak lagi mem-filter (lock) data di WHERE.
+  // Sebagai gantinya, kita pindahkan pengecekan LHK ke SELECT sebagai indikator 'isLhk'.
   let query = `
-        SELECT h.sd_nomor AS nomor, h.sd_tanggal AS tanggal, h.sd_nama AS namaDtf, h.sd_ket AS keterangan
+        SELECT 
+            h.sd_nomor AS nomor, 
+            h.sd_tanggal AS tanggal, 
+            h.sd_nama AS namaDtf, 
+            h.sd_ket AS keterangan,
+            -- Tentukan status LHK: 
+            -- 1 jika (tanggal lama < CUTOFF) ATAU (ada di tabel tdtf)
+            -- 0 jika tanggal baru dan belum ada di tabel tdtf
+            CASE 
+                WHEN h.sd_tanggal < '${CUTOFF_DATE}' THEN 1
+                WHEN EXISTS (SELECT 1 FROM tdtf WHERE tdtf.sodtf = h.sd_nomor) THEN 1
+                ELSE 0 
+            END AS isLhk
         FROM tsodtf_hdr h
         WHERE h.sd_stok = "" AND h.sd_alasan = "" 
           AND h.sd_cab = ?
           AND h.sd_cus_kode = ?
-    `;
-
-  // Sisipkan filter LHK hanya untuk cabang di luar K01 dan K03
-  if (needsLhkFilter) {
-    query += `
-          AND (
-            -- Aturan 1: Jika tanggal SO di bawah 23 Feb 2026, langsung lolos (Legacy)
-            h.sd_tanggal < '${CUTOFF_DATE}' 
-            OR 
-            -- Aturan 2: Jika tanggal SO >= 23 Feb 2026, WAJIB ada di tabel LHK (tdtf)
-            EXISTS (
-                SELECT 1 FROM tdtf 
-                WHERE tdtf.sodtf = h.sd_nomor
-            )
-          )
-    `;
-  }
-
-  query += `
           AND h.sd_nomor NOT IN (
               SELECT DISTINCT sod_sd_nomor FROM tso_dtl WHERE sod_sd_nomor <> ''
               UNION ALL
@@ -2547,6 +2539,9 @@ const searchSoDtf = async (filters, user) => {
           AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?)
         ORDER BY h.sd_nomor DESC;
     `;
+
+  // Note: Variabel needsLhkFilter dihilangkan karena sekarang
+  // semua cabang bisa melihat data baik yang sudah LHK maupun belum.
 
   const [rows] = await pool.query(query, [
     userCabang,
