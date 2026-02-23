@@ -92,6 +92,7 @@ const loadFromSo = async (nomorSo, user) => {
       TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
       d.sod_ukuran AS ukuran,
       d.sod_jumlah AS qtyso,
+      d.sod_scanned AS scanned,
 
       -- SHOWROOM (sama)
       IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out)
@@ -133,12 +134,14 @@ const loadFromSo = async (nomorSo, user) => {
     FROM tso_dtl d
     JOIN tbarangdc a ON a.brg_kode = d.sod_kode AND a.brg_logstok="Y"
     LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
-    WHERE d.sod_so_nomor = ?;
+    WHERE d.sod_so_nomor = ? 
+      AND d.sod_scanned > 0; -- 👈 FIX: Hanya ambil yang sudah Ready
   `;
 
   const [rows] = await pool.query(query, [
     user.cabang,
     user.cabang,
+    nomorSo,
     nomorSo,
     nomorSo,
     nomorSo,
@@ -149,7 +152,13 @@ const loadFromSo = async (nomorSo, user) => {
     const produksi = item.keluar - item.masuk;
     const ready = produksi + item.pesan;
     const kurang = item.qtyso - ready;
-    return { ...item, produksi, ready, kurang };
+    return {
+      ...item,
+      produksi,
+      ready,
+      kurang,
+      jumlah: item.scanned, // 👈 Otomatis isi Qty Mutasi dengan hasil Scan di SO
+    };
   });
 };
 
@@ -165,7 +174,7 @@ const saveData = async (payload, user) => {
     // Validasi (Sudah benar)
     if (!header.nomorSo) throw new Error("No. Pesanan harus diisi.");
     const validItems = items.filter(
-      (item) => item.kode && (item.jumlah || 0) > 0
+      (item) => item.kode && (item.jumlah || 0) > 0,
     );
     if (validItems.length === 0) throw new Error("Detail barang harus diisi.");
     // (Validasi Qty vs Stok sudah ada di frontend/service, itu bagus)
@@ -222,7 +231,7 @@ const saveData = async (payload, user) => {
       const msodNomorIn = await generateNewMsodNomorIn(
         connection,
         user.cabang,
-        header.tanggal
+        header.tanggal,
       );
 
       // 2. Siapkan detail values DENGAN msod_nomorin dan msod_nourut

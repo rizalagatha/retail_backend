@@ -31,7 +31,7 @@ const deleteRefund = async (req, res) => {
       // A. Get Header
       const [headerRows] = await pool.query(
         "SELECT * FROM trefund_hdr WHERE rf_nomor = ?",
-        [nomor]
+        [nomor],
       );
 
       if (headerRows.length > 0) {
@@ -40,13 +40,13 @@ const deleteRefund = async (req, res) => {
         // B. Get Detail (Use rfd_nomor)
         const [detailRows] = await pool.query(
           "SELECT * FROM trefund_dtl WHERE rfd_nomor = ? ORDER BY rfd_nourut", // Order by sequence
-          [nomor]
+          [nomor],
         );
 
         // C. Combine
         oldData = {
           ...header,
-          items: detailRows
+          items: detailRows,
         };
       }
     } catch (e) {
@@ -60,12 +60,12 @@ const deleteRefund = async (req, res) => {
     if (oldData) {
       auditService.logActivity(
         req,
-        "DELETE",            // Action
-        "REFUND",            // Module
-        nomor,               // Target ID
-        oldData,             // Old Data (Snapshot)
-        null,                // New Data (Null because deleted)
-        `Menghapus Pengajuan Refund (Tanggal: ${oldData.rf_tanggal})`
+        "DELETE", // Action
+        "REFUND", // Module
+        nomor, // Target ID
+        oldData, // Old Data (Snapshot)
+        null, // New Data (Null because deleted)
+        `Menghapus Pengajuan Refund (Tanggal: ${oldData.rf_tanggal})`,
       );
     }
 
@@ -102,6 +102,26 @@ const getCabangOptions = async (req, res) => {
   }
 };
 
+const cancelRefund = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const { reason } = req.body;
+
+    if (!reason) {
+      return res
+        .status(400)
+        .json({ message: "Alasan pembatalan wajib diisi." });
+    }
+
+    const result = await service.cancelRefund(nomor, reason, req.user);
+    res.json(result);
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: error.message || "Gagal membatalkan refund." });
+  }
+};
+
 module.exports = {
   getList,
   getDetails,
@@ -109,4 +129,5 @@ module.exports = {
   exportHeaders,
   exportDetails,
   getCabangOptions,
+  cancelRefund,
 };

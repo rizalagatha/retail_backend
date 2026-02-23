@@ -1,7 +1,7 @@
 const soFormService = require("../services/soFormService");
 const auditService = require("../services/auditService"); // Import Audit
 const pool = require("../config/database"); // Import Pool untuk Snapshot
-const { differenceInDays, parseISO } = require("date-fns");
+const { differenceInDays, parseISO, format } = require("date-fns");
 
 const getForEdit = async (req, res) => {
   try {
@@ -105,21 +105,18 @@ const getPenawaranDetails = async (req, res) => {
 
     const result = await soFormService.getPenawaranDetailsForSo(nomor, cabang);
 
-    // --- PERBAIKAN LOGIKA TANGGAL ---
+    // --- LOGIKA AUDIT (Tetap dipertahankan untuk mendeteksi penawaran kadaluwarsa) ---
     const rawDate = result.header.pen_tanggal;
     let tglPenawaran;
 
     if (rawDate instanceof Date) {
-      // Jika sudah berupa objek Date, gunakan langsung
       tglPenawaran = rawDate;
     } else if (typeof rawDate === "string") {
-      // Jika string, baru gunakan parseISO
       tglPenawaran = parseISO(rawDate);
     } else {
       tglPenawaran = new Date();
     }
 
-    // Hitung selisih hari untuk audit
     const hariIni = new Date();
     const selisihHari = differenceInDays(hariIni, tglPenawaran);
 
@@ -134,6 +131,10 @@ const getPenawaranDetails = async (req, res) => {
         `⚠️ ANOMALI: Menarik penawaran berumur ${selisihHari} hari (Batas 20 hari)`,
       );
     }
+
+    // --- PERBAIKAN UTAMA: OVERRIDE TANGGAL UNTUK FRONTEND ---
+    // Kita paksa tanggal penawaran yang dikirim ke form SO menjadi tanggal hari ini.
+    result.pen_tanggal = format(new Date(), "yyyy-MM-dd");
 
     // Kirim hasil ke frontend
     res.json(result);

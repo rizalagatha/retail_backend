@@ -1,25 +1,49 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const controller = require('../controllers/refundController');
-const { verifyToken, checkPermission } = require('../middleware/authMiddleware');
+const controller = require("../controllers/refundController");
+const {
+  verifyToken,
+  checkPermission,
+} = require("../middleware/authMiddleware");
 
-const MENU_ID = '55'; // Sesuai permintaan
+const MENU_ID = "55"; // Sesuai permintaan
 
 router.get(
   "/export-headers",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.exportHeaders
+  controller.exportHeaders,
 );
 router.get(
   "/export-details",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.exportDetails
+  controller.exportDetails,
 );
-router.get('/', verifyToken, checkPermission(MENU_ID, 'view'), controller.getList);
-router.get('/details/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), controller.getDetails);
-router.get('/cabang-options', verifyToken, controller.getCabangOptions);
-router.delete('/:nomor', verifyToken, checkPermission(MENU_ID, 'delete'), controller.deleteRefund);
+router.put(
+  "/cancel/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.cancelRefund,
+);
+router.get(
+  "/",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getList,
+);
+router.get(
+  "/details/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getDetails,
+);
+router.get("/cabang-options", verifyToken, controller.getCabangOptions);
+router.delete(
+  "/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "delete"),
+  controller.deleteRefund,
+);
 
 module.exports = router;

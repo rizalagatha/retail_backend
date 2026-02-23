@@ -58,7 +58,7 @@ const getDetails = async (nomor) => {
             ), 0) AS SudahTerima
         FROM tdc_qc_dtl d
         INNER JOIN tdc_qc_hdr h ON d.mutd_nomor = h.mut_nomor
-        LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.mutd_kode
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.mutd_kode
         WHERE h.mut_nomor = ?
         ORDER BY d.mutd_nomor
     `;
@@ -74,7 +74,7 @@ const deleteQC = async (nomor, tanggal) => {
   // Ambil data untuk validasi
   const [rows] = await pool.query(
     "SELECT mut_closing FROM tdc_qc_hdr WHERE mut_nomor = ?",
-    [nomor]
+    [nomor],
   );
   if (rows.length === 0) throw new Error("Dokumen tidak ditemukan.");
   const doc = rows[0];
@@ -121,7 +121,7 @@ const getExportDetails = async (filters, user) => {
             ), 0) AS 'SudahTerima'
         FROM tdc_qc_dtl d
         INNER JOIN tdc_qc_hdr h ON d.mutd_nomor = h.mut_nomor
-        LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.mutd_kode
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.mutd_kode
         WHERE h.mut_tanggal BETWEEN ? AND ?
     `;
   const params = [startDate, endDate];

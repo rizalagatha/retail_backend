@@ -221,9 +221,9 @@ const lookupInvoices = async (cabang) => {
     cabang === "K10" && new Date() < new Date("2026-01-31");
 
   const dateCondition =
-    cabang === "KON" || isTemporaryOpenK10
-      ? ""
-      : "AND h.inv_tanggal >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
+    cabang === "KON" || cabang === "KPR" || isTemporaryOpenK10
+      ? "" // Tanpa batasan waktu (bisa panggil invoice lama)
+      : "AND h.inv_tanggal >= DATE_SUB(NOW(), INTERVAL 7 DAY)"; // Cabang lain dibatasi 7 hari
 
   const query = `
     SELECT h.inv_nomor AS nomor, h.inv_tanggal AS tanggal, c.cus_nama

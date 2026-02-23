@@ -32,7 +32,7 @@ const updatePrices = async (req, res) => {
     try {
       const [rows] = await pool.query(
         "SELECT brgd_kode, brgd_ukuran, brgd_hpp, brgd_harga FROM tbarangdc_dtl WHERE brgd_kode = ?",
-        [kode]
+        [kode],
       );
       if (rows.length > 0) oldData = rows;
     } catch (e) {
@@ -52,7 +52,7 @@ const updatePrices = async (req, res) => {
         kode, // Target ID (Kode Barang)
         oldData, // Data Lama (List Harga per ukuran)
         payload.variants, // Data Baru (List Harga baru yang dikirim user)
-        `Update Harga/HPP Barang: ${kode}`
+        `Update Harga/HPP Barang: ${kode}`,
       );
     }
 
@@ -62,8 +62,19 @@ const updatePrices = async (req, res) => {
   }
 };
 
+const getExportData = async (req, res) => {
+  try {
+    // Mengambil filter (kategori, search, hargaKosong) dari query string
+    const data = await service.getExportData(req.query);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getList,
   getDetails,
   updatePrices,
+  getExportData,
 };

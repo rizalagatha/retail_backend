@@ -33,9 +33,9 @@ const getList = async (filters) => {
         h.msk_closing AS 'closing'
     FROM tmsk_hdr h
     INNER JOIN tmsk_dtl d ON d.mskd_nomor = h.msk_nomor
-    LEFT JOIN retail.tgudang f ON f.gdg_kode = h.msk_cab
-    LEFT JOIN retail.tgudang g ON g.gdg_kode = h.msk_kecab
-    LEFT JOIN retail.tmst_hdr t ON t.mst_nomor = h.msk_noterima
+    LEFT JOIN tgudang f ON f.gdg_kode = h.msk_cab
+    LEFT JOIN tgudang g ON g.gdg_kode = h.msk_kecab
+    LEFT JOIN tmst_hdr t ON t.mst_nomor = h.msk_noterima
     WHERE
         h.msk_tanggal BETWEEN ? AND ?
         AND f.gdg_kode = ?
@@ -57,7 +57,7 @@ const getDetails = async (nomor) => {
         d.mskd_ukuran AS ukuran,
         d.mskd_jumlah AS jumlah
     FROM tmsk_dtl d
-    LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.mskd_kode
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.mskd_kode
     WHERE d.mskd_nomor = ?
     `;
   const [rows] = await pool.query(query, [nomor]);
@@ -71,7 +71,7 @@ const remove = async (nomor, user) => {
 
     const [rows] = await connection.query(
       "SELECT msk_noterima, msk_closing FROM tmsk_hdr WHERE msk_nomor = ?",
-      [nomor]
+      [nomor],
     );
 
     if (rows.length === 0) throw new Error("Data tidak ditemukan.");
@@ -84,7 +84,7 @@ const remove = async (nomor, user) => {
       throw new Error("Sudah Close Transaksi. Tidak bisa dihapus.");
     if (nomor.substring(0, 3) !== user.cabang && user.cabang !== "KDC") {
       throw new Error(
-        `Anda tidak berhak menghapus data milik store ${nomor.substring(0, 3)}.`
+        `Anda tidak berhak menghapus data milik store ${nomor.substring(0, 3)}.`,
       );
     }
 

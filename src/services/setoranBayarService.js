@@ -28,7 +28,10 @@ const getList = async (filters) => {
         h.sh_tanggal AS Tanggal, 
         CASE 
             WHEN h.sh_jenis = 0 THEN "TUNAI"
+            -- Jika jenis 1 tapi ada kata QRIS di keterangan, tampilkan QRIS
+            WHEN h.sh_jenis = 1 AND h.sh_ket LIKE '%QRIS%' THEN "QRIS" 
             WHEN h.sh_jenis = 1 THEN "TRANSFER"
+            WHEN h.sh_jenis = 3 THEN "QRIS" -- Tetap ada untuk jaga-jaga data lama
             ELSE "GIRO"
         END AS JenisBayar,
         h.sh_nominal AS Nominal,
@@ -119,7 +122,7 @@ const remove = async (nomor, user) => {
       `SELECT sh_otomatis, sh_closing, sh_so_nomor, 
         (SELECT COUNT(*) FROM finance.tjurnal WHERE jur_nomor = sh_nomor) > 0 AS isPosted 
         FROM tsetor_hdr WHERE sh_nomor = ?`,
-      [nomor]
+      [nomor],
     );
     if (rows.length === 0) throw new Error("Data tidak ditemukan.");
     const setoran = rows[0];
@@ -131,8 +134,8 @@ const remove = async (nomor, user) => {
       throw new Error(
         `Anda tidak berhak menghapus data milik cabang ${nomor.substring(
           0,
-          3
-        )}.`
+          3,
+        )}.`,
       );
     if (setoran.isPosted)
       throw new Error("Pembayaran ini sudah di-Posting oleh Finance.");

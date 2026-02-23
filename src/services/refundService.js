@@ -16,7 +16,8 @@ const getList = async (filters, user) => {
             h.rf_status AS Status,
             h.rf_acc AS Approved,
             h.date_acc AS TglApprove,
-            h.rf_closing AS Closing
+            h.rf_closing AS Closing,
+            h.rf_alasan_batal AS AlasanBatal
         FROM trefund_hdr h
         WHERE h.rf_tanggal BETWEEN ? AND ?
     `;
@@ -80,7 +81,7 @@ const deleteRefund = async (nomor, user) => {
 
     const [rows] = await connection.query(
       "SELECT rf_nomor, rf_acc, rf_closing FROM trefund_hdr WHERE rf_nomor = ?",
-      [nomor]
+      [nomor],
     );
     if (rows.length === 0) throw new Error("Dokumen tidak ditemukan.");
     const doc = rows[0];
@@ -209,6 +210,56 @@ const getCabangOptions = async (user) => {
   return rows;
 };
 
+/**
+ * Membatalkan pengajuan refund.
+ * Menambahkan kolom rf_alasan_batal di database jika belum ada.
+ */
+const cancelRefund = async (nomor, reason, user) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [rows] = await connection.query(
+      "SELECT rf_nomor, rf_closing FROM trefund_hdr WHERE rf_nomor = ?",
+      [nomor],
+    );
+    if (rows.length === 0) throw new Error("Dokumen tidak ditemukan.");
+    if (rows[0].rf_closing === "Y") throw new Error("Data sudah Closing.");
+
+    // 1. UPDATE HEADER: Set Status 'BATAL' & Kosongkan Verifikasi
+    const updateHdrSql = `
+      UPDATE trefund_hdr 
+      SET rf_status = 'BATAL', 
+          rf_acc = '', 
+          date_acc = NULL,
+          rf_alasan_batal = ?, 
+          user_modified = ?, 
+          date_modified = NOW()
+      WHERE rf_nomor = ?
+    `;
+    await connection.query(updateHdrSql, [reason, user.kode, nomor]);
+
+    // 2. UPDATE DETAIL: Kosongkan data rekening & nominal refund
+    const updateDtlSql = `
+      UPDATE trefund_dtl 
+      SET rfd_refund = 0, 
+          rfd_bank = '', 
+          rfd_norek = '', 
+          rfd_atasnama = ''
+      WHERE rfd_nomor = ?
+    `;
+    await connection.query(updateDtlSql, [nomor]);
+
+    await connection.commit();
+    return { message: `Refund ${nomor} telah berhasil dibatalkan.` };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   getList,
   getDetails,
@@ -216,4 +267,5 @@ module.exports = {
   getExportHeaders,
   getExportDetails,
   getCabangOptions,
+  cancelRefund,
 };

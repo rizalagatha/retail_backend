@@ -625,6 +625,7 @@ const saveData = async (payload, user) => {
       dpDipakai +
       Number(payment.tunai || 0) +
       Number(payment.transfer?.nominal || 0) +
+      Number(payment.qris?.nominal || 0) +
       Number(payment.voucher?.nominal || 0) +
       Number(payment.retur?.nominal || 0) +
       Number(payment.diskonPembulatan || 0);
@@ -699,6 +700,7 @@ const saveData = async (payload, user) => {
         dpDipakai +
           Number(payment.tunai || 0) +
           Number(payment.transfer?.nominal || 0) +
+          Number(payment.qris?.nominal || 0) +
           Number(payment.voucher?.nominal || 0) +
           Number(payment.retur?.nominal || 0),
       );
@@ -736,6 +738,33 @@ const saveData = async (payload, user) => {
         user.cabang,
         header.tanggal,
       );
+    }
+
+    let nomorSetoranQris = "";
+    if ((payment.qris?.nominal || 0) > 0) {
+      nomorSetoranQris = await generateNewSetorNumber(
+        connection,
+        user.cabang,
+        header.tanggal,
+      );
+
+      // Jika tidak ada transfer, jadikan QRIS sebagai referensi utama di Header Invoice
+      if (!nomorSetoran) {
+        nomorSetoran = nomorSetoranQris;
+      }
+    }
+
+    // [BARU] Tentukan apakah transaksi ini bersifat Piutang
+    const isPiutang = isBelumLunas || isPotongGaji || isMarketplace;
+
+    // [BARU] LOGIKA PENENTUAN TOP OTOMATIS
+    let finalTop = 0;
+    if (isPiutang) {
+      // Jika Piutang, paksa TOP sesuai aturan cabang
+      finalTop = user.cabang === "KPR" ? 30 : 14;
+    } else {
+      // Jika Tunai (Lunas), TOP tetap 0
+      finalTop = 0;
     }
 
     const invNomor = isNew
@@ -783,6 +812,10 @@ const saveData = async (payload, user) => {
       ? Number(header.mpBiayaPlatform) || 0
       : 0;
 
+    const totalNonTunai =
+      Number(payment.transfer?.nominal || 0) +
+      Number(payment.qris?.nominal || 0);
+
     // 1. INSERT/UPDATE tinv_hdr
     if (isNew) {
       const invTanggal = toSqlDate(header.tanggal);
@@ -791,6 +824,7 @@ const saveData = async (payload, user) => {
           inv_idrec, inv_nomor, inv_nomor_so, inv_tanggal,
           inv_cab,
           inv_cus_kode, inv_cus_level, inv_ket, inv_sc,
+          inv_top,
           inv_disc, inv_bkrm, inv_dp, inv_bayar, inv_pundiamal, inv_diskon_pembulatan,
           inv_rptunai, inv_novoucher, inv_rpvoucher, inv_rpcard, inv_nosetor,
           inv_kembali,
@@ -799,7 +833,7 @@ const saveData = async (payload, user) => {
           inv_print,
           user_create, date_create
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, 
+          ?, ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
       `;
@@ -816,6 +850,7 @@ const saveData = async (payload, user) => {
           .charAt(0),
         header.keterangan,
         header.salesCounter,
+        finalTop,
 
         // DISKON FAKTUR
         totalDiskon, // inv_disc
@@ -831,7 +866,7 @@ const saveData = async (payload, user) => {
         bayarTunaiBersih, // inv_rptunai
         payment.voucher?.nomor || "",
         Number(payment.voucher?.nominal || 0),
-        Number(payment.transfer?.nominal || 0),
+        totalNonTunai,
         nomorSetoran,
         kembalianFinal,
 
@@ -858,7 +893,7 @@ const saveData = async (payload, user) => {
       const updateSql = `
         UPDATE tinv_hdr SET
           inv_nomor_so = ?, inv_tanggal = ?, inv_cab = ?, inv_cus_kode = ?, inv_cus_level = ?, inv_ket = ?, inv_sc = ?,
-          inv_disc = ?, inv_bkrm = ?, inv_dp = ?, inv_bayar = ?, inv_pundiamal = ?, inv_diskon_pembulatan = ?,
+          inv_top = ?, inv_disc = ?, inv_bkrm = ?, inv_dp = ?, inv_bayar = ?, inv_pundiamal = ?, inv_diskon_pembulatan = ?,
           inv_rptunai = ?, inv_novoucher = ?, inv_rpvoucher = ?, inv_rpcard = ?, inv_nosetor = ?,
           inv_kembali = ?,
           inv_mem_hp = ?, inv_mem_nama = ?, inv_mem_alamat = ?, 
@@ -879,6 +914,7 @@ const saveData = async (payload, user) => {
           .charAt(0),
         header.keterangan,
         header.salesCounter,
+        finalTop,
         totalDiskon,
         biayaKirim,
         dpDipakai,
@@ -1051,7 +1087,7 @@ const saveData = async (payload, user) => {
       toSqlDate(header.tanggal),
       header.customer.kode, // NIK atau Kode Customer
       invNomor,
-      header.top || 0, // Jika tunai biasanya TOP 0
+      finalTop, // Jika tunai biasanya TOP 0
       nominalHeaderPiutang, // Insert Nominal Invoice (misal 138000)
       user.cabang, // Tambahan field cabang (biasanya ada di desktop lama)
     ]);
@@ -1334,6 +1370,66 @@ const saveData = async (payload, user) => {
         Number(payment.transfer.nominal || 0),
         nomorSetoranReal || "-",
         angsurId,
+      ]);
+    }
+
+    if ((payment.qris?.nominal || 0) > 0) {
+      const nomorSetoranQris = await generateNewSetorNumber(
+        connection,
+        user.cabang,
+        header.tanggal,
+      );
+      const idrecQris = `${user.cabang}QR${format(new Date(), "yyyyMMddHHmmssSSS")}`;
+
+      // 1. Insert ke Header Setoran (sh_jenis = 3 untuk QRIS)
+      const qrisHdrSql = `
+    INSERT INTO tsetor_hdr (
+      sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, 
+      sh_jenis, -- Kita isi 1 (TRANSFER)
+      sh_nominal, sh_akun, sh_norek, sh_tgltransfer, sh_otomatis, 
+      sh_ket, -- Kita isi 'PEMBAYARAN QRIS KASIR'
+      user_create, date_create
+    )
+    VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 'Y', 'PEMBAYARAN QRIS KASIR', ?, NOW());
+  `;
+      await connection.query(qrisHdrSql, [
+        idrecQris,
+        nomorSetoranQris,
+        header.customer.kode,
+        toSqlDateTime(header.tanggal),
+        Number(payment.qris.nominal || 0),
+        payment.qris.akun?.kode || "",
+        payment.qris.akun?.rekening || "",
+        toSqlDateTime(payment.qris.tanggal),
+        user.kode,
+      ]);
+
+      // Insert detail setoran
+      const angsurIdQris = `${user.cabang}QS${format(new Date(), "yyyyMMddHHmmssSSS")}`;
+      const qrisDtlSql = `
+    INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut)
+    VALUES (?, ?, ?, ?, ?, 'PEMBAYARAN QRIS KASIR', ?, 1);
+  `;
+      await connection.query(qrisDtlSql, [
+        idrecQris,
+        nomorSetoranQris,
+        toSqlDateTime(header.tanggal),
+        invNomor,
+        Number(payment.qris.nominal || 0),
+        angsurIdQris,
+      ]);
+
+      // Catat di Kartu Piutang (Kredit)
+      const piutangQrisSql = `
+    INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur)
+    VALUES (?, ?, 'Pembayaran QRIS', ?, ?, ?);
+  `;
+      await connection.query(piutangQrisSql, [
+        piutangNomor,
+        toSqlDateTime(payment.qris.tanggal),
+        Number(payment.qris.nominal || 0),
+        nomorSetoranQris,
+        angsurIdQris,
       ]);
     }
 
@@ -2383,22 +2479,41 @@ END AS total,
 const searchSoDtf = async (filters, user) => {
   const { term, customerKode } = filters;
   const searchTerm = `%${term || ""}%`;
+  const userCabang = user.cabang;
 
-  const query = `
+  // [FIX] Tentukan apakah filter LHK perlu diterapkan atau tidak
+  const needsLhkFilter = userCabang !== "K01" && userCabang !== "K03";
+
+  let query = `
         SELECT h.sd_nomor AS nomor, h.sd_tanggal AS tanggal, h.sd_nama AS namaDtf, h.sd_ket AS keterangan
         FROM tsodtf_hdr h
         WHERE h.sd_stok = "" AND h.sd_alasan = "" 
           AND h.sd_cab = ?
           AND h.sd_cus_kode = ?
+    `;
+
+  // Sisipkan filter LHK hanya untuk cabang di luar K01 dan K03
+  if (needsLhkFilter) {
+    query += `
+          AND EXISTS (
+              SELECT 1 FROM tdtf 
+              WHERE tdtf.sodtf = h.sd_nomor
+          )
+    `;
+  }
+
+  query += `
           AND h.sd_nomor NOT IN (
               SELECT DISTINCT sod_sd_nomor FROM tso_dtl WHERE sod_sd_nomor <> ''
               UNION ALL
               SELECT DISTINCT invd_sd_nomor FROM tinv_dtl WHERE invd_sd_nomor <> ''
           )
-          AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?);
+          AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?)
+        ORDER BY h.sd_nomor DESC;
     `;
+
   const [rows] = await pool.query(query, [
-    user.cabang,
+    userCabang,
     customerKode,
     searchTerm,
     searchTerm,

@@ -28,14 +28,15 @@ const generateNewFskNumber = async (cabang, tanggal) => {
 
 /**
  * Memuat data setoran harian untuk form baru.
- * Diadaptasi dari prosedur `loadnew` di Delphi.
+ * Diperbarui untuk membedakan Transfer manual dan QRIS (Legacy Mode).
  */
 const loadInitialData = async (tanggal, user) => {
   const { cabang } = user;
   const params = [cabang, tanggal];
 
-  // Query untuk grid pertama (detail setoran)
+  // 1. Query untuk grid pertama (detail setoran)
   const detail1Query = `
+        -- A. TUNAI DARI INVOICE
         SELECT 
             'SETORAN KASIR TUNAI' AS jenis, h.inv_tanggal AS tgltrf, h.inv_cus_kode AS kdcus, 
             c.cus_nama AS nmcus, c.cus_alamat AS alamat, h.inv_nomor AS inv, 
@@ -46,6 +47,7 @@ const loadInitialData = async (tanggal, user) => {
         
         UNION ALL
         
+        -- B. PEMBAYARAN TUNAI (PELUNASAN)
         SELECT 
             'PEMBAYARAN TUNAI' AS jenis, NULL AS tgltrf, h.sh_cus_kode, 
             c.cus_nama, c.cus_alamat, 
@@ -57,6 +59,7 @@ const loadInitialData = async (tanggal, user) => {
         
         UNION ALL
         
+        -- C. PEMBAYARAN TRANSFER (KECUALI YANG ADA KATA QRIS)
         SELECT 
             'PEMBAYARAN TRANSFER' AS jenis, h.sh_tgltransfer, h.sh_cus_kode, 
             c.cus_nama, c.cus_alamat,
@@ -64,10 +67,23 @@ const loadInitialData = async (tanggal, user) => {
             h.sh_nomor, h.sh_nominal AS nominal
         FROM tsetor_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode=h.sh_cus_kode
-        WHERE LEFT(h.sh_nomor,3)=? AND h.sh_jenis=1 AND h.sh_tanggal=?
+        WHERE LEFT(h.sh_nomor,3)=? AND h.sh_jenis=1 AND h.sh_ket NOT LIKE '%QRIS%' AND h.sh_tanggal=?
+        
+        UNION ALL
+
+        -- D. PEMBAYARAN QRIS (JENIS 1 DENGAN KETERANGAN QRIS)
+        SELECT 
+            'PEMBAYARAN QRIS' AS jenis, h.sh_tgltransfer, h.sh_cus_kode, 
+            c.cus_nama, c.cus_alamat,
+            (SELECT d.sd_inv FROM tsetor_dtl d WHERE d.sd_sh_nomor=h.sh_nomor ORDER BY d.sd_tanggal DESC LIMIT 1) AS inv,
+            h.sh_nomor, h.sh_nominal AS nominal
+        FROM tsetor_hdr h
+        LEFT JOIN tcustomer c ON c.cus_kode=h.sh_cus_kode
+        WHERE LEFT(h.sh_nomor,3)=? AND h.sh_jenis=1 AND h.sh_ket LIKE '%QRIS%' AND h.sh_tanggal=?
         
         UNION ALL
         
+        -- E. PEMBAYARAN GIRO
         SELECT 
             'PEMBAYARAN GIRO' AS jenis, h.sh_tglgiro, h.sh_cus_kode, 
             c.cus_nama, c.cus_alamat, 
@@ -77,24 +93,32 @@ const loadInitialData = async (tanggal, user) => {
         LEFT JOIN tcustomer c ON c.cus_kode=h.sh_cus_kode
         WHERE LEFT(h.sh_nomor,3)=? AND h.sh_jenis=2 AND h.sh_tanggal=?;
     `;
+
+  // Total 5 Spread Params untuk 5 blok UNION ALL
   const [details1] = await pool.query(detail1Query, [
+    ...params,
     ...params,
     ...params,
     ...params,
     ...params,
   ]);
 
-  // Query untuk grid kedua (summary)
+  // 2. Query untuk grid kedua (summary per jenis)
   const detail2Query = `
         SELECT 'SETORAN KASIR TUNAI' AS jenis, IFNULL(SUM(h.inv_rptunai), 0) AS nominal FROM tinv_hdr h WHERE LEFT(h.inv_nomor,3)=? AND h.inv_sts_pro=0 AND h.inv_rptunai<>0 AND h.inv_tanggal=?
         UNION ALL
         SELECT "PEMBAYARAN TUNAI" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=0 AND s.sh_tanggal=?
         UNION ALL
-        SELECT "PEMBAYARAN TRANSFER" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=1 AND s.sh_tanggal=?
+        SELECT "PEMBAYARAN TRANSFER" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=1 AND s.sh_ket NOT LIKE '%QRIS%' AND s.sh_tanggal=?
+        UNION ALL
+        -- [FIX] Filter QRIS menggunakan LIKE pada keterangan
+        SELECT "PEMBAYARAN QRIS" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=1 AND s.sh_ket LIKE '%QRIS%' AND s.sh_tanggal=?
         UNION ALL
         SELECT "PEMBAYARAN GIRO" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=2 AND s.sh_tanggal=?;
     `;
+
   const [details2] = await pool.query(detail2Query, [
+    ...params,
     ...params,
     ...params,
     ...params,
@@ -174,8 +198,8 @@ const saveData = async (payload, user) => {
             user.cabang
           } sudah membuat FSK untuk tanggal ${format(
             new Date(header.tanggal),
-            "dd/MM/yyyy"
-          )} (${existing[0].fsk_nomor}).`
+            "dd/MM/yyyy",
+          )} (${existing[0].fsk_nomor}).`,
         );
       }
       // --- AKHIR VALIDASI ---
@@ -201,7 +225,7 @@ const saveData = async (payload, user) => {
     // Simpan Detail 1
     await connection.query(
       "DELETE FROM tform_setorkasir_dtl WHERE fskd_nomor = ?",
-      [fskNomor]
+      [fskNomor],
     );
     if (details1.length > 0) {
       const dtl1Sql = `
@@ -214,7 +238,7 @@ const saveData = async (payload, user) => {
         d.jenis,
         toSqlDate(d.tgltrf),
         d.kdcus,
-        d.inv || '',
+        d.inv || "",
         d.nomor,
         d.nominal,
       ]);
@@ -224,7 +248,7 @@ const saveData = async (payload, user) => {
     // Simpan Detail 2
     await connection.query(
       "DELETE FROM tform_setorkasir_dtl2 WHERE fskd2_nomor = ?",
-      [fskNomor]
+      [fskNomor],
     );
     if (details2.length > 0) {
       const dtl2Sql = `
@@ -308,10 +332,10 @@ const remove = async (nomor, user) => {
     await connection.beginTransaction();
 
     const [rows] = await connection.query(
-    `
+      `
       SELECT fsk_userv, fsk_closing FROM tform_setorkasir_hdr WHERE fsk_nomor = ?
     `,
-      [nomor]
+      [nomor],
     );
 
     if (rows.length === 0) throw new Error("Data tidak ditemukan.");
@@ -325,8 +349,8 @@ const remove = async (nomor, user) => {
       throw new Error(
         `Anda tidak berhak menghapus data milik cabang ${nomor.substring(
           0,
-          3
-        )}.`
+          3,
+        )}.`,
       );
     }
     if (setoran.fsk_closing === "Y") {
@@ -336,7 +360,7 @@ const remove = async (nomor, user) => {
 
     await connection.query(
       "DELETE FROM tform_setorkasir_hdr WHERE fsk_nomor = ?",
-      [nomor]
+      [nomor],
     );
 
     await connection.commit();

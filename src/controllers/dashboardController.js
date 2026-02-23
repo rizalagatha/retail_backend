@@ -59,7 +59,7 @@ const getTopSellingProducts = async (req, res) => {
     // Kirim user dan filter cabang ke service
     const data = await dashboardService.getTopSellingProducts(
       req.user,
-      branchFilter
+      branchFilter,
     );
 
     res.json(data);
@@ -151,9 +151,16 @@ const getTotalStokPerCabang = async (req, res) => {
 
 const getItemSalesTrend = async (req, res) => {
   try {
-    const data = await dashboardService.getItemSalesTrend(req.user);
+    // 1. Tangkap parameter 'export' dari URL (?export=true)
+    // Kita konversi string 'true' menjadi boolean true riil
+    const isExport = req.query.export === "true";
+
+    // 2. Teruskan req.user dan flag isExport ke Service
+    const data = await dashboardService.getItemSalesTrend(req.user, isExport);
+
     res.json(data);
   } catch (error) {
+    console.error("Error Trend Penjualan:", error);
     res.status(500).json({ message: "Gagal memuat trend barang." });
   }
 };
@@ -179,7 +186,7 @@ const getAppChangelog = async (req, res) => {
 
     // Urutkan dari versi terbaru ke terlama
     formattedLog.sort((a, b) =>
-      b.version.localeCompare(a.version, undefined, { numeric: true })
+      b.version.localeCompare(a.version, undefined, { numeric: true }),
     );
 
     res.json(formattedLog);
@@ -208,7 +215,7 @@ const getStokKosong = async (req, res) => {
     const items = await dashboardService.getStokKosongReguler(
       req.user,
       searchTerm,
-      targetCabang
+      targetCabang,
     );
 
     res.json({
@@ -257,6 +264,85 @@ const getParetoDetails = async (req, res) => {
   }
 };
 
+const getShipmentSchedules = async (req, res) => {
+  try {
+    const data = await dashboardService.getShipmentSchedules(req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: "Gagal memuat jadwal kirim" });
+  }
+};
+
+const createShipmentSchedule = async (req, res) => {
+  try {
+    // Validasi: Hanya user KDC yang boleh input
+    if (req.user.cabang !== "KDC") {
+      return res
+        .status(403)
+        .json({ message: "Hanya Pusat (KDC) yang bisa input jadwal" });
+    }
+
+    const result = await dashboardService.saveShipmentSchedule(
+      req.body,
+      req.user,
+    );
+    res.status(201).json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+const updateStatus = async (req, res) => {
+  try {
+    const { id, status } = req.body;
+    // Hanya user KDC (Warehouse) yang boleh mengubah status
+    if (req.user.cabang !== "KDC") {
+      return res.status(403).json({ message: "Akses ditolak" });
+    }
+    const result = await dashboardService.updateShipmentStatus(id, status);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getMasterJadwal = async (req, res) => {
+  const data = await dashboardService.getMasterJadwalRutin();
+  res.json(data);
+};
+
+const getCashflowSummary = async (req, res) => {
+  try {
+    // Ambil 'date' dari query string (?date=...)
+    const targetDate = req.query.date;
+    const data = await dashboardService.getCashflowSummary(
+      req.user,
+      targetDate,
+    );
+    res.json(data);
+  } catch (error) {
+    console.error("Error Cashflow:", error);
+    res.status(500).json({ message: "Gagal memuat ringkasan cashflow." });
+  }
+};
+
+const getBranchInfo = async (req, res) => {
+  try {
+    // Mengambil parameter cabang dari URL (:cabang)
+    const { cabang } = req.params;
+
+    if (!cabang) {
+      return res.status(400).json({ message: "Kode cabang tidak disertakan." });
+    }
+
+    const data = await dashboardService.getBranchInfo(cabang);
+    res.json(data);
+  } catch (error) {
+    console.error("Error in getBranchInfo controller:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -278,4 +364,10 @@ module.exports = {
   getStokKosong,
   getParetoStockHealth,
   getParetoDetails,
+  getShipmentSchedules,
+  createShipmentSchedule,
+  updateStatus,
+  getMasterJadwal,
+  getCashflowSummary,
+  getBranchInfo,
 };

@@ -401,6 +401,7 @@ const getList = async (filters) => {
         sh.sh_tgltransfer AS TglTransfer,
         sh.sh_akun AS Akun,
         rek.rek_rekening AS NoRekening,
+        rek.rek_nama AS NamaBank,
 
         h.inv_rj_nomor AS NoRetur,
         h.inv_rj_rp AS RpRetur,

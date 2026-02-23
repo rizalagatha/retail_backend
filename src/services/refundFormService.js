@@ -388,7 +388,7 @@ const getPrintData = async (nomor, user) => {
             ? AS usr_signature
         FROM trefund_hdr h
         LEFT JOIN trefund_dtl d ON d.rfd_nomor = h.rf_nomor
-        LEFT JOIN retail.tcustomer c ON c.cus_kode = d.rfd_cus_kode
+        LEFT JOIN tcustomer c ON c.cus_kode = d.rfd_cus_kode
         LEFT JOIN tinv_hdr i ON i.inv_nomor = d.rfd_notrs
         LEFT JOIN tsetor_hdr s ON s.sh_nomor = d.rfd_notrs
         LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.rf_nomor, 3)

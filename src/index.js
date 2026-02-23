@@ -209,6 +209,19 @@ app.use("/memos", (req, res, next) => {
   }
   next();
 });
+app.use(
+  "/memos",
+  express.static(memoFolderPath, {
+    setHeaders: (res, filePath) => {
+      // Cek jika file yang direquest adalah PDF
+      if (path.extname(filePath).toLowerCase() === ".pdf") {
+        // Paksa browser untuk menampilkan file, bukan mengunduh
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", "inline");
+      }
+    },
+  }),
+);
 app.use("/memos", express.static(memoFolderPath));
 app.disable("etag");
 requiredDirs.forEach((dir) => {

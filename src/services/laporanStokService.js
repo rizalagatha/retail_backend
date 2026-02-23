@@ -77,6 +77,8 @@ const getRealTimeStock = async (filters) => {
 
     const havingClause = !tampilkanKosong ? "HAVING TOTAL > 0" : "";
 
+    const isKDC = gudang === "KDC" ? 1 : 0;
+
     const query = `
         SELECT
             a.brg_kode AS KODE,
@@ -86,6 +88,21 @@ const getRealTimeStock = async (filters) => {
             ${dynamicColumns}  -- <--- INI BAGIAN DINAMISNYA
             
             , SUM(s.stok) AS TOTAL
+            -- [BARU] Hitung Total Qty di Packing List yang masih OPEN (Hanya untuk KDC)
+            , IF(${isKDC}, 
+            IFNULL((
+              SELECT SUM(pld.pld_jumlah) 
+              FROM tpacking_list_dtl pld
+              JOIN tpacking_list_hdr plh ON pld.pld_nomor = plh.pl_nomor
+              WHERE pld.pld_kode = a.brg_kode AND plh.pl_status = 'O'
+            ), 0), 
+          0) AS PL
+          -- [BARU] Hitung Total 2 (Stok Bebas / Tersedia)
+        , (SUM(s.stok) - IF(${isKDC}, 
+            IFNULL((SELECT SUM(pld.pld_jumlah) FROM tpacking_list_dtl pld 
+                    JOIN tpacking_list_hdr plh ON pld.pld_nomor = plh.pl_nomor 
+                    WHERE pld.pld_kode = a.brg_kode AND plh.pl_status = 'O'), 0), 
+          0)) AS TOTAL2
             , IFNULL((SELECT SUM(brgd_min) FROM tbarangdc_dtl b WHERE b.brgd_kode = a.brg_kode), 0) AS Buffer
         FROM tbarangdc a
         LEFT JOIN (
@@ -251,6 +268,8 @@ const getRealTimeStockExport = async (filters) => {
       params.push(kodeBarang);
     }
 
+    const isKDC = gudang === "KDC" ? 1 : 0;
+
     // 3. Query Utama
     // Gunakan variabel 'isShowZero' yang sudah dikonversi
     const query = `
@@ -262,6 +281,25 @@ const getRealTimeStockExport = async (filters) => {
             b.brgd_ukuran AS UKURAN,
             b.brgd_hpp AS HPP,
             COALESCE(s.stok, 0) AS TOTAL,
+            IF(${isKDC}, 
+            IFNULL((
+                SELECT SUM(pld.pld_jumlah) 
+                FROM tpacking_list_dtl pld
+                JOIN tpacking_list_hdr plh ON pld.pld_nomor = plh.pl_nomor
+                WHERE pld.pld_kode = a.brg_kode AND pld.pld_ukuran = b.brgd_ukuran AND plh.pl_status = 'O'
+            ), 0),
+        0) AS PL_QTY,
+
+        -- [BARU] Kolom TOTAL2: Total Fisik dikurangi PL yang masih Open
+            (COALESCE(s.stok, 0) - IF(${isKDC}, 
+                IFNULL((
+                    SELECT SUM(pld.pld_jumlah) 
+                    FROM tpacking_list_dtl pld
+                    JOIN tpacking_list_hdr plh ON pld.pld_nomor = plh.pl_nomor
+                    WHERE pld.pld_kode = a.brg_kode AND pld.pld_ukuran = b.brgd_ukuran AND plh.pl_status = 'O'
+                ), 0),
+            0)) AS TOTAL2,
+        
             COALESCE(b.brgd_min, 0) AS BUFFER
         FROM tbarangdc a
         JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode

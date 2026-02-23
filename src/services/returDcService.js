@@ -16,7 +16,7 @@ const getList = async (filters, user) => {
       h.rb_ket AS keterangan,
       h.rb_closing AS closing
     FROM trbdc_hdr h
-    LEFT JOIN retail.tdcrb_hdr t ON t.rb_nomor = h.rb_noterima
+    LEFT JOIN tdcrb_hdr t ON t.rb_nomor = h.rb_noterima
     LEFT JOIN tgudang g ON g.gdg_kode = h.rb_kecab
     WHERE 
       h.rb_cab = ? 
@@ -40,8 +40,8 @@ const getDetails = async (nomor) => {
       (IFNULL(r.rbd_jumlah, 0) - IF(d.rbd_input <> 0, d.rbd_input, d.rbd_jumlah)) AS selisih
     FROM trbdc_dtl d
     INNER JOIN trbdc_hdr h ON d.rbd_nomor = h.rb_nomor
-    LEFT JOIN retail.tdcrb_dtl r ON r.rbd_nomor = h.rb_noterima AND r.rbd_kode = d.rbd_kode AND r.rbd_ukuran = d.rbd_ukuran
-    LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.rbd_kode
+    LEFT JOIN tdcrb_dtl r ON r.rbd_nomor = h.rb_noterima AND r.rbd_kode = d.rbd_kode AND r.rbd_ukuran = d.rbd_ukuran
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.rbd_kode
     WHERE d.rbd_nomor = ?;
   `;
   const [rows] = await pool.query(query, [nomor]);
@@ -55,7 +55,7 @@ const remove = async (nomor, user) => {
     await connection.beginTransaction();
     const [rows] = await connection.query(
       "SELECT rb_noterima, rb_closing, rb_cab AS cabang FROM trbdc_hdr WHERE rb_nomor = ?",
-      [nomor]
+      [nomor],
     );
     if (rows.length === 0) throw new Error("Dokumen tidak ditemukan.");
     const doc = rows[0];

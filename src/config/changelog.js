@@ -1,4 +1,30 @@
 const changelogs = {
+  "1.3.8": {
+    date: "2026-02-11",
+    changes: [
+      {
+        title: "Pembaruan:",
+        items: [
+          "Pembaruan pada halaman Surat Pesanan seperti yang sudah dijelaskan kemarin",
+          "Operator DTF wajib menginputkan LHK Jasa terlebih dahulu sebelum menambahkan SO DTF ke Surat Pesanan",
+          "Fitur Batal Refund untuk Finance, jika terdapat pembatalan refund oleh customer",
+          "Metode Pembayaran Baru : QRIS, dapat digunakan di invoice maupun DP Surat Pesanan",
+          "Halaman Baru Memo Internal",
+          "Pembaruan beberapa Card pada Dashboard, termasuk Jadwal Kirim DC",
+        ],
+      },
+      {
+        title: "Penambahan:",
+        items: [
+          "Fitur export data pada halaman Pricelist",
+          "Penambahan kolom QTY Packing List dan total tersedia pada Laporan Stok Real Time DC Pusat",
+          "Validasi wajib mengisi Nama Barang pada Pengajuan Harga",
+          "Lonceng pengingat pada navigation bar",
+          "Penambahan Tombol untuk melihat Google Maps masing-masing Store",
+        ],
+      },
+    ],
+  },
   "1.3.7": {
     date: "2026-02-11",
     changes: [

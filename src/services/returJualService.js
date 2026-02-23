@@ -45,7 +45,7 @@ const getList = async (filters, user) => {
         CASE h.rj_jenis 
           WHEN 'N' THEN 'TUKAR BARANG'
           WHEN 'O' THEN 'RETUR ONLINE'
-          ELSE 'SALAH QTY'
+          ELSE 'PENGEMBALIAN'
         END AS jenis,
         h.rj_ket AS keterangan,
         h.rj_closing AS closing,

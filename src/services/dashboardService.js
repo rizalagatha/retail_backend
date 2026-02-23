@@ -784,42 +784,45 @@ const getStockPerCabang = async () => {
   return rows;
 };
 
-const getItemSalesTrend = async (user) => {
-  // Hanya KDC
+const getItemSalesTrend = async (user, isExport = false) => {
   if (user.cabang !== "KDC") return [];
 
   const query = `
     SELECT 
         a.brg_kode AS kode,
         TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+        COUNT(DISTINCT CASE WHEN month_diff = 0 THEN h.inv_cab END) AS store_count_now,
         
-        -- Penjualan Bulan Ini (Running)
-        SUM(CASE WHEN DATE_FORMAT(h.inv_tanggal, '%Y-%m') = DATE_FORMAT(NOW(), '%Y-%m') 
-            THEN d.invd_jumlah ELSE 0 END) AS bulan_ini,
-            
-        -- Penjualan 1 Bulan Lalu
-        SUM(CASE WHEN DATE_FORMAT(h.inv_tanggal, '%Y-%m') = DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m') 
-            THEN d.invd_jumlah ELSE 0 END) AS bulan_min_1,
+        -- TAHUN INI
+        COALESCE(SUM(CASE WHEN month_diff = 0 THEN d.invd_jumlah ELSE 0 END) / NULLIF(COUNT(DISTINCT CASE WHEN month_diff = 0 THEN h.inv_cab END), 0), 0) AS avg_now,
+        COALESCE(SUM(CASE WHEN month_diff = 1 THEN d.invd_jumlah ELSE 0 END) / NULLIF(COUNT(DISTINCT CASE WHEN month_diff = 1 THEN h.inv_cab END), 0), 0) AS avg_min_1,
+        COALESCE(SUM(CASE WHEN month_diff = 2 THEN d.invd_jumlah ELSE 0 END) / NULLIF(COUNT(DISTINCT CASE WHEN month_diff = 2 THEN h.inv_cab END), 0), 0) AS avg_min_2,
+        COALESCE(SUM(CASE WHEN month_diff = 3 THEN d.invd_jumlah ELSE 0 END) / NULLIF(COUNT(DISTINCT CASE WHEN month_diff = 3 THEN h.inv_cab END), 0), 0) AS avg_min_3,
 
-        -- Penjualan 2 Bulan Lalu
-        SUM(CASE WHEN DATE_FORMAT(h.inv_tanggal, '%Y-%m') = DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 2 MONTH), '%Y-%m') 
-            THEN d.invd_jumlah ELSE 0 END) AS bulan_min_2,
-
-        -- Penjualan 3 Bulan Lalu
-        SUM(CASE WHEN DATE_FORMAT(h.inv_tanggal, '%Y-%m') = DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 3 MONTH), '%Y-%m') 
-            THEN d.invd_jumlah ELSE 0 END) AS bulan_min_3,
-
-        -- Total 4 Bulan
-        SUM(d.invd_jumlah) AS total_qty
+        -- TAHUN LALU (Data Historis & Prediksi)
+        COALESCE(SUM(CASE WHEN month_diff = 12 THEN d.invd_jumlah ELSE 0 END) / NULLIF(COUNT(DISTINCT CASE WHEN month_diff = 12 THEN h.inv_cab END), 0), 0) AS avg_ly_now,
+        COALESCE(SUM(CASE WHEN month_diff = 11 THEN d.invd_jumlah ELSE 0 END) / NULLIF(COUNT(DISTINCT CASE WHEN month_diff = 11 THEN h.inv_cab END), 0), 0) AS avg_ly_plus_1,
+        COALESCE(SUM(CASE WHEN month_diff = 10 THEN d.invd_jumlah ELSE 0 END) / NULLIF(COUNT(DISTINCT CASE WHEN month_diff = 10 THEN h.inv_cab END), 0), 0) AS avg_ly_plus_2
 
     FROM tinv_hdr h
     JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
     JOIN tbarangdc a ON a.brg_kode = d.invd_kode
+    LEFT JOIN (
+        SELECT inv_nomor, 
+        PERIOD_DIFF(DATE_FORMAT(NOW(), '%Y%m'), DATE_FORMAT(inv_tanggal, '%Y%m')) as month_diff
+        FROM tinv_hdr
+    ) diff ON diff.inv_nomor = h.inv_nomor
     WHERE h.inv_sts_pro = 0 
-      AND h.inv_tanggal >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 3 MONTH), '%Y-%m-01') -- Ambil sejak 3 bulan lalu
+      AND a.brg_warna NOT LIKE '%STICKER%' 
+      AND a.brg_jeniskaos NOT LIKE '%STIKER%'
+      AND a.brg_jeniskaos NOT LIKE '%DTF%'
+      AND a.brg_aktif = 0
+      -- Ambil range bulan yang dibutuhkan
+      AND diff.month_diff IN (0, 1, 2, 3, 10, 11, 12)
     GROUP BY a.brg_kode, nama
-    ORDER BY bulan_ini DESC -- Urutkan dari yang terlaris bulan ini
-    LIMIT 10; -- Ambil Top 10 saja agar tidak berat
+    HAVING store_count_now > 1
+    ORDER BY avg_now DESC
+    ${isExport ? "" : "LIMIT 10"};
   `;
 
   const [rows] = await pool.query(query);
@@ -880,19 +883,31 @@ const getStockAlerts = async (user) => {
     paramsPinjam.push(cabang);
   }
 
+  // 5. [BARU] Cek Memo Internal yang diupload hari ini
+  const queryMemo = `
+  SELECT 
+    COUNT(*) AS total, 
+    MAX(mi_date_upload) AS latest_date -- Ambil tanggal upload terakhir
+  FROM tmemo_internal
+`;
+
   // Jalankan Query secara paralel
-  const [rowsSj, rowsMutasi, rowsReturDc, rowsPinjam] = await Promise.all([
-    pool.query(querySj, [cabang]),
-    pool.query(queryMutasi, [cabang]),
-    pool.query(queryReturDc, [cabang]),
-    pool.query(queryPinjam, paramsPinjam),
-  ]);
+  const [rowsSj, rowsMutasi, rowsReturDc, rowsPinjam, rowsMemo] =
+    await Promise.all([
+      pool.query(querySj, [cabang]),
+      pool.query(queryMutasi, [cabang]),
+      pool.query(queryReturDc, [cabang]),
+      pool.query(queryPinjam, paramsPinjam),
+      pool.query(queryMemo), //
+    ]);
 
   return {
     sj_pending: rowsSj[0][0].total || 0,
     mutasi_pending: rowsMutasi[0][0].total || 0,
     retur_dc_pending: rowsReturDc[0][0].total || 0, // [BARU]
     pinjam_overdue: rowsPinjam[0][0].total || 0,
+    new_memo_count: rowsMemo[0][0].total || 0,
+    latest_memo_date: rowsMemo[0][0].latest_date || null,
   };
 };
 
@@ -1227,6 +1242,121 @@ const getParetoDetails = async (req, res) => {
   }
 };
 
+// Fungsi mengambil jadwal kirim
+const getShipmentSchedules = async (user) => {
+  let branchFilter = "";
+  let params = [];
+
+  // Jika user Toko, hanya lihat jadwal untuk cabangnya sendiri
+  if (user.cabang !== "KDC") {
+    branchFilter = "WHERE j.cabang_tujuan = ?";
+    params.push(user.cabang);
+  }
+
+  const query = `
+        SELECT 
+            j.id, 
+            j.tanggal_kirim, 
+            j.cabang_tujuan, 
+            g.gdg_nama AS nama_cabang, 
+            j.no_sj, 
+            j.status, 
+            j.keterangan 
+        FROM tdashboard_jadwal_kirim j
+        LEFT JOIN tgudang g ON j.cabang_tujuan = g.gdg_kode
+        ${branchFilter}
+        ORDER BY j.tanggal_kirim DESC, j.id DESC
+        LIMIT 20;
+    `;
+  const [rows] = await pool.query(query, params);
+  return rows;
+};
+
+// Fungsi menyimpan jadwal (Khusus KDC)
+const saveShipmentSchedule = async (payload, user) => {
+  const { tanggal_kirim, cabang_tujuan, keterangan, status } = payload;
+
+  if (!tanggal_kirim || !cabang_tujuan) {
+    throw new Error("Data tidak lengkap");
+  }
+
+  // Kita hapus created_at dari query karena DB akan mengisinya otomatis
+  const query = `
+        INSERT INTO tdashboard_jadwal_kirim 
+        (tanggal_kirim, cabang_tujuan, keterangan, status, user_create)
+        VALUES (?, ?, ?, ?, ?)
+    `;
+
+  const [result] = await pool.query(query, [
+    tanggal_kirim,
+    cabang_tujuan,
+    keterangan || "",
+    status || "Antri",
+    user.kode, // Pastikan user.kode ini berisi username/id user
+  ]);
+
+  return { id: result.insertId, message: "Jadwal berhasil disimpan" };
+};
+
+const updateShipmentStatus = async (id, status) => {
+  const query = `UPDATE tdashboard_jadwal_kirim SET status = ? WHERE id = ?`;
+  await pool.query(query, [status, id]);
+  return { message: "Status jadwal berhasil diperbarui" };
+};
+
+const getMasterJadwalRutin = async () => {
+  const query = `SELECT * FROM tmaster_jadwal_rutin ORDER BY cabang_kode`;
+  const [rows] = await pool.query(query);
+  return rows;
+};
+
+const getCashflowSummary = async (user, targetDate = null) => {
+  // Pastikan targetDate ada dan bukan string 'undefined' atau 'null'
+  let finalDate;
+  if (targetDate && targetDate !== "undefined" && targetDate !== "") {
+    finalDate = targetDate;
+  } else {
+    finalDate = format(subDays(new Date(), 1), "yyyy-MM-dd"); // Default H-1
+  }
+
+  let branchFilter = "";
+  let params = [finalDate];
+
+  if (user.cabang !== "KDC") {
+    branchFilter = "AND LEFT(h.fsk_nomor, 3) = ?";
+    params.push(user.cabang);
+  }
+
+  // Query menggunakan parameter '?' untuk finalDate
+  const query = `
+    SELECT 
+        d.fskd2_jenis AS jenis,
+        SUM(d.fskd2_nominal) AS total_reported,
+        SUM(IFNULL(d.fskd2_nominalv, 0)) AS total_verified
+    FROM tform_setorkasir_hdr h
+    JOIN tform_setorkasir_dtl2 d ON h.fsk_nomor = d.fskd2_nomor
+    WHERE h.fsk_tanggal = ? ${branchFilter}
+    GROUP BY d.fskd2_jenis
+  `;
+
+  const [rows] = await pool.query(query, params);
+  return rows;
+};
+
+/**
+ * Mengambil informasi spesifik cabang (Place ID Google Maps)
+ */
+const getBranchInfo = async (cabang) => {
+  const query = `
+    SELECT gdg_kode, gdg_nama, gdg_place_id, gdg_lat, gdg_long -- Tambahkan lat long di sini
+    FROM tgudang 
+    WHERE gdg_kode = ?
+  `;
+
+  const [rows] = await pool.query(query, [cabang]);
+  return rows[0] || { gdg_place_id: null, gdg_lat: null, gdg_long: null };
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -1247,4 +1377,10 @@ module.exports = {
   getStokKosongReguler,
   getParetoStockHealth,
   getParetoDetails,
+  getShipmentSchedules,
+  saveShipmentSchedule,
+  updateShipmentStatus,
+  getMasterJadwalRutin,
+  getCashflowSummary,
+  getBranchInfo,
 };

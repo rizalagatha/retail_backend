@@ -7,8 +7,8 @@ const { format } = require("date-fns");
 const getSudah = async (connection, soNomor, kode, ukuran, excludeMoNomor) => {
   const query = `
         SELECT IFNULL(SUM(mod_jumlah), 0) AS total 
-        FROM retail.tmutasiout_dtl
-        JOIN retail.tmutasiout_hdr ON mo_nomor = mod_nomor
+        FROM tmutasiout_dtl
+        JOIN tmutasiout_hdr ON mo_nomor = mod_nomor
         WHERE mo_nomor <> ? AND mo_so_nomor = ? AND mod_kode = ? AND mod_ukuran = ?
     `;
   const [rows] = await connection.query(query, [
@@ -111,7 +111,7 @@ const getSoDetailsForGrid = async (soNomor, user) => {
         soNomor,
         row.kode,
         row.ukuran,
-        ""
+        "",
       );
       items.push({
         ...row,
@@ -151,7 +151,7 @@ const save = async (data, user) => {
     if (isNew) {
       const prefix = `${user.cabang}MO${format(
         new Date(header.tanggal),
-        "yyMM"
+        "yyMM",
       )}`;
 
       // Locking row untuk penomoran
@@ -159,7 +159,7 @@ const save = async (data, user) => {
         `SELECT IFNULL(MAX(RIGHT(mo_nomor, 5)), 0) as maxNum 
          FROM tmutasiout_hdr 
          WHERE LEFT(mo_nomor, 9) = ? FOR UPDATE`,
-        [prefix]
+        [prefix],
       );
 
       const nextNum = parseInt(maxRows[0].maxNum, 10) + 1;
@@ -178,14 +178,20 @@ const save = async (data, user) => {
           header.keCabang,
           header.keterangan,
           user.kode,
-        ]
+        ],
       );
     } else {
       await connection.query(
         `UPDATE tmutasiout_hdr 
          SET mo_tanggal = ?, mo_kecab = ?, mo_ket = ?, user_modified = ?, date_modified = NOW() 
          WHERE mo_nomor = ?`,
-        [header.tanggal, header.keCabang, header.keterangan, user.kode, moNomor]
+        [
+          header.tanggal,
+          header.keCabang,
+          header.keterangan,
+          user.kode,
+          moNomor,
+        ],
       );
     }
 
@@ -228,7 +234,7 @@ const save = async (data, user) => {
         `INSERT INTO tmutasiout_dtl 
              (mod_idrec, mod_iddrec, mod_nomor, mod_kode, mod_ukuran, mod_jumlah) 
              VALUES ?`,
-        [itemValues]
+        [itemValues],
       );
     }
 
@@ -254,7 +260,7 @@ const loadForEdit = async (nomor, user) => {
   try {
     const [headerRows] = await connection.query(
       "SELECT * FROM tmutasiout_hdr WHERE mo_nomor = ?",
-      [nomor]
+      [nomor],
     );
     if (headerRows.length === 0)
       throw new Error("Data Mutasi Out tidak ditemukan.");
@@ -262,13 +268,13 @@ const loadForEdit = async (nomor, user) => {
 
     const [savedDetails] = await connection.query(
       "SELECT * FROM tmutasiout_dtl WHERE mod_nomor = ?",
-      [nomor]
+      [nomor],
     );
     const templateItems = await getSoDetailsForGrid(header.mo_so_nomor, user);
 
     const items = templateItems.map((item) => {
       const savedItem = savedDetails.find(
-        (d) => d.mod_kode === item.kode && d.mod_ukuran === item.ukuran
+        (d) => d.mod_kode === item.kode && d.mod_ukuran === item.ukuran,
       );
       return {
         ...item,

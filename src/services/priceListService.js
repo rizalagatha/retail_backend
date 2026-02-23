@@ -71,7 +71,7 @@ const updatePrices = async (payload) => {
     for (const variant of variants) {
       await connection.query(
         "UPDATE tbarangdc_dtl SET brgd_hpp = ?, brgd_harga = ? WHERE brgd_kode = ? AND brgd_ukuran = ?",
-        [variant.hpp, variant.harga, kode, variant.ukuran]
+        [variant.hpp, variant.harga, kode, variant.ukuran],
       );
     }
 
@@ -85,4 +85,45 @@ const updatePrices = async (payload) => {
   }
 };
 
-module.exports = { getList, getDetails, updatePrices };
+const getExportData = async (filters) => {
+  const { kategori, hargaKosong, search } = filters;
+  let whereClause = 'WHERE a.brg_aktif = 0 AND a.brg_logstok = "Y"';
+  const queryParams = [];
+
+  if (kategori === "Kaosan") {
+    whereClause += ' AND a.brg_ktg = ""';
+  } else if (kategori === "Rezso") {
+    whereClause += ' AND a.brg_ktg <> ""';
+  }
+
+  if (hargaKosong === "true" || hargaKosong === true) {
+    whereClause += " AND b.brgd_harga = 0";
+  }
+
+  if (search) {
+    const searchTerm = `%${search}%`;
+    whereClause += ` AND (a.brg_kode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) LIKE ?)`;
+    queryParams.push(searchTerm, searchTerm);
+  }
+
+  const query = `
+    SELECT 
+        a.brg_kode AS Kode,
+        a.brg_ktgp AS Kategori,
+        TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS NamaBarang,
+        b.brgd_ukuran AS Ukuran,
+        b.brgd_barcode AS Barcode,
+        b.brgd_hpp AS HPP,
+        b.brgd_harga AS HargaJual,
+        (b.brgd_harga - b.brgd_hpp) AS Laba
+    FROM tbarangdc a
+    INNER JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
+    ${whereClause}
+    ORDER BY a.brg_kode, b.brgd_barcode;
+  `;
+
+  const [rows] = await pool.query(query, queryParams);
+  return rows;
+};
+
+module.exports = { getList, getDetails, updatePrices, getExportData };

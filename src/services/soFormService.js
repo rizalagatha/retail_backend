@@ -196,8 +196,8 @@ const save = async (data, user) => {
 
       await connection.query(
         `INSERT INTO tso_dtl 
-        (sod_idrec, sod_so_nomor, sod_kode, sod_ph_nomor, sod_sd_nomor, sod_ukuran, sod_jumlah, sod_harga, sod_disc, sod_diskon, sod_nourut, sod_custom, sod_custom_nama, sod_custom_data)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (sod_idrec, sod_so_nomor, sod_kode, sod_ph_nomor, sod_sd_nomor, sod_ukuran, sod_jumlah, sod_scanned, sod_harga, sod_disc, sod_diskon, sod_nourut, sod_custom, sod_custom_nama, sod_custom_data)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           idrec,
           soNomor,
@@ -206,6 +206,7 @@ const save = async (data, user) => {
           item.noSoDtf || "",
           item.ukuran || "",
           item.jumlah || 0,
+          item.sod_scanned || 0,
           item.harga || 0,
           item.diskonPersen || 0,
           item.diskonRp || 0,
@@ -359,6 +360,16 @@ const getSoForEdit = async (nomor) => {
     const mainQuery = `
   SELECT 
       h.*, d.*, 
+      d.sod_scanned AS scannedQty,
+      IFNULL((
+        SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+        FROM tmasterstokso m 
+        WHERE m.mst_aktif='Y' 
+          AND m.mst_cab = h.so_cab
+          AND m.mst_brg_kode = d.sod_kode 
+          AND m.mst_ukuran = d.sod_ukuran
+          AND m.mst_nomor_so = h.so_nomor
+      ), 0) AS mutatedQty,
       h.so_pro_nomor, 
       h.so_pro_nama,
       c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
@@ -475,6 +486,9 @@ const getSoForEdit = async (nomor) => {
         ukuran: row.sod_ukuran || "",
         stok: Number(row.Stok || 0),
         jumlah: Number(row.sod_jumlah || 0),
+        sod_scanned: Number(row.scannedQty || 0),
+        mutatedQty: Number(row.mutatedQty || 0), // 👈 Tambahkan ini
+        isMutated: Number(row.mutatedQty || 0) > 0, // 👈 Flag pengunci
         harga: Number(row.sod_harga || 0),
         diskonPersen: Number(row.sod_disc || 0),
         diskonRp: Number(row.sod_diskon || 0),
@@ -842,7 +856,19 @@ const saveNewDp = async (dpData, user) => {
     const idrec = `${cabang}SH${format(new Date(), "yyyyMMddHHmmssSSS")}`;
 
     // 3. Tentukan jenis
-    const jenisNum = jenis === "TUNAI" ? 0 : jenis === "TRANSFER" ? 1 : 2;
+    let jenisNum;
+    let finalKeterangan = keterangan || "DP";
+
+    if (jenis === "TUNAI") {
+      jenisNum = 0;
+    } else if (jenis === "TRANSFER") {
+      jenisNum = 1;
+    } else if (jenis === "QRIS") {
+      jenisNum = 1; // Paksa ke 1 agar muncul di Delphi Finance
+      finalKeterangan = `PEMBAYARAN QRIS - ${finalKeterangan}`; // Tambahkan marker di keterangan
+    } else {
+      jenisNum = 2; // GIRO
+    }
 
     let query, params;
 
@@ -878,7 +904,7 @@ const saveNewDp = async (dpData, user) => {
         soNomor,
         user.kode,
       ];
-    } else if (jenis === "TRANSFER") {
+    } else if (jenis === "TRANSFER" || jenis === "QRIS") {
       query = `
         INSERT INTO tsetor_hdr (
           sh_idrec,
@@ -912,7 +938,7 @@ const saveNewDp = async (dpData, user) => {
         bankData?.akun || "",
         bankData?.norek || "",
         bankData?.tglTransfer || tanggal,
-        keterangan || "",
+        finalKeterangan,
         soNomor, // sh_so_nomor
         cabang, // sh_cab
         user.kode,

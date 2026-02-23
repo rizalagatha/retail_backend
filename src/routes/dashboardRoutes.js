@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const dashboardController = require("../controllers/dashboardController");
 const { verifyToken } = require("../middleware/authMiddleware");
+const { verify } = require("jsonwebtoken");
 
 // Rute untuk mengambil statistik kartu (penjualan & transaksi hari ini)
 router.get("/today-stats", verifyToken, dashboardController.getTodayStats);
@@ -12,62 +13,62 @@ router.get("/sales-chart", verifyToken, dashboardController.getSalesChartData);
 router.get(
   "/cabang-options",
   verifyToken,
-  dashboardController.getCabangOptions
+  dashboardController.getCabangOptions,
 );
 
 router.get(
   "/recent-transactions",
   verifyToken,
-  dashboardController.getRecentTransactions
+  dashboardController.getRecentTransactions,
 );
 
 router.get(
   "/pending-actions",
   verifyToken,
-  dashboardController.getPendingActions
+  dashboardController.getPendingActions,
 );
 
 router.get(
   "/top-products",
   verifyToken,
-  dashboardController.getTopSellingProducts
+  dashboardController.getTopSellingProducts,
 );
 
 router.get(
   "/sales-target-summary",
   verifyToken,
-  dashboardController.getSalesTargetSummary
+  dashboardController.getSalesTargetSummary,
 );
 
 router.get(
   "/branch-performance",
   verifyToken,
-  dashboardController.getBranchPerformance
+  dashboardController.getBranchPerformance,
 );
 
 // Rute baru untuk ringkasan stok stagnan
 router.get(
   "/stagnant-stock-summary",
   verifyToken,
-  dashboardController.getStagnantStockSummary
+  dashboardController.getStagnantStockSummary,
 );
 
 router.get(
   "/total-sisa-piutang",
   verifyToken,
-  dashboardController.getTotalSisaPiutang
+  dashboardController.getTotalSisaPiutang,
 );
 
 router.get(
   "/piutang-per-cabang",
   verifyToken,
-  dashboardController.getPiutangPerCabang
+  dashboardController.getPiutangPerCabang,
 );
 
 router.get(
   "/piutang-per-invoice",
   verifyToken,
-  dashboardController.getPiutangPerInvoice
+  dashboardController.getPiutangPerInvoice,
 );
 
 router.get("/total-stok", verifyToken, dashboardController.getTotalStok);
@@ -75,13 +76,13 @@ router.get("/total-stok", verifyToken, dashboardController.getTotalStok);
 router.get(
   "/total-stok-per-cabang",
   verifyToken,
-  dashboardController.getTotalStokPerCabang
+  dashboardController.getTotalStokPerCabang,
 );
 
 router.get(
   "/item-sales-trend",
   verifyToken,
-  dashboardController.getItemSalesTrend
+  dashboardController.getItemSalesTrend,
 );
 
 router.get("/changelog", verifyToken, dashboardController.getAppChangelog);
@@ -93,13 +94,47 @@ router.get("/stok-kosong", verifyToken, dashboardController.getStokKosong);
 router.get(
   "/pareto-health",
   verifyToken,
-  dashboardController.getParetoStockHealth
+  dashboardController.getParetoStockHealth,
 );
 
 router.get(
   "/pareto-details",
   verifyToken,
-  dashboardController.getParetoDetails
+  dashboardController.getParetoDetails,
+);
+
+router.get(
+  "/shipment-schedules",
+  verifyToken,
+  dashboardController.getShipmentSchedules,
+);
+router.post(
+  "/shipment-schedules",
+  verifyToken,
+  dashboardController.createShipmentSchedule,
+);
+router.patch(
+  "/shipment-schedules/status",
+  verifyToken,
+  dashboardController.updateStatus,
+);
+
+router.get(
+  "/master-jadwal-rutin",
+  verifyToken,
+  dashboardController.getMasterJadwal,
+);
+
+router.get(
+  "/cashflow-summary",
+  verifyToken,
+  dashboardController.getCashflowSummary,
+);
+
+router.get(
+  "/branch-info/:cabang",
+  verifyToken,
+  dashboardController.getBranchInfo,
 );
 
 module.exports = router;
