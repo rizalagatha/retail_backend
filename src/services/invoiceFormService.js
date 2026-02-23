@@ -1,5 +1,5 @@
 const pool = require("../config/database");
-const { format } = require("date-fns");
+const { format, lastDayOfMonth, differenceInDays } = require("date-fns");
 const { validate } = require("uuid");
 const { applyRoundingPolicy } = require("../lib/numberUtils");
 
@@ -757,10 +757,20 @@ const saveData = async (payload, user) => {
     // [BARU] Tentukan apakah transaksi ini bersifat Piutang
     const isPiutang = isBelumLunas || isPotongGaji || isMarketplace;
 
-    // [BARU] LOGIKA PENENTUAN TOP OTOMATIS
+    // [BARU] LOGIKA PENENTUAN TOP OTOMATIS (Mendeteksi Payroll Period)
     let finalTop = 0;
-    if (isPiutang) {
-      // Jika Piutang, paksa TOP sesuai aturan cabang
+    if (isPotongGaji) {
+      // Hitung selisih hari sampai akhir bulan berjalan
+      const tanggalTransaksi = new Date(header.tanggal);
+      const hariTerakhirBulanIni = lastDayOfMonth(tanggalTransaksi);
+
+      // Hitung TOP agar jatuh tempo tepat di akhir bulan
+      finalTop = differenceInDays(hariTerakhirBulanIni, tanggalTransaksi);
+
+      // Safety check: jika transaksi dilakukan di hari terakhir, TOP minimal 0
+      if (finalTop < 0) finalTop = 0;
+    } else if (isPiutang) {
+      // Jika Piutang Umum, paksa TOP sesuai aturan cabang
       finalTop = user.cabang === "KPR" ? 30 : 14;
     } else {
       // Jika Tunai (Lunas), TOP tetap 0
