@@ -2483,6 +2483,8 @@ const searchSoDtf = async (filters, user) => {
   const searchTerm = `%${term || ""}%`;
   const userCabang = user.cabang;
 
+  const CUTOFF_DATE = "2026-02-23";
+
   // [FIX] Tentukan apakah filter LHK perlu diterapkan atau tidak
   const needsLhkFilter = userCabang !== "K01" && userCabang !== "K03";
 
@@ -2497,9 +2499,15 @@ const searchSoDtf = async (filters, user) => {
   // Sisipkan filter LHK hanya untuk cabang di luar K01 dan K03
   if (needsLhkFilter) {
     query += `
-          AND EXISTS (
-              SELECT 1 FROM tdtf 
-              WHERE tdtf.sodtf = h.sd_nomor
+          AND (
+            -- Aturan 1: Jika tanggal SO di bawah 23 Feb 2026, langsung lolos (Legacy)
+            h.sd_tanggal < '${CUTOFF_DATE}' 
+            OR 
+            -- Aturan 2: Jika tanggal SO >= 23 Feb 2026, WAJIB ada di tabel LHK (tdtf)
+            EXISTS (
+                SELECT 1 FROM tdtf 
+                WHERE tdtf.sodtf = h.sd_nomor
+            )
           )
     `;
   }

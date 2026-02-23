@@ -784,8 +784,28 @@ const getStockPerCabang = async () => {
   return rows;
 };
 
-const getItemSalesTrend = async (user, isExport = false) => {
+// dashboardService.js
+
+const getItemSalesTrend = async (user, filters = {}) => {
+  const { isExport = false, cabang = 'ALL' } = filters;
+
   if (user.cabang !== "KDC") return [];
+
+  let branchFilter = "";
+  let params = [];
+
+  // 1. Logika Filter Cabang
+  if (cabang && cabang !== "ALL") {
+    branchFilter = "AND h.inv_cab = ?";
+    params.push(cabang);
+  }
+
+  // 2. [FITUR DINAMIS] Tentukan syarat jumlah toko
+  // Jika ALL: harus laku di > 1 toko (Tren Global)
+  // Jika Cabang Spesifik: cukup >= 1 (Tren Lokal Cabang tsb)
+  const havingCondition = (cabang === 'ALL') 
+    ? "HAVING store_count_now > 1" 
+    : "HAVING store_count_now >= 1";
 
   const query = `
     SELECT 
@@ -799,7 +819,7 @@ const getItemSalesTrend = async (user, isExport = false) => {
         COALESCE(SUM(CASE WHEN month_diff = 2 THEN d.invd_jumlah ELSE 0 END) / NULLIF(COUNT(DISTINCT CASE WHEN month_diff = 2 THEN h.inv_cab END), 0), 0) AS avg_min_2,
         COALESCE(SUM(CASE WHEN month_diff = 3 THEN d.invd_jumlah ELSE 0 END) / NULLIF(COUNT(DISTINCT CASE WHEN month_diff = 3 THEN h.inv_cab END), 0), 0) AS avg_min_3,
 
-        -- TAHUN LALU (Data Historis & Prediksi)
+        -- TAHUN LALU
         COALESCE(SUM(CASE WHEN month_diff = 12 THEN d.invd_jumlah ELSE 0 END) / NULLIF(COUNT(DISTINCT CASE WHEN month_diff = 12 THEN h.inv_cab END), 0), 0) AS avg_ly_now,
         COALESCE(SUM(CASE WHEN month_diff = 11 THEN d.invd_jumlah ELSE 0 END) / NULLIF(COUNT(DISTINCT CASE WHEN month_diff = 11 THEN h.inv_cab END), 0), 0) AS avg_ly_plus_1,
         COALESCE(SUM(CASE WHEN month_diff = 10 THEN d.invd_jumlah ELSE 0 END) / NULLIF(COUNT(DISTINCT CASE WHEN month_diff = 10 THEN h.inv_cab END), 0), 0) AS avg_ly_plus_2
@@ -817,15 +837,16 @@ const getItemSalesTrend = async (user, isExport = false) => {
       AND a.brg_jeniskaos NOT LIKE '%STIKER%'
       AND a.brg_jeniskaos NOT LIKE '%DTF%'
       AND a.brg_aktif = 0
-      -- Ambil range bulan yang dibutuhkan
       AND diff.month_diff IN (0, 1, 2, 3, 10, 11, 12)
+      ${branchFilter}
     GROUP BY a.brg_kode, nama
-    HAVING store_count_now > 1
+    ${havingCondition} -- [FIX] Masukkan kondisi dinamis di sini
     ORDER BY avg_now DESC
     ${isExport ? "" : "LIMIT 10"};
   `;
 
-  const [rows] = await pool.query(query);
+  // [PENTING] Kirim variabel 'params' agar filter '?' di SQL terisi
+  const [rows] = await pool.query(query, params); 
   return rows;
 };
 

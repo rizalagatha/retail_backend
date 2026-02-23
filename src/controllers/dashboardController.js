@@ -151,12 +151,15 @@ const getTotalStokPerCabang = async (req, res) => {
 
 const getItemSalesTrend = async (req, res) => {
   try {
-    // 1. Tangkap parameter 'export' dari URL (?export=true)
-    // Kita konversi string 'true' menjadi boolean true riil
+    // 1. Tangkap parameter dari URL
     const isExport = req.query.export === "true";
+    const cabang = req.query.cabang || "ALL"; // [BARU] Ambil filter cabang
 
-    // 2. Teruskan req.user dan flag isExport ke Service
-    const data = await dashboardService.getItemSalesTrend(req.user, isExport);
+    // 2. Teruskan ke Service dalam bentuk objek filter
+    const data = await dashboardService.getItemSalesTrend(req.user, { 
+      isExport, 
+      cabang 
+    });
 
     res.json(data);
   } catch (error) {
