@@ -1,5 +1,11 @@
 const pool = require("../config/database");
-const { format, lastDayOfMonth, differenceInDays } = require("date-fns");
+const {
+  format,
+  lastDayOfMonth,
+  differenceInDays,
+  getDate,
+  addMonths,
+} = require("date-fns");
 const { validate } = require("uuid");
 const { applyRoundingPolicy } = require("../lib/numberUtils");
 
@@ -757,23 +763,33 @@ const saveData = async (payload, user) => {
     // [BARU] Tentukan apakah transaksi ini bersifat Piutang
     const isPiutang = isBelumLunas || isPotongGaji || isMarketplace;
 
-    // [BARU] LOGIKA PENENTUAN TOP OTOMATIS (Mendeteksi Payroll Period)
+    // [BARU] LOGIKA PENENTUAN TOP OTOMATIS (Sesuai Cutoff Payroll HRD)
     let finalTop = 0;
     if (isPotongGaji) {
-      // Hitung selisih hari sampai akhir bulan berjalan
       const tanggalTransaksi = new Date(header.tanggal);
-      const hariTerakhirBulanIni = lastDayOfMonth(tanggalTransaksi);
+      const tanggalHariIni = getDate(tanggalTransaksi); // Mengambil angka tanggal (1-31)
 
-      // Hitung TOP agar jatuh tempo tepat di akhir bulan
-      finalTop = differenceInDays(hariTerakhirBulanIni, tanggalTransaksi);
+      let tanggalJatuhTempoPayroll;
 
-      // Safety check: jika transaksi dilakukan di hari terakhir, TOP minimal 0
+      // ATURAN CUTOFF: Tanggal 20
+      if (tanggalHariIni <= 20) {
+        // Jika belanja tgl 1-20, potong gaji akhir bulan INI
+        tanggalJatuhTempoPayroll = lastDayOfMonth(tanggalTransaksi);
+      } else {
+        // Jika belanja tgl 21 ke atas, potong gaji akhir bulan DEPAN
+        const bulanDepan = addMonths(tanggalTransaksi, 1);
+        tanggalJatuhTempoPayroll = lastDayOfMonth(bulanDepan);
+      }
+
+      // Hitung selisih hari dari tanggal transaksi ke hari gajian
+      finalTop = differenceInDays(tanggalJatuhTempoPayroll, tanggalTransaksi);
+
+      // Safety check: pastikan tidak negatif
       if (finalTop < 0) finalTop = 0;
     } else if (isPiutang) {
       // Jika Piutang Umum, paksa TOP sesuai aturan cabang
       finalTop = user.cabang === "KPR" ? 30 : 14;
     } else {
-      // Jika Tunai (Lunas), TOP tetap 0
       finalTop = 0;
     }
 

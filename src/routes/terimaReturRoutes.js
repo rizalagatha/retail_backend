@@ -13,32 +13,38 @@ router.get(
   "/export-details",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.exportDetails
+  controller.exportDetails,
 );
 
 router.get(
   "/",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getList
+  controller.getList,
 );
 router.get(
   "/details/:nomor",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getDetails
+  controller.getDetails,
 );
 router.delete(
   "/:nomor",
   verifyToken,
   checkPermission(MENU_ID, "delete"),
-  controller.cancelReceipt
+  controller.cancelReceipt,
 );
 router.post(
   "/submit-change-request",
   verifyToken,
   checkPermission(MENU_ID, "edit"),
-  controller.submitChangeRequest
+  controller.submitChangeRequest,
+);
+router.post(
+  "/auto-receive-trigger",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.runAutoReceive,
 );
 
 module.exports = router;

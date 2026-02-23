@@ -35,23 +35,24 @@ const cancelReceipt = async (req, res) => {
         `SELECT t.* FROM trbdc_hdr h
          LEFT JOIN tdcrb_hdr t ON h.rb_noterima = t.rb_nomor
          WHERE h.rb_nomor = ?`,
-        [nomor]
+        [nomor],
       );
 
-      if (headerRows.length > 0 && headerRows[0].rb_nomor) { // Pastikan rb_nomor (nomor terima) ada
+      if (headerRows.length > 0 && headerRows[0].rb_nomor) {
+        // Pastikan rb_nomor (nomor terima) ada
         const header = headerRows[0];
         nomorTerima = header.rb_nomor;
 
         // Langkah B: Ambil Detail (Gunakan rbd_nomor)
         const [detailRows] = await pool.query(
           "SELECT * FROM tdcrb_dtl WHERE rbd_nomor = ? ORDER BY rbd_kode",
-          [nomorTerima]
+          [nomorTerima],
         );
 
         // Langkah C: Gabungkan
         oldData = {
           ...header,
-          items: detailRows
+          items: detailRows,
         };
       }
     } catch (e) {
@@ -65,12 +66,12 @@ const cancelReceipt = async (req, res) => {
     if (oldData && nomorTerima) {
       auditService.logActivity(
         req,
-        "CANCEL",            // Action khusus pembatalan
-        "TERIMA_RETUR",      // Module
-        nomorTerima,         // Target ID (Nomor Terima)
-        oldData,             // Data Lama (Header + Items)
-        null,                // Data Baru (Null karena dihapus)
-        `Membatalkan Penerimaan Retur (Ref Kirim: ${nomor})`
+        "CANCEL", // Action khusus pembatalan
+        "TERIMA_RETUR", // Module
+        nomorTerima, // Target ID (Nomor Terima)
+        oldData, // Data Lama (Header + Items)
+        null, // Data Baru (Null karena dihapus)
+        `Membatalkan Penerimaan Retur (Ref Kirim: ${nomor})`,
       );
     }
 
@@ -96,7 +97,7 @@ const submitChangeRequest = async (req, res) => {
       targetId, // Target ID
       null, // Old Data
       req.body, // Data Baru (Request Payload)
-      `Request Edit Terima Retur (Alasan: ${req.body.alasan})`
+      `Request Edit Terima Retur (Alasan: ${req.body.alasan})`,
     );
 
     res.json(result);
@@ -114,10 +115,32 @@ const exportDetails = async (req, res) => {
   }
 };
 
+const runAutoReceive = async (req, res) => {
+  try {
+    // Validasi: Hanya admin KDC yang boleh memicu ini
+    if (req.user.cabang !== "KDC") {
+      return res.status(403).json({
+        message: "Hanya admin Pusat (KDC) yang dapat memicu eksekusi sistem.",
+      });
+    }
+
+    // Panggil service autoReceiveRetur (pastikan fungsi ini ada di service)
+    await service.autoReceiveRetur();
+
+    res.json({
+      message: "Eksekusi otomatis terima retur berhasil dijalankan.",
+    });
+  } catch (error) {
+    console.error("Error in runAutoReceive controller:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getList,
   getDetails,
   cancelReceipt,
   submitChangeRequest,
   exportDetails,
+  runAutoReceive,
 };

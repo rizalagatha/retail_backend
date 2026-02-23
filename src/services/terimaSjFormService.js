@@ -7,7 +7,7 @@ const { format } = require("date-fns"); // Pastikan import ini ada di paling ata
 const generateNewTjNumber = async (connection, gudang, tanggal) => {
   if (!gudang) {
     throw new Error(
-      "FATAL: Kode Cabang (user.cabang) tidak terbaca/undefined!"
+      "FATAL: Kode Cabang (user.cabang) tidak terbaca/undefined!",
     );
   }
 
@@ -80,7 +80,7 @@ const saveData = async (payload, user) => {
     // Hitung total terima
     const totalTerima = items.reduce(
       (sum, i) => sum + (Number(i.jumlahTerima) || 0),
-      0
+      0,
     );
 
     // --- 1️⃣ BATAL TERIMA (jika semua jumlahTerima = 0) ---
@@ -88,7 +88,7 @@ const saveData = async (payload, user) => {
       // Ambil nomor terima dulu dari SJ-nya
       const [cekSjBatal] = await connection.query(
         `SELECT sj_noterima FROM tdc_sj_hdr WHERE sj_nomor = ?`,
-        [nomorSj]
+        [nomorSj],
       );
       const tjNomorBatal = cekSjBatal[0]?.sj_noterima;
 
@@ -104,7 +104,7 @@ const saveData = async (payload, user) => {
         // Kosongkan link di SJ
         await connection.query(
           `UPDATE tdc_sj_hdr SET sj_noterima = '' WHERE sj_nomor = ?`,
-          [nomorSj]
+          [nomorSj],
         );
       }
 
@@ -118,7 +118,7 @@ const saveData = async (payload, user) => {
 
     const [cekSj] = await connection.query(
       `SELECT sj_noterima FROM tdc_sj_hdr WHERE sj_nomor = ?`,
-      [nomorSj]
+      [nomorSj],
     );
 
     if (cekSj.length === 0) {
@@ -140,7 +140,7 @@ const saveData = async (payload, user) => {
       // Ambil idrec dari header terima yang sudah ada untuk konsistensi
       const [oldHeader] = await connection.query(
         `SELECT tj_idrec FROM ttrm_sj_hdr WHERE tj_nomor = ?`,
-        [tjNomor]
+        [tjNomor],
       );
 
       if (oldHeader.length > 0) {
@@ -159,7 +159,7 @@ const saveData = async (payload, user) => {
       // Update header info (optional, misal user ubah tanggal terima)
       await connection.query(
         `UPDATE ttrm_sj_hdr SET tj_tanggal = ?, user_update = ?, date_update = NOW() WHERE tj_nomor = ?`,
-        [tanggalTerima, user.kode, tjNomor]
+        [tanggalTerima, user.kode, tjNomor],
       );
     } else {
       // --- 4️⃣ MODE INSERT BARU ---
@@ -167,7 +167,7 @@ const saveData = async (payload, user) => {
       tjNomor = await generateNewTjNumber(
         connection,
         user.cabang,
-        tanggalTerima
+        tanggalTerima,
       );
 
       const timestamp = format(new Date(), "yyyyMMddHHmmssSSS");
@@ -177,7 +177,7 @@ const saveData = async (payload, user) => {
         `INSERT INTO ttrm_sj_hdr 
           (tj_idrec, tj_nomor, tj_tanggal, tj_mt_nomor, tj_cab, user_create, date_create)
          VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-        [idrec, tjNomor, tanggalTerima, nomorMinta, user.cabang, user.kode]
+        [idrec, tjNomor, tanggalTerima, nomorMinta, user.cabang, user.kode],
       );
     }
 
@@ -195,7 +195,7 @@ const saveData = async (payload, user) => {
         `INSERT INTO ttrm_sj_dtl 
           (tjd_idrec, tjd_iddrec, tjd_nomor, tjd_kode, tjd_ukuran, tjd_jumlah)
          VALUES ?`,
-        [detailValues]
+        [detailValues],
       );
     }
 
@@ -205,7 +205,7 @@ const saveData = async (payload, user) => {
       `UPDATE tdc_sj_hdr 
        SET sj_noterima = ?
        WHERE sj_nomor = ?`,
-      [tjNomor, nomorSj]
+      [tjNomor, nomorSj],
     );
 
     await connection.commit();

@@ -47,10 +47,28 @@ const exportDetails = async (req, res) => {
   }
 };
 
+const runAutoReceive = async (req, res) => {
+  try {
+    // Hanya izinkan KDC untuk memicu ini
+    if (req.user.cabang !== "KDC") {
+      return res
+        .status(403)
+        .json({
+          message: "Hanya admin KDC yang dapat memicu eksekusi sistem.",
+        });
+    }
+    await terimaSjService.autoReceiveSj();
+    res.json({ message: "Proses eksekusi otomatis berhasil dijalankan." });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getCabangList,
   getList,
   getDetails,
   remove,
   exportDetails,
+  runAutoReceive,
 };

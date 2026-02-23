@@ -8,6 +8,13 @@ const getList = async (filters, user) => {
             h.rb_nomor AS nomor,
             h.rb_tanggal AS tanggal,
             h.rb_noterima AS nomorTerima,
+            CASE 
+                WHEN LEFT(h.rb_nomor, 3) IN ('K01','K03','K06','K08') THEN 3
+                WHEN LEFT(h.rb_nomor, 3) = 'K10' THEN 7
+                ELSE 5 
+            END AS BatasHari,
+            -- HITUNG SELISIH (Jika belum diterima)
+            IF(h.rb_noterima IS NULL OR h.rb_noterima = '', DATEDIFF(CURDATE(), h.rb_tanggal), 0) AS SelisihHari,
             r.rb_tanggal AS tglTerima,
             LEFT(h.rb_nomor, 3) AS store,
             g.gdg_nama AS namaStore,
@@ -38,7 +45,15 @@ const getList = async (filters, user) => {
     `;
   const params = [startDate, endDate, itemCode || null, itemCode];
   const [rows] = await pool.query(query, params);
-  return rows;
+  return rows.map((row) => {
+    let status = "AMAN";
+    if (!row.nomorTerima) {
+      if (row.SelisihHari > row.BatasHari + 1)
+        status = "EKSEKUSI"; // H+2
+      else if (row.SelisihHari > row.BatasHari) status = "TERLAMBAT"; // H+1
+    }
+    return { ...row, StatusDeadline: status };
+  });
 };
 
 const getDetails = async (nomor) => {
@@ -75,7 +90,7 @@ const cancelReceipt = async (nomorKirim, user) => {
             FROM trbdc_hdr h
             LEFT JOIN tdcrb_hdr t ON h.rb_noterima = t.rb_nomor
             WHERE h.rb_nomor = ?`,
-      [nomorKirim]
+      [nomorKirim],
     );
 
     if (headerRows.length === 0)
@@ -93,11 +108,11 @@ const cancelReceipt = async (nomorKirim, user) => {
       // Cek apakah koreksi selisih sudah di-ACC
       const [koreksiRows] = await connection.query(
         "SELECT kor_acc FROM tkor_hdr WHERE kor_nomor = ?",
-        [doc.rb_koreksi]
+        [doc.rb_koreksi],
       );
       if (koreksiRows.length > 0 && koreksiRows[0].kor_acc) {
         throw new Error(
-          "Ada selisih retur yang sudah di-ACC, tidak bisa dibatalkan."
+          "Ada selisih retur yang sudah di-ACC, tidak bisa dibatalkan.",
         );
       }
     }
@@ -116,7 +131,7 @@ const cancelReceipt = async (nomorKirim, user) => {
     // 2. Kosongkan referensi di header pengiriman (trbdc_hdr)
     await connection.query(
       'UPDATE trbdc_hdr SET rb_noterima = "" WHERE rb_nomor = ?',
-      [nomorKirim]
+      [nomorKirim],
     );
 
     await connection.commit();
@@ -202,10 +217,86 @@ const getExportDetails = async (filters, user) => {
   return rows;
 };
 
+const autoReceiveRetur = async () => {
+  const [expiredRetur] = await pool.query(`
+    SELECT h.rb_nomor, h.rb_tanggal, LEFT(h.rb_nomor, 3) AS store
+    FROM trbdc_hdr h
+    WHERE (h.rb_noterima IS NULL OR h.rb_noterima = '')
+      AND DATEDIFF(CURDATE(), h.rb_tanggal) >= (
+        CASE 
+          WHEN LEFT(h.rb_nomor, 3) IN ('K01','K03','K06','K08') THEN 3 + 2 
+          WHEN LEFT(h.rb_nomor, 3) = 'K10' THEN 7 + 2 
+          ELSE 5 + 2 
+        END
+      )
+  `);
+
+  console.log(
+    `[CRON-RETUR] Menemukan ${expiredRetur.length} dokumen untuk dieksekusi.`,
+  );
+
+  for (const doc of expiredRetur) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      // 1. Ambil detail barang
+      const [items] = await connection.query(
+        "SELECT rbd_kode, rbd_ukuran, rbd_jumlah FROM trbdc_dtl WHERE rbd_nomor = ?",
+        [doc.rb_nomor],
+      );
+
+      // 2. Generate Nomor Dokumen Terima (RB DC)
+      const yearMonth = format(new Date(), "yyMM");
+      const prefix = `KDC.RB.${yearMonth}.`;
+      const [numRows] = await connection.query(
+        "SELECT IFNULL(MAX(RIGHT(rb_nomor, 4)), 0) + 1 AS next_num FROM tdcrb_hdr WHERE rb_nomor LIKE ?",
+        [`${prefix}%`],
+      );
+      const nomorBaru = `${prefix}${numRows[0].next_num.toString().padStart(4, "0")}`;
+      const idrec = `SYSTEM.RB.${format(new Date(), "yyyyMMddHHmmssSSS")}`;
+
+      // 3. Insert Header
+      await connection.query(
+        "INSERT INTO tdcrb_hdr (rb_nomor, rb_tanggal, rb_ket, user_create, date_create) VALUES (?, CURDATE(), 'EKSEKUSI OTOMATIS SISTEM', 'SYSTEM', NOW())",
+        [nomorBaru],
+      );
+
+      // 4. Insert Detail (Samakan Jumlah)
+      const detailValues = items.map((it, idx) => [
+        nomorBaru + (idx + 1),
+        nomorBaru,
+        it.rbd_kode,
+        it.rbd_ukuran,
+        it.rbd_jumlah,
+      ]);
+      await connection.query(
+        "INSERT INTO tdcrb_dtl (rbd_iddrec, rbd_nomor, rbd_kode, rbd_ukuran, rbd_jumlah) VALUES ?",
+        [detailValues],
+      );
+
+      // 5. Link ke Dokumen Kirim
+      await connection.query(
+        "UPDATE trbdc_hdr SET rb_noterima = ? WHERE rb_nomor = ?",
+        [nomorBaru, doc.rb_nomor],
+      );
+
+      await connection.commit();
+      console.log(`[CRON-RETUR] SUCCESS: ${doc.rb_nomor} -> ${nomorBaru}`);
+    } catch (e) {
+      await connection.rollback();
+      console.error(`[CRON-RETUR] FAILED: ${doc.rb_nomor}:`, e.message);
+    } finally {
+      connection.release();
+    }
+  }
+};
+
 module.exports = {
   getList,
   getDetails,
   cancelReceipt,
   submitChangeRequest,
   getExportDetails,
+  autoReceiveRetur,
 };

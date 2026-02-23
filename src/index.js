@@ -4,6 +4,9 @@ const cookieParser = require("cookie-parser");
 const clientCertAuth = require("./middleware/clientCertAuth");
 const fs = require("fs");
 const path = require("path");
+const cron = require("node-cron");
+const terimaSjService = require("./services/terimaSjService");
+const terimaReturService = require("./services/terimaReturService");
 require("dotenv/config"); // Memuat variabel dari .env
 // === Global Rounding Policy ===
 global.ROUNDING_POLICY = process.env.ROUNDING_POLICY || "ROUND_1";
@@ -222,7 +225,6 @@ app.use(
     },
   }),
 );
-app.use("/memos", express.static(memoFolderPath));
 app.disable("etag");
 requiredDirs.forEach((dir) => {
   if (!fs.existsSync(dir)) {
@@ -237,6 +239,37 @@ app.use((req, res, next) => {
   res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
   next();
 });
+
+cron.schedule(
+  "5 0 * * *",
+  async () => {
+    console.log("--- [CRON] Memulai Eksekusi Otomatis Sistem ---");
+
+    // Eksekusi Terima SJ
+    try {
+      console.log("[CRON] Menjalankan Auto-Receive SJ...");
+      await terimaSjService.autoReceiveSj();
+      console.log("✅ [CRON] Auto-Receive SJ Selesai.");
+    } catch (error) {
+      console.error("❌ [CRON] Error pada Auto-Receive SJ:", error.message);
+    }
+
+    // Eksekusi Terima Retur
+    try {
+      console.log("[CRON] Menjalankan Auto-Receive Retur...");
+      await terimaReturService.autoReceiveRetur();
+      console.log("✅ [CRON] Auto-Receive Retur Selesai.");
+    } catch (error) {
+      console.error("❌ [CRON] Error pada Auto-Receive Retur:", error.message);
+    }
+
+    console.log("--- [CRON] Seluruh Tugas Rutin Selesai ---");
+  },
+  {
+    scheduled: true,
+    timezone: "Asia/Jakarta", // Memastikan berjalan jam 00:05 WIB
+  },
+);
 
 // Menggunakan Rute
 app.use("/api/auth", clientCertAuth, authRoutes);

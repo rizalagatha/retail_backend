@@ -41,6 +41,15 @@ const getList = async (filters) => {
         h.sj_noterima AS NomorTerima,
         t.tj_tanggal AS TglTerima,
         h.sj_kecab AS Store,
+        -- LOGIKA DEADLINE
+        CASE 
+          WHEN h.sj_kecab IN ('K01','K03','K06','K08') THEN 3
+          WHEN h.sj_kecab IN ('K10') THEN 7
+          ELSE 5 
+        END AS BatasHari,
+        
+        -- HITUNG SELISIH HARI (Hanya untuk yang belum diterima)
+        IF(h.sj_noterima IS NULL OR h.sj_noterima = '', DATEDIFF(CURDATE(), h.sj_tanggal), 0) AS SelisihHari,
         g.gdg_nama AS Nama_Store,
         h.sj_ket AS Keterangan,
         IFNULL(t.tj_closing, "N") AS Closing,
@@ -56,7 +65,15 @@ const getList = async (filters) => {
     ORDER BY h.sj_noterima, h.sj_nomor;
     `;
   const [rows] = await pool.query(query, params);
-  return rows;
+  return rows.map((row) => {
+    let statusDeadline = "AMAN";
+    if (!row.NomorTerima) {
+      if (row.SelisihHari > row.BatasHari + 1)
+        statusDeadline = "EKSEKUSI"; // H+2
+      else if (row.SelisihHari > row.BatasHari) statusDeadline = "TERLAMBAT"; // H+1
+    }
+    return { ...row, StatusDeadline: statusDeadline };
+  });
 };
 
 /**
@@ -95,7 +112,7 @@ const remove = async (nomorSj, nomorTerima, user) => {
     // Ambil data penerimaan
     const [sjRows] = await connection.query(
       "SELECT tj_closing FROM ttrm_sj_hdr WHERE tj_nomor = ?",
-      [nomorTerima]
+      [nomorTerima],
     );
     if (sjRows.length === 0)
       throw new Error("Nomor penerimaan tidak ditemukan.");
@@ -107,7 +124,7 @@ const remove = async (nomorSj, nomorTerima, user) => {
       throw new Error("Penerimaan sudah di-closing. Tidak bisa dibatalkan.");
     if (cabangPenerimaan !== user.cabang)
       throw new Error(
-        "Anda tidak berhak membatalkan penerimaan milik cabang lain."
+        "Anda tidak berhak membatalkan penerimaan milik cabang lain.",
       );
     // --- AKHIR PERBAIKAN ---
 
@@ -117,7 +134,7 @@ const remove = async (nomorSj, nomorTerima, user) => {
     ]);
     await connection.query(
       "UPDATE tdc_sj_hdr SET sj_noterima = NULL WHERE sj_nomor = ?",
-      [nomorSj]
+      [nomorSj],
     );
 
     await connection.commit();
@@ -168,10 +185,84 @@ const getExportDetails = async (filters) => {
   return rows;
 };
 
+const autoReceiveSj = async () => {
+  const [expiredSj] = await pool.query(`
+    SELECT h.sj_nomor, h.sj_tanggal, h.sj_kecab, h.sj_mt_nomor
+    FROM tdc_sj_hdr h
+    WHERE (h.sj_noterima IS NULL OR h.sj_noterima = '')
+      AND DATEDIFF(CURDATE(), h.sj_tanggal) >= (
+        CASE 
+          WHEN h.sj_kecab IN ('K01','K03','K06','K08') THEN 3 + 2 
+          WHEN h.sj_kecab = 'K10' THEN 7 + 2 
+          ELSE 5 + 2 
+        END
+      )
+  `);
+
+  console.log(`[CRON] Menemukan ${expiredSj.length} SJ untuk dieksekusi.`);
+
+  for (const sj of expiredSj) {
+    const connection = await pool.getConnection(); // [FIX] Koneksi per SJ
+    try {
+      await connection.beginTransaction();
+
+      const [items] = await connection.query(
+        "SELECT sjd_kode, sjd_ukuran, sjd_jumlah FROM tdc_sj_dtl WHERE sjd_nomor = ?",
+        [sj.sj_nomor],
+      );
+
+      const tjNomor = await generateNewTjNumber(
+        connection,
+        sj.sj_kecab,
+        new Date(),
+      );
+      const timestamp = format(new Date(), "yyyyMMddHHmmssSSS");
+      const idrec = `SYSTEM.TJ.${timestamp}`;
+
+      // Insert Header
+      await connection.query(
+        `INSERT INTO ttrm_sj_hdr (tj_idrec, tj_nomor, tj_tanggal, tj_mt_nomor, tj_cab, tj_ket, user_create, date_create)
+         VALUES (?, ?, CURDATE(), ?, ?, 'EKSEKUSI OTOMATIS SISTEM', 'SYSTEM', NOW())`,
+        [idrec, tjNomor, sj.sj_mt_nomor, sj.sj_kecab],
+      );
+
+      // Insert Detail (100% diterima)
+      const detailValues = items.map((it, idx) => [
+        idrec,
+        `${idrec}${idx + 1}`,
+        tjNomor,
+        it.sjd_kode,
+        it.sjd_ukuran,
+        it.sjd_jumlah,
+      ]);
+
+      await connection.query(
+        "INSERT INTO ttrm_sj_dtl (tjd_idrec, tjd_iddrec, tjd_nomor, tjd_kode, tjd_ukuran, tjd_jumlah) VALUES ?",
+        [detailValues],
+      );
+
+      // Link ke SJ Asal
+      await connection.query(
+        "UPDATE tdc_sj_hdr SET sj_noterima = ? WHERE sj_nomor = ?",
+        [tjNomor, sj.sj_nomor],
+      );
+
+      await connection.commit();
+      console.log(`[CRON] SUCCESS: SJ ${sj.sj_nomor} -> ${tjNomor}`);
+    } catch (error) {
+      await connection.rollback();
+      console.error(`[CRON] FAILED: SJ ${sj.sj_nomor}:`, error.message);
+    } finally {
+      connection.release();
+    }
+  }
+};
+
 module.exports = {
   getCabangList,
   getList,
   getDetails,
   remove,
   getExportDetails,
+  autoReceiveSj,
 };
