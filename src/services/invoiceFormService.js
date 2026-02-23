@@ -1460,6 +1460,11 @@ const saveData = async (payload, user) => {
       ]);
     }
 
+    await connection.query(
+      "DELETE FROM totorisasi WHERE o_transaksi = 'INVOICE' AND (o_nomor = ? OR o_nomor LIKE ?)",
+      [invNomor, `${invNomor}%`],
+    );
+
     const { pinDiskon1, pinDiskon2 } = payload.pins || {};
     const { pinBelumLunas } = payload.payment || {};
 
@@ -1468,16 +1473,15 @@ const saveData = async (payload, user) => {
 
     // 1. Simpan Log untuk Diskon Faktur 1
     if (pinDiskon1) {
-      // Kita simpan Nama Approver ke kolom 'o_approver' (jika ada) atau 'o_ket'
-      // Kosongkan 'o_pin' atau isi strip '-'
       const authLogSql = `
-        INSERT INTO totorisasi 
-        (o_nomor, o_transaksi, o_jenis, o_pin, o_approver, o_nominal, o_created, o_status) 
-        VALUES (?, 'INVOICE', 'DISKON FAKTUR', '-', ?, ?, NOW(), 1);
-      `;
+    INSERT INTO totorisasi 
+    (o_nomor, o_transaksi, o_jenis, o_pin, o_approver, o_nominal, o_created, o_status) 
+    VALUES (?, 'INVOICE', 'DISKON FAKTUR', '-', ?, ?, NOW(), 1);
+  `;
+      // [FIX] Gunakan suffix agar o_nomor unik jika ada lebih dari 1 otorisasi
       await connection.query(authLogSql, [
-        invNomor,
-        pinDiskon1, // Ini berisi Nama Manager
+        `${invNomor}.D1`,
+        pinDiskon1,
         header.diskonPersen1,
       ]);
     }
@@ -1485,13 +1489,13 @@ const saveData = async (payload, user) => {
     // 2. Simpan Log untuk Diskon Faktur 2
     if (pinDiskon2) {
       const authLogSql = `
-        INSERT INTO totorisasi 
-        (o_nomor, o_transaksi, o_jenis, o_pin, o_approver, o_nominal, o_created, o_status) 
-        VALUES (?, 'INVOICE', 'DISKON FAKTUR 2', '-', ?, ?, NOW(), 1);
-      `;
+    INSERT INTO totorisasi 
+    (o_nomor, o_transaksi, o_jenis, o_pin, o_approver, o_nominal, o_created, o_status) 
+    VALUES (?, 'INVOICE', 'DISKON FAKTUR 2', '-', ?, ?, NOW(), 1);
+  `;
       await connection.query(authLogSql, [
-        invNomor,
-        pinDiskon2, // Ini berisi Nama Manager
+        `${invNomor}.D2`,
+        pinDiskon2,
         header.diskonPersen2,
       ]);
     }
@@ -1501,17 +1505,15 @@ const saveData = async (payload, user) => {
       const kurangBayar = applyRoundingPolicy(
         Math.max(grandTotal - invBayar, 0),
       );
-
       const authLogSql = `
-        INSERT INTO totorisasi (
-          o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_approver, o_nominal, o_status
-        )
-        VALUES (?, 'INVOICE', 'BELUM LUNAS', '', NOW(), '-', ?, ?, 1);
-      `;
-
+    INSERT INTO totorisasi 
+    (o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_approver, o_nominal, o_status)
+    VALUES (?, 'INVOICE', 'BELUM LUNAS', '', NOW(), '-', ?, ?, 1);
+  `;
+      // [FIX] Suffix .BL agar tidak bentrok dengan diskon
       await connection.query(authLogSql, [
-        invNomor,
-        pinBelumLunas, // Ini berisi Nama Manager
+        `${invNomor}.BL`,
+        pinBelumLunas,
         kurangBayar,
       ]);
     }
