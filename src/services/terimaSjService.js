@@ -1,4 +1,21 @@
 const pool = require("../config/database");
+const { format } = require("date-fns");
+
+/**
+ * [FIX] Tambahkan fungsi generator nomor terima SJ (TJ)
+ */
+const generateNewTjNumber = async (connection, cabang, tanggal) => {
+  const date = new Date(tanggal);
+  const prefix = `${cabang}.TJ.${format(date, "yyMM")}.`;
+  const query = `
+        SELECT IFNULL(MAX(RIGHT(tj_nomor, 4)), 0) + 1 AS next_num
+        FROM ttrm_sj_hdr 
+        WHERE tj_nomor LIKE ?;
+    `;
+  const [rows] = await connection.query(query, [`${prefix}%`]);
+  const nextNumber = rows[0].next_num.toString().padStart(4, "0");
+  return `${prefix}${nextNumber}`;
+};
 
 /**
  * Mengambil daftar cabang yang bisa diakses user.
