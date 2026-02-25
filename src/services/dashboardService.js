@@ -787,7 +787,7 @@ const getStockPerCabang = async () => {
 // dashboardService.js
 
 const getItemSalesTrend = async (user, filters = {}) => {
-  const { isExport = false, cabang = 'ALL' } = filters;
+  const { isExport = false, cabang = "ALL" } = filters;
 
   if (user.cabang !== "KDC") return [];
 
@@ -803,9 +803,10 @@ const getItemSalesTrend = async (user, filters = {}) => {
   // 2. [FITUR DINAMIS] Tentukan syarat jumlah toko
   // Jika ALL: harus laku di > 1 toko (Tren Global)
   // Jika Cabang Spesifik: cukup >= 1 (Tren Lokal Cabang tsb)
-  const havingCondition = (cabang === 'ALL') 
-    ? "HAVING store_count_now > 1" 
-    : "HAVING store_count_now >= 1";
+  const havingCondition =
+    cabang === "ALL"
+      ? "HAVING store_count_now > 1"
+      : "HAVING store_count_now >= 1";
 
   const query = `
     SELECT 
@@ -846,7 +847,7 @@ const getItemSalesTrend = async (user, filters = {}) => {
   `;
 
   // [PENTING] Kirim variabel 'params' agar filter '?' di SQL terisi
-  const [rows] = await pool.query(query, params); 
+  const [rows] = await pool.query(query, params);
   return rows;
 };
 
@@ -871,15 +872,29 @@ const getStockAlerts = async (user) => {
       AND msk_tanggal >= DATE_SUB(NOW(), INTERVAL 3 MONTH)
   `;
 
-  // 3. [BARU] Cek Retur ke DC yang belum diterima oleh DC
-  // Logika: Asal (rb_cab) = Cabang User, dan rb_noterima masih kosong
-  const queryReturDc = `
-    SELECT COUNT(*) AS total
-    FROM trbdc_hdr
-    WHERE rb_cab = ?
-      AND (rb_noterima IS NULL OR rb_noterima = '')
-      AND rb_tanggal >= DATE_SUB(NOW(), INTERVAL 3 MONTH)
-  `;
+  // 3. [UPDATE] Cek Retur yang perlu diproses
+  let queryRetur = "";
+  let paramsRetur = [];
+
+  if (cabang === "KDC") {
+    // UNTUK DC: Hitung semua retur dari toko yang BELUM diterima oleh DC
+    queryRetur = `
+      SELECT COUNT(*) AS total
+      FROM trbdc_hdr
+      WHERE (rb_noterima IS NULL OR rb_noterima = '')
+        AND rb_tanggal >= DATE_SUB(NOW(), INTERVAL 3 MONTH)
+    `;
+  } else {
+    // UNTUK STORE: Hitung retur miliknya sendiri yang belum di-acc DC
+    queryRetur = `
+      SELECT COUNT(*) AS total
+      FROM trbdc_hdr
+      WHERE rb_cab = ?
+        AND (rb_noterima IS NULL OR rb_noterima = '')
+        AND rb_tanggal >= DATE_SUB(NOW(), INTERVAL 3 MONTH)
+    `;
+    paramsRetur.push(cabang);
+  }
 
   // 4. [BARU] Cek Peminjaman Overdue (> 14 hari belum kembali)
   // KDC bisa melihat semua cabang, Store hanya cabangnya sendiri
@@ -913,19 +928,19 @@ const getStockAlerts = async (user) => {
 `;
 
   // Jalankan Query secara paralel
-  const [rowsSj, rowsMutasi, rowsReturDc, rowsPinjam, rowsMemo] =
+  const [rowsSj, rowsMutasi, rowsRetur, rowsPinjam, rowsMemo] =
     await Promise.all([
       pool.query(querySj, [cabang]),
       pool.query(queryMutasi, [cabang]),
-      pool.query(queryReturDc, [cabang]),
+      pool.query(queryRetur, paramsRetur),
       pool.query(queryPinjam, paramsPinjam),
-      pool.query(queryMemo), //
+      pool.query(queryMemo),
     ]);
 
   return {
     sj_pending: rowsSj[0][0].total || 0,
     mutasi_pending: rowsMutasi[0][0].total || 0,
-    retur_dc_pending: rowsReturDc[0][0].total || 0, // [BARU]
+    retur_pending: rowsRetur[0][0].total || 0, // Ambil dari trbdc_hdr yang rb_noterima kosong
     pinjam_overdue: rowsPinjam[0][0].total || 0,
     new_memo_count: rowsMemo[0][0].total || 0,
     latest_memo_date: rowsMemo[0][0].latest_date || null,

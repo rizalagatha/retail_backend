@@ -129,6 +129,7 @@ const loadInitialData = async (tanggal, user) => {
 };
 
 const loadForEdit = async (nomor, user) => {
+  const isKDC = user.cabang === "KDC";
   // 1. Ambil data header
   const headerQuery = `
         SELECT 
@@ -138,9 +139,12 @@ const loadForEdit = async (nomor, user) => {
             h.fsk_userv AS verifiedBy,
             h.fsk_tanggalv AS verifiedDate
         FROM tform_setorkasir_hdr h
-        WHERE h.fsk_nomor = ? AND LEFT(h.fsk_nomor, 3) = ?;
+        WHERE h.fsk_nomor = ? 
+        ${!isKDC ? "AND LEFT(h.fsk_nomor, 3) = ?" : ""}; 
     `;
-  const [headerRows] = await pool.query(headerQuery, [nomor, user.cabang]);
+
+  const queryParams = isKDC ? [nomor] : [nomor, user.cabang];
+  const [headerRows] = await pool.query(headerQuery, queryParams);
   if (headerRows.length === 0)
     throw new Error("Data FSK tidak ditemukan atau bukan milik cabang Anda.");
 

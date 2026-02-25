@@ -209,17 +209,15 @@ const autoReceiveSj = async () => {
     WHERE (h.sj_noterima IS NULL OR h.sj_noterima = '')
       AND DATEDIFF(CURDATE(), h.sj_tanggal) >= (
         CASE 
-          WHEN h.sj_kecab IN ('K01','K03','K06','K08') THEN 3 + 2 
-          WHEN h.sj_kecab = 'K10' THEN 7 + 2 
-          ELSE 5 + 2 
+          WHEN h.sj_kecab IN ('K01','K03','K06','K08') THEN 5
+          WHEN h.sj_kecab = 'K10' THEN 9 
+          ELSE 7 
         END
       )
   `);
 
-  console.log(`[CRON] Menemukan ${expiredSj.length} SJ untuk dieksekusi.`);
-
   for (const sj of expiredSj) {
-    const connection = await pool.getConnection(); // [FIX] Koneksi per SJ
+    const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
 
@@ -234,19 +232,19 @@ const autoReceiveSj = async () => {
         new Date(),
       );
       const timestamp = format(new Date(), "yyyyMMddHHmmssSSS");
-      const idrec = `SYSTEM.TJ.${timestamp}`;
+      const idrecHeader = `${sj.sj_kecab}.TJ.${timestamp}`;
 
-      // Insert Header
+      // A. Insert Header (Sesuai DDL: tj_idrec, tj_nomor, tj_tanggal, tj_mt_nomor, tj_cab)
       await connection.query(
-        `INSERT INTO ttrm_sj_hdr (tj_idrec, tj_nomor, tj_tanggal, tj_mt_nomor, tj_cab, tj_ket, user_create, date_create)
-         VALUES (?, ?, CURDATE(), ?, ?, 'EKSEKUSI OTOMATIS SISTEM', 'SYSTEM', NOW())`,
-        [idrec, tjNomor, sj.sj_mt_nomor, sj.sj_kecab],
+        `INSERT INTO ttrm_sj_hdr (tj_idrec, tj_nomor, tj_tanggal, tj_mt_nomor, tj_cab, user_create, date_create)
+         VALUES (?, ?, CURDATE(), ?, ?, 'SYSTEM', NOW())`,
+        [idrecHeader, tjNomor, sj.sj_mt_nomor, sj.sj_kecab],
       );
 
-      // Insert Detail (100% diterima)
+      // B. Insert Detail (Sesuai DDL: tjd_idrec, tjd_iddrec, tjd_nomor)
       const detailValues = items.map((it, idx) => [
-        idrec,
-        `${idrec}${idx + 1}`,
+        idrecHeader,
+        `${idrecHeader}.${idx + 1}`,
         tjNomor,
         it.sjd_kode,
         it.sjd_ukuran,
@@ -258,7 +256,7 @@ const autoReceiveSj = async () => {
         [detailValues],
       );
 
-      // Link ke SJ Asal
+      // C. Update SJ Asal
       await connection.query(
         "UPDATE tdc_sj_hdr SET sj_noterima = ? WHERE sj_nomor = ?",
         [tjNomor, sj.sj_nomor],
@@ -268,7 +266,7 @@ const autoReceiveSj = async () => {
       console.log(`[CRON] SUCCESS: SJ ${sj.sj_nomor} -> ${tjNomor}`);
     } catch (error) {
       await connection.rollback();
-      console.error(`[CRON] FAILED: SJ ${sj.sj_nomor}:`, error.message);
+      console.error(`[CRON] FAILED SJ ${sj.sj_nomor}:`, error.message);
     } finally {
       connection.release();
     }

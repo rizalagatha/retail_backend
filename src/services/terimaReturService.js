@@ -220,34 +220,21 @@ const getExportDetails = async (filters, user) => {
 
 const autoReceiveRetur = async () => {
   const [expiredRetur] = await pool.query(`
-    SELECT h.rb_nomor, h.rb_tanggal, LEFT(h.rb_nomor, 3) AS store
-    FROM trbdc_hdr h
-    WHERE (h.rb_noterima IS NULL OR h.rb_noterima = '')
-      AND DATEDIFF(CURDATE(), h.rb_tanggal) >= (
-        CASE 
-          WHEN LEFT(h.rb_nomor, 3) IN ('K01','K03','K06','K08') THEN 3 + 2 
-          WHEN LEFT(h.rb_nomor, 3) = 'K10' THEN 7 + 2 
-          ELSE 5 + 2 
-        END
-      )
+    SELECT rb_nomor, rb_tanggal, rb_cab FROM trbdc_hdr 
+    WHERE (rb_noterima IS NULL OR rb_noterima = '')
+      AND DATEDIFF(CURDATE(), rb_tanggal) >= 7 -- Contoh standar 7 hari
   `);
-
-  console.log(
-    `[CRON-RETUR] Menemukan ${expiredRetur.length} dokumen untuk dieksekusi.`,
-  );
 
   for (const doc of expiredRetur) {
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
 
-      // 1. Ambil detail barang
       const [items] = await connection.query(
         "SELECT rbd_kode, rbd_ukuran, rbd_jumlah FROM trbdc_dtl WHERE rbd_nomor = ?",
         [doc.rb_nomor],
       );
 
-      // 2. Generate Nomor Dokumen Terima (RB DC)
       const yearMonth = format(new Date(), "yyMM");
       const prefix = `KDC.RB.${yearMonth}.`;
       const [numRows] = await connection.query(
@@ -255,28 +242,30 @@ const autoReceiveRetur = async () => {
         [`${prefix}%`],
       );
       const nomorBaru = `${prefix}${numRows[0].next_num.toString().padStart(4, "0")}`;
-      const idrec = `SYSTEM.RB.${format(new Date(), "yyyyMMddHHmmssSSS")}`;
 
-      // 3. Insert Header
+      // A. Insert Header (Sesuai DDL: rb_nomor, rb_tanggal, rb_cab, rb_closing)
+      // PENTING: Jangan masukkan rb_idrec karena tidak ada di DDL
       await connection.query(
-        "INSERT INTO tdcrb_hdr (rb_nomor, rb_tanggal, rb_ket, user_create, date_create) VALUES (?, CURDATE(), 'EKSEKUSI OTOMATIS SISTEM', 'SYSTEM', NOW())",
+        `INSERT INTO tdcrb_hdr (rb_nomor, rb_tanggal, rb_cab, rb_closing, user_create, date_create) 
+         VALUES (?, CURDATE(), 'KDC', 'N', 'SYSTEM', NOW())`,
         [nomorBaru],
       );
 
-      // 4. Insert Detail (Samakan Jumlah)
+      // B. Insert Detail (Sesuai DDL: rbd_iddrec, rbd_nomor)
       const detailValues = items.map((it, idx) => [
-        nomorBaru + (idx + 1),
+        `${nomorBaru}.${idx + 1}`, // rbd_iddrec unik
         nomorBaru,
         it.rbd_kode,
         it.rbd_ukuran,
         it.rbd_jumlah,
       ]);
+
       await connection.query(
         "INSERT INTO tdcrb_dtl (rbd_iddrec, rbd_nomor, rbd_kode, rbd_ukuran, rbd_jumlah) VALUES ?",
         [detailValues],
       );
 
-      // 5. Link ke Dokumen Kirim
+      // C. Link ke Dokumen Asal
       await connection.query(
         "UPDATE trbdc_hdr SET rb_noterima = ? WHERE rb_nomor = ?",
         [nomorBaru, doc.rb_nomor],
@@ -286,7 +275,7 @@ const autoReceiveRetur = async () => {
       console.log(`[CRON-RETUR] SUCCESS: ${doc.rb_nomor} -> ${nomorBaru}`);
     } catch (e) {
       await connection.rollback();
-      console.error(`[CRON-RETUR] FAILED: ${doc.rb_nomor}:`, e.message);
+      console.error(`[CRON-RETUR] FAILED ${doc.rb_nomor}:`, e.message);
     } finally {
       connection.release();
     }

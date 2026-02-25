@@ -22,11 +22,10 @@ const verifyToken = (req, res, next) => {
 };
 
 // Middleware untuk memeriksa hak akses spesifik (view, insert, edit, delete)
+// Ganti bagian query di dalam checkPermission
 const checkPermission = (menuId, action) => {
   return async (req, res, next) => {
-    const userKode = req.user.kode; // Diambil dari middleware verifyToken
-
-    // Mapping action ke nama kolom di database
+    const userKode = req.user.kode;
     const actionColumnMap = {
       view: "hak_men_view",
       insert: "hak_men_insert",
@@ -35,34 +34,25 @@ const checkPermission = (menuId, action) => {
     };
 
     const column = actionColumnMap[action];
-    if (!column) {
-      return res.status(500).json({ message: "Aksi tidak valid." });
-    }
+    if (!column) return res.status(500).json({ message: "Aksi tidak valid." });
 
     try {
+      // Gunakan MAX untuk mengambil 'Y' jika ada baris yang mengizinkan
       const query = `
-                SELECT ${column} 
-                FROM thakuser 
-                WHERE hak_user_kode = ? AND hak_men_id = ?`;
+        SELECT MAX(${column}) AS permission 
+        FROM thakuser 
+        WHERE hak_user_kode = ? AND hak_men_id = ?`;
 
       const [rows] = await pool.query(query, [userKode, menuId]);
 
-      if (rows.length > 0 && rows[0][column] === "Y") {
-        next(); // Pengguna memiliki izin, lanjutkan ke controller
+      // Cek hasil alias 'permission'
+      if (rows.length > 0 && rows[0].permission === "Y") {
+        next();
       } else {
-        res
-          .status(403)
-          .json({
-            message: "Anda tidak memiliki izin untuk melakukan aksi ini.",
-          });
+        res.status(403).json({ message: "Anda tidak memiliki izin." });
       }
     } catch (error) {
-      res
-        .status(500)
-        .json({
-          message: "Terjadi kesalahan pada server.",
-          error: error.message,
-        });
+      res.status(500).json({ message: "Server error", error: error.message });
     }
   };
 };
@@ -86,20 +76,15 @@ const checkInsertOrEditPermission = (menuId) => {
       ) {
         next();
       } else {
-        res
-          .status(403)
-          .json({
-            message:
-              "Anda tidak memiliki izin untuk mengakses sumber daya ini.",
-          });
+        res.status(403).json({
+          message: "Anda tidak memiliki izin untuk mengakses sumber daya ini.",
+        });
       }
     } catch (error) {
-      res
-        .status(500)
-        .json({
-          message: "Terjadi kesalahan pada server.",
-          error: error.message,
-        });
+      res.status(500).json({
+        message: "Terjadi kesalahan pada server.",
+        error: error.message,
+      });
     }
   };
 };
