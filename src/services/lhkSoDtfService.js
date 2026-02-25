@@ -9,6 +9,7 @@ const getLhkList = async (filters) => {
         d.lhk_nomor AS NomorLhk,
         DATE_FORMAT(d.tanggal, '%Y-%m-%d') AS Tanggal,
         d.cab,
+        d.user_create,
         
         -- LOGIKA STORE PEMINTA (3 Digit Awal)
         MAX(CASE 

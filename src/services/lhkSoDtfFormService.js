@@ -162,7 +162,7 @@ const loadData = async (nomorLhk) => {
       d.variasi, 
       d.saku,
       d.jumlah,
-      d.jumlah_sistem,
+      d.jumlah_sistem AS jumlahSistem,
       d.reject,
       d.panjang, 
       d.buangan, 
