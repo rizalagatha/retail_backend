@@ -236,8 +236,10 @@ const autoReceiveSj = async () => {
 
       // A. Insert Header (Sesuai DDL: tj_idrec, tj_nomor, tj_tanggal, tj_mt_nomor, tj_cab)
       await connection.query(
-        `INSERT INTO ttrm_sj_hdr (tj_idrec, tj_nomor, tj_tanggal, tj_mt_nomor, tj_cab, user_create, date_create)
-         VALUES (?, ?, CURDATE(), ?, ?, 'SYSTEM', NOW())`,
+        `INSERT INTO ttrm_sj_hdr 
+          (tj_idrec, tj_nomor, tj_tanggal, tj_mt_nomor, tj_cab, tj_closing, user_create, date_create)
+         VALUES 
+          (?, ?, CURDATE(), ?, ?, 'N', 'SYSTEM', NOW())`, // 4 tanda tanya untuk 4 variabel di array
         [idrecHeader, tjNomor, sj.sj_mt_nomor, sj.sj_kecab],
       );
 

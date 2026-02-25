@@ -246,14 +246,16 @@ const autoReceiveRetur = async () => {
       // A. Insert Header (Sesuai DDL: rb_nomor, rb_tanggal, rb_cab, rb_closing)
       // PENTING: Jangan masukkan rb_idrec karena tidak ada di DDL
       await connection.query(
-        `INSERT INTO tdcrb_hdr (rb_nomor, rb_tanggal, rb_cab, rb_closing, user_create, date_create) 
-         VALUES (?, CURDATE(), 'KDC', 'N', 'SYSTEM', NOW())`,
+        `INSERT INTO tdcrb_hdr 
+    (rb_nomor, rb_tanggal, rb_cab, rb_closing, user_create, date_create) 
+   VALUES 
+    (?, CURDATE(), 'KDC', 'N', 'SYSTEM', NOW())`, // 1 tanda tanya karena sisanya hardcoded/fixed
         [nomorBaru],
       );
 
       // B. Insert Detail (Sesuai DDL: rbd_iddrec, rbd_nomor)
       const detailValues = items.map((it, idx) => [
-        `${nomorBaru}.${idx + 1}`, // rbd_iddrec unik
+        `${nomorBaru}.${idx + 1}`, // rbd_iddrec
         nomorBaru,
         it.rbd_kode,
         it.rbd_ukuran,
