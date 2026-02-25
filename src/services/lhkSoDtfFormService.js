@@ -400,7 +400,7 @@ const saveData = async (payload, user) => {
           `INSERT INTO tdtf (lhk_nomor, tanggal, sodtf, depan, belakang, lengan, variasi, saku, jumlah, jumlah_sistem, reject, panjang, buangan, luas_sistem, luas_riil, jo_kode, cab, user_create, date_create) 
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
           [
-            lhkNomor,
+            lhkNomorFinal,
             tanggal,
             item.kode,
             item.depan || 0,
