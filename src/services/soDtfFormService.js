@@ -79,7 +79,7 @@ const generateNewSoNumber = async (connection, data, user) => {
 
   if (!branchCode || !orderType) {
     throw new Error(
-      "Kode cabang dan jenis order harus ada untuk membuat nomor SO."
+      "Kode cabang dan jenis order harus ada untuk membuat nomor SO.",
     );
   }
 
@@ -118,7 +118,7 @@ const create = async (data, user) => {
     // Format: CAB + 'SD' + Timestamp (yyyyMMddHHmmssSSS)
     const headerIdRec = `${user.cabang}SD${format(
       new Date(),
-      "yyyyMMddHHmmssSSS"
+      "yyyyMMddHHmmssSSS",
     )}`;
 
     const header = data.header;
@@ -173,7 +173,7 @@ const create = async (data, user) => {
           detail.harga ?? 0,
           index + 1,
           detail.namaBarang,
-        ]
+        ],
       );
     }
 
@@ -192,7 +192,7 @@ const create = async (data, user) => {
           detail.panjang,
           detail.lebar,
           index + 1,
-        ]
+        ],
       );
     }
 
@@ -202,7 +202,7 @@ const create = async (data, user) => {
         `UPDATE tso_hdr 
          SET so_dipakai_dtf = 'Y'
          WHERE so_nomor = ?`,
-        [header.soNomor]
+        [header.soNomor],
       );
 
       await connection.query(
@@ -211,7 +211,7 @@ const create = async (data, user) => {
               sod_sd_nomor = ?
           WHERE sod_so_nomor = ?
             AND sod_custom = 'Y'`,
-        [newNomor, newNomor, header.soNomor]
+        [newNomor, newNomor, header.soNomor],
       );
     }
 
@@ -225,7 +225,7 @@ const create = async (data, user) => {
        LEFT JOIN kencanaprint.tjenisorder j ON h.sd_jo_kode = j.jo_kode
        LEFT JOIN kencanaprint.tpabrik p ON h.sd_workshop = p.pab_kode
        WHERE sd_nomor = ?`,
-      [newNomor]
+      [newNomor],
     );
 
     return {
@@ -247,32 +247,44 @@ const update = async (nomor, data, user) => {
 
   try {
     const header = data.header;
-    const userKode = user ? user.kode : null; // Handle jika user tidak terdeteksi
-
-    // 0. Generate Timestamp UNTUK SEMUA IDREC DI SINI (Paling Aman)
+    const userKode = user ? user.kode : null;
     const timestamp = format(new Date(), "yyyyMMddHHmmssSSS");
 
-    // sebelum apapun, baca data lama
-    const existing = await findById(nomor);
-
-    // 1️⃣ Ambil nomor SO lama
-    const [oldRows] = await connection.query(
-      "SELECT sd_so_nomor FROM tsodtf_hdr WHERE sd_nomor = ?",
-      [nomor]
+    // 1️⃣ Ambil data lama untuk pengecekan Jenis Order & referensi SO
+    const [existingRows] = await connection.query(
+      "SELECT sd_jo_kode, sd_so_nomor FROM tsodtf_hdr WHERE sd_nomor = ?",
+      [nomor],
     );
-    const oldSo = oldRows?.[0]?.sd_so_nomor || null;
+
+    if (existingRows.length === 0)
+      throw new Error("Data SO DTF tidak ditemukan.");
+
+    const oldJoKode = existingRows[0].sd_jo_kode;
+    const oldSo = existingRows[0].sd_so_nomor;
     const newSo = header.soNomor || null;
 
-    // 2️⃣ Update HEADER
+    // 2️⃣ Tentukan Nomor Final (Generate baru jika Jenis Order berubah)
+    let finalNomor = nomor;
+    const isOrderTypeChanged = oldJoKode !== header.jenisOrderKode;
+
+    if (isOrderTypeChanged) {
+      // Panggil fungsi generator nomor yang sudah ada
+      finalNomor = await generateNewSoNumber(connection, data, user);
+    }
+
+    // 3️⃣ Update HEADER (Termasuk update sd_nomor jika berubah)
     const headerQuery = `
       UPDATE tsodtf_hdr SET 
+        sd_nomor = ?, 
         sd_tanggal = ?, sd_datekerja = ?, sd_dateline = ?, sd_cus_kode = ?, sd_customer = ?, 
         sd_sal_kode = ?, sd_jo_kode = ?, sd_so_nomor = ?, sd_nama = ?, sd_kain = ?, 
         sd_finishing = ?, sd_desain = ?, sd_workshop = ?, sd_ket = ?, 
         user_modified = ?, date_modified = NOW()
       WHERE sd_nomor = ?
     `;
+
     await connection.query(headerQuery, [
+      finalNomor, // Nomor baru atau tetap lama
       header.tanggal,
       header.tglPengerjaan,
       header.datelineCustomer,
@@ -287,101 +299,106 @@ const update = async (nomor, data, user) => {
       header.desain,
       header.workshopKode,
       header.keterangan,
-      userKode, // Pastikan tidak error jika user kosong
-      nomor,
+      userKode,
+      nomor, // Berdasarkan nomor asli sebelum update
     ]);
 
-    // === PATCH START ===
-    // gunakan detail lama jika frontend tidak kirim
-    const detailsUkuran = Array.isArray(data.detailsUkuran)
-      ? data.detailsUkuran
-      : existing.detailsUkuran;
-
-    const detailsTitik = Array.isArray(data.detailsTitik)
-      ? data.detailsTitik
-      : existing.detailsTitik;
-
-    // Hapus ukuran lama
+    // 4️⃣ Kelola DETAIL (Hapus pakai nomor LAMA, Insert pakai nomor BARU)
+    // Hapus detail lama
     await connection.query("DELETE FROM tsodtf_dtl WHERE sdd_nomor = ?", [
       nomor,
     ]);
+    await connection.query("DELETE FROM tsodtf_dtl2 WHERE sdd2_nomor = ?", [
+      nomor,
+    ]);
 
-    // Insert ukuran baru/lama
+    // Insert Ukuran Baru
+    const detailsUkuran = Array.isArray(data.detailsUkuran)
+      ? data.detailsUkuran
+      : [];
     for (const [i, det] of detailsUkuran.entries()) {
       const detailIdRec = `${user.cabang}DT${timestamp}${i}`;
       await connection.query(
-        `INSERT INTO tsodtf_dtl 
-     (sdd_idrec, sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut, sdd_nama_barang)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tsodtf_dtl (sdd_idrec, sdd_nomor, sdd_ukuran, sdd_jumlah, sdd_harga, sdd_nourut, sdd_nama_barang)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           detailIdRec,
-          nomor,
+          finalNomor,
           det.ukuran || "",
           det.jumlah ?? 0,
           det.harga ?? 0,
           i + 1,
           det.namaBarang || "",
-        ]
+        ],
       );
     }
 
-    // Hapus titik lama
-    await connection.query("DELETE FROM tsodtf_dtl2 WHERE sdd2_nomor = ?", [
-      nomor,
-    ]);
-
-    // Insert titik baru/lama
+    // Insert Titik Baru
+    const detailsTitik = Array.isArray(data.detailsTitik)
+      ? data.detailsTitik
+      : [];
     for (const [i, det] of detailsTitik.entries()) {
       const detailTitikIdRec = `${user.cabang}DT2${timestamp}${i}`;
       await connection.query(
-        `INSERT INTO tsodtf_dtl2
-     (sdd2_idrec, sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tsodtf_dtl2 (sdd2_idrec, sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           detailTitikIdRec,
-          nomor,
+          finalNomor,
           det.keterangan || "",
           det.sizeCetak || "",
           det.panjang ?? 0,
           det.lebar ?? 0,
           i + 1,
-        ]
+        ],
       );
     }
 
-    // === PATCH END ===
-
-    // 5️⃣ Update Flag SO dipakai/tidak (Logic SO Lama vs Baru)
-    if (oldSo && oldSo !== newSo) {
+    // 5️⃣ Update Flag & Relasi SO Utama (Logic SO Lama vs Baru)
+    // Jika ganti referensi SO atau ganti nomor SO DTF-nya
+    if (oldSo && (oldSo !== newSo || isOrderTypeChanged)) {
       await connection.query(
-        `UPDATE tso_hdr SET so_dipakai_dtf = 'N' WHERE so_nomor = ?`,
-        [oldSo]
+        "UPDATE tso_hdr SET so_dipakai_dtf = 'N' WHERE so_nomor = ?",
+        [oldSo],
       );
       await connection.query(
-        `UPDATE tso_dtl SET sod_sd_nomor = NULL WHERE sod_so_nomor = ? AND sod_custom = 'Y'`,
-        [oldSo]
+        "UPDATE tso_dtl SET sod_sd_nomor = NULL WHERE sod_so_nomor = ? AND sod_custom = 'Y'",
+        [oldSo],
       );
     }
 
     if (newSo) {
       await connection.query(
         `UPDATE tso_dtl SET sod_kode = ?, sod_sd_nomor = ? WHERE sod_so_nomor = ? AND sod_custom = 'Y'`,
-        [nomor, newSo, newSo]
+        [finalNomor, finalNomor, newSo],
       );
       await connection.query(
-        `UPDATE tso_hdr SET so_dipakai_dtf = 'Y' WHERE so_nomor = ?`,
-        [newSo]
+        "UPDATE tso_hdr SET so_dipakai_dtf = 'Y' WHERE so_nomor = ?",
+        [newSo],
       );
+    }
+
+    // 6️⃣ Logic Rename File Gambar jika nomor berubah
+    if (isOrderTypeChanged) {
+      try {
+        const cabang = finalNomor.substring(0, 3);
+        const folderPath = path.join(process.cwd(), "public", "images", cabang);
+        const oldFile = path.join(folderPath, `${nomor}.jpg`);
+        const newFile = path.join(folderPath, `${finalNomor}.jpg`);
+
+        if (fs.existsSync(oldFile)) {
+          fs.renameSync(oldFile, newFile);
+        }
+      } catch (imgErr) {
+        console.error("Gagal rename gambar SO DTF:", imgErr.message);
+        // Jangan throw error agar transaksi DB tetap sukses walau rename file gagal
+      }
     }
 
     await connection.commit();
 
-    // 6️⃣ Return Data Terbaru
-    // Panggil findById DI LUAR try/catch ini atau buat koneksi baru di dalamnya,
-    // karena findById membuat koneksi sendiri.
-    // Cukup return object sederhana jika findById ribet, tapi sebaiknya panggil findById.
-    const updatedData = await findById(nomor);
-    return updatedData;
+    // 7️⃣ Return Data Terbaru menggunakan finalNomor
+    return await findById(finalNomor);
   } catch (err) {
     await connection.rollback();
     console.error("ERROR UPDATE SO DTF:", err);
@@ -561,12 +578,7 @@ const processSoDtfImage = async (tempFilePath, nomorSo) => {
   const finalFileName = `${nomorSo}.jpg`; // Pasti .jpg
 
   // Path disimpan di public/images/cabang [cite: 2025-09-09]
-  const branchFolderPath = path.join(
-    process.cwd(),
-    "public",
-    "images",
-    cabang
-  );
+  const branchFolderPath = path.join(process.cwd(), "public", "images", cabang);
 
   // 3. Buat folder cabang jika belum ada
   if (!fs.existsSync(branchFolderPath)) {
@@ -579,7 +591,7 @@ const processSoDtfImage = async (tempFilePath, nomorSo) => {
     // 4. PROSES KONVERSI: Gunakan Sharp untuk mengubah format ke JPG
     // .flatten() digunakan untuk memberi background putih jika asal file PNG transparan
     await sharp(tempFilePath)
-      .flatten({ background: { r: 255, g: 255, b: 255 } }) 
+      .flatten({ background: { r: 255, g: 255, b: 255 } })
       .toFormat("jpeg")
       .jpeg({ quality: 90 }) // Kualitas tinggi namun tetap efisien
       .toFile(finalPath);
