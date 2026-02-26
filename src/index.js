@@ -48,6 +48,7 @@ const lhkSoDtfStokRoutes = require("./routes/lhkSoDtfStokRoutes");
 const lhkSoDtfStokFormRoutes = require("./routes/lhkSoDtfStokFormRoutes");
 const soRoutes = require("./routes/soRoutes");
 const soFormRoutes = require("./routes/soFormRoutes");
+const spkRoutes = require("./routes/spkRoutes");
 const mutasiOutRoutes = require("./routes/mutasiOutRoutes");
 const mutasiOutFormRoutes = require("./routes/mutasiOutFormRoutes");
 const mintaBarangRoutes = require("./routes/mintaBarangRoutes");
@@ -233,10 +234,16 @@ requiredDirs.forEach((dir) => {
   }
 });
 app.use((req, res, next) => {
-  // Izinkan iframe dari domain yang sama
-  res.setHeader("X-Frame-Options", "SAMEORIGIN");
-  // Content Security Policy untuk mengizinkan PDF plugin
-  res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
+  // NONAKTIFKAN X-Frame-Options agar bisa di-embed oleh frontend yang beda port
+  // res.setHeader("X-Frame-Options", "SAMEORIGIN");
+
+  // Ubah CSP agar mengizinkan frontend untuk melakukan embed file PDF
+  const allowedEmbedOrigins = allowedOrigins.join(" ");
+  res.setHeader(
+    "Content-Security-Policy",
+    `frame-ancestors 'self' ${allowedEmbedOrigins}`,
+  );
+
   next();
 });
 
@@ -308,6 +315,7 @@ app.use("/api/lhk-so-dtf-stok", clientCertAuth, lhkSoDtfStokRoutes);
 app.use("/api/lhk-so-dtf-stok-form", clientCertAuth, lhkSoDtfStokFormRoutes);
 app.use("/api/so", clientCertAuth, soRoutes);
 app.use("/api/so-form", clientCertAuth, soFormRoutes);
+app.use("/api/spk-form", clientCertAuth, spkRoutes);
 app.use("/api/mutasi-out", clientCertAuth, mutasiOutRoutes);
 app.use("/api/mutasi-out-form", clientCertAuth, mutasiOutFormRoutes);
 app.use("/api/minta-barang", clientCertAuth, mintaBarangRoutes);

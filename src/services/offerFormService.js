@@ -292,10 +292,16 @@ const saveOffer = async (data) => {
               : item.sod_custom_data;
 
           if (customData.ukuranKaos && Array.isArray(customData.ukuranKaos)) {
-            // Gabungkan ukuran unik, misal: "L, XL"
+            // 1. Gabungkan tanpa spasi agar lebih hemat karakter (misal: "S,M,L,XL,2XL")
             displayUkuran = [
               ...new Set(customData.ukuranKaos.map((u) => u.ukuran)),
-            ].join(", ");
+            ].join(",");
+
+            // 2. Potong paksa jika masih melebihi batas database (Asumsi batasnya 15 karakter)
+            // Sesuaikan angka 15 dengan lebar VARCHAR di database Anda jika berbeda.
+            if (displayUkuran.length > 15) {
+              displayUkuran = displayUkuran.substring(0, 15);
+            }
           }
         } catch (e) {
           console.error("Gagal parse ukuran custom:", e);
