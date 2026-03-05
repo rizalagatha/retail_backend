@@ -247,36 +247,36 @@ app.use((req, res, next) => {
   next();
 });
 
-cron.schedule(
-  "5 0 * * *",
-  async () => {
-    console.log("--- [CRON] Memulai Eksekusi Otomatis Sistem ---");
+// cron.schedule(
+//   "5 0 * * *",
+//   async () => {
+//     console.log("--- [CRON] Memulai Eksekusi Otomatis Sistem ---");
 
-    // Eksekusi Terima SJ
-    try {
-      console.log("[CRON] Menjalankan Auto-Receive SJ...");
-      await terimaSjService.autoReceiveSj();
-      console.log("✅ [CRON] Auto-Receive SJ Selesai.");
-    } catch (error) {
-      console.error("❌ [CRON] Error pada Auto-Receive SJ:", error.message);
-    }
+//     // Eksekusi Terima SJ
+//     try {
+//       console.log("[CRON] Menjalankan Auto-Receive SJ...");
+//       await terimaSjService.autoReceiveSj();
+//       console.log("✅ [CRON] Auto-Receive SJ Selesai.");
+//     } catch (error) {
+//       console.error("❌ [CRON] Error pada Auto-Receive SJ:", error.message);
+//     }
 
-    // Eksekusi Terima Retur
-    try {
-      console.log("[CRON] Menjalankan Auto-Receive Retur...");
-      await terimaReturService.autoReceiveRetur();
-      console.log("✅ [CRON] Auto-Receive Retur Selesai.");
-    } catch (error) {
-      console.error("❌ [CRON] Error pada Auto-Receive Retur:", error.message);
-    }
+//     // Eksekusi Terima Retur
+//     try {
+//       console.log("[CRON] Menjalankan Auto-Receive Retur...");
+//       await terimaReturService.autoReceiveRetur();
+//       console.log("✅ [CRON] Auto-Receive Retur Selesai.");
+//     } catch (error) {
+//       console.error("❌ [CRON] Error pada Auto-Receive Retur:", error.message);
+//     }
 
-    console.log("--- [CRON] Seluruh Tugas Rutin Selesai ---");
-  },
-  {
-    scheduled: true,
-    timezone: "Asia/Jakarta", // Memastikan berjalan jam 00:05 WIB
-  },
-);
+//     console.log("--- [CRON] Seluruh Tugas Rutin Selesai ---");
+//   },
+//   {
+//     scheduled: true,
+//     timezone: "Asia/Jakarta", // Memastikan berjalan jam 00:05 WIB
+//   },
+// );
 
 // Menggunakan Rute
 app.use("/api/auth", clientCertAuth, authRoutes);
