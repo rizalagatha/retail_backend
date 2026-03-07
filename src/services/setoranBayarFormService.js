@@ -118,6 +118,13 @@ const saveData = async (payload, user) => {
         : "PEMBAYARAN QRIS";
     }
 
+    const safeDate = (val) =>
+      val === "" || val === undefined || val === null ? null : val;
+
+    const tglTransfer = safeDate(header.tanggalTransfer);
+    const tglGiro = safeDate(header.tanggalGiro);
+    const tglTempoGiro = safeDate(header.tanggalJatuhTempo);
+
     if (isNew) {
       // ===== MODE BARU (INSERT) =====
       shNomor = await generateNewShNumber(user.cabang, header.tanggal);
@@ -139,10 +146,10 @@ const saveData = async (payload, user) => {
         header.nominal,
         header.akun?.kode,
         header.akun?.rekening,
-        header.tanggalTransfer,
+        tglTransfer,
         header.nomorGiro,
-        header.tanggalGiro,
-        header.tanggalJatuhTempo,
+        tglGiro,
+        tglTempoGiro,
         finalKeterangan,
         header.nomorSo || "",
         user.kode,
@@ -169,10 +176,10 @@ const saveData = async (payload, user) => {
         header.nominal,
         header.akun?.kode,
         header.akun?.rekening,
-        header.tanggalTransfer,
-        header.nomorGiro,
-        header.tanggalGiro,
-        header.tanggalJatuhTempo,
+        tglTransfer, // <-- Gunakan variabel aman
+        header.nomorGiro || "",
+        tglGiro, // <-- Gunakan variabel aman
+        tglTempoGiro, // <-- Gunakan variabel aman
         finalKeterangan,
         user.kode,
         shNomor,
