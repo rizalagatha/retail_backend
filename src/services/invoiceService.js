@@ -953,9 +953,10 @@ const changePaymentMethod = async (payload, user) => {
     // =========================================================
 
     // 1. Hapus Setoran Lama (Non-DP)
+    // Karena QRIS juga masuk sebagai PEMBAYARAN QRIS KASIR, kita harus pastikan semua jenis setoran pembayaran kasir terhapus.
     const [oldSetor] = await connection.query(
       `SELECT sd_sh_nomor FROM tsetor_dtl 
-       WHERE sd_inv = ? AND sd_ket = 'PEMBAYARAN DARI KASIR'`,
+       WHERE sd_inv = ? AND sd_ket IN ('PEMBAYARAN DARI KASIR', 'PEMBAYARAN QRIS KASIR')`,
       [nomor],
     );
 
@@ -973,26 +974,18 @@ const changePaymentMethod = async (payload, user) => {
     }
 
     // 2. Hapus History Piutang (Kredit/Pelunasan)
-    // Hapus baris pelunasan Tunai/Card/Voucher agar tidak duplikat saldo
+    // Hapus juga riwayat pembayaran QRIS yang mungkin sudah ada sebelumnya.
     const piutangNomor = `${inv.inv_cus_kode}${nomor}`;
     await connection.query(
       `DELETE FROM tpiutang_dtl 
        WHERE pd_ph_nomor = ? 
-         AND pd_uraian IN ('Bayar Tunai Langsung', 'Pembayaran Card', 'Bayar Voucher')`,
+         AND pd_uraian IN ('Bayar Tunai Langsung', 'Pembayaran Card', 'Pembayaran QRIS', 'Bayar Voucher')`,
       [piutangNomor],
     );
 
     // =========================================================
     // STEP B: BUAT DATA BARU
     // =========================================================
-
-    // Asumsi: inv_bayar adalah total uang masuk (DP + Pelunasan).
-    // Nominal pelunasan hari ini = inv_bayar - inv_dp
-    // Namun untuk simplifikasi "Ubah Metode", kita anggap inv_bayar adalah nilai yang valid.
-    // Jika sistem Anda memisah DP dan Pelunasan, gunakan logika: (inv.inv_bayar - inv.inv_dp).
-    // Di sini saya pakai inv_bayar penuh sebagai nilai transaksi pembayaran (karena biasanya ubah metode = ubah pelunasan).
-    // TAPI LEBIH AMAN: Kita anggap nominal yang diubah adalah SISA TAGIHANNYA.
-    // Jika inv_dp ada, maka yang dibayar tunai/transfer adalah sisanya.
 
     let nominalBayar = Number(inv.inv_bayar) - Number(inv.inv_dp || 0);
     if (nominalBayar <= 0) nominalBayar = Number(inv.inv_bayar); // Jaga-jaga jika DP null
@@ -1001,24 +994,26 @@ const changePaymentMethod = async (payload, user) => {
     let updateHdrSql = `
       UPDATE tinv_hdr SET 
         inv_rptunai = 0, inv_rpcard = 0, inv_rpvoucher = 0, inv_nosetor = '', 
-        inv_ket = CONCAT(inv_ket, ' | Ubah Bayar: ', ?), -- Tambahkan alasan ke ket (opsional)
+        inv_ket = CONCAT(IFNULL(inv_ket,''), ' | Ubah Bayar: ', ?), 
         user_modified = ?, date_modified = NOW() 
     `;
     let updateParams = [alasan, user.kode];
 
     let jenisSetor = 0;
     let nomorSetoranBaru = "";
+    let uraianPiutang = "";
+    let keteranganSetoran = "";
+    let idPrefix = "";
 
     // Generate ID Unik untuk record baru
-    const timestampID = format(new Date(), "yyyyMMddHHmmss");
-    const idrec = `${user.cabang}CHG${timestampID}`;
+    const timestampID = format(new Date(), "yyyyMMddHHmmssSSS");
     const tglSql = toSqlDateTime(inv.inv_tanggal);
 
     if (metodeBaru === "TUNAI") {
       // --- KASUS TUNAI ---
       updateHdrSql += ", inv_rptunai = ? ";
       updateParams.push(nominalBayar);
-      jenisSetor = 0;
+      const idrec = `${user.cabang}CHG${timestampID}`;
 
       // Catat di Kartu Piutang (Lunas Tunai)
       await connection.query(
@@ -1033,12 +1028,10 @@ const changePaymentMethod = async (payload, user) => {
         ],
       );
     } else {
-      // --- KASUS TRANSFER / EDC ---
-      updateHdrSql += ", inv_rpcard = ?, inv_nosetor = ? ";
-      jenisSetor = 1;
+      // --- KASUS TRANSFER / QRIS ---
+      updateHdrSql += ", inv_rpcard = ?, inv_nosetor = ? "; // Transfer dan QRIS sama-sama masuk ke inv_rpcard
 
       // Generate No Setoran Baru
-      // Pastikan fungsi generateNewSetorNumber ada di scope ini atau di-import
       nomorSetoranBaru = await generateNewSetorNumber(
         connection,
         user.cabang,
@@ -1046,14 +1039,30 @@ const changePaymentMethod = async (payload, user) => {
       );
       updateParams.push(nominalBayar, nomorSetoranBaru);
 
+      // Konfigurasi Spesifik berdasarkan jenis
+      if (metodeBaru === "TRANSFER") {
+        jenisSetor = 1;
+        uraianPiutang = "Pembayaran Card";
+        keteranganSetoran = "PEMBAYARAN DARI KASIR";
+        idPrefix = "SH";
+      } else if (metodeBaru === "QRIS") {
+        jenisSetor = 1; // Backend lama Anda memakai sh_jenis = 1 (Transfer) untuk QRIS di tabel setoran (lihat referensi saveData)
+        uraianPiutang = "Pembayaran QRIS";
+        keteranganSetoran = "PEMBAYARAN QRIS KASIR";
+        idPrefix = "QR";
+      }
+
+      const idrecSetoran = `${user.cabang}${idPrefix}${timestampID}`;
+      const angsurId = `${user.cabang}KS${timestampID}`;
+
       // 1. Insert tsetor_hdr
       await connection.query(
         `INSERT INTO tsetor_hdr (
            sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, 
-           sh_akun, sh_norek, sh_tgltransfer, sh_otomatis, user_create, date_create
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Y', ?, NOW())`,
+           sh_akun, sh_norek, sh_tgltransfer, sh_otomatis, sh_ket, user_create, date_create
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Y', ?, ?, NOW())`,
         [
-          idrec,
+          idrecSetoran,
           nomorSetoranBaru,
           inv.inv_cus_kode,
           tglSql,
@@ -1062,6 +1071,7 @@ const changePaymentMethod = async (payload, user) => {
           bank?.kode || "",
           noRek || "",
           tglSql,
+          keteranganSetoran,
           user.kode,
         ],
       );
@@ -1070,15 +1080,30 @@ const changePaymentMethod = async (payload, user) => {
       await connection.query(
         `INSERT INTO tsetor_dtl (
            sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut
-         ) VALUES (?, ?, ?, ?, ?, 'PEMBAYARAN DARI KASIR', ?, 1)`,
-        [idrec, nomorSetoranBaru, tglSql, nomor, nominalBayar, idrec],
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+        [
+          idrecSetoran,
+          nomorSetoranBaru,
+          tglSql,
+          nomor,
+          nominalBayar,
+          keteranganSetoran,
+          angsurId,
+        ],
       );
 
-      // 3. Insert tpiutang_dtl (Pelunasan via Transfer)
+      // 3. Insert tpiutang_dtl (Pelunasan via Transfer/QRIS)
       await connection.query(
         `INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur)
-         VALUES (?, ?, 'Pembayaran Card', ?, ?, ?)`,
-        [piutangNomor, tglSql, nominalBayar, nomorSetoranBaru, idrec],
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          piutangNomor,
+          tglSql,
+          uraianPiutang,
+          nominalBayar,
+          nomorSetoranBaru,
+          angsurId,
+        ],
       );
     }
 

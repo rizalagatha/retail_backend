@@ -82,8 +82,8 @@ const saveData = async (payload, user) => {
     if (!header.customer?.kode && !isNew)
       throw new Error("Customer harus diisi.");
     if (!header.nominal) throw new Error("Nominal setoran harus diisi.");
-    if (header.jenisSetor === "TRANSFER" && !header.akun?.kode)
-      throw new Error("Akun bank harus diisi.");
+    if (["TRANSFER", "QRIS"].includes(header.jenisSetor) && !header.akun?.kode)
+      throw new Error("Akun bank / QRIS harus diisi.");
     if (header.jenisSetor === "GIRO" && !header.nomorGiro)
       throw new Error("No. Giro harus diisi.");
     if (header.sisa < 0)
@@ -115,7 +115,17 @@ const saveData = async (payload, user) => {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
       `;
 
-      const jenisMap = { TUNAI: 0, TRANSFER: 1, GIRO: 2 };
+      const jenisMap = { TUNAI: 0, TRANSFER: 1, GIRO: 2, QRIS: 1 };
+
+      let finalKeterangan = header.keterangan || "";
+      if (
+        header.jenisSetor === "QRIS" &&
+        !finalKeterangan.toUpperCase().includes("PEMBAYARAN QRIS")
+      ) {
+        finalKeterangan = finalKeterangan
+          ? `PEMBAYARAN QRIS | ${finalKeterangan}`
+          : "PEMBAYARAN QRIS";
+      }
 
       // 1️⃣ INSERT HEADER dulu
       await connection.query(headerSql, [
@@ -131,7 +141,7 @@ const saveData = async (payload, user) => {
         header.nomorGiro,
         header.tanggalGiro,
         header.tanggalJatuhTempo,
-        header.keterangan,
+        finalKeterangan,
         header.nomorSo || "",
         user.kode,
       ]);
@@ -311,6 +321,7 @@ const loadForEdit = async (nomor, user) => {
         c.cus_telp AS customer_telp,
         CASE 
             WHEN h.sh_jenis = 0 THEN "TUNAI"
+            WHEN h.sh_jenis = 1 AND UPPER(h.sh_ket) LIKE "%PEMBAYARAN QRIS%" THEN "QRIS"
             WHEN h.sh_jenis = 1 THEN "TRANSFER"
             ELSE "GIRO"
         END AS jenisSetor,
