@@ -194,12 +194,14 @@ const save = async (data, user) => {
         }
       }
 
+      const sodIdrec = `${idrec}${String(index + 1).padStart(3, "0")}`;
+
       await connection.query(
         `INSERT INTO tso_dtl 
         (sod_idrec, sod_so_nomor, sod_kode, sod_ph_nomor, sod_sd_nomor, sod_ukuran, sod_jumlah, sod_scanned, sod_harga, sod_disc, sod_diskon, sod_nourut, sod_custom, sod_custom_nama, sod_custom_data)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          idrec,
+          sodIdrec,
           soNomor,
           kodeBarang,
           item.noPengajuanHarga || "",
@@ -212,7 +214,7 @@ const save = async (data, user) => {
           item.diskonRp || 0,
           index + 1,
           isCustom,
-          isCustom === "Y" ? item.sod_custom_nama : null,
+          item.sod_custom_nama || item.nama || null,
           customData,
         ],
       );
