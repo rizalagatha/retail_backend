@@ -706,7 +706,8 @@ const getOfferForEdit = async (nomor) => {
         d.pend_ph_nomor as noPengajuanHarga,
         d.pend_sd_nomor as noSoDtf,
         -- Tambahkan kolom custom detail
-        d.pend_custom, d.pend_custom_nama, d.pend_custom_data
+        d.pend_custom, d.pend_custom_nama, d.pend_custom_data,
+        IFNULL(a.brg_ktgp, '') AS kategori
       FROM tpenawaran_dtl d
       LEFT JOIN tbarangdc a ON a.brg_kode = d.pend_kode
       LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.pend_kode AND b.brgd_ukuran = d.pend_ukuran
@@ -849,7 +850,8 @@ const getPriceProposalDetailsForSo = async (nomor) => {
             d.phs_jumlah AS jumlah,
             (d.phs_harga + IFNULL(t.tambahan, 0) + IFNULL(brd.bordir, 0) + IFNULL(dt.dtf, 0)) AS harga,
             (d.phs_jumlah * (d.phs_harga + IFNULL(t.tambahan, 0) + IFNULL(brd.bordir, 0) + IFNULL(dt.dtf, 0))) as total,
-            IFNULL(stok.Stok, 0) as stok
+            IFNULL(stok.Stok, 0) as stok,
+            IFNULL(a.brg_ktgp, '') AS kategori
         FROM tpengajuanharga_size d
         LEFT JOIN tpengajuanharga h ON h.ph_nomor = d.phs_nomor
         LEFT JOIN tbarangdc a ON a.brg_kode = d.phs_kode
@@ -1015,6 +1017,7 @@ const findByBarcode = async (barcode, gudang) => {
             TRIM(CONCAT(h.brg_jeniskaos, " ", h.brg_tipe, " ", h.brg_lengan, " ", h.brg_jeniskain, " ", h.brg_warna)) AS nama,
             d.brgd_ukuran AS ukuran,
             d.brgd_harga AS harga,
+            IFNULL(h.brg_ktgp, '') AS kategori,
             
             -- Logika perhitungan stok dari Delphi menggunakan tmasterstok --
             IFNULL((
