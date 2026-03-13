@@ -103,7 +103,7 @@ const getList = async (filters, user) => {
             h.pj_status_kembali AS statusKembali, 
             h.user_create AS userCreate,
             k.pk_nomor AS noKembali,
-            k.pk_tanggal AS tanggalKembali
+            k.pk_tanggal AS tanggalKembali,
             (SELECT SUM(pjd_qty) FROM tpeminjaman_dtl WHERE pjd_nomor = h.pj_nomor) AS totalQty,
             (SELECT pk_nomor FROM tpengembalian_hdr WHERE pk_ref_pinjam = h.pj_nomor LIMIT 1) AS noKembali
         FROM tpeminjaman_hdr h
