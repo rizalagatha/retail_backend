@@ -211,9 +211,9 @@ const saveData = async (data, user) => {
           header.tanggal,
           header.akun.kode,
           header.nominalPotongan,
-          user.cabang,
+          header.gudang.kode,
           user.kode,
-        ]
+        ],
       );
     }
 
