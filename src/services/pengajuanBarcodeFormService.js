@@ -116,52 +116,78 @@ const save = async (payload, user) => {
           const newProductCode =
             item.kodebaru || (await generateNewProductCode(connection));
           const newProductName = `${item.nama} #${item.jenis.substring(0, 1)}`;
-          const pcd2_nomorin = `${nomorDokumen.substring(0, 3)}RJT${newProductCode}`; // [FIX] Sesuai Delphi
+          const pcd2_nomorin = `${nomorDokumen.substring(0, 3)}RJT${newProductCode}`;
 
           // 1. Insert/Update Master Produk
           await connection.query(
-            'INSERT INTO tbarangdc (brg_kode, brg_ktgp, brg_aktif, brg_logstok, brg_kelompok, brg_warna, user_create, date_create) VALUES (?, ?, 0, "Y", "C", ?, ?, NOW()) ON DUPLICATE KEY UPDATE brg_ktgp=VALUES(brg_ktgp), brg_warna=VALUES(brg_warna)',
+            `INSERT INTO tbarangdc (brg_kode, brg_ktgp, brg_aktif, brg_logstok, brg_kelompok, brg_warna, user_create, date_create) 
+         VALUES (?, ?, 0, "Y", "C", ?, ?, NOW()) 
+         ON DUPLICATE KEY UPDATE brg_ktgp=VALUES(brg_ktgp), brg_warna=VALUES(brg_warna)`,
             [newProductCode, item.jenis, newProductName, user.kode],
           );
 
           await connection.query(
-            "INSERT INTO tbarangdc_dtl (brgd_kode, brgd_barcode, brgd_ukuran, brgd_hpp, brgd_harga) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE brgd_hpp=VALUES(brgd_hpp), brgd_harga=VALUES(brgd_harga)",
+            `INSERT INTO tbarangdc_dtl (brgd_kode, brgd_barcode, brgd_ukuran, brgd_hpp, brgd_harga, brgd_produksi) 
+         VALUES (?, ?, ?, ?, ?, ?) 
+         ON DUPLICATE KEY UPDATE brgd_hpp=VALUES(brgd_hpp), brgd_harga=VALUES(brgd_harga)`,
             [
               newProductCode,
               newProductCode,
               item.ukuran,
               item.hpp,
               item.hargabaru,
+              header.tanggal,
             ],
           );
 
           // 2. Insert ke Detail 2 (Hasil Approval) [FIX KOLOM]
-          const timestampDetail = format(
-            new Date(now.getTime() + index),
-            "yyyyMMddHHmmss.SSS",
-          );
-          const pcd2_idrec = `${user.cabang}PC${timestampDetail}`;
+          const pcd2_idrec = `${user.cabang}PC${format(new Date(now.getTime() + index), "yyyyMMddHHmmss.SSS")}`;
           const pcd2_iddrec = `${pcd2_idrec}${index + 1}`;
 
           await connection.query(
             `INSERT INTO tpengajuanbarcode_dtl2 
-         (pcd2_idrec, pcd2_iddrec, pcd2_nomor, pcd2_nomorin, pcd2_kode, pcd2_kodein, pcd2_ukuran, pcd2_jumlah, pcd2_diskon, pcd2_harga) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
-         ON DUPLICATE KEY UPDATE pcd2_diskon=VALUES(pcd2_diskon), pcd2_harga=VALUES(pcd2_harga)`,
+        (pcd2_idrec, pcd2_iddrec, pcd2_nomor, pcd2_nomorin, pcd2_kode, pcd2_kodein, pcd2_ukuran, pcd2_jumlah, pcd2_diskon, pcd2_harga) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               pcd2_idrec,
               pcd2_iddrec,
               nomorDokumen,
-              pcd2_nomorin, // [BARU]
+              pcd2_nomorin, // Format: K03RJT00000126
               item.kode,
               newProductCode,
               item.ukuran,
-              item.jumlah, // [BARU]
+              item.jumlah,
               item.diskon,
               item.hargabaru,
             ],
           );
         }
+      }
+
+      if (stickers && stickers.length > 0) {
+        const sticker2Values = stickers.map((s, i) => {
+          const timestamp = format(
+            new Date(now.getTime() + i + 1000),
+            "yyyyMMddHHmmss.SSS",
+          );
+          const pcs2_idrec = `${user.cabang}PC${timestamp}`;
+          return [
+            pcs2_idrec,
+            `${pcs2_idrec}${i + 1}`, // pcs2_iddrec
+            nomorDokumen,
+            s.kode,
+            s.kodes,
+            s.ukuran,
+            s.jumlah,
+          ];
+        });
+
+        await connection.query(
+          `INSERT INTO tpengajuanbarcode_sticker2 
+             (pcs2_idrec, pcs2_iddrec, pcs2_nomor, pcs2_kode, pcs2_kodes, pcs2_ukuran, pcs2_jumlah) 
+             VALUES ? ON DUPLICATE KEY UPDATE pcs2_jumlah=VALUES(pcs2_jumlah)`,
+          [sticker2Values],
+        );
       }
     } else {
       // == ALUR SIMPAN BIASA ==
