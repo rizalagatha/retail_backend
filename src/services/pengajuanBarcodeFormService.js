@@ -111,28 +111,34 @@ const save = async (payload, user) => {
       );
 
       for (const [index, item] of items.entries()) {
-        // [FIX] Validasi hargabaru agar tidak skip item yang sedang di-approve
         if (Number(item.hargabaru) > 0) {
+          // GENERATE 8 DIGIT: 00000926
           const newProductCode =
             item.kodebaru || (await generateNewProductCode(connection));
-          const newProductName = `${item.nama} #${item.jenis.substring(0, 1)}`;
+
+          // FORMAT DELPHI: CAB+RJT+00000926 (Contoh: K03RJT00000926)
           const pcd2_nomorin = `${nomorDokumen.substring(0, 3)}RJT${newProductCode}`;
 
-          // 1. Insert/Update Master Produk
+          // 1. Update Master Utama
           await connection.query(
-            `INSERT INTO tbarangdc (brg_kode, brg_ktgp, brg_aktif, brg_logstok, brg_kelompok, brg_warna, user_create, date_create) 
-         VALUES (?, ?, 0, "Y", "C", ?, ?, NOW()) 
-         ON DUPLICATE KEY UPDATE brg_ktgp=VALUES(brg_ktgp), brg_warna=VALUES(brg_warna)`,
-            [newProductCode, item.jenis, newProductName, user.kode],
-          );
-
-          await connection.query(
-            `INSERT INTO tbarangdc_dtl (brgd_kode, brgd_barcode, brgd_ukuran, brgd_hpp, brgd_harga, brgd_produksi) 
-         VALUES (?, ?, ?, ?, ?, ?) 
-         ON DUPLICATE KEY UPDATE brgd_hpp=VALUES(brgd_hpp), brgd_harga=VALUES(brgd_harga)`,
+            'INSERT INTO tbarangdc (brg_kode, brg_warna, brg_ktgp, brg_aktif, brg_logstok, brg_kelompok, user_create, date_create) VALUES (?, ?, ?, 0, "Y", "C", ?, NOW()) ON DUPLICATE KEY UPDATE brg_warna=VALUES(brg_warna)',
             [
               newProductCode,
-              newProductCode,
+              `${item.nama} #${item.jenis.substring(0, 1)}`,
+              item.jenis,
+              user.kode,
+            ],
+          );
+
+          // 2. Update Detail Barcode
+          // PASTIKAN yang masuk ke brgd_barcode adalah newProductCode!
+          await connection.query(
+            `INSERT INTO tbarangdc_dtl (brgd_kode, brgd_barcode, brgd_ukuran, brgd_hpp, brgd_harga, brgd_produksi) 
+                 VALUES (?, ?, ?, ?, ?, ?) 
+                 ON DUPLICATE KEY UPDATE brgd_hpp=VALUES(brgd_hpp), brgd_harga=VALUES(brgd_harga)`,
+            [
+              newProductCode, // brgd_kode
+              newProductCode, // brgd_barcode (8 digit)
               item.ukuran,
               item.hpp,
               item.hargabaru,
@@ -140,21 +146,19 @@ const save = async (payload, user) => {
             ],
           );
 
-          // 2. Insert ke Detail 2 (Hasil Approval) [FIX KOLOM]
+          // 3. Simpan Detail Approval
           const pcd2_idrec = `${user.cabang}PC${format(new Date(now.getTime() + index), "yyyyMMddHHmmss.SSS")}`;
-          const pcd2_iddrec = `${pcd2_idrec}${index + 1}`;
-
           await connection.query(
             `INSERT INTO tpengajuanbarcode_dtl2 
-        (pcd2_idrec, pcd2_iddrec, pcd2_nomor, pcd2_nomorin, pcd2_kode, pcd2_kodein, pcd2_ukuran, pcd2_jumlah, pcd2_diskon, pcd2_harga) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                (pcd2_idrec, pcd2_iddrec, pcd2_nomor, pcd2_nomorin, pcd2_kode, pcd2_kodein, pcd2_ukuran, pcd2_jumlah, pcd2_diskon, pcd2_harga) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               pcd2_idrec,
-              pcd2_iddrec,
+              `${pcd2_idrec}${index + 1}`,
               nomorDokumen,
-              pcd2_nomorin, // Format: K03RJT00000126
-              item.kode,
-              newProductCode,
+              pcd2_nomorin, // Ini panjang (K03RJT00000926), makanya dtl2 harus diperlebar di Langkah 1
+              item.kode, // Kode lama
+              newProductCode, // Kode baru (8 digit)
               item.ukuran,
               item.jumlah,
               item.diskon,
