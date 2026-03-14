@@ -335,13 +335,26 @@ const getJenisReject = async () => {
 };
 
 const generateNewProductCode = async (connection) => {
+  // 1. Ambil 2 digit tahun sekarang (misal: "26")
   const year = new Date().getFullYear().toString().substring(2);
-  const query = `SELECT IFNULL(MAX(LEFT(brg_kode, 6)), 0) AS last_num FROM tbarangdc WHERE brg_kelompok='C' AND RIGHT(brg_kode, 2) = ?;`;
+
+  // 2. Cari nomor urut terbesar untuk barang kelompok 'C' (Reject/Custom) di tahun tsb
+  const query = `
+    SELECT IFNULL(MAX(CAST(LEFT(brg_kode, 6) AS UNSIGNED)), 0) AS last_num 
+    FROM tbarangdc 
+    WHERE brg_kelompok = 'C' AND RIGHT(brg_kode, 2) = ?
+  `;
+
   const [rows] = await connection.query(query, [year]);
-  const nextNum = (parseInt(rows[0].last_num, 10) + 1)
-    .toString()
-    .padStart(6, "0");
-  return `${nextNum}${year}`;
+
+  // 3. Tambahkan 1 ke nomor terakhir
+  const nextNum = parseInt(rows[0].last_num, 10) + 1;
+
+  // 4. Pad dengan nol sampai 6 digit, lalu gabungkan dengan tahun
+  // Result: "000009" + "26" = "00000926"
+  const formattedNum = nextNum.toString().padStart(6, "0");
+
+  return `${formattedNum}${year}`;
 };
 
 const getProductDetails = async (filters) => {
