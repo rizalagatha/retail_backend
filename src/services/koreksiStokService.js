@@ -6,15 +6,11 @@ const getList = async (filters, user) => {
   let whereClauses = ["h.kor_tanggal BETWEEN ? AND ?"];
   let params = [startDate, endDate];
 
-  // --- PERBAIKAN LOGIKA OTORISASI ---
+  // Logika Otorisasi: Cabang lihat data sendiri, KDC lihat semua
   if (user.cabang !== "KDC") {
-    // Jika user cabang (Store), hanya boleh lihat data miliknya sendiri
     whereClauses.push("h.kor_cab = ?");
     params.push(user.cabang);
   }
-  // Jika user adalah KDC, kita TIDAK membatasi whereClauses.
-  // Ini memungkinkan semua user KDC melihat data dari semua cabang (Store + DC).
-  // Filter canApproveCorrection hanya digunakan untuk izin menekan tombol ACC, bukan hak melihat.
 
   if (belumAccSaja === "true" || belumAccSaja === true) {
     whereClauses.push('h.kor_acc = ""');
@@ -24,12 +20,13 @@ const getList = async (filters, user) => {
         SELECT 
             h.kor_nomor AS nomor,
             h.kor_tanggal AS tanggal,
-            h.kor_cab AS cabang, -- Tambahkan kolom cabang agar user KDC tahu ini milik siapa
+            g.gdg_nama AS cabang, -- [FIX] Ambil Nama Cabang dari join tabel gudang
             h.kor_ket AS keterangan,
             h.kor_acc AS diAccOleh,
             DATE_FORMAT(h.date_acc, "%d-%m-%Y %H:%i:%s") AS tglAcc,
             h.kor_closing AS closing
         FROM tkor_hdr h
+        LEFT JOIN tgudang g ON g.gdg_kode = h.kor_cab -- [TAMBAH] Join ke tabel gudang
         WHERE ${whereClauses.join(" AND ")}
         ORDER BY h.kor_tanggal DESC, h.kor_nomor DESC;
     `;
@@ -181,7 +178,7 @@ const getExportDetails = async (filters, user) => {
   const query = `
         SELECT 
             h.kor_nomor AS 'Nomor Koreksi',
-            h.kor_cab AS 'Cabang', -- Tambahkan info Cabang di kolom Excel
+            g.gdg_nama AS 'Cabang', -- Tambahkan info Cabang di kolom Excel
             h.kor_tanggal AS 'Tanggal',
             h.kor_ket AS 'Keterangan Header',
             COALESCE(h.kor_acc, '-') AS 'DiAcc Oleh',
@@ -197,6 +194,7 @@ const getExportDetails = async (filters, user) => {
         FROM tkor_hdr h
         INNER JOIN tkor_dtl d ON d.kord_kor_nomor = h.kor_nomor
         LEFT JOIN tbarangdc a ON a.brg_kode = d.kord_kode
+        LEFT JOIN tgudang g ON g.gdg_kode = h.kor_cab
         WHERE ${whereClauses.join(" AND ")}
         ORDER BY h.kor_tanggal, h.kor_nomor;
     `;
