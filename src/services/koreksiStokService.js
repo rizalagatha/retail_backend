@@ -6,16 +6,15 @@ const getList = async (filters, user) => {
   let whereClauses = ["h.kor_tanggal BETWEEN ? AND ?"];
   let params = [startDate, endDate];
 
-  // Terjemahan logika otorisasi dari Delphi
+  // --- PERBAIKAN LOGIKA OTORISASI ---
   if (user.cabang !== "KDC") {
+    // Jika user cabang (Store), hanya boleh lihat data miliknya sendiri
     whereClauses.push("h.kor_cab = ?");
     params.push(user.cabang);
-  } else if (user.cabang === "KDC" && !user.canApproveCorrection) {
-    // Asumsi ada hak akses 'canApproveCorrection'
-    whereClauses.push(
-      "h.kor_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc=1)"
-    );
   }
+  // Jika user adalah KDC, kita TIDAK membatasi whereClauses.
+  // Ini memungkinkan semua user KDC melihat data dari semua cabang (Store + DC).
+  // Filter canApproveCorrection hanya digunakan untuk izin menekan tombol ACC, bukan hak melihat.
 
   if (belumAccSaja === "true" || belumAccSaja === true) {
     whereClauses.push('h.kor_acc = ""');
@@ -25,6 +24,7 @@ const getList = async (filters, user) => {
         SELECT 
             h.kor_nomor AS nomor,
             h.kor_tanggal AS tanggal,
+            h.kor_cab AS cabang, -- Tambahkan kolom cabang agar user KDC tahu ini milik siapa
             h.kor_ket AS keterangan,
             h.kor_acc AS diAccOleh,
             DATE_FORMAT(h.date_acc, "%d-%m-%Y %H:%i:%s") AS tglAcc,
@@ -60,7 +60,7 @@ const getDetails = async (nomor) => {
 const toggleApproval = async (nomor, user) => {
   if (!user.canApproveCorrection) {
     throw new Error(
-      "Anda tidak memiliki hak untuk melakukan ACC pada modul ini."
+      "Anda tidak memiliki hak untuk melakukan ACC pada modul ini.",
     );
   }
 
@@ -69,7 +69,7 @@ const toggleApproval = async (nomor, user) => {
     await connection.beginTransaction();
     const [headerRows] = await connection.query(
       "SELECT kor_acc FROM tkor_hdr WHERE kor_nomor = ?",
-      [nomor]
+      [nomor],
     );
     if (headerRows.length === 0) throw new Error("Dokumen tidak ditemukan.");
 
@@ -82,13 +82,13 @@ const toggleApproval = async (nomor, user) => {
       ]);
       await connection.query(
         'UPDATE tkor_hdr SET kor_acc = "", date_acc = NULL WHERE kor_nomor = ?',
-        [nomor]
+        [nomor],
       );
     } else {
       // Logika ACC
       const [detailRows] = await connection.query(
         "SELECT * FROM tkor_dtl WHERE kord_kor_nomor = ?",
-        [nomor]
+        [nomor],
       );
       if (detailRows.length > 0) {
         const insertValues = detailRows.map((d) => [
@@ -99,12 +99,12 @@ const toggleApproval = async (nomor, user) => {
         ]);
         await connection.query(
           "INSERT INTO tkor_dtl2 (kord2_nomor, kord2_kode, kord2_ukuran, kord2_selisih) VALUES ?",
-          [insertValues]
+          [insertValues],
         );
       }
       await connection.query(
         "UPDATE tkor_hdr SET kor_acc = ?, date_acc = NOW() WHERE kor_nomor = ?",
-        [user.kode, nomor]
+        [user.kode, nomor],
       );
     }
 
@@ -128,7 +128,7 @@ const remove = async (nomor, user) => {
     await connection.beginTransaction();
     const [headerRows] = await connection.query(
       "SELECT kor_acc, kor_closing, kor_cab AS cabang FROM tkor_hdr WHERE kor_nomor = ?",
-      [nomor]
+      [nomor],
     );
     if (headerRows.length === 0) throw new Error("Dokumen tidak ditemukan.");
     const header = headerRows[0];
@@ -159,23 +159,19 @@ const remove = async (nomor, user) => {
 const getExportDetails = async (filters, user) => {
   const { startDate, endDate, belumAccSaja } = filters;
 
-  // [FIX] Gunakan DATE() agar jam diabaikan
+  // Gunakan DATE() agar jam diabaikan untuk konsistensi pencarian
   let whereClauses = ["DATE(h.kor_tanggal) BETWEEN ? AND ?"];
   let params = [startDate, endDate];
 
-  // Logic Permission:
-  // 1. Cabang Store hanya bisa lihat data sendiri
+  // --- PERBAIKAN LOGIKA AKSES DATA (SINKRON DENGAN GETLIST) ---
   if (user.cabang !== "KDC") {
+    // Jika user cabang biasa, batasi hanya data cabangnya sendiri
     whereClauses.push("h.kor_cab = ?");
     params.push(user.cabang);
   }
-  // 2. KDC (Pusat) tapi tidak punya hak approve, hanya lihat data DC
-  else if (user.cabang === "KDC" && !user.canApproveCorrection) {
-    whereClauses.push(
-      "h.kor_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc=1)"
-    );
-  }
-  // 3. KDC dengan hak approve (Super Admin/Manager) bisa lihat semua (Tidak perlu filter tambahan)
+  // Jika user KDC, maka whereClauses untuk 'kor_cab' TIDAK DITAMBAHKAN.
+  // Hasilnya: Query akan mengambil data dari SEMUA cabang yang ada.
+  // ------------------------------------------------------------
 
   // Filter Status ACC
   if (belumAccSaja === "true" || belumAccSaja === true) {
@@ -185,6 +181,7 @@ const getExportDetails = async (filters, user) => {
   const query = `
         SELECT 
             h.kor_nomor AS 'Nomor Koreksi',
+            h.kor_cab AS 'Cabang', -- Tambahkan info Cabang di kolom Excel
             h.kor_tanggal AS 'Tanggal',
             h.kor_ket AS 'Keterangan Header',
             COALESCE(h.kor_acc, '-') AS 'DiAcc Oleh',
