@@ -263,7 +263,7 @@ const getList = async (filters) => {
         FROM tinv_hdr h
         -- Join Customer & Karyawan (Untuk filter Nama)
         LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
-        LEFT JOIN hrd2.karyawan k ON k.kar_nik = h.inv_cus_kode
+        LEFT JOIN hrd2.tkaryawan k ON k.kar_nik = h.inv_cus_kode
         LEFT JOIN tcustomer_level lvl ON lvl.level_kode = h.inv_cus_level
         
         -- Join SO (Untuk Tgl SO)
