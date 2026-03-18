@@ -421,7 +421,7 @@ const getList = async (filters) => {
     -- JOIN UTAMA (Untuk Output Final)
     LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
     LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
-    LEFT JOIN hrd2.karyawan k ON k.kar_nik = h.inv_cus_kode
+    LEFT JOIN hrd2.tkaryawan k ON k.kar_nik = h.inv_cus_kode
     LEFT JOIN tcustomer_level lvl ON lvl.level_kode = h.inv_cus_level
     LEFT JOIN tsetor_hdr sh ON sh.sh_nomor = h.inv_nosetor
     LEFT JOIN finance.trekening rek ON rek.rek_kode = sh.sh_akun
@@ -446,7 +446,7 @@ const getList = async (filters) => {
     SELECT COUNT(*) as total 
     FROM tinv_hdr h 
     LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
-    LEFT JOIN hrd2.karyawan k ON k.kar_nik = h.inv_cus_kode
+    LEFT JOIN hrd2.tkaryawan k ON k.kar_nik = h.inv_cus_kode
     LEFT JOIN tcustomer_level lvl ON lvl.level_kode = h.inv_cus_level
     LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
     LEFT JOIN tsetor_hdr sh ON sh.sh_nomor = h.inv_nosetor
@@ -692,7 +692,7 @@ const getExportHeader = async (filters) => {
         SELECT h.inv_nomor
         FROM tinv_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
-        LEFT JOIN hrd2.karyawan k ON k.kar_nik = h.inv_cus_kode
+        LEFT JOIN hrd2.tkaryawan k ON k.kar_nik = h.inv_cus_kode
         LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
         WHERE h.inv_sts_pro = 0
           -- Gunakan format DateTime lengkap agar index jalan
@@ -759,7 +759,7 @@ const getExportHeader = async (filters) => {
     FROM tinv_hdr h
     INNER JOIN BaseInvoices fb ON fb.inv_nomor = h.inv_nomor
     LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
-    LEFT JOIN hrd2.karyawan k ON k.kar_nik = h.inv_cus_kode
+    LEFT JOIN hrd2.tkaryawan k ON k.kar_nik = h.inv_cus_kode
     LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
     LEFT JOIN DetailCalc DC ON DC.invd_inv_nomor = h.inv_nomor
     LEFT JOIN PiutangReal PR ON PR.ph_inv_nomor = h.inv_nomor
