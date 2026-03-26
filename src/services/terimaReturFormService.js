@@ -6,9 +6,18 @@ const generateNomorKoreksi = async (connection, gudang, tanggal) => {
     .slice(2, 7)
     .replace("-", "");
   const prefix = `${gudang}.KOR.${yearMonth}.`;
-  const query = `SELECT IFNULL(MAX(RIGHT(kor_nomor, 4)), 0) + 1 AS next_num FROM tkor_hdr WHERE LEFT(kor_nomor, 12) = ?;`;
+
+  // PERBAIKAN 1: Gunakan LIKE agar tidak perlu pusing hitung jumlah karakter (jauh lebih aman)
+  const query = `
+    SELECT IFNULL(MAX(CAST(RIGHT(kor_nomor, 4) AS UNSIGNED)), 0) AS max_num 
+    FROM tkor_hdr 
+    WHERE kor_nomor LIKE CONCAT(?, '%');
+  `;
+
   const [rows] = await connection.query(query, [prefix]);
-  const nextNum = rows[0].next_num.toString().padStart(4, "0");
+  const nextNum = (parseInt(rows[0].max_num, 10) + 1)
+    .toString()
+    .padStart(4, "0");
   return `${prefix}${nextNum}`;
 };
 
@@ -68,11 +77,11 @@ const save = async (payload, user) => {
         .slice(2, 7)
         .replace("-", "");
       const prefix = `KDC.RB.${yearMonth}.`;
-      const prefixLength = prefix.length;
+
       const nomorQuery = `
-        SELECT IFNULL(MAX(RIGHT(rb_nomor, 4)), 0) + 1 AS next_num 
+        SELECT IFNULL(MAX(CAST(RIGHT(rb_nomor, 4) AS UNSIGNED)), 0) + 1 AS next_num 
         FROM tdcrb_hdr 
-        WHERE LEFT(rb_nomor, ${prefixLength}) = ?;
+        WHERE rb_nomor LIKE CONCAT(?, '%');
       `;
       const [nomorRows] = await connection.query(nomorQuery, [prefix]);
       const nomorDokumen = `${prefix}${nomorRows[0].next_num
@@ -81,19 +90,19 @@ const save = async (payload, user) => {
 
       await connection.query(
         "INSERT INTO tdcrb_hdr (rb_nomor, rb_tanggal, user_create, date_create) VALUES (?, ?, ?, NOW())",
-        [nomorDokumen, header.tanggal, user.kode]
+        [nomorDokumen, header.tanggal, user.kode],
       );
 
       // 2. Update dokumen pengiriman asli (trbdc_hdr)
       await connection.query(
         "UPDATE trbdc_hdr SET rb_noterima = ? WHERE rb_nomor = ?",
-        [nomorDokumen, header.nomorRb]
+        [nomorDokumen, header.nomorRb],
       );
 
       // 3. Simpan detail penerimaan (tdcrb_dtl)
       if (items.length > 0) {
         const itemValues = items.map((item, index) => [
-          nomorDokumen + (index + 1),
+          `${nomorDokumen}${(index + 1).toString().padStart(3, "0")}`, // PERBAIKAN 3: Hindari bentrok rbd_iddrec dengan format yang benar
           nomorDokumen,
           item.kode,
           item.ukuran,
@@ -101,13 +110,13 @@ const save = async (payload, user) => {
         ]);
         await connection.query(
           "INSERT INTO tdcrb_dtl (rbd_iddrec, rbd_nomor, rbd_kode, rbd_ukuran, rbd_jumlah) VALUES ?",
-          [itemValues]
+          [itemValues],
         );
       }
 
       // --- 4. LOGIKA KOREKSI OTOMATIS JIKA ADA SELISIH ---
       const selisihItems = items.filter(
-        (i) => (i.terima || 0) !== (i.jumlah || 0)
+        (i) => (i.terima || 0) !== (i.jumlah || 0),
       );
 
       if (selisihItems.length > 0) {
@@ -115,14 +124,14 @@ const save = async (payload, user) => {
         const nomorKoreksi = await generateNomorKoreksi(
           connection,
           user.cabang,
-          header.tanggal
+          header.tanggal,
         );
 
         // Insert header koreksi
         const keteranganKoreksi = `KOREKSI OTOMATIS DARI TERIMA RETUR ${nomorDokumen}`;
         await connection.query(
           "INSERT INTO tkor_hdr (kor_nomor, kor_tanggal, kor_ket, user_create, date_create) VALUES (?, ?, ?, ?, NOW())",
-          [nomorKoreksi, header.tanggal, keteranganKoreksi, user.kode]
+          [nomorKoreksi, header.tanggal, keteranganKoreksi, user.kode],
         );
 
         // Insert detail koreksi
@@ -142,18 +151,22 @@ const save = async (payload, user) => {
         });
         await connection.query(
           "INSERT INTO tkor_dtl (kord_kor_nomor, kord_kode, kord_ukuran, kord_stok, kord_jumlah, kord_selisih, kord_hpp, kord_ket) VALUES ?",
-          [koreksiValues]
+          [koreksiValues],
         );
 
         // Update referensi nomor koreksi di header penerimaan
         await connection.query(
           "UPDATE tdcrb_hdr SET rb_koreksi = ? WHERE rb_nomor = ?",
-          [nomorKoreksi, nomorDokumen]
+          [nomorKoreksi, nomorDokumen],
         );
       }
       // --- AKHIR LOGIKA KOREKSI OTOMATIS ---
 
       await connection.commit();
+
+      // PERBAIKAN 4: WAJIB release koneksi setelah sukses!
+      connection.release();
+
       return {
         message: `Penerimaan Retur berhasil disimpan dengan nomor ${nomorDokumen}`,
         nomor: nomorDokumen,
@@ -168,7 +181,7 @@ const save = async (payload, user) => {
         if (retries === 0) {
           // Jika sudah habis, lempar error
           throw new Error(
-            "Gagal menyimpan data setelah beberapa kali percobaan karena nomor duplikat."
+            "Gagal menyimpan data setelah beberapa kali percobaan karena nomor duplikat.",
           );
         }
         // Jika masih ada jatah, loop akan berlanjut dan mencoba lagi
