@@ -94,6 +94,7 @@ const getDetailStokMinus = async (kode, cabang, tanggal) => {
             WHEN t.mst_noreferensi LIKE '%MSI%' THEN 'Mutasi Stok dari Pesanan'
             WHEN t.mst_noreferensi LIKE '%MST%' THEN 'Mutasi Store Terima'
             WHEN t.mst_noreferensi LIKE '%MSK%' THEN 'Mutasi Store Kirim'
+            WHEN t.mst_noreferensi LIKE '%DS%' THEN 'SO DTF Stok'
             ELSE t.mst_ket
         END AS transaksi,
         (SELECT SUM(x.mst_stok_in - x.mst_stok_out) 

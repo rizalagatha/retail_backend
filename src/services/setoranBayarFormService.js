@@ -64,46 +64,69 @@ const calculateMinDp = async (nomorSo) => {
 
 const saveData = async (payload, user) => {
   const { header, items, isNew } = payload;
+
   // --- VALIDASI TANGGAL SERVER ---
   const serverDate = format(new Date(), "yyyy-MM-dd");
   const inputDate = format(new Date(header.tanggal), "yyyy-MM-dd");
 
-  if (inputDate !== serverDate) {
+  if (inputDate !== serverDate && isNew) {
     throw new Error(
       `Gagal Simpan: Tanggal Setoran (${inputDate}) tidak sesuai dengan tanggal server (${serverDate}).`,
     );
   }
-  // -------------------------------
+
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
 
-    // --- VALIDASI DARI DELPHI ---
+    // --- VALIDASI ---
     if (!header.customer?.kode && !isNew)
       throw new Error("Customer harus diisi.");
     if (!header.nominal) throw new Error("Nominal setoran harus diisi.");
-    if (header.jenisSetor === "TRANSFER" && !header.akun?.kode)
-      throw new Error("Akun bank harus diisi.");
+    if (["TRANSFER", "QRIS"].includes(header.jenisSetor) && !header.akun?.kode)
+      throw new Error("Akun bank / QRIS harus diisi.");
     if (header.jenisSetor === "GIRO" && !header.nomorGiro)
       throw new Error("No. Giro harus diisi.");
     if (header.sisa < 0)
       throw new Error("Sisa pembayaran minus. Cek kembali alokasi pembayaran.");
+
     if (header.nomorSo) {
       const minDp = await calculateMinDp(header.nomorSo);
       if (header.nominal < minDp) {
         const formattedMinDp = new Intl.NumberFormat("id-ID").format(minDp);
         throw new Error(
-          `Setoran ini untuk DP SO ${header.nomorSo}. Nominal tidak boleh kurang dari Rp ${formattedMinDp}`,
+          `Setoran DP SO ${header.nomorSo} tidak boleh kurang dari Rp ${formattedMinDp}`,
         );
       }
     }
-    // --- AKHIR VALIDASI ---
 
     let shNomor = header.nomor;
     const timestamp = format(new Date(), "yyyyMMddHHmmssSSS");
     const idrec = `${user.cabang}SH${timestamp}`;
 
+    // MAPPING JENIS SETORAN
+    // QRIS di-set ke 1, tapi nanti kita manipulasi di keterangan agar terbaca "PEMBAYARAN QRIS"
+    const jenisMap = { TUNAI: 0, TRANSFER: 1, GIRO: 2, QRIS: 1 };
+
+    let finalKeterangan = header.keterangan || "";
+    if (
+      header.jenisSetor === "QRIS" &&
+      !finalKeterangan.toUpperCase().includes("PEMBAYARAN QRIS")
+    ) {
+      finalKeterangan = finalKeterangan
+        ? `PEMBAYARAN QRIS | ${finalKeterangan}`
+        : "PEMBAYARAN QRIS";
+    }
+
+    const safeDate = (val) =>
+      val === "" || val === undefined || val === null ? null : val;
+
+    const tglTransfer = safeDate(header.tanggalTransfer);
+    const tglGiro = safeDate(header.tanggalGiro);
+    const tglTempoGiro = safeDate(header.tanggalJatuhTempo);
+
     if (isNew) {
+      // ===== MODE BARU (INSERT) =====
       shNomor = await generateNewShNumber(user.cabang, header.tanggal);
 
       const headerSql = `
@@ -111,13 +134,9 @@ const saveData = async (payload, user) => {
           sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal,
           sh_akun, sh_norek, sh_tgltransfer, sh_giro, sh_tglgiro, sh_tempogiro,
           sh_ket, sh_so_nomor, user_create, date_create
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
       `;
 
-      const jenisMap = { TUNAI: 0, TRANSFER: 1, GIRO: 2 };
-
-      // 1️⃣ INSERT HEADER dulu
       await connection.query(headerSql, [
         idrec,
         shNomor,
@@ -127,73 +146,74 @@ const saveData = async (payload, user) => {
         header.nominal,
         header.akun?.kode,
         header.akun?.rekening,
-        header.tanggalTransfer,
+        tglTransfer,
         header.nomorGiro,
-        header.tanggalGiro,
-        header.tanggalJatuhTempo,
-        header.keterangan,
+        tglGiro,
+        tglTempoGiro,
+        finalKeterangan,
         header.nomorSo || "",
         user.kode,
       ]);
 
-      // 2️⃣ Setelah insert → jika ini DP SO → simpan nomor SO
       if (header.nomorSo) {
         await connection.query(
           `UPDATE tsetor_hdr SET sh_so_nomor = ? WHERE sh_nomor = ?`,
           [header.nomorSo, shNomor],
         );
       }
+    } else {
+      // ===== MODE EDIT (UPDATE & CLEANUP) =====
+
+      // Update Header
+      const updateHeaderSql = `
+        UPDATE tsetor_hdr SET 
+          sh_jenis = ?, sh_nominal = ?, sh_akun = ?, sh_norek = ?, sh_tgltransfer = ?, 
+          sh_giro = ?, sh_tglgiro = ?, sh_tempogiro = ?, sh_ket = ?, user_modified = ?, date_modified = NOW()
+        WHERE sh_nomor = ?
+      `;
+      await connection.query(updateHeaderSql, [
+        jenisMap[header.jenisSetor],
+        header.nominal,
+        header.akun?.kode,
+        header.akun?.rekening,
+        tglTransfer, // <-- Gunakan variabel aman
+        header.nomorGiro || "",
+        tglGiro, // <-- Gunakan variabel aman
+        tglTempoGiro, // <-- Gunakan variabel aman
+        finalKeterangan,
+        user.kode,
+        shNomor,
+      ]);
+
+      // CLEANUP 1: Hapus Setoran DTL lama (Kecuali DP LINK)
+      await connection.query(
+        `DELETE FROM tsetor_dtl WHERE sd_sh_nomor = ? AND sd_ket NOT LIKE 'DP LINK DARI INV'`,
+        [shNomor],
+      );
+
+      // CLEANUP 2: Hapus Piutang DTL lama
+      // Penting: Hapus berdasarkan referensi Setor (pd_ket = sh_nomor) ATAU uraian lama
+      await connection.query(`DELETE FROM tpiutang_dtl WHERE pd_ket = ?`, [
+        shNomor,
+      ]);
     }
 
-    // ===============================
-    // PATCH: Jangan hapus DP LINK DARI INV
-    // ===============================
-    await connection.query(
-      `
-      DELETE FROM tsetor_dtl 
-      WHERE sd_sh_nomor = ?
-        AND sd_ket NOT LIKE 'DP LINK DARI INV'
-    `,
-      [shNomor],
-    );
-    // ===============================
-    // PATCH: hapus hanya pembayaran, bukan DP
-    // ===============================
-    await connection.query(
-      `
-      DELETE FROM tpiutang_dtl 
-      WHERE pd_ket = ?
-        AND (
-          pd_uraian LIKE 'Pembayaran Tunai%'
-        OR pd_uraian LIKE 'Pembayaran Transfer%'
-        OR pd_uraian LIKE 'Pembayaran Giro%'
-        OR pd_uraian LIKE 'Pembayaran Card%'
-      )
-    `,
-      [shNomor],
-    );
-
+    // --- INSERT DETAIL BARU ---
     const validItems = items.filter(
       (item) => item.invoice && (item.bayar || 0) > 0,
     );
+
     if (validItems.length > 0) {
-      const detailSql = `
-        INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut) 
-        VALUES ?;
-        `;
-      const piutangDetailSql = `
-        INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur, pd_bk) 
-        VALUES ?;
-        `;
+      const detailSql = `INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut) VALUES ?;`;
+      const piutangDetailSql = `INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur, pd_bk) VALUES ?;`;
 
       const detailValues = [];
       const piutangValues = [];
 
       validItems.forEach((item, index) => {
-        const angsurId = `${user.cabang}SD${format(
-          new Date(),
-          "yyyyMMddHHmmssSSS",
-        )}${index}`;
+        const angsurId = `${user.cabang}SD${format(new Date(), "yyyyMMddHHmmssSSS")}${index}`;
+
+        // Push ke tsetor_dtl
         detailValues.push([
           idrec,
           shNomor,
@@ -205,27 +225,33 @@ const saveData = async (payload, user) => {
           index + 1,
         ]);
 
+        // Push ke tpiutang_dtl
+        const uraian =
+          header.jenisSetor === "QRIS"
+            ? "Pembayaran QRIS"
+            : `Pembayaran ${header.jenisSetor}`;
+
         if (item.invoice.includes("INV")) {
           // Pelunasan Invoice Biasa
           piutangValues.push([
             `${header.customer.kode}${item.invoice}`,
             item.tglBayar,
-            `Pembayaran ${header.jenisSetor}`,
+            uraian,
             item.bayar,
             shNomor,
             angsurId,
-            "N", // pd_bk = 'N'
+            "N",
           ]);
         } else if (item.invoice.includes(".BK")) {
-          // Pelunasan Biaya Kirim (Logika Pos('BK') di Delphi)
+          // Pelunasan Biaya Kirim
           piutangValues.push([
-            item.invoice, // pd_ph_nomor = Nomor BK langsung
+            item.invoice,
             item.tglBayar,
             `Pembayaran BK ${header.jenisSetor}`,
             item.bayar,
             shNomor,
             angsurId,
-            "Y", // PENTING: pd_bk = 'Y' agar muncul di detail Biaya Kirim
+            "Y",
           ]);
         }
       });
@@ -236,6 +262,7 @@ const saveData = async (payload, user) => {
         await connection.query(piutangDetailSql, [piutangValues]);
     }
 
+    // Aktivasi SO Jika Memenuhi DP
     if (header.nomorSo) {
       await activateSoIfDpEnough(connection, header.nomorSo, shNomor, user);
     }
@@ -311,6 +338,7 @@ const loadForEdit = async (nomor, user) => {
         c.cus_telp AS customer_telp,
         CASE 
             WHEN h.sh_jenis = 0 THEN "TUNAI"
+            WHEN h.sh_jenis = 1 AND UPPER(h.sh_ket) LIKE "%PEMBAYARAN QRIS%" THEN "QRIS"
             WHEN h.sh_jenis = 1 THEN "TRANSFER"
             ELSE "GIRO"
         END AS jenisSetor,

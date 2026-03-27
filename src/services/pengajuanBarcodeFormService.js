@@ -111,57 +111,87 @@ const save = async (payload, user) => {
       );
 
       for (const [index, item] of items.entries()) {
-        // [FIX] Validasi hargabaru agar tidak skip item yang sedang di-approve
         if (Number(item.hargabaru) > 0) {
+          // GENERATE 8 DIGIT: 00000926
           const newProductCode =
             item.kodebaru || (await generateNewProductCode(connection));
-          const newProductName = `${item.nama} #${item.jenis.substring(0, 1)}`;
-          const pcd2_nomorin = `${nomorDokumen.substring(0, 3)}RJT${newProductCode}`; // [FIX] Sesuai Delphi
 
-          // 1. Insert/Update Master Produk
-          await connection.query(
-            'INSERT INTO tbarangdc (brg_kode, brg_ktgp, brg_aktif, brg_logstok, brg_kelompok, brg_warna, user_create, date_create) VALUES (?, ?, 0, "Y", "C", ?, ?, NOW()) ON DUPLICATE KEY UPDATE brg_ktgp=VALUES(brg_ktgp), brg_warna=VALUES(brg_warna)',
-            [newProductCode, item.jenis, newProductName, user.kode],
-          );
+          // FORMAT DELPHI: CAB+RJT+00000926 (Contoh: K03RJT00000926)
+          const pcd2_nomorin = `${nomorDokumen.substring(0, 3)}RJT${newProductCode}`;
 
+          // 1. Update Master Utama
           await connection.query(
-            "INSERT INTO tbarangdc_dtl (brgd_kode, brgd_barcode, brgd_ukuran, brgd_hpp, brgd_harga) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE brgd_hpp=VALUES(brgd_hpp), brgd_harga=VALUES(brgd_harga)",
+            'INSERT INTO tbarangdc (brg_kode, brg_warna, brg_ktgp, brg_aktif, brg_logstok, brg_kelompok, user_create, date_create) VALUES (?, ?, ?, 0, "Y", "C", ?, NOW()) ON DUPLICATE KEY UPDATE brg_warna=VALUES(brg_warna)',
             [
               newProductCode,
-              newProductCode,
-              item.ukuran,
-              item.hpp,
-              item.hargabaru,
+              `${item.nama} #${item.jenis.substring(0, 1)}`,
+              item.jenis,
+              user.kode,
             ],
           );
 
-          // 2. Insert ke Detail 2 (Hasil Approval) [FIX KOLOM]
-          const timestampDetail = format(
-            new Date(now.getTime() + index),
-            "yyyyMMddHHmmss.SSS",
+          // 2. Update Detail Barcode
+          // PASTIKAN yang masuk ke brgd_barcode adalah newProductCode!
+          await connection.query(
+            `INSERT INTO tbarangdc_dtl (brgd_kode, brgd_barcode, brgd_ukuran, brgd_hpp, brgd_harga, brgd_produksi) 
+                 VALUES (?, ?, ?, ?, ?, ?) 
+                 ON DUPLICATE KEY UPDATE brgd_hpp=VALUES(brgd_hpp), brgd_harga=VALUES(brgd_harga)`,
+            [
+              newProductCode, // brgd_kode
+              newProductCode, // brgd_barcode (8 digit)
+              item.ukuran,
+              item.hpp,
+              item.hargabaru,
+              header.tanggal,
+            ],
           );
-          const pcd2_idrec = `${user.cabang}PC${timestampDetail}`;
-          const pcd2_iddrec = `${pcd2_idrec}${index + 1}`;
 
+          // 3. Simpan Detail Approval
+          const pcd2_idrec = `${user.cabang}PC${format(new Date(now.getTime() + index), "yyyyMMddHHmmss.SSS")}`;
           await connection.query(
             `INSERT INTO tpengajuanbarcode_dtl2 
-         (pcd2_idrec, pcd2_iddrec, pcd2_nomor, pcd2_nomorin, pcd2_kode, pcd2_kodein, pcd2_ukuran, pcd2_jumlah, pcd2_diskon, pcd2_harga) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
-         ON DUPLICATE KEY UPDATE pcd2_diskon=VALUES(pcd2_diskon), pcd2_harga=VALUES(pcd2_harga)`,
+                (pcd2_idrec, pcd2_iddrec, pcd2_nomor, pcd2_nomorin, pcd2_kode, pcd2_kodein, pcd2_ukuran, pcd2_jumlah, pcd2_diskon, pcd2_harga) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               pcd2_idrec,
-              pcd2_iddrec,
+              `${pcd2_idrec}${index + 1}`,
               nomorDokumen,
-              pcd2_nomorin, // [BARU]
-              item.kode,
-              newProductCode,
+              pcd2_nomorin, // Ini panjang (K03RJT00000926), makanya dtl2 harus diperlebar di Langkah 1
+              item.kode, // Kode lama
+              newProductCode, // Kode baru (8 digit)
               item.ukuran,
-              item.jumlah, // [BARU]
+              item.jumlah,
               item.diskon,
               item.hargabaru,
             ],
           );
         }
+      }
+
+      if (stickers && stickers.length > 0) {
+        const sticker2Values = stickers.map((s, i) => {
+          const timestamp = format(
+            new Date(now.getTime() + i + 1000),
+            "yyyyMMddHHmmss.SSS",
+          );
+          const pcs2_idrec = `${user.cabang}PC${timestamp}`;
+          return [
+            pcs2_idrec,
+            `${pcs2_idrec}${i + 1}`, // pcs2_iddrec
+            nomorDokumen,
+            s.kode,
+            s.kodes,
+            s.ukuran,
+            s.jumlah,
+          ];
+        });
+
+        await connection.query(
+          `INSERT INTO tpengajuanbarcode_sticker2 
+             (pcs2_idrec, pcs2_iddrec, pcs2_nomor, pcs2_kode, pcs2_kodes, pcs2_ukuran, pcs2_jumlah) 
+             VALUES ? ON DUPLICATE KEY UPDATE pcs2_jumlah=VALUES(pcs2_jumlah)`,
+          [sticker2Values],
+        );
       }
     } else {
       // == ALUR SIMPAN BIASA ==
@@ -309,13 +339,26 @@ const getJenisReject = async () => {
 };
 
 const generateNewProductCode = async (connection) => {
+  // 1. Ambil 2 digit tahun sekarang (misal: "26")
   const year = new Date().getFullYear().toString().substring(2);
-  const query = `SELECT IFNULL(MAX(LEFT(brg_kode, 6)), 0) AS last_num FROM tbarangdc WHERE brg_kelompok='C' AND RIGHT(brg_kode, 2) = ?;`;
+
+  // 2. Cari nomor urut terbesar untuk barang kelompok 'C' (Reject/Custom) di tahun tsb
+  const query = `
+    SELECT IFNULL(MAX(CAST(LEFT(brg_kode, 6) AS UNSIGNED)), 0) AS last_num 
+    FROM tbarangdc 
+    WHERE brg_kelompok = 'C' AND RIGHT(brg_kode, 2) = ?
+  `;
+
   const [rows] = await connection.query(query, [year]);
-  const nextNum = (parseInt(rows[0].last_num, 10) + 1)
-    .toString()
-    .padStart(6, "0");
-  return `${nextNum}${year}`;
+
+  // 3. Tambahkan 1 ke nomor terakhir
+  const nextNum = parseInt(rows[0].last_num, 10) + 1;
+
+  // 4. Pad dengan nol sampai 6 digit, lalu gabungkan dengan tahun
+  // Result: "000009" + "26" = "00000926"
+  const formattedNum = nextNum.toString().padStart(6, "0");
+
+  return `${formattedNum}${year}`;
 };
 
 const getProductDetails = async (filters) => {
