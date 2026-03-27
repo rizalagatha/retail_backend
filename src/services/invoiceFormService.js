@@ -99,8 +99,10 @@ const searchSo = async (term, page, itemsPerPage, user) => {
                     
             -- 6. Cek apakah LHK sudah dibuat di tabel tdtf (sodtf = nomor SO)
             IFNULL((SELECT COUNT(*) 
-                    FROM tdtf lhk 
-                    WHERE lhk.sodtf = h.so_nomor), 0) AS lhk_created
+                    FROM tso_dtl dd 
+                    INNER JOIN tdtf lhk ON lhk.sodtf = dd.sod_sd_nomor 
+                    WHERE dd.sod_so_nomor = h.so_nomor 
+                      AND dd.sod_sd_nomor <> ''), 0) AS lhk_created
             
         FROM tso_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
@@ -1057,14 +1059,20 @@ const saveData = async (payload, user) => {
         ).padStart(3, "0")}`;
 
         // =================================================================
-        // [FIX] TARIK HPP ASLI LANGSUNG DARI DATABASE SAAT MENYIMPAN
+        // [FIX FINAL] AMBIL HPP DARI FRONTEND (PRIORITAS SJ/SO)
         // =================================================================
-        const [brgRows] = await connection.query(
-          "SELECT brgd_hpp FROM tbarangdc_dtl WHERE brgd_kode = ? AND brgd_ukuran = ? LIMIT 1",
-          [item.kode, item.ukuran || ""],
-        );
-        const hppAsli =
-          brgRows.length > 0 ? Number(brgRows[0].brgd_hpp || 0) : 0;
+        let hppAsli = Number(item.hpp || 0);
+
+        // Jika hpp dari frontend 0 (misal hasil Scan Barcode manual), baru tarik dari DB Master
+        if (hppAsli === 0) {
+          const [brgRows] = await connection.query(
+            "SELECT brgd_hpp FROM tbarangdc_dtl WHERE brgd_kode = ? AND brgd_ukuran = ? LIMIT 1",
+            [item.kode, item.ukuran || ""],
+          );
+          if (brgRows.length > 0) {
+            hppAsli = Number(brgRows[0].brgd_hpp || 0);
+          }
+        }
         // =================================================================
 
         let invd_mstpesan = 0;
@@ -3114,8 +3122,11 @@ const getSjDetails = async (nomor, user, currentInvNomor = "") => {
     // 2. Ambil Items & Stok Cabang user saat ini
     const itemsQuery = `
       SELECT d.sjd_kode as kode, d.sjd_ukuran as ukuran, d.sjd_jumlah,
-        ifnull(trim(concat(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)), f.sd_nama) as nama,
-        b.brgd_barcode as barcode, b.brgd_harga, b.brgd_hpp, a.brg_ktgp as kategori,
+        ifnull(trim(concat(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)), f.sd_nama) as nama_barang,
+        b.brgd_barcode as barcode, 
+        b.brgd_harga AS harga, -- [FIX] Beri alias harga
+        b.brgd_hpp AS hpp,     -- [FIX] Beri alias hpp 
+        a.brg_ktgp as kategori,
         -- [FIX] Gunakan IFNULL dan tambahkan pengecekan mst_noreferensi agar stok tidak 0 saat edit
         IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
                 FROM tmasterstok m 
