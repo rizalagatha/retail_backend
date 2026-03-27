@@ -285,12 +285,16 @@ const saveData = async (data, user) => {
       ]);
       for (const [index, item] of details.entries()) {
         if (item.nomor) {
+          const newIdDrec = `${user.cabang}RFD${format(
+            new Date(),
+            "yyyyMMddHHmmssSSS",
+          )}${String(index + 1).padStart(3, "0")}`;
           // PERBAIKAN 2: Tambahkan kolom rfd_refund agar input user tersimpan
           await connection.query(
             "INSERT INTO trefund_dtl (rfd_idrec, rfd_iddrec, rfd_nomor, rfd_notrs, rfd_cus_kode, rfd_nominal, rfd_refund, rfd_ket, rfd_nourut) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
               cidrec,
-              item.iddrec,
+              newIdDrec,
               rfNomor,
               item.nomor,
               item.kdcus,

@@ -58,6 +58,7 @@ const searchSo = async (term, page, itemsPerPage, user) => {
   const offset = (page - 1) * itemsPerPage;
   const searchTerm = `%${term || ""}%`;
 
+  // --- SUBQUERY UNTUK KALKULASI SYARAT INVOICE ---
   const subQuery = `
         SELECT 
             h.so_nomor AS Nomor, 
@@ -67,14 +68,40 @@ const searchSo = async (term, page, itemsPerPage, user) => {
             c.cus_alamat AS Alamat,
             c.cus_kota AS Kota,
             h.so_dipakai_dtf AS DipakaiDtf,
+            
+            -- 1. Total Qty Pesanan
             IFNULL((SELECT SUM(dd.sod_jumlah) 
                     FROM tso_dtl dd 
                     WHERE dd.sod_so_nomor = h.so_nomor), 0) AS qtyso,
+                    
+            -- 2. Total Qty yang sudah di-Invoice (Belum lunas total)
             IFNULL((SELECT SUM(dd.invd_jumlah) 
                     FROM tinv_dtl dd 
                     JOIN tinv_hdr hh ON hh.inv_nomor = dd.invd_inv_nomor 
                     WHERE hh.inv_sts_pro = 0 
-                    AND hh.inv_nomor_so = h.so_nomor), 0) AS qtyinv
+                    AND hh.inv_nomor_so = h.so_nomor), 0) AS qtyinv,
+                    
+            -- 3. Total Qty yang sudah di-Scan
+            IFNULL((SELECT SUM(dd.sod_scanned) 
+                    FROM tso_dtl dd 
+                    WHERE dd.sod_so_nomor = h.so_nomor), 0) AS qtyscanned,
+                    
+            -- 4. Total Mutasi Stok SO
+            IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
+                    FROM tmasterstokso m 
+                    WHERE m.mst_aktif = 'Y' 
+                    AND m.mst_nomor_so = h.so_nomor), 0) AS qtymutated,
+                    
+            -- 5. Cek apakah ada item Custom (SO DTF)
+            IFNULL((SELECT SUM(IF(dd.sod_custom = 'Y', 1, 0)) 
+                    FROM tso_dtl dd 
+                    WHERE dd.sod_so_nomor = h.so_nomor), 0) AS is_custom,
+                    
+            -- 6. Cek apakah LHK sudah dibuat di tabel tdtf (sodtf = nomor SO)
+            IFNULL((SELECT COUNT(*) 
+                    FROM tdtf lhk 
+                    WHERE lhk.sodtf = h.so_nomor), 0) AS lhk_created
+            
         FROM tso_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
         WHERE h.so_aktif = "Y" 
@@ -82,7 +109,15 @@ const searchSo = async (term, page, itemsPerPage, user) => {
           AND h.so_cab = ?
     `;
 
-  const baseQuery = `FROM (${subQuery}) AS x WHERE x.qtyinv < x.qtyso`;
+  // --- FILTER UTAMA (Aturan Bisnis) ---
+  const baseQuery = `
+        FROM (${subQuery}) AS x 
+        WHERE x.qtyinv < x.qtyso             -- Belum sepenuhnya di-invoice
+          AND x.qtyscanned >= x.qtyso        -- Semua item sudah di-scan
+          AND x.qtymutated >= x.qtyso        -- Semua item sudah dimutasi stok
+          AND (x.is_custom = 0 OR x.lhk_created > 0) -- Jika ada custom, LHK WAJIB ada
+    `;
+
   const searchWhere = `AND (x.Nomor LIKE ? OR x.Customer LIKE ?)`;
 
   const countParams = [user.cabang];
@@ -93,21 +128,21 @@ const searchSo = async (term, page, itemsPerPage, user) => {
     dataParams.push(searchTerm, searchTerm);
   }
 
-  const countQuery = `SELECT COUNT(*) AS total ${baseQuery} ${
-    term ? searchWhere : ""
-  }`;
+  // Hitung Total Data (untuk pagination)
+  const countQuery = `SELECT COUNT(*) AS total ${baseQuery} ${term ? searchWhere : ""}`;
   const [countRows] = await pool.query(countQuery, countParams);
 
   dataParams.push(itemsPerPage, offset);
 
+  // Ambil Data Item
   const dataQuery = `
         SELECT 
             x.Nomor, 
             x.Tanggal, 
             x.KdCus, 
             x.Customer,
-            x.Alamat,        -- ✔ FIX
-            x.Kota,           -- ✔ FIX
+            x.Alamat,
+            x.Kota,
             x.DipakaiDtf 
         ${baseQuery} 
         ${term ? searchWhere : ""} 
@@ -1021,6 +1056,17 @@ const saveData = async (payload, user) => {
           index + 1,
         ).padStart(3, "0")}`;
 
+        // =================================================================
+        // [FIX] TARIK HPP ASLI LANGSUNG DARI DATABASE SAAT MENYIMPAN
+        // =================================================================
+        const [brgRows] = await connection.query(
+          "SELECT brgd_hpp FROM tbarangdc_dtl WHERE brgd_kode = ? AND brgd_ukuran = ? LIMIT 1",
+          [item.kode, item.ukuran || ""],
+        );
+        const hppAsli =
+          brgRows.length > 0 ? Number(brgRows[0].brgd_hpp || 0) : 0;
+        // =================================================================
+
         let invd_mstpesan = 0;
         let invd_mststok = jumlah;
 
@@ -1050,7 +1096,7 @@ const saveData = async (payload, user) => {
           invd_mstpesan, // Akan bernilai 0 untuk KPR
           invd_mststok, // Akan bernilai FULL Qty untuk KPR
           hargaAsli,
-          Number(item.hpp || 0),
+          hppAsli,
           Number(item.diskonPersen || 0),
           diskonRp,
           item.noSoDtf || "",
