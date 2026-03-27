@@ -12,17 +12,18 @@ const getSoDtfList = async (filters, user) => {
   const dateColumn =
     filterDateType === "pengerjaan" ? "h.sd_datekerja" : "h.sd_tanggal";
 
-  // --- LOGIKA FILTER KHUSUS K06 (Kecualikan K06 sendiri) ---
+  // --- LOGIKA FILTER KHUSUS K06 & KDC ---
   let branchQuery = "";
 
   if (userCabang === "K06") {
     if (cabang === "ALL") {
-      // Tampilkan kiriman dari SEMUA cabang lain ke workshop K06
-      // Kecualikan yang dibuat oleh K06 sendiri (h.sd_cab <> 'K06')
+      // Mode Workshop: Tampilkan kiriman dari SEMUA cabang lain ke workshop K06
       branchQuery = "AND h.sd_Workshop = 'K06' AND h.sd_cab <> 'K06'";
+    } else if (cabang === "K06") {
+      // [FIX] Mode Toko: Jika K06 melihat tokonya sendiri, tampilkan semua tanpa membatasi Workshop
+      branchQuery = "AND h.sd_cab = 'K06'";
     } else {
-      // Tampilkan kiriman dari cabang spesifik yang dipilih ke workshop K06
-      // (K06 tidak akan muncul karena pilihan 'cabang' di dropdown pasti cabang lain)
+      // Mode Workshop: Tampilkan kiriman dari cabang spesifik yang dipilih ke workshop K06
       branchQuery = "AND h.sd_cab = ? AND h.sd_Workshop = 'K06'";
       params.push(cabang);
     }
