@@ -75,7 +75,8 @@ const getRealTimeStock = async (filters) => {
       mainParams.push(kodeBarang);
     }
 
-    const havingClause = !tampilkanKosong ? "HAVING TOTAL > 0" : "";
+    // [FIX] Gunakan <> 0 agar stok minus tetap tampil
+    const havingClause = !tampilkanKosong ? "HAVING TOTAL <> 0" : "";
 
     const isKDC = gudang === "KDC" ? 1 : 0;
 
@@ -315,7 +316,7 @@ const getRealTimeStockExport = async (filters) => {
         WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y' ${kodeBarangFilter}
         
         -- [FIX 2] Gunakan isShowZero di sini
-        ${!isShowZero ? "HAVING TOTAL > 0" : ""}
+        ${!isShowZero ? "HAVING TOTAL <> 0" : ""}
         
         ORDER BY NAMA, b.brgd_ukuran;
     `;
