@@ -251,7 +251,15 @@ const getExportDetails = async (startDate, endDate, cabang) => {
             d.pend_jumlah AS 'Qty',
             d.pend_harga AS 'Harga',
             d.pend_diskon AS 'Diskon',
-            (d.pend_jumlah * (d.pend_harga - d.pend_diskon)) AS 'Total'
+            (d.pend_jumlah * (d.pend_harga - d.pend_diskon)) AS 'Total',
+            
+            -- [BARU] Tambahkan Logika Status di sini
+            CASE 
+                WHEN EXISTS(SELECT 1 FROM tso_hdr so WHERE so.so_pen_nomor = h.pen_nomor) THEN 'Sudah Jadi SO'
+                WHEN h.pen_alasan IS NOT NULL AND h.pen_alasan != '' THEN 'Closed'
+                ELSE 'Open'
+            END AS 'Status'
+            
         FROM tpenawaran_hdr h
         JOIN tpenawaran_dtl d ON h.pen_nomor = d.pend_nomor
         LEFT JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode

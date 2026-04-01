@@ -61,7 +61,7 @@ const getList = async (filters, user) => {
             FROM trj_dtl d WHERE d.rjd_nomor = h.rj_nomor
         ) AS nominal,
 
-        /* 2. Hitung Dibayarkan: Cek ke tabel Retur DC jika jenis 'O' */
+        /* 2. Hitung Dibayarkan */
         CASE 
           WHEN h.rj_jenis = 'O' AND EXISTS (SELECT 1 FROM trbdc_hdr WHERE rb_ket LIKE CONCAT('%', h.rj_nomor, '%')) THEN
             (SELECT ROUND(SUM(d.rjd_jumlah*(d.rjd_harga-d.rjd_diskon))-h.rj_disc+(h.rj_ppn/100*(SUM(d.rjd_jumlah*(d.rjd_harga-d.rjd_diskon))-h.rj_disc)))
@@ -80,12 +80,18 @@ const getList = async (filters, user) => {
                FROM trj_dtl d WHERE d.rjd_nomor = h.rj_nomor)
             ELSE IFNULL(p.link, 0)
           END)
-        ) AS sisa
+        ) AS sisa,
+
+        /* [BARU] 4. Link Piutang Pembayaran (Muncul di tabel luar) */
+        p.linkPiutang
 
     FROM trj_hdr h
     LEFT JOIN tcustomer c ON c.cus_kode = h.rj_cus_kode
     LEFT JOIN (
-        SELECT pd_ket, SUM(pd_kredit) AS link 
+        SELECT pd_ket, 
+               SUM(pd_kredit) AS link,
+               -- [BARU] Tarik semua invoice yg menggunakan retur ini (digabung jika lebih dari 1)
+               GROUP_CONCAT(DISTINCT RIGHT(pd_ph_nomor, 17) SEPARATOR ', ') AS linkPiutang
         FROM tpiutang_dtl 
         WHERE pd_uraian IN ('Pembayaran Retur', 'Pembayaran Retur Online', 'Retur Online (Adjustment)') 
         GROUP BY pd_ket
@@ -125,7 +131,8 @@ const getPaymentLinks = async (nomor) => {
         pd_tanggal AS tanggal,
         pd_kredit AS nominal 
     FROM tpiutang_dtl
-    WHERE pd_ket = ? AND pd_uraian = 'Pembayaran Retur'
+    -- [PERBAIKAN] Samakan IN clause-nya dengan getList agar detailnya sinkron
+    WHERE pd_ket = ? AND pd_uraian IN ('Pembayaran Retur', 'Pembayaran Retur Online', 'Retur Online (Adjustment)')
     ORDER BY pd_tanggal;
     `;
   const [rows] = await pool.query(query, [nomor]);
@@ -188,27 +195,20 @@ const remove = async (nomor, user) => {
 };
 
 const getExportDetails = async (filters, user) => {
-  // Filters berisi startDate, endDate, cabang dari Frontend
   const { startDate, endDate, cabang } = filters;
-
-  // Gunakan DATE() agar filter mencakup seluruh jam dalam hari tersebut
   let whereClauses = ["DATE(h.rj_tanggal) BETWEEN ? AND ?"];
   let params = [startDate, endDate];
 
   if (user.cabang === "KDC") {
-    // Jika user KDC, dia bisa filter cabang tertentu ATAU defaultnya semua cabang DC
-    // Jika filters.cabang ada isinya (bukan ALL/kosong), pakai filter itu
     if (cabang && cabang !== "ALL") {
       whereClauses.push("h.rj_cab = ?");
       params.push(cabang);
     } else {
-      // Default KDC melihat semua data DC
       whereClauses.push(
         "h.rj_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)",
       );
     }
   } else {
-    // Jika user cabang biasa, paksa hanya lihat cabangnya sendiri
     whereClauses.push("h.rj_cab = ?");
     params.push(user.cabang);
   }
@@ -218,6 +218,7 @@ const getExportDetails = async (filters, user) => {
         h.rj_nomor AS 'Nomor Retur',
         h.rj_tanggal AS 'Tanggal',
         h.rj_inv AS 'No. Invoice',
+        IFNULL(p.linkPiutang, '-') AS 'Link Pembayaran', -- [BARU] Tambah di Excel
         c.cus_nama AS 'Customer',
         d.rjd_kode AS 'Kode Barang',
         TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS 'Nama Barang',
@@ -230,6 +231,12 @@ const getExportDetails = async (filters, user) => {
     INNER JOIN trj_dtl d ON h.rj_nomor = d.rjd_nomor
     LEFT JOIN tcustomer c ON c.cus_kode = h.rj_cus_kode
     LEFT JOIN tbarangdc a ON a.brg_kode = d.rjd_kode
+    LEFT JOIN (
+        SELECT pd_ket, GROUP_CONCAT(DISTINCT RIGHT(pd_ph_nomor, 17) SEPARATOR ', ') AS linkPiutang
+        FROM tpiutang_dtl 
+        WHERE pd_uraian IN ('Pembayaran Retur', 'Pembayaran Retur Online', 'Retur Online (Adjustment)') 
+        GROUP BY pd_ket
+    ) p ON p.pd_ket = h.rj_nomor
     WHERE ${whereClauses.join(" AND ")}
     ORDER BY h.rj_nomor, d.rjd_nourut;
     `;

@@ -797,9 +797,8 @@ const searchSoForDtf = async (term, cabang, page, itemsPerPage) => {
     LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
     LEFT JOIN tsetor_hdr s ON s.sh_so_nomor = h.so_nomor
 
-    WHERE h.so_aktif = 'Y'
-      AND h.so_dipakai_dtf = 'N'
-      AND h.so_cab = ?
+    -- [PERBAIKAN] Filter so_aktif dan so_dipakai_dtf dihapus agar semua SO muncul
+    WHERE h.so_cab = ?
       AND (h.so_nomor LIKE ? OR c.cus_nama LIKE ?)
 
     GROUP BY h.so_nomor
@@ -823,9 +822,9 @@ const searchSoForDtf = async (term, cabang, page, itemsPerPage) => {
       FROM tso_hdr h
       LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
       LEFT JOIN tsetor_hdr s ON s.sh_so_nomor = h.so_nomor
-      WHERE h.so_aktif = 'Y'
-        AND h.so_dipakai_dtf = 'N'
-        AND h.so_cab = ?
+      
+      -- [PERBAIKAN] Filter di count query juga harus disamakan
+      WHERE h.so_cab = ?
         AND (h.so_nomor LIKE ? OR c.cus_nama LIKE ?)
       GROUP BY h.so_nomor
     ) x
