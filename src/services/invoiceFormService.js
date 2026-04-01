@@ -39,6 +39,69 @@ async function getSisaStokSO(connection, nomorSO, kodeBarang, ukuran) {
   return Number(rows?.[0]?.sisa || 0);
 }
 
+// --- HELPER DISKON PRIORITAS KPR ---
+const getKprItemDiscount = (namaBarang, kategori) => {
+  const nama = (namaBarang || "").toUpperCase();
+  const kat = (kategori || "").toUpperCase();
+
+  // ==============================================================================
+  // PRIORITAS 1: PENGECEKAN BAHAN SPESIFIK (Tidak peduli Reguler atau Sesional)
+  // ==============================================================================
+
+  // KATUN AIR & CARLOS: 10%
+  if (nama.includes("KATUN AIR") || nama.includes("CARLOS")) return 10;
+
+  // DBF: 5%
+  if (nama.includes("DBF")) return 5;
+
+  // JERSEY: 5%
+  if (nama.includes("JERSEY")) return 5;
+
+  // SWEATER: 5%
+  if (nama.includes("SWEATER")) return 5;
+
+  // CROPTOP / CROP: 5%
+  if (nama.includes("CROPTOP") || nama.includes("CROP ")) return 5;
+
+  // BATWING: 5%
+  if (nama.includes("BATWING")) return 5;
+
+  // ==============================================================================
+  // PRIORITAS 2: PENGECEKAN KATEGORI / JENIS TERTENTU (15%)
+  // ==============================================================================
+
+  // Pastikan BUKAN SESIONAL agar bisa mendapat hak diskon 15%
+  if (kat !== "SESIONAL" && kat !== "SESSIONAL") {
+    // 1. KAOS REGULER COMBED 24S/30S
+    if (
+      kat === "REGULER" &&
+      nama.includes("COMBED") &&
+      (nama.includes("24S") || nama.includes("30S"))
+    ) {
+      return 15;
+    }
+
+    // 2. ANAK, TUNIK, HOODIE, POLO
+    if (
+      /\bANAK\b/.test(nama) ||
+      nama.includes("TUNIK") ||
+      nama.includes("HOODIE") ||
+      /\bPOLO\b/.test(nama)
+    ) {
+      return 15;
+    }
+  }
+
+  // ==============================================================================
+  // PRIORITAS 3: DEFAULT SESIONAL
+  // ==============================================================================
+  // Semua yang berkategori Sesional dan lolos dari Prioritas 1 akan bermuara di sini
+  if (kat === "SESIONAL" || kat === "SESSIONAL") return 10;
+
+  // Default jika tidak masuk daftar diskon priority sama sekali
+  return 0;
+};
+
 // --- FUNGSI GENERATE NOMOR ---
 const generateNewInvNumber = async (gudang, tanggal) => {
   const date = new Date(tanggal);
@@ -3083,10 +3146,13 @@ const searchSj = async (filters, user) => {
 /**
  * Mengambil detail lengkap SJ untuk dimasukkan ke Grid Invoice
  */
+/**
+ * Mengambil detail lengkap SJ untuk dimasukkan ke Grid Invoice
+ */
 const getSjDetails = async (nomor, user, currentInvNomor = "") => {
   const connection = await pool.getConnection();
   try {
-    // 1. Ambil Header & Info Customer sesuai logic Delphi
+    // 1. Ambil Header SJ
     const headerQuery = `
       SELECT h.sj_nomor, h.sj_tanggal, h.sj_noterima, ifnull(m.mt_so,"") as noso, m.mt_cus,
         IFNULL(c.cus_nama,"") as customer, IFNULL(c.cus_alamat,"") as alamat, 
@@ -3107,27 +3173,27 @@ const getSjDetails = async (nomor, user, currentInvNomor = "") => {
       nomor,
       user.cabang,
     ]);
+
     if (headerRows.length === 0)
       throw new Error("SJ tidak ditemukan atau bukan milik cabang Anda.");
 
     const header = headerRows[0];
 
-    // Validasi: SJ harus sudah diterima di KPR
+    // Validasi: SJ harus sudah diterima di sistem KPR
     if (!header.sj_noterima || header.sj_noterima === "") {
       throw new Error(
         "SJ tersebut belum diterima. Silakan proses penerimaan SJ terlebih dahulu.",
       );
     }
 
-    // 2. Ambil Items & Stok Cabang user saat ini
+    // 2. Ambil Items & Stok
     const itemsQuery = `
       SELECT d.sjd_kode as kode, d.sjd_ukuran as ukuran, d.sjd_jumlah,
         ifnull(trim(concat(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)), f.sd_nama) as nama_barang,
         b.brgd_barcode as barcode, 
-        b.brgd_harga AS harga, -- [FIX] Beri alias harga
-        b.brgd_hpp AS hpp,     -- [FIX] Beri alias hpp 
-        a.brg_ktgp as kategori,
-        -- [FIX] Gunakan IFNULL dan tambahkan pengecekan mst_noreferensi agar stok tidak 0 saat edit
+        b.brgd_harga AS harga, 
+        b.brgd_hpp AS hpp,     
+        a.brg_ktgp as kategori, -- KATEGORI DIAMBIL DARI SINI
         IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
                 FROM tmasterstok m 
                 WHERE m.mst_aktif="Y" 
@@ -3147,7 +3213,31 @@ const getSjDetails = async (nomor, user, currentInvNomor = "") => {
       nomor,
     ]);
 
-    return { header: headerRows[0], items: itemRows };
+    // 3. PROSES INJEKSI DISKON PER ITEM
+    const processedItems = itemRows.map((item) => {
+      // Nilai default diskon jika cabang bukan KPR
+      item.disc = 0; // Ini akan di-map jadi diskonPersen di Frontend
+      item.diskon = 0; // Ini akan di-map jadi diskonRp di Frontend
+
+      // Jika cabang yang request adalah KPR, hitung diskon otomatis
+      if (user.cabang === "KPR") {
+        // Panggil helper evaluasi nama_barang dan kategori per baris!
+        const kprDiscountPersen = getKprItemDiscount(
+          item.nama_barang,
+          item.kategori,
+        );
+
+        if (kprDiscountPersen > 0) {
+          item.disc = kprDiscountPersen;
+          // Hitung potongan nominal (Rupiah) = Harga * (Persen / 100)
+          item.diskon = (item.harga * kprDiscountPersen) / 100;
+        }
+      }
+
+      return item;
+    });
+
+    return { header: headerRows[0], items: processedItems };
   } finally {
     connection.release();
   }

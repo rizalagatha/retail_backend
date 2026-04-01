@@ -42,6 +42,7 @@ const soDtfFormRoutes = require("./routes/soDtfFormRoutes");
 const lhkSoDtfRoutes = require("./routes/lhkSoDtfRoutes");
 const lhkSoDtfFormRoutes = require("./routes/lhkSoDtfFormRoutes");
 const DasborDtfRoutes = require("./routes/dasborDtfRoutes");
+const DasborBordirRoutes = require("./routes/dasborBordirRoutes");
 const soDtfStokRoutes = require("./routes/SoDtfStokRoutes");
 const soDtfStokFormRoutes = require("./routes/soDtfStokFormRoutes");
 const lhkSoDtfStokRoutes = require("./routes/lhkSoDtfStokRoutes");
@@ -154,6 +155,13 @@ const peminjamanFormRoutes = require("./routes/peminjamanFormRoutes");
 const pengembalianFormRoutes = require("./routes/pengembalianFormRoutes");
 const laporanStokMinusRoutes = require("./routes/laporanStokMinusRoutes");
 const whatsappRoutes = require("./routes/whatsappRoutes");
+const pettyCashRoutes = require("./routes/pettyCashRoutes");
+const pettyCashFormRoutes = require("./routes/pettyCashFormRoutes");
+const pettyCashReportRoutes = require("./routes/pettyCashReportRoutes");
+const komplainRoute = require("./routes/komplainRoutes");
+const komplainFormRoute = require("./routes/komplainFormRoutes");
+const mintaAccesoriesRoutes = require("./routes/mintaAccesoriesRoutes");
+const mintaAccesoriesFormRoutes = require("./routes/mintaAccesoriesFormRoutes");
 
 const app = express();
 const port = process.env.PORT || 8000;
@@ -200,6 +208,7 @@ app.use(
   }),
 );
 app.use("/images", express.static(imageFolderPath));
+app.use("/uploads", express.static(path.join(process.cwd(), "public/uploads")));
 app.use("/memos", (req, res, next) => {
   console.log(`[DEBUG MEMO] Mencari file: ${req.url}`);
   console.log(`[DEBUG MEMO] Path Fisik: ${path.join(memoFolderPath, req.url)}`);
@@ -309,6 +318,7 @@ app.use("/api/so-dtf-form", clientCertAuth, soDtfFormRoutes);
 app.use("/api/lhk-so-dtf", clientCertAuth, lhkSoDtfRoutes);
 app.use("/api/lhk-so-dtf-form", clientCertAuth, lhkSoDtfFormRoutes);
 app.use("/api/dasbor-dtf", clientCertAuth, DasborDtfRoutes);
+app.use("/api/dasbor-bordir", clientCertAuth, DasborBordirRoutes);
 app.use("/api/so-dtf-stok", clientCertAuth, soDtfStokRoutes);
 app.use("/api/so-dtf-stok-form", clientCertAuth, soDtfStokFormRoutes);
 app.use("/api/lhk-so-dtf-stok", clientCertAuth, lhkSoDtfStokRoutes);
@@ -461,6 +471,17 @@ app.use(
 );
 app.use("/api/laporan-stok-minus", clientCertAuth, laporanStokMinusRoutes);
 app.use("/api/whatsapp", clientCertAuth, whatsappRoutes);
+app.use("/api/petty-cash", clientCertAuth, pettyCashRoutes);
+app.use("/api/petty-cash-form", clientCertAuth, pettyCashFormRoutes);
+app.use("/api/petty-cash-report", clientCertAuth, pettyCashReportRoutes);
+app.use("/api/komplain", clientCertAuth, komplainRoute);
+app.use("/api/komplain-form", clientCertAuth, komplainFormRoute);
+app.use("/api/minta-accesories", clientCertAuth, mintaAccesoriesRoutes);
+app.use(
+  "/api/minta-accesories-form",
+  clientCertAuth,
+  mintaAccesoriesFormRoutes,
+);
 
 // Menjalankan Server
 app.listen(port, () => {

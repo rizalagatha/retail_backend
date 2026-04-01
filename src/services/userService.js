@@ -2,17 +2,25 @@ const pool = require("../config/database");
 
 // Mengambil daftar user, dengan opsi pencarian
 const getAllUsers = async (searchTerm = "") => {
-  let query =
-    "SELECT user_kode as kode, user_nama as nama, user_cab as cabang FROM tuser";
+  let query = `
+    SELECT 
+      u.user_kode as kode, 
+      u.user_nama as nama, 
+      u.user_cab as kode_cabang, -- [FIX] Kembalikan kode cabangnya juga
+      IFNULL(g.gdg_nama, u.user_cab) as nama_cabang -- [FIX] Ini untuk tampilan
+    FROM tuser u
+    LEFT JOIN tgudang g ON u.user_cab = g.gdg_kode
+  `;
   const params = [];
 
   // Jika ada parameter pencarian, tambahkan klausa WHERE
   if (searchTerm) {
-    query += " WHERE user_kode LIKE ? OR user_nama LIKE ?";
-    params.push(`%${searchTerm}%`, `%${searchTerm}%`);
+    query +=
+      " WHERE u.user_kode LIKE ? OR u.user_nama LIKE ? OR g.gdg_nama LIKE ?";
+    params.push(`%${searchTerm}%`, `%${searchTerm}%`, `%${searchTerm}%`);
   }
 
-  query += " ORDER BY user_kode";
+  query += " ORDER BY u.user_kode";
 
   const [rows] = await pool.query(query, params);
   return rows;
@@ -21,7 +29,7 @@ const getAllUsers = async (searchTerm = "") => {
 // Mengambil daftar semua cabang/gudang
 const getAllBranches = async () => {
   const [rows] = await pool.query(
-    "SELECT gdg_kode FROM tgudang ORDER BY gdg_kode"
+    "SELECT gdg_kode FROM tgudang ORDER BY gdg_kode",
   );
   return rows;
 };
@@ -31,7 +39,7 @@ const getUserDetails = async (kode, cabang) => {
   // 1. Ambil data user
   const [userRows] = await pool.query(
     "SELECT * FROM tuser WHERE user_kode = ? AND user_cab = ?",
-    [kode, cabang]
+    [kode, cabang],
   );
   if (userRows.length === 0) {
     return null; // User tidak ditemukan
@@ -40,13 +48,13 @@ const getUserDetails = async (kode, cabang) => {
 
   // 2. Ambil semua menu yang tersedia
   const [menuRows] = await pool.query(
-    "SELECT men_id, men_nama, men_keterangan FROM tmenu WHERE men_modul=1 ORDER BY men_id"
+    "SELECT men_id, men_nama, men_keterangan FROM tmenu WHERE men_modul=1 ORDER BY men_id",
   );
 
   // 3. Ambil hak akses spesifik user ini
   const [hakRows] = await pool.query(
     "SELECT * FROM thakuser WHERE hak_user_kode = ? AND hak_cab = ?",
-    [kode, cabang]
+    [kode, cabang],
   );
 
   // 4. Gabungkan data menu dengan hak aksesnya
@@ -78,7 +86,7 @@ const saveUser = async (userData) => {
     if (isNewUser) {
       await connection.query(
         "INSERT INTO tuser (user_kode, user_nama, user_password, user_cab) VALUES (?, ?, ?, ?)",
-        [kode, nama, password, cabang]
+        [kode, nama, password, cabang],
       );
     } else {
       // --- PERUBAHAN DI SINI ---
@@ -88,13 +96,13 @@ const saveUser = async (userData) => {
         // Update nama DAN password
         await connection.query(
           "UPDATE tuser SET user_nama = ?, user_password = ? WHERE user_kode = ? AND user_cab = ?",
-          [nama, password, kode, cabang]
+          [nama, password, kode, cabang],
         );
       } else {
         // Update nama SAJA (sesuai Delphi)
         await connection.query(
           "UPDATE tuser SET user_nama = ? WHERE user_kode = ? AND user_cab = ?",
-          [nama, kode, cabang]
+          [nama, kode, cabang],
         );
       }
       // --- BATAS PERUBAHAN ---
@@ -103,7 +111,7 @@ const saveUser = async (userData) => {
     // Langkah 2: Hapus semua hak akses lama user ini
     await connection.query(
       "DELETE FROM thakuser WHERE hak_user_kode = ? AND hak_cab = ?",
-      [kode, cabang]
+      [kode, cabang],
     );
 
     // Langkah 3: Insert hak akses yang baru
@@ -122,7 +130,7 @@ const saveUser = async (userData) => {
             p.insert ? "Y" : "N",
             p.edit ? "Y" : "N",
             p.delete ? "Y" : "N",
-          ]
+          ],
         );
       }
     }
@@ -145,11 +153,11 @@ const deleteUser = async (kode, cabang) => {
     await connection.beginTransaction();
     await connection.query(
       "DELETE FROM thakuser WHERE hak_user_kode = ? AND hak_cab = ?",
-      [kode, cabang]
+      [kode, cabang],
     );
     await connection.query(
       "DELETE FROM tuser WHERE user_kode = ? AND user_cab = ?",
-      [kode, cabang]
+      [kode, cabang],
     );
     await connection.commit();
     return { success: true, message: "User berhasil dihapus." };
@@ -164,7 +172,7 @@ const deleteUser = async (kode, cabang) => {
 
 const getAllMenus = async () => {
   const [rows] = await pool.query(
-    "SELECT men_id, men_nama, men_keterangan FROM tmenu WHERE men_modul=1 ORDER BY men_id"
+    "SELECT men_id, men_nama, men_keterangan FROM tmenu WHERE men_modul=1 ORDER BY men_id",
   );
   return rows;
 };
@@ -173,7 +181,7 @@ const changePassword = async (kodeUser, passwordLama, passwordBaru) => {
   // 1. Verifikasi password lama
   const [userRows] = await pool.query(
     "SELECT * FROM tuser WHERE user_kode = ? AND user_password = ?",
-    [kodeUser, passwordLama]
+    [kodeUser, passwordLama],
   );
 
   // Jika user tidak ditemukan dengan password lama, berarti password salah
@@ -185,7 +193,7 @@ const changePassword = async (kodeUser, passwordLama, passwordBaru) => {
   // 2. Jika password lama benar, update ke password baru
   const [updateResult] = await pool.query(
     "UPDATE tuser SET user_password = ? WHERE user_kode = ?",
-    [passwordBaru, kodeUser]
+    [passwordBaru, kodeUser],
   );
 
   // Periksa apakah proses update berhasil

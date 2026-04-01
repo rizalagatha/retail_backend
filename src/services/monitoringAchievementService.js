@@ -48,7 +48,7 @@ const getTargetData = async (filters) => {
   return rows;
 };
 
-// Helper function untuk mengambil target data
+// Helper function untuk mengambil target data harian
 const getDailyData = async (filters) => {
   const { tahun, bulan, cabang } = filters;
 
@@ -88,19 +88,17 @@ const getDailyData = async (filters) => {
             AND t.tanggal BETWEEN ta.start_date AND ta.end_date
         GROUP BY t.tanggal
     ),
-    -- [BARU] CTE CleanPiutang: Hitung saldo per invoice, jika minus dianggap 0
     CleanPiutang AS (
         SELECT 
             h.inv_tanggal,
             h.inv_cab,
-            -- Logika: Max(0, Debet - Kredit)
             GREATEST(SUM(pd.pd_debet - pd.pd_kredit), 0) AS sisa
         FROM tinv_hdr h
         JOIN tpiutang_hdr ph ON ph.ph_inv_nomor = h.inv_nomor
         JOIN tpiutang_dtl pd ON pd.pd_ph_nomor = ph.ph_nomor
         ${cabang !== "ALL" ? "WHERE h.inv_cab = ?" : ""}
         GROUP BY h.inv_nomor
-        HAVING sisa > 0 -- Optimasi: Hanya ambil yang benar-benar ada piutang
+        HAVING sisa > 0 
     )
 
     SELECT 
@@ -116,11 +114,10 @@ const getDailyData = async (filters) => {
         IFNULL(dt.target, 0) AS target,
         (SELECT bulan_total FROM MonthlyTarget LIMIT 1) AS target_bulanan,
         
-        -- Retur Jual (Achievement Mode: Menghitung Kerugian Omset Riil)
+        -- Retur Jual
         (
           SELECT IFNULL(SUM(
             CASE 
-              -- 1. TUKAR BARANG (N): Kerugian = Nilai Barang Retur - Nilai yang Dipakai Belanja Lagi
               WHEN rh.rj_jenis = 'N' THEN (
                 SELECT GREATEST(0, 
                     IFNULL(SUM(rd.rjd_jumlah * (rd.rjd_harga - rd.rjd_diskon)), 0) - 
@@ -128,11 +125,10 @@ const getDailyData = async (filters) => {
                 )
                 FROM trj_dtl rd WHERE rd.rjd_nomor = rh.rj_nomor
               )
-              -- 2. PENGEMBALIAN (Y): Kerugian = Nominal Cash Out yang tercatat di Refund
               WHEN rh.rj_jenis = 'Y' THEN (
                 SELECT IFNULL(SUM(rfd_refund), 0) 
                 FROM trefund_dtl 
-                WHERE rfd_notrs = rh.rj_inv -- Menghubungkan Invoice Asal ke data Refund
+                WHERE rfd_notrs = rh.rj_inv
               )
               ELSE 0
             END
@@ -142,70 +138,75 @@ const getDailyData = async (filters) => {
           ${cabang !== "ALL" ? "AND rh.rj_cab = ?" : ""}
         ) AS retur_jual,
 
-        -- 1. Open SO (Per Hari Ini) yang benar-benar belum ter-Invoice
-(
-    SELECT IFNULL(SUM(d.sod_jumlah * d.sod_harga), 0)
-    FROM tso_hdr h
-    JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor
-    WHERE DATE(h.so_tanggal) = dr.tanggal
-      AND h.so_aktif = 'Y' AND h.so_close = 0
-      -- Filter pengunci: Pastikan SO belum terdaftar di Invoice
-      AND h.so_nomor NOT IN (
-          SELECT DISTINCT inv_nomor_so 
-          FROM tinv_hdr 
-          WHERE inv_nomor_so IS NOT NULL AND inv_nomor_so <> ''
-      )
-      ${cabang !== "ALL" ? "AND h.so_cab = ?" : ""}
-) AS so_open_today,
+        -- [BARU] Biaya Platform / Fee Marketplace
+        (
+          SELECT IFNULL(SUM(inv_mp_biaya_platform), 0)
+          FROM tinv_hdr
+          WHERE DATE(inv_tanggal) = dr.tanggal
+          ${cabang !== "ALL" ? "AND inv_cab = ?" : ""}
+        ) AS biaya_platform,
 
--- 2. Open SO (30 Hari Terakhir) yang benar-benar belum ter-Invoice
-(
-    SELECT IFNULL(SUM(d.sod_jumlah * d.sod_harga), 0)
-    FROM tso_hdr h
-    JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor
-    WHERE h.so_tanggal BETWEEN DATE_SUB(dr.tanggal, INTERVAL 29 DAY) AND dr.tanggal
-      AND h.so_aktif = 'Y' AND h.so_close = 0
-      -- Filter pengunci: Pastikan SO belum terdaftar di Invoice
-      AND h.so_nomor NOT IN (
-          SELECT DISTINCT inv_nomor_so 
-          FROM tinv_hdr 
-          WHERE inv_nomor_so IS NOT NULL AND inv_nomor_so <> ''
-      )
-      ${cabang !== "ALL" ? "AND h.so_cab = ?" : ""}
-) AS so_open_30days,
+        -- 1. Open SO (Per Hari Ini)
+        (
+            SELECT IFNULL(SUM(d.sod_jumlah * d.sod_harga), 0)
+            FROM tso_hdr h
+            JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor
+            WHERE DATE(h.so_tanggal) = dr.tanggal
+              AND h.so_aktif = 'Y' AND h.so_close = 0
+              AND h.so_nomor NOT IN (
+                  SELECT DISTINCT inv_nomor_so 
+                  FROM tinv_hdr 
+                  WHERE inv_nomor_so IS NOT NULL AND inv_nomor_so <> ''
+              )
+              ${cabang !== "ALL" ? "AND h.so_cab = ?" : ""}
+        ) AS so_open_today,
 
-        -- 3. Open SO (Akumulasi) yang benar-benar belum ter-Invoice
-(
-    SELECT IFNULL(SUM(d.sod_jumlah * d.sod_harga), 0)
-    FROM tso_hdr h
-    JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor
-    WHERE h.so_tanggal <= dr.tanggal
-      AND h.so_aktif = 'Y' 
-      AND h.so_close = 0
-      -- Tambahan filter: Pastikan SO belum ada di tabel invoice
-      AND h.so_nomor NOT IN (
-          SELECT DISTINCT inv_nomor_so 
-          FROM tinv_hdr 
-          WHERE inv_nomor_so IS NOT NULL AND inv_nomor_so <> ''
-      )
-      ${cabang !== "ALL" ? "AND h.so_cab = ?" : ""}
-) AS so_open_accum,
+        -- 2. Open SO (30 Hari Terakhir)
+        (
+            SELECT IFNULL(SUM(d.sod_jumlah * d.sod_harga), 0)
+            FROM tso_hdr h
+            JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor
+            WHERE h.so_tanggal BETWEEN DATE_SUB(dr.tanggal, INTERVAL 29 DAY) AND dr.tanggal
+              AND h.so_aktif = 'Y' AND h.so_close = 0
+              AND h.so_nomor NOT IN (
+                  SELECT DISTINCT inv_nomor_so 
+                  FROM tinv_hdr 
+                  WHERE inv_nomor_so IS NOT NULL AND inv_nomor_so <> ''
+              )
+              ${cabang !== "ALL" ? "AND h.so_cab = ?" : ""}
+        ) AS so_open_30days,
 
-        -- [UPDATE] 4. Sisa Piutang (Hari Ini) - Mengambil dari CTE CleanPiutang
+        -- 3. Open SO (Akumulasi)
+        (
+            SELECT IFNULL(SUM(d.sod_jumlah * d.sod_harga), 0)
+            FROM tso_hdr h
+            JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor
+            WHERE h.so_tanggal <= dr.tanggal
+              AND h.so_aktif = 'Y' 
+              AND h.so_close = 0
+              AND h.so_nomor NOT IN (
+                  SELECT DISTINCT inv_nomor_so 
+                  FROM tinv_hdr 
+                  WHERE inv_nomor_so IS NOT NULL AND inv_nomor_so <> ''
+              )
+              ${cabang !== "ALL" ? "AND h.so_cab = ?" : ""}
+        ) AS so_open_accum,
+
+        -- 4. Sisa Piutang (Hari Ini)
         (
             SELECT IFNULL(SUM(cp.sisa), 0)
             FROM CleanPiutang cp
             WHERE DATE(cp.inv_tanggal) = dr.tanggal
         ) AS piutang_today,
 
-        -- [UPDATE] 5. Sisa Piutang (30 Hari)
+        -- 5. Sisa Piutang (30 Hari)
         (
             SELECT IFNULL(SUM(cp.sisa), 0)
             FROM CleanPiutang cp
             WHERE cp.inv_tanggal BETWEEN DATE_SUB(dr.tanggal, INTERVAL 29 DAY) AND dr.tanggal
         ) AS piutang_30days,
 
-        -- [UPDATE] 6. Sisa Piutang (Akumulasi)
+        -- 6. Sisa Piutang (Akumulasi)
         (
             SELECT IFNULL(SUM(cp.sisa), 0)
             FROM CleanPiutang cp
@@ -218,30 +219,23 @@ const getDailyData = async (filters) => {
     ORDER BY dr.tanggal;
   `;
 
-  // Susunan Parameter
   const params = [
     tahun,
     bulan, // DateRange
     tahun,
-    bulan, // DailySales
-    ...(cabang !== "ALL" ? [cabang] : []),
+    bulan,
+    ...(cabang !== "ALL" ? [cabang] : []), // DailySales
     tahun,
-    bulan, // TargetAggregated
-    ...(cabang !== "ALL" ? [cabang] : []),
+    bulan,
+    ...(cabang !== "ALL" ? [cabang] : []), // TargetAggregated
     ...(cabang !== "ALL" ? [cabang] : []), // CleanPiutang
-
     cabang, // SELECT kode_cabang
     ...(cabang !== "ALL" ? [cabang] : []), // SELECT nama_cabang
     ...(cabang !== "ALL" ? [cabang] : []), // Retur Jual
-
-    // Open SO Params (3x)
-    ...(cabang !== "ALL" ? [cabang] : []), // Today
-    ...(cabang !== "ALL" ? [cabang] : []), // 30 Days
-    ...(cabang !== "ALL" ? [cabang] : []), // Accum
-
-    // Piutang Params: TIDAK PERLU PARAM TAMBAHAN
-    // Karena CTE CleanPiutang sudah difilter cabang di awal,
-    // dan join tanggal menggunakan dr.tanggal
+    ...(cabang !== "ALL" ? [cabang] : []), // Biaya Platform [BARU]
+    ...(cabang !== "ALL" ? [cabang] : []), // Open SO Today
+    ...(cabang !== "ALL" ? [cabang] : []), // Open SO 30Days
+    ...(cabang !== "ALL" ? [cabang] : []), // Open SO Accum
   ];
 
   const [rows] = await pool.query(query, params);
@@ -254,7 +248,9 @@ const getDailyData = async (filters) => {
     const dateKey = row.tanggal.toISOString();
     if (!seenDates.has(dateKey)) {
       seenDates.add(dateKey);
-      const nettoHariIni = row.omset - (row.retur_jual || 0);
+      // [UPDATE] Kurangi biaya_platform dari omset harian
+      const nettoHariIni =
+        row.omset - (row.retur_jual || 0) - (row.biaya_platform || 0);
       cumulativeSales += nettoHariIni;
 
       uniqueRows.push({
@@ -265,8 +261,6 @@ const getDailyData = async (filters) => {
           row.target_bulanan > 0
             ? (cumulativeSales / row.target_bulanan) * 100
             : 0,
-
-        // Casting ke Number untuk keamanan
         so_open_today: Number(row.so_open_today),
         so_open_30days: Number(row.so_open_30days),
         so_open_accum: Number(row.so_open_accum),
@@ -291,7 +285,8 @@ const getWeeklyData = async (filters) => {
                 t.minggu, 
                 t.kode_gudang AS kode_cabang,
                 g.gdg_nama AS nama_cabang,
-                IFNULL(s.nominal, 0) AS nominal,
+                -- [UPDATE] Kurangi nominal dengan fee marketplace
+                (IFNULL(s.nominal, 0) - IFNULL(f.fee, 0)) AS nominal,
                 IFNULL(t.target, 0) AS target
             FROM (
                 SELECT tahun, bulan, minggu, kode_gudang, SUM(target_omset) AS target, start_date, end_date
@@ -305,11 +300,17 @@ const getWeeklyData = async (filters) => {
                 SELECT tanggal, cabang, SUM(nominal) AS nominal
                 FROM v_sales_harian
                 WHERE YEAR(tanggal) = ? AND MONTH(tanggal) = ?
-                ${
-                  cabang !== "ALL" ? "AND cabang = ?" : ""
-                } -- <-- PERBAIKAN: Tambah filter cabang
+                ${cabang !== "ALL" ? "AND cabang = ?" : ""}
                 GROUP BY 1,2
             ) s ON s.cabang = t.kode_gudang AND s.tanggal BETWEEN t.start_date AND t.end_date
+            -- [BARU] CTE/Subquery untuk Fee Marketplace mingguan
+            LEFT JOIN (
+                SELECT DATE(inv_tanggal) as tanggal, inv_cab as cabang, SUM(COALESCE(inv_mp_biaya_platform, 0)) as fee
+                FROM tinv_hdr
+                WHERE YEAR(inv_tanggal) = ? AND MONTH(inv_tanggal) = ?
+                ${cabang !== "ALL" ? "AND inv_cab = ?" : ""}
+                GROUP BY 1,2
+            ) f ON f.cabang = t.kode_gudang AND f.tanggal BETWEEN t.start_date AND t.end_date
         )
         SELECT
             kode_cabang,
@@ -330,16 +331,15 @@ const getWeeklyData = async (filters) => {
         GROUP BY kode_cabang, nama_cabang
         HAVING total_nominal > 0 OR total_target > 0
         ORDER BY kode_cabang;
-    `; // --- PERBAIKAN: Urutan params harus benar ---
+    `;
 
   const params = [tahun, bulan];
-  if (cabang !== "ALL") {
-    params.push(cabang); // Untuk kpi.ttarget_kaosan
-  }
+  if (cabang !== "ALL") params.push(cabang); // Target
   params.push(tahun, bulan);
-  if (cabang !== "ALL") {
-    params.push(cabang); // Untuk v_sales_harian
-  } // --------------------------------------------
+  if (cabang !== "ALL") params.push(cabang); // Sales
+  params.push(tahun, bulan);
+  if (cabang !== "ALL") params.push(cabang); // Fees [BARU]
+
   const [rows] = await pool.query(query, params);
   return rows;
 };
@@ -354,9 +354,7 @@ const getMonthlyData = async (filters) => {
                 SUM(nominal) AS nominal 
             FROM v_sales_harian
             WHERE YEAR(tanggal) = ? AND MONTH(tanggal) = ?
-            ${
-              cabang !== "ALL" ? "AND cabang = ?" : ""
-            } -- <-- PERBAIKAN: Tambah filter cabang
+            ${cabang !== "ALL" ? "AND cabang = ?" : ""}
             GROUP BY cabang
         ),
         MonthlyTargets AS (
@@ -365,10 +363,16 @@ const getMonthlyData = async (filters) => {
                 SUM(target_omset) AS target
             FROM kpi.ttarget_kaosan
             WHERE tahun = ? AND bulan = ?
-            ${
-              cabang !== "ALL" ? "AND kode_gudang = ?" : ""
-            } -- <-- PERBAIKAN: Tambah filter cabang
+            ${cabang !== "ALL" ? "AND kode_gudang = ?" : ""}
             GROUP BY cabang
+        ),
+        -- [BARU] CTE untuk Biaya Platform
+        MonthlyFees AS (
+            SELECT inv_cab AS cabang, SUM(COALESCE(inv_mp_biaya_platform, 0)) AS total_fee
+            FROM tinv_hdr
+            WHERE YEAR(inv_tanggal) = ? AND MONTH(inv_tanggal) = ?
+            ${cabang !== "ALL" ? "AND inv_cab = ?" : ""}
+            GROUP BY inv_cab
         ),
         RelevantBranches AS (
             SELECT cabang FROM MonthlySales
@@ -380,31 +384,33 @@ const getMonthlyData = async (filters) => {
             ? AS bulan,
             rb.cabang AS kode_cabang,
             g.gdg_nama AS nama_cabang,
-            IFNULL(ms.nominal, 0) AS nominal,
+            -- [UPDATE] Kurangi Fee dari Nominal
+            (IFNULL(ms.nominal, 0) - IFNULL(mf.total_fee, 0)) AS nominal,
             IFNULL(mt.target, 0) AS target
         FROM RelevantBranches rb
         JOIN tgudang g ON rb.cabang = g.gdg_kode
         LEFT JOIN MonthlySales ms ON rb.cabang = ms.cabang
         LEFT JOIN MonthlyTargets mt ON rb.cabang = mt.cabang
+        LEFT JOIN MonthlyFees mf ON rb.cabang = mf.cabang
         ${cabang !== "ALL" ? "WHERE rb.cabang = ?" : ""}
         ORDER BY rb.cabang;
-    `; // --- PERBAIKAN: Urutan params harus benar ---
+    `;
 
   const params = [
     tahun,
-    bulan, // Untuk MonthlySales
+    bulan,
+    ...(cabang !== "ALL" ? [cabang] : []), // MonthlySales
+    tahun,
+    bulan,
+    ...(cabang !== "ALL" ? [cabang] : []), // MonthlyTargets
+    tahun,
+    bulan,
+    ...(cabang !== "ALL" ? [cabang] : []), // MonthlyFees
+    tahun,
+    bulan,
+    ...(cabang !== "ALL" ? [cabang] : []), // SELECT & WHERE Utama
   ];
-  if (cabang !== "ALL") {
-    params.push(cabang); // Untuk MonthlySales
-  }
-  params.push(tahun, bulan); // Untuk MonthlyTargets
-  if (cabang !== "ALL") {
-    params.push(cabang); // Untuk MonthlyTargets
-  }
-  params.push(tahun, bulan); // Untuk SELECT utama
-  if (cabang !== "ALL") {
-    params.push(cabang); // Untuk WHERE rb.cabang
-  } // --------------------------------------------
+
   const [rows] = await pool.query(query, params);
 
   return rows.map((row) => ({
@@ -416,7 +422,6 @@ const getMonthlyData = async (filters) => {
 const getYtdData = async (filters) => {
   const { tahun, cabang } = filters;
 
-  // Query ini dirombak untuk mengelompokkan dengan benar
   const query = `
         SELECT
             y.tahun,
@@ -429,7 +434,8 @@ const getYtdData = async (filters) => {
         FROM (
             SELECT 
                 t.tahun, t.bulan, t.kode_gudang AS kode_cabang, g.gdg_nama AS nama_cabang,
-                IFNULL(s.nominal, 0) AS nominal,
+                -- [UPDATE] Kurangi Fee
+                (IFNULL(s.nominal, 0) - IFNULL(f.total_fee, 0)) AS nominal,
                 IFNULL(t.target, 0) AS target
             FROM (
                 SELECT tahun, bulan, kode_gudang, SUM(target_omset) AS target
@@ -443,6 +449,13 @@ const getYtdData = async (filters) => {
                 WHERE YEAR(tanggal) = ?
                 GROUP BY 1, 2, 3
             ) s ON t.tahun = s.tahun AND t.bulan = s.bulan AND t.kode_gudang = s.cabang
+            -- [BARU] Join Biaya Platform
+            LEFT JOIN (
+                SELECT YEAR(inv_tanggal) AS tahun, MONTH(inv_tanggal) AS bulan, inv_cab AS cabang, SUM(COALESCE(inv_mp_biaya_platform, 0)) AS total_fee
+                FROM tinv_hdr
+                WHERE YEAR(inv_tanggal) = ?
+                GROUP BY 1, 2, 3
+            ) f ON t.tahun = f.tahun AND t.bulan = f.bulan AND t.kode_gudang = f.cabang
             JOIN tgudang g ON t.kode_gudang = g.gdg_kode
         ) y
         ${cabang !== "ALL" ? "WHERE y.kode_cabang = ?" : ""}
@@ -450,14 +463,13 @@ const getYtdData = async (filters) => {
         ORDER BY y.bulan, y.kode_cabang;
     `;
 
-  const params = [tahun, tahun];
+  const params = [tahun, tahun, tahun]; // Target, Sales, Fee
   if (cabang !== "ALL") {
     params.push(cabang);
   }
 
   const [rows] = await pool.query(query, params);
 
-  // Jika filter 'ALL', kita perlu agregasi tambahan di sini
   if (cabang === "ALL") {
     const aggregated = {};
     rows.forEach((row) => {
@@ -487,7 +499,6 @@ const getCabangOptions = async (user) => {
   let query;
   const params = [];
 
-  // If the user is from the central warehouse (KDC), they can see all options
   if (user.cabang === "KDC") {
     query = `
             SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang
@@ -496,7 +507,6 @@ const getCabangOptions = async (user) => {
             ORDER BY kode;
         `;
   } else {
-    // If it's a regular branch user, they can only see their own branch
     query =
       "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ?";
     params.push(user.cabang);
@@ -510,7 +520,6 @@ const getCabangOptions = async (user) => {
 const saveTarget = async (payload, user) => {
   const { tahun, bulan, kode_gudang, targets } = payload;
 
-  // Validasi User
   if (user.cabang !== "KDC" || user.kode !== "HARIS") {
     throw new Error("Akses ditolak. Hanya PAK HARIS yang boleh input target.");
   }
@@ -519,22 +528,19 @@ const saveTarget = async (payload, user) => {
   try {
     await connection.beginTransaction();
 
-    // 1. Ambil Nama Gudang
     const [gudangRows] = await connection.query(
       "SELECT gdg_nama FROM tgudang WHERE gdg_kode = ?",
       [kode_gudang],
     );
     const nama_gudang = gudangRows.length > 0 ? gudangRows[0].gdg_nama : "";
 
-    // 2. Hapus target lama
     await connection.query(
       `DELETE FROM kpi.ttarget_kaosan 
        WHERE tahun = ? AND bulan = ? AND kode_gudang = ?`,
       [tahun, bulan, kode_gudang],
     );
 
-    // 3. Insert Target Baru (LOGIKA 4 MINGGU)
-    const lastDayOfMonth = new Date(tahun, bulan, 0).getDate(); // misal 30, 31, atau 28
+    const lastDayOfMonth = new Date(tahun, bulan, 0).getDate();
 
     for (const item of targets) {
       const nominal = parseFloat(item.nominal) || 0;
@@ -542,7 +548,6 @@ const saveTarget = async (payload, user) => {
 
       let startDay, endDay;
 
-      // --- LOGIKA PEMBAGIAN TANGGAL 4 MINGGU ---
       if (item.minggu === 1) {
         startDay = 1;
         endDay = 7;
@@ -554,9 +559,9 @@ const saveTarget = async (payload, user) => {
         endDay = 21;
       } else if (item.minggu === 4) {
         startDay = 22;
-        endDay = lastDayOfMonth; // Sisa hari masuk ke Minggu 4
+        endDay = lastDayOfMonth;
       } else {
-        continue; // Abaikan jika ada data minggu ke-5 dst
+        continue;
       }
 
       const startDate = `${tahun}-${String(bulan).padStart(2, "0")}-${String(

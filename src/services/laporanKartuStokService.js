@@ -568,6 +568,8 @@ const getKartuDetails = async (filters) => {
           WHEN m.mst_noreferensi LIKE '%MO%'  THEN 'Mutasi Out ke Produksi'
           WHEN m.mst_noreferensi LIKE '%MSO%' THEN 'Mutasi Stok ke Pesanan'
           WHEN m.mst_noreferensi LIKE '%MI%'  THEN 'Mutasi In from Produksi'
+          WHEN m.mst_noreferensi LIKE '%SJ%'  THEN 'Surat Jalan ke Store'
+          WHEN m.mst_noreferensi LIKE '%TS%'  THEN 'Terima STBJ'
           ELSE 'Lain-lain'
       END AS transaksi
     FROM tmasterstok m

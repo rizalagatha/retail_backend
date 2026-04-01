@@ -7,8 +7,11 @@ const getList = async (filters, user) => {
   const query = `
         SELECT 
             h.rb_nomor AS nomor,
+            r.rb_is_reject AS isReject,
+            r.rb_reject_reason AS rejectReason,
             h.rb_tanggal AS tanggal,
-            h.rb_noterima AS nomorTerima,
+            IF(r.rb_is_reject = 'Y', '', h.rb_noterima) AS nomorTerima,
+            IF(r.rb_is_reject = 'Y', h.rb_noterima, '') AS nomorTolak,
             CASE 
                 WHEN LEFT(h.rb_nomor, 3) IN ('K01','K03','K06','K08') THEN 3
                 WHEN LEFT(h.rb_nomor, 3) = 'K10' THEN 7
@@ -42,7 +45,7 @@ const getList = async (filters, user) => {
         WHERE h.rb_tanggal BETWEEN ? AND ?
         AND (? IS NULL OR d.rbd_kode = ?)
         GROUP BY h.rb_nomor
-        ORDER BY h.rb_noterima, h.rb_nomor;
+        ORDER BY h.rb_noterima DESC, h.rb_nomor DESC;
     `;
   const params = [startDate, endDate, itemCode || null, itemCode];
   const [rows] = await pool.query(query, params);
@@ -284,6 +287,67 @@ const autoReceiveRetur = async () => {
   }
 };
 
+const rejectRetur = async (payload, user) => {
+  const { nomorKirim, alasan } = payload;
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    // 1. Ambil data asli pengiriman (untuk rincian barang)
+    const [items] = await connection.query(
+      "SELECT rbd_kode, rbd_ukuran, rbd_jumlah FROM trbdc_dtl WHERE rbd_nomor = ?",
+      [nomorKirim],
+    );
+    if (items.length === 0) throw new Error("Rincian barang tidak ditemukan.");
+
+    // 2. Generate Nomor Transaksi Reject
+    const yearMonth = format(new Date(), "yyMM");
+    const prefix = `KDC.RJC.${yearMonth}.`;
+    const [numRows] = await connection.query(
+      "SELECT IFNULL(MAX(RIGHT(rb_nomor, 4)), 0) + 1 AS next_num FROM tdcrb_hdr WHERE rb_nomor LIKE ?",
+      [`${prefix}%`],
+    );
+    const nomorReject = `${prefix}${numRows[0].next_num.toString().padStart(4, "0")}`;
+
+    // 3. Insert ke Header (dengan flag is_reject = 'Y')
+    await connection.query(
+      `INSERT INTO tdcrb_hdr 
+       (rb_nomor, rb_tanggal, rb_cab, rb_closing, rb_is_reject, rb_reject_reason, user_create, date_create) 
+       VALUES (?, CURDATE(), 'KDC', 'N', 'Y', ?, ?, NOW())`,
+      [nomorReject, alasan, user.kode],
+    );
+
+    // 4. INSERT KE DETAIL (VITAL: Untuk memicu Trigger Stok)
+    const detailValues = items.map((it, idx) => [
+      `${nomorReject}.${it.rbd_kode}.${it.rbd_ukuran}`, // IDREC lebih spesifik agar unik
+      nomorReject,
+      it.rbd_kode,
+      it.rbd_ukuran,
+      it.rbd_jumlah,
+    ]);
+
+    await connection.query(
+      "INSERT INTO tdcrb_dtl (rbd_iddrec, rbd_nomor, rbd_kode, rbd_ukuran, rbd_jumlah) VALUES ?",
+      [detailValues],
+    );
+
+    // 5. Update Referensi di trbdc_hdr
+    await connection.query(
+      "UPDATE trbdc_hdr SET rb_noterima = ? WHERE rb_nomor = ?",
+      [nomorReject, nomorKirim],
+    );
+
+    await connection.commit();
+    return { message: `Retur ditolak. Stok otomatis dikembalikan ke Store.` };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   getList,
   getDetails,
@@ -291,4 +355,5 @@ module.exports = {
   submitChangeRequest,
   getExportDetails,
   autoReceiveRetur,
+  rejectRetur,
 };

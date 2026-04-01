@@ -1393,6 +1393,68 @@ const getBranchInfo = async (cabang) => {
   return rows[0] || { gdg_place_id: null, gdg_lat: null, gdg_long: null };
 };
 
+// --- JADWAL BORDIR ---
+const getBordirSchedules = async (filters = {}) => {
+  // Gunakan default 7 hari terakhir jika tidak ada filter yang dikirim
+  const startDate =
+    filters.startDate || format(subDays(new Date(), 7), "yyyy-MM-dd");
+  const endDate = filters.endDate || format(new Date(), "yyyy-MM-dd");
+
+  const query = `
+    SELECT 
+      h.sd_nomor AS so_nomor,
+      h.sd_tanggal AS tanggal_so,
+      h.sd_nama AS customer,
+      IFNULL((SELECT SUM(d.sdd_jumlah) FROM tsodtf_dtl d WHERE d.sdd_nomor = h.sd_nomor), 0) AS jumlah_kaos,
+      b.tgl_pengerjaan,
+      b.deadline,
+      CASE 
+          WHEN EXISTS (SELECT 1 FROM tdtf WHERE sodtf = h.sd_nomor) THEN 'Ready'
+          ELSE IFNULL(b.status, 'Antri') 
+      END AS status,
+      b.alasan_pending
+    FROM tsodtf_hdr h
+    LEFT JOIN tdashboard_bordir b ON h.sd_nomor = b.so_nomor
+    WHERE h.sd_nomor LIKE '%.BR.%'
+      AND h.sd_tanggal BETWEEN ? AND ?  -- <-- Filter Tanggal SO
+    ORDER BY h.sd_tanggal DESC, h.sd_nomor DESC
+  `;
+
+  const [rows] = await pool.query(query, [startDate, endDate]);
+  return rows;
+};
+
+const updateBordirSchedule = async (payload, user) => {
+  const { so_nomor, tgl_pengerjaan, deadline, status, alasan_pending } =
+    payload;
+
+  // Pastikan status yang dikirim bukan 'Ready' (karena Ready otomatis dari LHK)
+  const finalStatus = status === "Ready" ? "Antri" : status || "Antri";
+
+  const query = `
+    INSERT INTO tdashboard_bordir (so_nomor, tgl_pengerjaan, deadline, status, alasan_pending, updated_by, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, NOW())
+    ON DUPLICATE KEY UPDATE
+      tgl_pengerjaan = VALUES(tgl_pengerjaan),
+      deadline = VALUES(deadline),
+      status = VALUES(status),
+      alasan_pending = VALUES(alasan_pending),
+      updated_by = VALUES(updated_by),
+      updated_at = NOW()
+  `;
+
+  await pool.query(query, [
+    so_nomor,
+    tgl_pengerjaan || null,
+    deadline || null,
+    finalStatus,
+    alasan_pending || "",
+    user.kode,
+  ]);
+
+  return { message: "Status antrian bordir berhasil diperbarui." };
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -1419,4 +1481,6 @@ module.exports = {
   getMasterJadwalRutin,
   getCashflowSummary,
   getBranchInfo,
+  getBordirSchedules,
+  updateBordirSchedule,
 };

@@ -2,6 +2,10 @@
 /.wwebjs_auth
 /.wwebjs_cache
 /public/images
+/temp
+/src/temp
+/public/uploads/pettycash
+/public/memos
 
 .env
 

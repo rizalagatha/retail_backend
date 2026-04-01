@@ -137,4 +137,15 @@ router.get(
   dashboardController.getBranchInfo,
 );
 
+router.get(
+  "/bordir-schedules",
+  verifyToken,
+  dashboardController.getBordirSchedules,
+);
+router.post(
+  "/bordir-schedules",
+  verifyToken,
+  dashboardController.saveBordirSchedule,
+);
+
 module.exports = router;

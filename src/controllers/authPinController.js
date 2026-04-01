@@ -46,9 +46,12 @@ const authorizationController = {
 
   getPending: async (req, res) => {
     try {
-      // req.user.cabang otomatis terisi dari token login
-      const rows = await service.getPendingRequests(req.user.cabang);
-      res.json({ success: true, data: rows }); // Format response konsisten
+      // [PERBAIKAN] Tambahkan req.user.kode agar service tahu siapa yang login
+      const rows = await service.getPendingRequests(
+        req.user.cabang,
+        req.user.kode,
+      );
+      res.json({ success: true, data: rows });
     } catch (error) {
       console.error("Error getPending:", error);
       res.status(500).json({ message: "Gagal memuat data otorisasi." });
@@ -68,7 +71,7 @@ const authorizationController = {
       const result = await service.processRequest(
         authNomor,
         managerUser,
-        action
+        action,
       );
       res.json(result);
     } catch (error) {

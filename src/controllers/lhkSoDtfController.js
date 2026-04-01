@@ -28,6 +28,15 @@ const getCabangList = async (req, res) => {
   }
 };
 
+const getJenisOrderList = async (req, res) => {
+  try {
+    const data = await lhkSoDtfService.getJenisOrderList();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const remove = async (req, res) => {
   try {
     // [FIX] Ambil string nomorLhk dari params, bukan mengirim objek req.params
@@ -51,4 +60,5 @@ module.exports = {
   getDetailList,
   getCabangList,
   remove,
+  getJenisOrderList,
 };

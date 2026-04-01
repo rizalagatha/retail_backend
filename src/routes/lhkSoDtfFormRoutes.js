@@ -6,6 +6,7 @@ const {
   checkPermission,
   checkInsertOrEditPermission,
 } = require("../middleware/authMiddleware");
+const upload = require("../middleware/uploadMiddleware");
 
 const MENU_ID = "41";
 
@@ -54,6 +55,14 @@ router.get(
   verifyToken,
   checkPermission(MENU_ID, "view"),
   lhkSoDtfFormController.loadData,
+);
+
+router.post(
+  "/upload-ripping",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  upload.single("file"), // "file" adalah nama field di FormData frontend
+  lhkSoDtfFormController.uploadBuktiRipping,
 );
 
 module.exports = router;

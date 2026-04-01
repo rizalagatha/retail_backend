@@ -1,4 +1,31 @@
 const changelogs = {
+  "1.4.0": {
+    date: "2026-04-01",
+    changes: [
+      {
+        title: "Pembaruan:",
+        items: [
+          "MODUL BARU PETTY CASH untuk mencatat pengeluaran kecil yang tidak memerlukan proses invoice, seperti pembelian alat tulis kantor, snack untuk meeting, dll. Petty Cash ini dapat diajukan oleh semua user toko dan akan masuk ke laporan finance sebagai pengeluaran operasional.",
+          "MODUL BARU KOMPLAIN CUSTOMER untuk mencatat dan memproses komplain dari customer terkait produk atau layanan, dengan fitur follow up dan penyelesaian komplain yang terstruktur.",
+          "MODUL BARU PERMINTAAN ACCESSORIES untuk memproses permintaan accesories dari gudang produksi ke store, dengan fitur realisasi dan laporan yang memudahkan monitoring permintaan accessories.",
+          "FITUR BARU PADA LHK JASA yaitu layouting untuk membantu operator DTF mengefisienkan proses cetak SO DTF, serta beberapa fitur dan inputan baru",
+          "FITUR BARU DASHBOARD BORDIR untuk memantau proses bordir di K06 Boyolali, untuk monitoring antrian bordir. User K06 dapat menginputkan tanggal pengerjaan dan deadline dari tiap SPK bordir. Dan setelah diinputkan akan masuk ke Dasbor Bordir",
+          "FITUR BARU TOLAK RETUR dari toko untuk user DC",
+          "Setting Promo mengikuti ketentuan terbaru untuk KPR/Prioritas",
+          "Setting Promo Kaosan bulan April 2026",
+        ],
+      },
+      {
+        title: "Perbaikan:",
+        items: [
+          "Perhitungan Persentase pada halaman Laporan Sales vs Target agar tidak minus persentasenya",
+          "Perhitungan Laporan Monitoring Achievement untuk Kaosan Online (KON) sudah dikurangi dengan biaya marketplace, serta sudah ditambahkan informasi kolom biaya marketplace",
+          "Validasi wajib mengisi Nama Barang pada Pengajuan Harga",
+          "Perbaikan Laporan Invoice dan perhitungan HPP-nya",
+        ],
+      },
+    ],
+  },
   "1.3.8": {
     date: "2026-02-11",
     changes: [

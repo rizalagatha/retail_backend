@@ -1,8 +1,23 @@
 const pool = require("../config/database");
 
+// Tambahkan di dalam service
+const getJenisOrderList = async () => {
+  const query = `
+    SELECT jo_kode AS kode, jo_nama AS nama 
+    FROM kencanaprint.tjenisorder 
+    WHERE jo_divisi = 3 
+    ORDER BY jo_nama ASC
+  `;
+  const [rows] = await pool.query(query);
+  return rows;
+};
+
 const getLhkList = async (filters) => {
-  const { startDate, endDate, cabang } = filters;
+  const { startDate, endDate, cabang, jenisOrder } = filters; // [TAMBAHAN] Tangkap jenisOrder
+
   const cabFilter = cabang === "ALL" ? "" : "AND d.cab = ?";
+  const joFilter =
+    jenisOrder && jenisOrder !== "ALL" ? "AND d.jo_kode = ?" : ""; // [TAMBAHAN] Filter JO
 
   const query = `
     SELECT 
@@ -46,13 +61,14 @@ const getLhkList = async (filters) => {
     -- Join ke Store Pengerja (Fallback)
     LEFT JOIN tgudang g_pengerja ON g_pengerja.gdg_kode = d.cab
     
-    WHERE d.tanggal BETWEEN ? AND ? ${cabFilter}
+    WHERE d.tanggal BETWEEN ? AND ? ${cabFilter} ${joFilter} -- [TAMBAHAN] Sisipkan joFilter di sini
     GROUP BY d.lhk_nomor, d.tanggal, d.jo_kode, jo.jo_nama
     ORDER BY d.tanggal DESC, d.lhk_nomor DESC
   `;
 
   const params = [startDate, endDate];
   if (cabang !== "ALL") params.push(cabang);
+  if (jenisOrder && jenisOrder !== "ALL") params.push(jenisOrder); // [TAMBAHAN] Push param jika bukan ALL
 
   const [rows] = await pool.query(query, params);
   return rows;
@@ -63,18 +79,17 @@ const getLhkDetail = async (nomorLhk) => {
   const query = `
     SELECT 
         d.sodtf AS SoDtf,
-        -- Ambil nama dari SO DTF, jika kosong ambil dari SPK
         COALESCE(h.sd_nama, s.spk_nama, d.sodtf) AS NamaDtf,
-        d.depan, d.belakang, d.lengan, d.variasi, d.saku,
-        d.jumlah AS JumlahRiil,
+        -- Mengambil data yang kita simpan sebelumnya
+        d.depan AS Titik,           -- Jumlah Titik per Kaos
+        d.jumlah AS JumlahRiil,     -- Jumlah Kaos
+        d.belakang AS TotalTitik,   -- Akumulasi Total Titik (Hasil kali/Manual)
         d.jumlah_sistem AS JumlahSistem,
         d.reject AS Reject,
-        d.keterangan AS Keterangan,
         d.luas_sistem AS LuasSistem
     FROM tdtf d
     LEFT JOIN tsodtf_hdr h ON h.sd_nomor = d.sodtf
-    -- Tambahkan Join ke tabel tspk
-    LEFT JOIN tspk s ON s.spk_nomor = d.sodtf
+    LEFT JOIN kencanaprint.tspk s ON s.spk_nomor = d.sodtf
     WHERE d.lhk_nomor = ?
   `;
   const [rows] = await pool.query(query, [nomorLhk]);
@@ -138,6 +153,7 @@ const remove = async (nomorLhk, user) => {
 };
 
 module.exports = {
+  getJenisOrderList,
   getLhkList,
   getLhkDetail,
   getCabangList,

@@ -156,9 +156,9 @@ const getItemSalesTrend = async (req, res) => {
     const cabang = req.query.cabang || "ALL"; // [BARU] Ambil filter cabang
 
     // 2. Teruskan ke Service dalam bentuk objek filter
-    const data = await dashboardService.getItemSalesTrend(req.user, { 
-      isExport, 
-      cabang 
+    const data = await dashboardService.getItemSalesTrend(req.user, {
+      isExport,
+      cabang,
     });
 
     res.json(data);
@@ -346,6 +346,27 @@ const getBranchInfo = async (req, res) => {
   }
 };
 
+const getBordirSchedules = async (req, res) => {
+  try {
+    const data = await dashboardService.getBordirSchedules(req.query); // <-- Pastikan req.query masuk
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: "Gagal memuat jadwal bordir." });
+  }
+};
+
+const saveBordirSchedule = async (req, res) => {
+  try {
+    const result = await dashboardService.updateBordirSchedule(
+      req.body,
+      req.user,
+    );
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: "Gagal menyimpan jadwal bordir." });
+  }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -373,4 +394,6 @@ module.exports = {
   getMasterJadwal,
   getCashflowSummary,
   getBranchInfo,
+  getBordirSchedules,
+  saveBordirSchedule,
 };

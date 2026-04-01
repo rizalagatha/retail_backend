@@ -99,12 +99,14 @@ const authPinService = {
         const isEstuManagerPeriod =
           today >= new Date(2026, 0, 12) && today < new Date(2026, 0, 17);
         const isPeminjaman = String(jenis).trim() === "PEMINJAMAN_BARANG";
+        const isKlaimPettyCash = String(jenis).trim() === "KLAIM_PETTYCASH";
 
         let managerCodes = ["DARUL"]; // Darul selalu dikirim
 
-        if (isPeminjaman) {
-          // Jika peminjaman barang, notifikasi ke ESTU (peran tetap dia)
-          managerCodes.push("ESTU");
+        if (isPeminjaman || isKlaimPettyCash) {
+          // [UBAH INI]
+          // Jika peminjaman barang ATAU klaim petty cash, notifikasi ke ESTU
+          if (!managerCodes.includes("ESTU")) managerCodes.push("ESTU");
         }
 
         if (isEstuManagerPeriod) {
@@ -112,14 +114,17 @@ const authPinService = {
           if (!managerCodes.includes("ESTU")) managerCodes.push("ESTU");
         } else {
           // Periode Normal: Transaksi Manager lari ke HARIS
-          managerCodes.push("HARIS");
+          // [PERBAIKAN] Haris TIDAK dikirimi notif jika jenisnya Peminjaman / Petty Cash (karena itu milik Estu)
+          if (!isPeminjaman && !isKlaimPettyCash) {
+            managerCodes.push("HARIS");
+          }
         }
 
         const [managers] = await pool.query(
           `SELECT DISTINCT user_fcm_token FROM tuser 
            WHERE user_kode IN (?) 
            AND user_fcm_token IS NOT NULL AND user_fcm_token != ''`,
-          [managerCodes]
+          [managerCodes],
         );
 
         if (managers.length > 0) {
@@ -128,8 +133,8 @@ const authPinService = {
               mgr.user_fcm_token,
               title,
               body,
-              dataPayload
-            )
+              dataPayload,
+            ),
           );
           await Promise.all(sendPromises);
         }
@@ -184,24 +189,27 @@ const authPinService = {
     if (userCabang === "KDC") {
       if (userKodeUpper === "ESTU") {
         if (isEstuManagerPeriod) {
+          // [UBAH INI]
           query +=
-            " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '' OR o_jenis = 'PEMINJAMAN_BARANG') ";
+            " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '' OR o_jenis IN ('PEMINJAMAN_BARANG', 'KLAIM_PETTYCASH')) ";
         } else {
-          query += " AND o_jenis = 'PEMINJAMAN_BARANG' ";
+          // [UBAH INI]
+          query += " AND o_jenis IN ('PEMINJAMAN_BARANG', 'KLAIM_PETTYCASH') ";
         }
       } else if (userKodeUpper === "HARIS") {
         if (isEstuManagerPeriod) {
           query += " AND 1=0 "; // Kosongkan list
         } else {
+          // [PERBAIKAN] Kecualikan Peminjaman & Petty Cash dari daftar Haris
           query +=
-            " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '') ";
+            " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '') AND o_jenis NOT IN ('PEMINJAMAN_BARANG', 'KLAIM_PETTYCASH') ";
         }
       } else if (userKodeUpper === "RIO") {
-        // RIO hanya melihat otorisasi Transfer SOP
         query += " AND o_jenis = 'TRANSFER_SOP' ";
       } else {
+        // [UBAH INI]
         query +=
-          " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '' OR o_jenis = 'PEMINJAMAN_BARANG') ";
+          " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '' OR o_jenis IN ('PEMINJAMAN_BARANG', 'KLAIM_PETTYCASH')) ";
       }
     } else {
       query +=
@@ -234,7 +242,7 @@ const authPinService = {
 
     if (result.affectedRows === 0) {
       throw new Error(
-        "Gagal memproses. Request mungkin sudah diproses atau tidak ditemukan."
+        "Gagal memproses. Request mungkin sudah diproses atau tidak ditemukan.",
       );
     }
 

@@ -116,7 +116,8 @@ const save = async (payload, user) => {
 
       // --- 4. LOGIKA KOREKSI OTOMATIS JIKA ADA SELISIH ---
       const selisihItems = items.filter(
-        (i) => (i.terima || 0) !== (i.jumlah || 0),
+        // WAJIB pakai jumlahKirim agar tidak salah deteksi selisih
+        (i) => (Number(i.terima) || 0) !== (Number(i.jumlahKirim) || 0),
       );
 
       if (selisihItems.length > 0) {

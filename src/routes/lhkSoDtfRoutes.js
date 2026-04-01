@@ -32,6 +32,13 @@ router.get(
   lhkSoDtfController.getCabangList,
 );
 
+router.get(
+  "/jenis-order",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  lhkSoDtfController.getJenisOrderList,
+);
+
 // DELETE: Hapus satu bundel LHK berdasarkan nomor
 router.delete(
   "/:nomorLhk",

@@ -94,6 +94,50 @@ const getSpecs = async (req, res) => {
   }
 };
 
+const uploadBuktiRipping = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "Tidak ada file yang diunggah." });
+    }
+
+    // Kita butuh Nomor LHK (sementara atau sudah jadi) dan cabang dari request
+    // Karena saat create LHK baru nomornya belum ada, Frontend harus mengirim "KODE SEMENTARA"
+    // atau Frontend harus SIMPAN LHK dulu, baru upload gambarnya.
+    const { nomorLhk, cabang } = req.body;
+
+    if (!nomorLhk || !cabang) {
+      if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      return res
+        .status(400)
+        .json({ message: "Data nomor LHK atau cabang tidak lengkap." });
+    }
+
+    const finalPath = await lhkSoDtfFormService.processLhkRippingImage(
+      req.file.path,
+      nomorLhk,
+      cabang,
+    );
+
+    const safeFileName = nomorLhk.replace(/\./g, "_") + ".jpg";
+    // Path public yang bisa diakses via browser
+    const imageUrl = `/images/lhk-dtf/${cabang}/${safeFileName}`;
+
+    res.status(200).json({
+      success: true,
+      message: "Bukti ripping berhasil diunggah.",
+      imageUrl: imageUrl,
+    });
+  } catch (error) {
+    console.error("UPLOAD BUKTI RIPPING ERROR:", error);
+    if (req.file && fs.existsSync(req.file.path)) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (e) {}
+    }
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   loadData,
   searchSoPo,
@@ -101,4 +145,5 @@ module.exports = {
   removeData,
   getSpecs,
   getJenisOrder,
+  uploadBuktiRipping,
 };

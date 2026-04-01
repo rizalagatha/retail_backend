@@ -30,8 +30,7 @@ const getInvoiceMasterData = async (filters) => {
             SELECT 
               (SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon))
               - hh.inv_disc
-              + (hh.inv_ppn / 100 * 
-                (SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) - hh.inv_disc)))
+              + (hh.inv_ppn / 100 * (SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) - hh.inv_disc)))
             FROM tinv_dtl dd
             LEFT JOIN tinv_hdr hh ON hh.inv_nomor = dd.invd_inv_nomor
             WHERE hh.inv_nomor = h.inv_nomor
@@ -62,12 +61,10 @@ const getInvoiceMasterData = async (filters) => {
           AND h.inv_tanggal BETWEEN ? AND ?
           ${!isKdc ? "AND LEFT(h.inv_nomor, 3) = ?" : ""}
       ) AS x
-      ${
-        !isKdc
-          ? "GROUP BY x.inv_tanggal, LEFT(x.inv_nomor, 3)"
-          : "GROUP BY x.inv_tanggal"
-      }
-      ORDER BY x.inv_tanggal
+      
+      -- [PERBAIKAN] Selalu Group By berdasarkan Tanggal dan Kode Cabang
+      GROUP BY x.inv_tanggal, LEFT(x.inv_nomor, 3)
+      ORDER BY x.inv_tanggal, LEFT(x.inv_nomor, 3)
     `;
     if (!isKdc) params.push(gudangKode);
   } else if (reportType === "customer") {
@@ -99,8 +96,7 @@ const getInvoiceMasterData = async (filters) => {
             SELECT 
               (SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon))
               - hh.inv_disc
-              + (hh.inv_ppn / 100 * 
-                (SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) - hh.inv_disc)))
+              + (hh.inv_ppn / 100 * (SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) - hh.inv_disc)))
             FROM tinv_dtl dd
             LEFT JOIN tinv_hdr hh ON hh.inv_nomor = dd.invd_inv_nomor
             WHERE hh.inv_nomor = h.inv_nomor

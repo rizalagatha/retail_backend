@@ -1,5 +1,8 @@
 const pool = require("../config/database");
 const { format } = require("date-fns");
+const fs = require("fs");
+const path = require("path");
+const sharp = require("sharp");
 
 /**
  * @description Membuat nomor LHK dengan format baru: cabang.LHK.yyMM.0001
@@ -64,6 +67,7 @@ const getSoDtfSpecs = async (nomorSo) => {
         return {
           totalLuasSistem: 0,
           totalKaos: 0,
+          specs: [], // Kembalikan array kosong jika tidak ada data
           message: "Data tidak ditemukan di tabel detail modul pengerjaan.",
         };
       }
@@ -76,16 +80,21 @@ const getSoDtfSpecs = async (nomorSo) => {
         [nomorSo],
       );
 
+      const specs = titikRows.map((t) => ({
+        w: Number(t.lebar || 0),
+        h: Number(t.panjang || 0),
+      }));
+
       const totalKaos = Number(qtyRows[0].totalQty);
       // Kalkulasi Luas: Total Luas per Kaos x Jumlah Kaos
-      const luasPerKaos = titikRows.reduce(
-        (sum, t) => sum + Number(t.panjang || 0) * Number(t.lebar || 0),
-        0,
-      );
+      const luasPerKaos = specs.reduce((sum, s) => sum + s.w * s.h, 0);
+      const totalTitikSistem = specs.length * totalKaos;
 
       return {
         totalLuasSistem: Math.round(luasPerKaos * totalKaos),
         totalKaos,
+        totalTitikSistem,
+        specs, // <--- Data rincian dimensi dikirim ke frontend
         message: `Data ditemukan di Modul Pengerjaan (${isPO ? "PO" : "SO"})`,
       };
     }
@@ -101,11 +110,13 @@ const getSoDtfSpecs = async (nomorSo) => {
         return {
           totalLuasSistem: 0,
           totalKaos: 0,
+          specs: [],
           message: "Nomor SO tidak ditemukan.",
         };
 
       let totalLuasSistem = 0;
       let totalKaos = 0;
+      let allSpecs = [];
 
       rows.forEach((row) => {
         const qty = Number(row.sod_jumlah || 0);
@@ -119,11 +130,19 @@ const getSoDtfSpecs = async (nomorSo) => {
                 ? JSON.parse(row.sod_custom_data)
                 : row.sod_custom_data;
 
+            const listTitik = custom.titikCetak || [];
+
             // Hitung luas berdasarkan array titikCetak di dalam objek JSON
-            const luasTitik = (custom.titikCetak || []).reduce(
-              (s, t) => s + Number(t.panjang || 0) * Number(t.lebar || 0),
-              0,
-            );
+            const luasTitik = listTitik.reduce((s, t) => {
+              const p = Number(t.panjang || 0);
+              const l = Number(t.lebar || 0);
+
+              // Tambahkan ke koleksi specs untuk auto-layout
+              allSpecs.push({ w: l, h: p });
+
+              return s + p * l;
+            }, 0);
+
             totalLuasSistem += luasTitik * qty;
           } catch (e) {
             console.error("Gagal parse JSON pada SO Reguler", e);
@@ -134,6 +153,7 @@ const getSoDtfSpecs = async (nomorSo) => {
       return {
         totalLuasSistem: Math.round(totalLuasSistem),
         totalKaos,
+        specs: allSpecs, // <--- Hasil ekstraksi dari JSON
         message: "Data ditemukan di SO Reguler (Item Custom)",
       };
     }
@@ -141,6 +161,7 @@ const getSoDtfSpecs = async (nomorSo) => {
     return {
       totalLuasSistem: 0,
       totalKaos: 0,
+      specs: [],
       message: "Format nomor tidak didukung.",
     };
   } catch (error) {
@@ -168,16 +189,15 @@ const loadData = async (nomorLhk) => {
       d.buangan, 
       d.luas_sistem, 
       d.luas_riil,
-      d.keterangan AS ket,
-      d.cab, -- Tambahkan kolom cab agar frontend tahu cabangnya
+      d.keterangan, -- Gunakan nama asli 'keterangan' agar mudah diakses di frontend
+      d.cab, 
       d.jo_kode
     FROM tdtf d
     LEFT JOIN tsodtf_hdr h ON h.sd_nomor = d.sodtf
-    WHERE d.lhk_nomor = ? -- [FIX] Filter berdasarkan Nomor LHK unik
+    WHERE d.lhk_nomor = ?
     ORDER BY d.date_create ASC;
   `;
 
-  // Kirim nomorLhk ke query
   const [rows] = await pool.query(query, [nomorLhk]);
   return rows;
 };
@@ -200,8 +220,6 @@ const searchSoPo = async (term, cabang, tipe, prefix, page = 1, limit = 50) => {
   let params = [];
 
   const patternPrefix = `%${prefix}%`;
-  const exclusionFilterSO = `AND h.sd_nomor NOT IN (SELECT sodtf FROM tdtf)`;
-  const exclusionFilterPO = `AND h.pjh_nomor NOT IN (SELECT sodtf FROM tdtf)`;
   const prefixFilterSO = prefix ? `AND h.sd_nomor LIKE ?` : "";
   const prefixFilterPO = prefix ? `AND h.pjh_nomor LIKE ?` : "";
 
@@ -212,7 +230,7 @@ const searchSoPo = async (term, cabang, tipe, prefix, page = 1, limit = 50) => {
              IFNULL((SELECT SUM(sdd_jumlah) FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor), 0) AS jumlah,
              h.sd_tanggal AS tanggal, 'SO DTF' AS tipe
       FROM tsodtf_hdr h 
-      WHERE (h.sd_cab = ? OR h.sd_workshop = ?) ${exclusionFilterSO} ${prefixFilterSO}
+      WHERE (h.sd_cab = ? OR h.sd_workshop = ?) ${prefixFilterSO}
     `;
     params = [cabang, cabang];
     if (prefix) params.push(patternPrefix);
@@ -230,7 +248,7 @@ const searchSoPo = async (term, cabang, tipe, prefix, page = 1, limit = 50) => {
              IFNULL((SELECT SUM(pjd_jumlah) FROM kencanaprint.tpodtf_dtl WHERE pjd_nomor = h.pjh_nomor), 0) AS jumlah,
              h.pjh_tanggal AS tanggal, 'PO DTF' AS tipe
       FROM kencanaprint.tpodtf_hdr h
-      WHERE h.pjh_kode_kaosan = ? ${exclusionFilterPO} ${prefixFilterPO}
+      WHERE h.pjh_kode_kaosan = ? ${prefixFilterPO}
     `;
     params = [cabang];
     if (prefix) params.push(patternPrefix);
@@ -247,7 +265,7 @@ const searchSoPo = async (term, cabang, tipe, prefix, page = 1, limit = 50) => {
       SELECT spk_nomor AS kode, spk_nama AS nama, 
              0 AS jumlah, -- SPK biasanya tidak memiliki agregat jumlah di header
              spk_tanggal AS tanggal, 'SPK PABRIK' AS tipe
-      FROM tspk 
+      FROM kencanaprint.tspk 
       WHERE spk_aktif = 'Y' AND spk_close = 0
     `;
     if (term) {
@@ -263,7 +281,7 @@ const searchSoPo = async (term, cabang, tipe, prefix, page = 1, limit = 50) => {
               IFNULL((SELECT SUM(sdd_jumlah) FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor), 0) AS jumlah, 
               h.sd_tanggal AS tanggal, 'SO DTF' AS tipe
        FROM tsodtf_hdr h 
-       WHERE (h.sd_cab = ? OR h.sd_workshop = ?) ${exclusionFilterSO} ${prefixFilterSO}
+       WHERE (h.sd_cab = ? OR h.sd_workshop = ?) ${prefixFilterSO}
          AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?)
       )
       UNION ALL
@@ -271,7 +289,7 @@ const searchSoPo = async (term, cabang, tipe, prefix, page = 1, limit = 50) => {
               IFNULL((SELECT SUM(pjd_jumlah) FROM kencanaprint.tpodtf_dtl WHERE pjd_nomor = h.pjh_nomor), 0) AS jumlah, 
               h.pjh_tanggal AS tanggal, 'PO DTF' AS tipe
        FROM kencanaprint.tpodtf_hdr h
-       WHERE h.pjh_kode_kaosan = ? ${exclusionFilterPO} ${prefixFilterPO}
+       WHERE h.pjh_kode_kaosan = ? ${prefixFilterPO}
          AND (h.pjh_nomor LIKE ? OR h.pjh_ket LIKE ?)
       )
       ORDER BY tanggal DESC LIMIT ? OFFSET ?;
@@ -296,19 +314,18 @@ const searchSoPo = async (term, cabang, tipe, prefix, page = 1, limit = 50) => {
   let countParams = params.slice(0, -2); // Ambil params tanpa limit & offset
 
   if (tipe === "SO") {
-    countQuery = `SELECT COUNT(*) AS total FROM tsodtf_hdr h WHERE (h.sd_cab = ? OR h.sd_workshop = ?) ${exclusionFilterSO} ${prefixFilterSO}`;
+    countQuery = `SELECT COUNT(*) AS total FROM tsodtf_hdr h WHERE (h.sd_cab = ? OR h.sd_workshop = ?) ${prefixFilterSO}`;
     if (term) countQuery += ` AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?)`;
   } else if (tipe === "PO") {
-    countQuery = `SELECT COUNT(*) AS total FROM kencanaprint.tpodtf_hdr h WHERE h.pjh_kode_kaosan = ? ${exclusionFilterPO} ${prefixFilterPO}`;
+    countQuery = `SELECT COUNT(*) AS total FROM kencanaprint.tpodtf_hdr h WHERE h.pjh_kode_kaosan = ? ${prefixFilterPO}`;
     if (term) countQuery += ` AND (h.pjh_nomor LIKE ? OR h.pjh_ket LIKE ?)`;
   } else if (tipe === "SPK") {
-    countQuery = `SELECT COUNT(*) AS total FROM tspk WHERE spk_aktif = 'Y' AND spk_close = 0`;
+    countQuery = `SELECT COUNT(*) AS total FROM kencanaprint.tspk WHERE spk_aktif = 'Y' AND spk_close = 0`;
     if (term) countQuery += ` AND (spk_nomor LIKE ? OR spk_nama LIKE ?)`;
   } else {
-    // Gabungan Count
     countQuery = `SELECT (
-        (SELECT COUNT(*) FROM tsodtf_hdr h WHERE (h.sd_cab=? OR h.sd_workshop=?) ${exclusionFilterSO} ${prefixFilterSO} AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?)) +
-        (SELECT COUNT(*) FROM kencanaprint.tpodtf_hdr h WHERE h.pjh_kode_kaosan=? ${exclusionFilterPO} ${prefixFilterPO} AND (h.pjh_nomor LIKE ? OR h.pjh_ket LIKE ?))
+        (SELECT COUNT(*) FROM tsodtf_hdr h WHERE (h.sd_cab=? OR h.sd_workshop=?) ${prefixFilterSO} AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?)) +
+        (SELECT COUNT(*) FROM kencanaprint.tpodtf_hdr h WHERE h.pjh_kode_kaosan=? ${prefixFilterPO} AND (h.pjh_nomor LIKE ? OR h.pjh_ket LIKE ?))
       ) AS total`;
   }
 
@@ -332,7 +349,7 @@ const searchSpk = async (term, page = 1, limit = 50) => {
   const query = `
     SELECT spk_nomor AS kode, spk_nama AS nama, 
            0 AS jumlah, spk_tanggal AS tanggal, 'SPK' AS tipe
-    FROM tspk 
+    FROM kencanaprint.tspk 
     WHERE spk_aktif = 'Y' AND spk_close = 0
       AND (spk_nomor LIKE ? OR spk_nama LIKE ?)
     ORDER BY spk_tanggal DESC LIMIT ? OFFSET ?
@@ -345,7 +362,7 @@ const searchSpk = async (term, page = 1, limit = 50) => {
   ]);
 
   const [countRows] = await pool.query(
-    "SELECT COUNT(*) AS total FROM tspk WHERE spk_aktif='Y' AND spk_close=0",
+    "SELECT COUNT(*) AS total FROM kencanaprint.tspk WHERE spk_aktif='Y' AND spk_close=0",
     [],
   );
 
@@ -356,6 +373,8 @@ const saveData = async (payload, user) => {
   const {
     tanggal,
     cabang,
+    layout, // <-- array layout dari vue
+    specsData, // <-- array spesifikasi (termasuk cadangan) dari vue
     items,
     panjang,
     buangan,
@@ -385,29 +404,45 @@ const saveData = async (payload, user) => {
       ? (Number(panjang || 0) + Number(buangan || 0)) * lebarFilm
       : 0;
 
-    for (const item of items) {
+    const combinedJsonData = {
+      layout: layout || [],
+      specsData: specsData || [],
+    };
+    const jsonString = JSON.stringify(combinedJsonData);
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+
       if (item.kode) {
-        // [FIX] Cek apakah kode item diawali dengan salah satu prefix produksi JERON
         const jeronPrefixes = ["SPK", "SM", "KP", "JA", "MD", "JER"];
         const isProductionOrder = jeronPrefixes.some((p) =>
           item.kode.startsWith(p),
         );
 
-        // Gunakan P04 jika produksi, jika tidak gunakan kode cabang pengirim (cabang pengerja)
         const finalCab = isProductionOrder ? "P04" : cabang;
 
+        // Kita simpan string layout HANYA di baris pertama (index 0)
+        // Kolom 'keterangan' digunakan sebagai wadah JSON layout
+        const ketValue = i === 0 ? jsonString : "";
+
         await connection.query(
-          `INSERT INTO tdtf (lhk_nomor, tanggal, sodtf, depan, belakang, lengan, variasi, saku, jumlah, jumlah_sistem, reject, panjang, buangan, luas_sistem, luas_riil, jo_kode, cab, user_create, date_create) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+          `INSERT INTO tdtf (
+            lhk_nomor, tanggal, sodtf, 
+            depan, belakang, lengan, variasi, saku, 
+            jumlah, jumlah_sistem, reject, 
+            panjang, buangan, luas_sistem, luas_riil, 
+            jo_kode, cab, keterangan, user_create, date_create
+          ) 
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
           [
             lhkNomorFinal,
             tanggal,
             item.kode,
-            item.depan || 0,
-            item.belakang || 0,
-            item.lengan || 0,
-            item.variasi || 0,
-            item.saku || 0,
+            item.jumlahTitik || 0, // Kolom depan: Jml titik per kaos
+            item.totalTitik || 0, // Kolom belakang: Total akumulasi titik
+            0, // lengan
+            0, // variasi
+            0, // saku
             item.jumlah || 0,
             item.jumlahSistem || 0,
             item.reject || 0,
@@ -417,15 +452,23 @@ const saveData = async (payload, user) => {
             luasRiilGlobal,
             jenisOrder.kode,
             finalCab,
+            ketValue, // Menyimpan JSON Layout
             user.kode,
           ],
         );
       }
     }
+
     await connection.commit();
-    return { message: "LHK Berhasil disimpan", lhkNomor };
+    // Kembalikan lhkNomorFinal agar frontend tahu nomor barunya jika bukan edit
+    return {
+      success: true,
+      message: "LHK Berhasil disimpan",
+      lhkNomor: lhkNomorFinal,
+    };
   } catch (error) {
     await connection.rollback();
+    console.error("Service Error:", error);
     throw error;
   } finally {
     connection.release();
@@ -460,6 +503,54 @@ const removeData = async (nomorLhk) => {
   }
 };
 
+/**
+ * @description Memproses file gambar bukti ripping LHK DTF
+ */
+const processLhkRippingImage = async (tempFilePath, lhkNomor, cabang) => {
+  if (!fs.existsSync(tempFilePath)) {
+    throw new Error("File sumber sementara tidak ditemukan.");
+  }
+
+  // Nama file menggunakan Nomor LHK, pastikan formatnya aman untuk nama file
+  // Contoh lhkNomor: K06.LHK.2602.0001 -> K06_LHK_2602_0001.jpg
+  const safeFileName = lhkNomor.replace(/\./g, "_") + ".jpg";
+
+  // Folder tujuan: public/images/lhk-dtf/K06
+  const folderPath = path.join(
+    process.cwd(),
+    "public",
+    "images",
+    "lhk-dtf",
+    cabang,
+  );
+
+  if (!fs.existsSync(folderPath)) {
+    fs.mkdirSync(folderPath, { recursive: true });
+  }
+
+  const finalPath = path.join(folderPath, safeFileName);
+
+  try {
+    await sharp(tempFilePath)
+      .flatten({ background: { r: 255, g: 255, b: 255 } }) // Transparan jadi putih
+      .toFormat("jpeg")
+      .jpeg({ quality: 85 }) // Kompresi agar ringan
+      .toFile(finalPath);
+
+    if (fs.existsSync(tempFilePath)) {
+      fs.unlinkSync(tempFilePath);
+    }
+
+    return finalPath;
+  } catch (error) {
+    if (fs.existsSync(tempFilePath)) {
+      fs.unlinkSync(tempFilePath);
+    }
+    console.error("Sharp processing error:", error);
+    throw new Error("Gagal mengkonversi gambar bukti ripping.");
+  }
+};
+
 module.exports = {
   loadData,
   getJenisOrderList,
@@ -468,4 +559,5 @@ module.exports = {
   saveData,
   removeData,
   getSoDtfSpecs,
+  processLhkRippingImage,
 };

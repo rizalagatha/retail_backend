@@ -136,6 +136,36 @@ const runAutoReceive = async (req, res) => {
   }
 };
 
+const rejectReturn = async (req, res) => {
+  try {
+    const { nomorKirim, alasan } = req.body;
+
+    if (!nomorKirim || !alasan) {
+      return res
+        .status(400)
+        .json({ message: "Nomor kirim dan alasan penolakan wajib diisi." });
+    }
+
+    // 1. PROSES: Eksekusi penolakan di level service
+    const result = await service.rejectRetur(req.body, req.user);
+
+    // 2. AUDIT: Catat Log Penolakan kedalam Audit Trail
+    auditService.logActivity(
+      req,
+      "REJECT", // Action
+      "TERIMA_RETUR", // Module
+      nomorKirim, // Target ID (Nomor Kirim dari Store)
+      null, // Old Data (Tidak ada data lama karena ini status baru)
+      { alasan }, // New Data (Payload alasan penolakan)
+      `Menolak Retur dari Store (Ref Kirim: ${nomorKirim}, Alasan: ${alasan})`,
+    );
+
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getList,
   getDetails,
@@ -143,4 +173,5 @@ module.exports = {
   submitChangeRequest,
   exportDetails,
   runAutoReceive,
+  rejectReturn,
 };

@@ -53,7 +53,16 @@ const getSoDtfList = async (filters, user) => {
             -- [FIX] Pastikan LHK yang null menjadi 0
             IFNULL(x.LHK_Count, 0) AS LHK,
             x.NoSO, x.NoINV, x.Sales, x.BagDesain, x.KdCus, x.Customer, x.Kain, 
-            x.Finishing, x.Workshop, x.Keterangan, x.AlasanClose, x.Created, x.Close
+            x.Finishing, x.Workshop, x.Keterangan, x.AlasanClose, x.Created, x.Close,
+            x.UserModified, x.DateModified,
+            
+            -- [PERBAIKAN] Tentukan status langsung dari SQL
+            CASE
+              WHEN x.AlasanClose <> '' AND x.AlasanClose IS NOT NULL THEN 'Closed'
+              WHEN x.NoINV <> '' THEN 'Sudah INV'
+              WHEN x.NoSO <> '' THEN 'Sudah SO'
+              ELSE 'Open'
+            END AS status
         FROM (
             SELECT 
                 h.sd_nomor AS Nomor, 
@@ -194,14 +203,17 @@ const exportHeader = async (filters, user) => {
   return await getSoDtfList(filters, user);
 };
 
-const exportDetail = async (filters) => {
-  const { startDate, endDate, cabang, filterDateType } = filters;
-  const dateColumn =
-    filterDateType === "pengerjaan" ? "h.sd_datekerja" : "h.sd_tanggal";
-  let params = [startDate, endDate];
+const exportDetail = async (payload) => {
+  const { nomors } = payload; // Tangkap array nomor dari frontend
 
-  // Query ini kembali menggunakan filter tanggal dan cabang
-  let query = `
+  if (!nomors || nomors.length === 0) {
+    return [];
+  }
+
+  // Buat tanda tanya (?) sejumlah elemen array untuk bind params SQL
+  const placeholders = nomors.map(() => "?").join(",");
+
+  const query = `
         SELECT 
             h.sd_nomor AS Nomor, 
             DATE_FORMAT(h.sd_tanggal, '%d-%m-%Y') AS Tanggal, 
@@ -218,16 +230,12 @@ const exportDetail = async (filters) => {
         JOIN tsodtf_dtl d ON h.sd_nomor = d.sdd_nomor
         LEFT JOIN tcustomer c ON c.cus_kode = h.sd_cus_kode
         LEFT JOIN kencanaprint.tsales s ON s.sal_kode = h.sd_sal_kode
-        WHERE ${dateColumn} BETWEEN ? AND ?
+        WHERE h.sd_nomor IN (${placeholders})
+        ORDER BY h.sd_nomor, d.sdd_nourut
     `;
 
-  if (cabang !== "ALL") {
-    query += " AND h.sd_cab = ?";
-    params.push(cabang);
-  }
-  query += " ORDER BY h.sd_nomor, d.sdd_nourut";
-
-  const [data] = await pool.query(query, params);
+  // Masukkan array nomors langsung sebagai parameter eksekusi
+  const [data] = await pool.query(query, nomors);
   return data;
 };
 

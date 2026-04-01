@@ -14,7 +14,7 @@ const getNomor = async (connection, cab) => {
   const prefix = `PJ.${cab}.${format(new Date(), "yyMM")}`;
   const [rows] = await connection.query(
     `SELECT IFNULL(MAX(RIGHT(pj_nomor, 4)), 0) as max_nomor FROM tpeminjaman_hdr WHERE pj_nomor LIKE ?`,
-    [`${prefix}%`]
+    [`${prefix}%`],
   );
   const nextNo = parseInt(rows[0].max_nomor) + 1;
   return `${prefix}.${String(nextNo).padStart(4, "0")}`;
@@ -35,8 +35,8 @@ const saveData = async (payload, user) => {
     // --- VALIDASI STOK SEBELUM LANJUT ---
     // for (const item of items) {
     //   const [stokRows] = await connection.query(
-    //     `SELECT IFNULL(SUM(mst_stok_in - mst_stok_out), 0) AS saldo 
-    //              FROM tmasterstok 
+    //     `SELECT IFNULL(SUM(mst_stok_in - mst_stok_out), 0) AS saldo
+    //              FROM tmasterstok
     //              WHERE mst_aktif = "Y" AND mst_cab = ? AND mst_brg_kode = ? AND mst_ukuran = ?`,
     //     [user.cabang, item.kode, item.ukuran]
     //   );
@@ -57,11 +57,11 @@ const saveData = async (payload, user) => {
       // Update Header (Hanya jika belum ACC/TOLAK)
       await connection.query(
         `UPDATE tpeminjaman_hdr SET pj_nama = ?, pj_ket = ?, user_create = ?, pj_status_acc = ? WHERE pj_nomor = ?`,
-        [header.pic, header.keterangan, user.kode, statusAcc, nomorPJ]
+        [header.pic, header.keterangan, user.kode, statusAcc, nomorPJ],
       );
       await connection.query(
         `DELETE FROM tpeminjaman_dtl WHERE pjd_nomor = ?`,
-        [nomorPJ]
+        [nomorPJ],
       );
     } else {
       // Cari bagian generate nomor baru:
@@ -72,11 +72,11 @@ const saveData = async (payload, user) => {
 
       const [maxRows] = await connection.query(
         `SELECT IFNULL(MAX(RIGHT(pj_nomor, 4)), 0) as max_nomor FROM tpeminjaman_hdr WHERE pj_nomor LIKE ?`,
-        [`${prefix}%`]
+        [`${prefix}%`],
       );
       nomorPJ = `${prefix}${String(parseInt(maxRows[0].max_nomor) + 1).padStart(
         4,
-        "0"
+        "0",
       )}`;
 
       const idrecHdr = generateIdRec(user.cabang, "PJH");
@@ -94,7 +94,7 @@ const saveData = async (payload, user) => {
           header.keterangan,
           statusAcc,
           user.kode,
-        ]
+        ],
       );
     }
 
@@ -104,7 +104,7 @@ const saveData = async (payload, user) => {
       await connection.query(
         `INSERT INTO tpeminjaman_dtl (idrec, pjd_nomor, pjd_kode, pjd_ukuran, pjd_qty, pjd_qty_kembali) 
                  VALUES (?, ?, ?, ?, ?, 0)`,
-        [idrecDtl, nomorPJ, item.kode, item.ukuran, item.jumlah]
+        [idrecDtl, nomorPJ, item.kode, item.ukuran, item.jumlah],
       );
     }
 
@@ -171,11 +171,11 @@ const lookupProducts = async (filters) => {
     FROM tbarangdc a
     INNER JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
   `;
-  
-  let whereClause = `WHERE a.brg_aktif = 0`; 
+
+  let whereClause = `WHERE a.brg_aktif = 0`;
   let params = [];
 
-  const cabCode = gudang || 'KDC'; 
+  const cabCode = gudang || "KDC";
 
   if (term) {
     whereClause += ` AND (a.brg_kode LIKE ? OR b.brgd_barcode LIKE ? OR a.brg_warna LIKE ? OR 
@@ -183,7 +183,7 @@ const lookupProducts = async (filters) => {
     params.push(searchTerm, searchTerm, searchTerm, searchTerm);
   }
 
-  if (category && category !== 'ALL') {
+  if (category && category !== "ALL") {
     whereClause += ` AND a.brg_ktg = ?`;
     params.push(category);
   }
@@ -215,16 +215,13 @@ const lookupProducts = async (filters) => {
         ORDER BY a.brg_kode ASC, b.brgd_barcode ASC
         LIMIT ? OFFSET ?
     `;
-  
+
   const dataParams = [cabCode, ...params, itemsPerPage, offset];
 
   const [items] = await pool.query(dataQuery, dataParams);
   return { items, total };
 };
 
-/**
- * Mengambil data lengkap untuk cetakan form peminjaman
- */
 /**
  * Mengambil data lengkap untuk cetakan form peminjaman
  * Mengambil info perusahaan dari tabel tgudang berdasarkan pj_cab

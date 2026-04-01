@@ -16,6 +16,13 @@ router.get(
   controller.exportDetails,
 );
 
+router.post(
+  "/reject",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"), // Menggunakan permission 'edit' untuk aksi penolakan
+  controller.rejectReturn,
+);
+
 router.get(
   "/",
   verifyToken,

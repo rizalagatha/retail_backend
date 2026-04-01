@@ -136,7 +136,7 @@ const getList = async (filters) => {
 
             -- G (Akhir Tahun)
             IFNULL(g.target, 0) AS target_akhir_tahun,
-            0 AS realisasi_akhir_tahun -- Placeholder (Delphi logic: nominal4 (d) / target4 (g))
+            IFNULL(d.nominal, 0) AS realisasi_akhir_tahun
 
         FROM AllBranches ab
         LEFT JOIN Data_A a ON ab.cabang = a.cabang
