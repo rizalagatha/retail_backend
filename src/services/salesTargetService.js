@@ -5,53 +5,64 @@ const getList = async (filters) => {
 
   const query = `
         WITH 
-        -- [BASE 1] Penjualan Bersih (Sama seperti v_nominal di Delphi)
-        -- Logika: Sales Kotor - Diskon Faktur - Biaya MP - PPN - Retur
-        InvoiceNetto AS (
-    SELECT 
-        cabang,
-        tahun,
-        bulan,
-        SUM(qty_inv) as qty,
-        SUM(netto_inv) as nominal_sales
-    FROM (
-        SELECT 
-            LEFT(h.inv_nomor, 3) AS cabang,
-            YEAR(h.inv_tanggal) AS tahun,
-            MONTH(h.inv_tanggal) AS bulan,
-            h.inv_nomor,
-            SUM(d.invd_jumlah) AS qty_inv,
-            -- Hitung Netto per 1 nomor invoice secara utuh
-            (
-                SUM((d.invd_harga - d.invd_diskon) * d.invd_jumlah) 
-                - COALESCE(h.inv_disc, 0)
-                - COALESCE(h.inv_mp_biaya_platform, 0)
-            ) AS netto_inv
-        FROM tinv_hdr h
-        JOIN tinv_dtl d ON h.inv_nomor = d.invd_inv_nomor
-        WHERE h.inv_sts_pro = 0
-        GROUP BY h.inv_nomor -- Group by invoice dulu agar h.inv_disc terpotong semua
-    ) AS PerInvoice
-    GROUP BY cabang, tahun, bulan
-),
-        ReturNetto AS (
-            SELECT 
-                LEFT(rh.rj_nomor, 3) AS cabang,
-                YEAR(rh.rj_tanggal) AS tahun,
-                MONTH(rh.rj_tanggal) AS bulan,
-                0 AS qty,
-                -SUM(rd.rjd_jumlah * (rd.rjd_harga - rd.rjd_diskon)) AS nominal_retur
-            FROM trj_hdr rh
-            JOIN trj_dtl rd ON rh.rj_nomor = rd.rjd_nomor
-            GROUP BY LEFT(rh.rj_nomor, 3), YEAR(rh.rj_tanggal), MONTH(rh.rj_tanggal)
-        ),
-        -- v_nominal (Gabungan Sales & Retur)
+        -- [BASE 1] Penjualan Bersih (Disinkronkan 100% dengan Laporan Monitoring)
         V_Nominal AS (
-            SELECT cabang, tahun, bulan, SUM(qty) as jumlah, SUM(nominal_sales) as nominal FROM InvoiceNetto GROUP BY cabang, tahun, bulan
+            -- 1. Ambil Qty dari tinv_dtl (karena v_sales_harian tidak punya Qty)
+            SELECT 
+                h.inv_cab AS cabang, YEAR(h.inv_tanggal) AS tahun, MONTH(h.inv_tanggal) AS bulan,
+                SUM(d.invd_jumlah) AS jumlah, 0 AS nominal
+            FROM tinv_hdr h
+            JOIN tinv_dtl d ON h.inv_nomor = d.invd_inv_nomor
+            WHERE h.inv_sts_pro = 0
+            GROUP BY 1, 2, 3
+
             UNION ALL
-            SELECT cabang, tahun, bulan, SUM(qty) as jumlah, SUM(nominal_retur) as nominal FROM ReturNetto GROUP BY cabang, tahun, bulan
+
+            -- 2. Ambil Omset Kotor dari v_sales_harian
+            SELECT 
+                cabang, YEAR(tanggal) AS tahun, MONTH(tanggal) AS bulan,
+                0 AS jumlah, SUM(nominal) AS nominal
+            FROM v_sales_harian
+            GROUP BY 1, 2, 3
+
+            UNION ALL
+
+            -- 3. Kurangi Biaya Platform / Fee Marketplace (Minus)
+            SELECT 
+                inv_cab AS cabang, YEAR(inv_tanggal) AS tahun, MONTH(inv_tanggal) AS bulan,
+                0 AS jumlah, -SUM(COALESCE(inv_mp_biaya_platform, 0)) AS nominal
+            FROM tinv_hdr
+            WHERE inv_sts_pro = 0
+            GROUP BY 1, 2, 3
+
+            UNION ALL
+
+            -- 4. Kurangi Retur Jual (Minus - Menggunakan Logika Akurat dari Monitoring)
+            SELECT 
+                rh.rj_cab AS cabang, YEAR(rh.rj_tanggal) AS tahun, MONTH(rh.rj_tanggal) AS bulan,
+                0 AS jumlah,
+                -SUM(
+                    CASE 
+                        WHEN rh.rj_jenis = 'N' THEN (
+                            SELECT GREATEST(0, 
+                                IFNULL(SUM(rd.rjd_jumlah * (rd.rjd_harga - rd.rjd_diskon)), 0) - 
+                                IFNULL((SELECT SUM(inv_rj_rp) FROM tinv_hdr WHERE inv_rj_nomor = rh.rj_nomor), 0)
+                            )
+                            FROM trj_dtl rd WHERE rd.rjd_nomor = rh.rj_nomor
+                        )
+                        WHEN rh.rj_jenis = 'Y' THEN (
+                            SELECT IFNULL(SUM(rfd_refund), 0) 
+                            FROM trefund_dtl 
+                            WHERE rfd_notrs = rh.rj_inv
+                        )
+                        ELSE 0
+                    END
+                ) AS nominal
+            FROM trj_hdr rh
+            GROUP BY 1, 2, 3
         ),
-        -- Aggregated V_Nominal (karena UNION ALL bisa duplikat row per cabang/bulan)
+        
+        -- Gabungkan semua angka di atas berdasarkan Cabang, Tahun, dan Bulan
         V_Nominal_Agg AS (
             SELECT cabang, tahun, bulan, SUM(jumlah) as jumlah, SUM(nominal) as nominal
             FROM V_Nominal
@@ -66,7 +77,7 @@ const getList = async (filters) => {
         ),
 
         -- =========================================================
-        -- MAPPING LOGIKA DELPHI (A, B, C, D, E, F, G)
+        -- MAPPING LOGIKA (A, B, C, D, E, F, G)
         -- =========================================================
 
         -- A: Bulan Ini (Actual)
@@ -108,10 +119,9 @@ const getList = async (filters) => {
         -- List Semua Cabang
         AllBranches AS (
             SELECT gdg_kode AS cabang, gdg_nama FROM tgudang
-            -- Opsional: Filter cabang aktif saja atau yang ada transaksi
         )
 
-        -- SELECT FINAL (Sesuai output Delphi)
+        -- SELECT FINAL
         SELECT 
             ? AS tahun,
             ? AS bulan,
@@ -147,7 +157,7 @@ const getList = async (filters) => {
         LEFT JOIN Data_F f ON ab.cabang = f.cabang
         LEFT JOIN Data_G g ON ab.cabang = g.cabang
         
-        -- Filter agar hanya muncul cabang yang punya data (Sesuai WHERE di Delphi)
+        -- Filter agar hanya muncul cabang yang punya data
         WHERE (
             IFNULL(a.nominal, 0) > 0 OR 
             IFNULL(b.target, 0) > 0 OR 
@@ -158,32 +168,23 @@ const getList = async (filters) => {
     `;
 
   const params = [
-    // Params A (Bulan Ini)
     tahun,
-    bulan,
-    // Params B (Target Bulan Ini)
+    bulan, // Params A
     tahun,
-    bulan,
-    // Params C (Bulan Lalu - Handle Januari)
+    bulan, // Params B
     tahun,
     bulan,
     tahun,
-    bulan,
-    // Params D (Kumulatif Actual)
+    bulan, // Params C
     tahun,
-    bulan,
-    // Params E (Kumulatif Target)
+    bulan, // Params D
     tahun,
-    bulan,
-    // Params F (Tahun Lalu)
+    bulan, // Params E
     tahun,
-    bulan,
-    // Params G (Target Akhir Tahun)
+    bulan, // Params F
+    tahun, // Params G
     tahun,
-
-    // Select Constants
-    tahun,
-    bulan,
+    bulan, // Select Constants
   ];
 
   const [rows] = await pool.query(query, params);
