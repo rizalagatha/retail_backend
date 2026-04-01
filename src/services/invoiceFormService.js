@@ -1115,7 +1115,14 @@ const saveData = async (payload, user) => {
         const isKprOrKdc =
           header.gudang.kode === "KPR" || header.gudang.kode === "KDC";
         const hargaAsli = applyRoundingPolicy(Number(item.harga || 0));
-        const diskonRp = applyRoundingPolicy(Number(item.diskonRp || 0));
+        let diskonRp = 0;
+        if (Number(item.diskonRp || 0) > 0) {
+          diskonRp = applyRoundingPolicy(Number(item.diskonRp));
+        } else if (Number(item.diskonPersen || 0) > 0) {
+          diskonRp = applyRoundingPolicy(
+            hargaAsli * (Number(item.diskonPersen) / 100),
+          );
+        }
 
         const invdIdrec = `${invNomor.replace(/\./g, "")}${String(
           index + 1,

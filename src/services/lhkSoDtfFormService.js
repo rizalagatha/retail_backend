@@ -51,6 +51,41 @@ const getSoDtfSpecs = async (nomorSo) => {
 
     // --- RUTE A: MODUL DTF (.SD / .DP / .SB) ATAU PO PRODUKSI (.PJ) ---
     if (isDTFModul || isPO) {
+      // [BARU] 1. Cek apakah ini SO DTF STOK terlebih dahulu
+      const [stokRows] = await pool.query(
+        `SELECT sds_panjang as panjang, sds_lebar as lebar, sds_jumlah as jumlah 
+         FROM tsodtf_stok 
+         WHERE sds_nomor = ? AND sds_jumlah > 0`,
+        [nomorSo],
+      );
+      if (stokRows.length > 0) {
+        let totalLuasSistem = 0;
+        let totalTitik = 0; // Ganti totalKaos dengan totalTitik
+        let specs = [];
+
+        stokRows.forEach((row) => {
+          const qty = Number(row.jumlah || 0);
+          const w = Number(row.lebar || 0);
+          const h = Number(row.panjang || 0);
+
+          totalTitik += qty;
+          totalLuasSistem += w * h * qty;
+
+          // Kirimkan qty spesifik per titik agar frontend bisa menyusun layout
+          specs.push({ w, h, qty });
+        });
+
+        return {
+          totalLuasSistem: Math.round(totalLuasSistem),
+          totalKaos: 0, // <--- KUNCI UTAMA: Paksa 0 agar tidak dianggap kaos!
+          totalTitikSistem: totalTitik, // Pindahkan totalnya ke jumlah titik
+          specs,
+          isStok: true, // Flag khusus untuk Frontend
+          message: "Data ditemukan di SO DTF Stok",
+        };
+      }
+
+      // 2. Jika BUKAN SO DTF Stok, lanjut ke logika DTF Reguler lama
       const tableDtl = isPO ? "kencanaprint.tpodtf_dtl" : "tsodtf_dtl";
       const tableDtl2 = isPO ? "kencanaprint.tpodtf_dtl2" : "tsodtf_dtl2";
       const colNo = isPO ? "pjd_nomor" : "sdd_nomor";
@@ -67,7 +102,7 @@ const getSoDtfSpecs = async (nomorSo) => {
         return {
           totalLuasSistem: 0,
           totalKaos: 0,
-          specs: [], // Kembalikan array kosong jika tidak ada data
+          specs: [],
           message: "Data tidak ditemukan di tabel detail modul pengerjaan.",
         };
       }
@@ -86,7 +121,6 @@ const getSoDtfSpecs = async (nomorSo) => {
       }));
 
       const totalKaos = Number(qtyRows[0].totalQty);
-      // Kalkulasi Luas: Total Luas per Kaos x Jumlah Kaos
       const luasPerKaos = specs.reduce((sum, s) => sum + s.w * s.h, 0);
       const totalTitikSistem = specs.length * totalKaos;
 
@@ -94,7 +128,7 @@ const getSoDtfSpecs = async (nomorSo) => {
         totalLuasSistem: Math.round(luasPerKaos * totalKaos),
         totalKaos,
         totalTitikSistem,
-        specs, // <--- Data rincian dimensi dikirim ke frontend
+        specs,
         message: `Data ditemukan di Modul Pengerjaan (${isPO ? "PO" : "SO"})`,
       };
     }
@@ -227,8 +261,11 @@ const searchSoPo = async (term, cabang, tipe, prefix, page = 1, limit = 50) => {
     // [FIX] Ambil Jumlah Riil dari tsodtf_dtl
     query = `
       SELECT h.sd_nomor AS kode, h.sd_nama AS nama,
-             IFNULL((SELECT SUM(sdd_jumlah) FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor), 0) AS jumlah,
-             h.sd_tanggal AS tanggal, 'SO DTF' AS tipe
+             IFNULL((SELECT SUM(sdd_jumlah) FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor), 
+             IFNULL((SELECT SUM(sds_jumlah) FROM tsodtf_stok WHERE sds_nomor = h.sd_nomor), 0)) AS jumlah,
+             h.sd_tanggal AS tanggal, 'SO DTF' AS tipe,
+             -- [BARU] Pengecekan tabel LHK
+             IF((SELECT COUNT(*) FROM tdtf WHERE sodtf = h.sd_nomor) > 0, 1, 0) AS sudah_lhk
       FROM tsodtf_hdr h 
       WHERE (h.sd_cab = ? OR h.sd_workshop = ?) ${prefixFilterSO}
     `;
@@ -246,7 +283,9 @@ const searchSoPo = async (term, cabang, tipe, prefix, page = 1, limit = 50) => {
     query = `
       SELECT h.pjh_nomor AS kode, h.pjh_ket AS nama, 
              IFNULL((SELECT SUM(pjd_jumlah) FROM kencanaprint.tpodtf_dtl WHERE pjd_nomor = h.pjh_nomor), 0) AS jumlah,
-             h.pjh_tanggal AS tanggal, 'PO DTF' AS tipe
+             h.pjh_tanggal AS tanggal, 'PO DTF' AS tipe,
+             -- [BARU] Pengecekan tabel LHK
+             IF((SELECT COUNT(*) FROM tdtf WHERE sodtf = h.pjh_nomor) > 0, 1, 0) AS sudah_lhk
       FROM kencanaprint.tpodtf_hdr h
       WHERE h.pjh_kode_kaosan = ? ${prefixFilterPO}
     `;
@@ -278,8 +317,10 @@ const searchSoPo = async (term, cabang, tipe, prefix, page = 1, limit = 50) => {
     // Gabungan (Default)
     query = `
       (SELECT h.sd_nomor AS kode, h.sd_nama AS nama, 
-              IFNULL((SELECT SUM(sdd_jumlah) FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor), 0) AS jumlah, 
-              h.sd_tanggal AS tanggal, 'SO DTF' AS tipe
+              IFNULL((SELECT SUM(sdd_jumlah) FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor), 
+              IFNULL((SELECT SUM(sds_jumlah) FROM tsodtf_stok WHERE sds_nomor = h.sd_nomor), 0)) AS jumlah, 
+              h.sd_tanggal AS tanggal, 'SO DTF' AS tipe,
+              IF((SELECT COUNT(*) FROM tdtf WHERE sodtf = h.sd_nomor) > 0, 1, 0) AS sudah_lhk
        FROM tsodtf_hdr h 
        WHERE (h.sd_cab = ? OR h.sd_workshop = ?) ${prefixFilterSO}
          AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?)
@@ -287,7 +328,8 @@ const searchSoPo = async (term, cabang, tipe, prefix, page = 1, limit = 50) => {
       UNION ALL
       (SELECT h.pjh_nomor AS kode, h.pjh_ket AS nama, 
               IFNULL((SELECT SUM(pjd_jumlah) FROM kencanaprint.tpodtf_dtl WHERE pjd_nomor = h.pjh_nomor), 0) AS jumlah, 
-              h.pjh_tanggal AS tanggal, 'PO DTF' AS tipe
+              h.pjh_tanggal AS tanggal, 'PO DTF' AS tipe,
+              IF((SELECT COUNT(*) FROM tdtf WHERE sodtf = h.pjh_nomor) > 0, 1, 0) AS sudah_lhk
        FROM kencanaprint.tpodtf_hdr h
        WHERE h.pjh_kode_kaosan = ? ${prefixFilterPO}
          AND (h.pjh_nomor LIKE ? OR h.pjh_ket LIKE ?)
