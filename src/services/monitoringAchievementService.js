@@ -520,8 +520,8 @@ const getCabangOptions = async (user) => {
 const saveTarget = async (payload, user) => {
   const { tahun, bulan, kode_gudang, targets } = payload;
 
-  if (user.cabang !== "KDC" || user.kode !== "HARIS") {
-    throw new Error("Akses ditolak. Hanya PAK HARIS yang boleh input target.");
+  if (user.cabang !== "KDC" || user.kode !== "ADMIN") {
+    throw new Error("Akses ditolak. Hanya atmin yang boleh input target.");
   }
 
   const connection = await pool.getConnection();
@@ -540,36 +540,13 @@ const saveTarget = async (payload, user) => {
       [tahun, bulan, kode_gudang],
     );
 
-    const lastDayOfMonth = new Date(tahun, bulan, 0).getDate();
-
     for (const item of targets) {
       const nominal = parseFloat(item.nominal) || 0;
       if (nominal === 0) continue;
 
-      let startDay, endDay;
-
-      if (item.minggu === 1) {
-        startDay = 1;
-        endDay = 7;
-      } else if (item.minggu === 2) {
-        startDay = 8;
-        endDay = 14;
-      } else if (item.minggu === 3) {
-        startDay = 15;
-        endDay = 21;
-      } else if (item.minggu === 4) {
-        startDay = 22;
-        endDay = lastDayOfMonth;
-      } else {
-        continue;
-      }
-
-      const startDate = `${tahun}-${String(bulan).padStart(2, "0")}-${String(
-        startDay,
-      ).padStart(2, "0")}`;
-      const endDate = `${tahun}-${String(bulan).padStart(2, "0")}-${String(
-        endDay,
-      ).padStart(2, "0")}`;
+      // [PERBAIKAN] Langsung gunakan tanggal valid dari Frontend (Generator Kalender)
+      const startDate = item.start_date;
+      const endDate = item.end_date;
 
       await connection.query(
         `INSERT INTO kpi.ttarget_kaosan 
@@ -598,6 +575,17 @@ const saveTarget = async (payload, user) => {
   }
 };
 
+const getTargetDetail = async (tahun, bulan, kode_gudang) => {
+  const query = `
+    SELECT minggu, target_omset as nominal
+    FROM kpi.ttarget_kaosan
+    WHERE tahun = ? AND bulan = ? AND kode_gudang = ?
+    ORDER BY minggu ASC
+  `;
+  const [rows] = await pool.query(query, [tahun, bulan, kode_gudang]);
+  return rows;
+};
+
 module.exports = {
   getDailyData,
   getWeeklyData,
@@ -605,4 +593,5 @@ module.exports = {
   getYtdData,
   getCabangOptions,
   saveTarget,
+  getTargetDetail,
 };

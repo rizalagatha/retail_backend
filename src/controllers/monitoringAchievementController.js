@@ -45,8 +45,20 @@ const saveTarget = async (req, res) => {
   }
 };
 
+const getTargetDetail = async (req, res) => {
+  try {
+    const { tahun, bulan, cabang } = req.query;
+    // Parameter yang dikirim dari Vue: tahun, bulan, cabang
+    const data = await service.getTargetDetail(tahun, bulan, cabang);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getData,
   getCabangOptions,
   saveTarget,
+  getTargetDetail,
 };

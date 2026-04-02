@@ -12,13 +12,19 @@ router.get(
   "/",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getData
+  controller.getData,
 );
 router.get(
   "/cabang-options",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getCabangOptions
+  controller.getCabangOptions,
+);
+router.get(
+  "/target-detail",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getTargetDetail,
 );
 router.post("/save-target", verifyToken, controller.saveTarget);
 
