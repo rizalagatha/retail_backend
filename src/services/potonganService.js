@@ -77,22 +77,20 @@ const getList = async (filters) => {
                 h.pt_nomor AS Nomor,
                 h.pt_tanggal AS Tanggal,
                 h.pt_nominal AS Nominal,
-                h.pt_nominal AS dBayarkan, -- Asumsi dBayarkan dan Nominal sama di list view
-                h.pt_nominal AS dSisakan,  -- Asumsi dSisakan adalah field yang tidak ada/diabaikan, atau ini total potongan. Kita set sama dengan Nominal/dBayarkan
+                h.pt_nominal AS Dibayarkan, -- [FIX] Sebelumnya 'dBayarkan', harusnya 'Dibayarkan'
                 h.pt_akun AS Akun,
                 r.rek_nama AS NamaAkun,
                 r.rek_rekening AS NoRekening,
-                h.pt_cus_kode AS Kdcust, -- Sama dengan customer_kode
+                h.pt_cus_kode AS Kdcus,      -- [FIX] Sebelumnya 'Kdcust', harusnya 'Kdcus'
                 c.cus_nama AS Customer,
                 c.cus_alamat AS Alamat,
                 c.cus_kota AS Kota,
                 h.user_create AS Usr,
-                LEFT(h.pt_nomor, 3) AS Cab, -- Ambil kode cabang dari pt_nomor
-                -- Pengecekan Jurnal (Closing)
+                LEFT(h.pt_nomor, 3) AS Cab,
                 IF(EXISTS(SELECT 1 FROM finance.tjurnal j WHERE j.jur_nomor = h.pt_nomor), 'Y', 'N') AS Closing
             FROM tpotongan_hdr h
             LEFT JOIN tcustomer c ON c.cus_kode = h.pt_cus_kode
-            LEFT JOIN finance.trekening r ON r.rek_kode = h.pt_akun -- Ambil Nama Akun dan No Rekening
+            LEFT JOIN finance.trekening r ON r.rek_kode = h.pt_akun
             WHERE LEFT(h.pt_nomor, 3) = ? 
                 AND h.pt_tanggal BETWEEN ? AND ?
             ORDER BY h.pt_tanggal DESC, h.pt_nomor ASC;
@@ -100,11 +98,9 @@ const getList = async (filters) => {
     const [rows] = await pool.query(query, [cabang, startDate, endDate]);
     return rows;
   } catch (err) {
-    console.error("Error in getList:", err.message);
     throw new Error("Gagal mengambil daftar potongan.");
   }
 };
-
 /**
  * [READ] Mengambil detail satu Potongan (untuk form Ubah)
  */
@@ -144,7 +140,7 @@ const getDetails = async (nomor) => {
   // Cek apakah sudah dijurnal untuk menentukan tombol edit aktif atau tidak
   const [jurnalCheck] = await pool.query(
     "SELECT jur_nomor FROM finance.tjurnal WHERE jur_nomor = ? LIMIT 1",
-    [nomor]
+    [nomor],
   );
 
   return {
@@ -298,7 +294,7 @@ const remove = async (nomor, user) => {
       `
             SELECT user_cab FROM tpotongan_hdr WHERE pt_nomor = ?
         `,
-      [nomor]
+      [nomor],
     );
 
     if (rows.length === 0) throw new Error("Data Potongan tidak ditemukan.");
@@ -307,14 +303,14 @@ const remove = async (nomor, user) => {
     // Cek Cabang
     if (potongan.user_cab !== user.cabang && user.cabang !== "KDC") {
       throw new Error(
-        `Anda tidak berhak menghapus data milik cabang ${potongan.user_cab}.`
+        `Anda tidak berhak menghapus data milik cabang ${potongan.user_cab}.`,
       );
     }
 
     // Cek Jurnal
     const [jurnalCheck] = await connection.query(
       "SELECT jur_nomor FROM finance.tjurnal WHERE jur_nomor = ? LIMIT 1",
-      [nomor]
+      [nomor],
     );
     if (jurnalCheck.length > 0) {
       throw new Error("Transaksi sudah dijurnal. Tidak bisa dihapus.");
@@ -379,7 +375,7 @@ const getExportHeaders = async (filters) => {
       AND DATE(h.pt_tanggal) BETWEEN ? AND ?
     ORDER BY h.pt_tanggal DESC, h.pt_nomor DESC;
   `;
-  
+
   const [rows] = await pool.query(query, [cabang, startDate, endDate]);
   return rows;
 };
@@ -418,7 +414,7 @@ const getBrowseDetails = async (nomor) => {
     // Ambil customer code dari header dulu
     const [hdr] = await pool.query(
       "SELECT pt_cus_kode FROM tpotongan_hdr WHERE pt_nomor = ?",
-      [nomor]
+      [nomor],
     );
     if (hdr.length === 0) {
       return []; // Tidak ada header, return array kosong
