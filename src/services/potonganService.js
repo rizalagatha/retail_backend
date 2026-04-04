@@ -101,6 +101,7 @@ const getList = async (filters) => {
     throw new Error("Gagal mengambil daftar potongan.");
   }
 };
+
 /**
  * [READ] Mengambil detail satu Potongan (untuk form Ubah)
  */
