@@ -1,7 +1,5 @@
 const soFormService = require("../services/soFormService");
-const auditService = require("../services/auditService"); // Import Audit
-const pool = require("../config/database"); // Import Pool untuk Snapshot
-const { differenceInDays, parseISO, format } = require("date-fns");
+const { format } = require("date-fns");
 
 const getForEdit = async (req, res) => {
   try {
@@ -17,71 +15,12 @@ const getForEdit = async (req, res) => {
   }
 };
 
-// [AUDIT TRAIL DITERAPKAN DI SINI]
 const save = async (req, res) => {
   try {
     const payload = req.body;
-    const isUpdate = payload.isNew === false;
-    const nomorDokumen = payload.header?.nomor;
-    let oldData = null;
-    let anomalyDetected = false;
-    let anomalyNote = "";
 
-    // 1. SNAPSHOT & DETEKSI PERUBAHAN BARANG (Hanya saat Update)
-    if (isUpdate && nomorDokumen) {
-      const [headerRows] = await pool.query(
-        "SELECT * FROM tso_hdr WHERE so_nomor = ?",
-        [nomorDokumen],
-      );
-      const [detailRows] = await pool.query(
-        "SELECT * FROM tso_dtl WHERE sod_so_nomor = ?",
-        [nomorDokumen],
-      );
-
-      if (headerRows.length > 0) {
-        oldData = { ...headerRows[0], items: detailRows };
-
-        // Cek apakah ada perubahan pada daftar barang (Kode, Qty, atau Harga)
-        const oldItems = oldData.items;
-        const newItems = payload.details || [];
-
-        if (oldItems.length !== newItems.length) {
-          anomalyDetected = true;
-          anomalyNote += "Jumlah baris item berubah. ";
-        } else {
-          for (let i = 0; i < oldItems.length; i++) {
-            const match = newItems.find(
-              (ni) => ni.kode === oldItems[i].sod_kode,
-            );
-            if (
-              !match ||
-              match.jumlah != oldItems[i].sod_jumlah ||
-              match.harga != oldItems[i].sod_harga
-            ) {
-              anomalyDetected = true;
-              anomalyNote += `Perubahan data pada barang ${oldItems[i].sod_kode}. `;
-              break;
-            }
-          }
-        }
-      }
-    }
-
-    // 2. PROSES SIMPAN
+    // Proses Simpan Utama
     const result = await soFormService.save(payload, req.user);
-
-    // 3. AUDIT: Hanya catat jika ini CREATE atau ada Anomali pada UPDATE
-    if (!isUpdate || anomalyDetected) {
-      auditService.logActivity(
-        req,
-        anomalyDetected ? "ANOMALY_UPDATE" : "CREATE",
-        "SURAT_PESANAN",
-        result.nomor || nomorDokumen,
-        oldData,
-        payload,
-        anomalyDetected ? `⚠️ ANOMALI: ${anomalyNote}` : `Input SO Baru`,
-      );
-    }
 
     res.status(payload.isNew ? 201 : 200).json(result);
   } catch (error) {
@@ -105,38 +44,10 @@ const getPenawaranDetails = async (req, res) => {
 
     const result = await soFormService.getPenawaranDetailsForSo(nomor, cabang);
 
-    // --- LOGIKA AUDIT (Tetap dipertahankan untuk mendeteksi penawaran kadaluwarsa) ---
-    const rawDate = result.header.pen_tanggal;
-    let tglPenawaran;
-
-    if (rawDate instanceof Date) {
-      tglPenawaran = rawDate;
-    } else if (typeof rawDate === "string") {
-      tglPenawaran = parseISO(rawDate);
-    } else {
-      tglPenawaran = new Date();
-    }
-
-    const hariIni = new Date();
-    const selisihHari = differenceInDays(hariIni, tglPenawaran);
-
-    if (selisihHari > 20) {
-      auditService.logActivity(
-        req,
-        "ANOMALY_OLD_OFFER",
-        "PENAWARAN",
-        nomor,
-        null,
-        { selisihHari },
-        `⚠️ ANOMALI: Menarik penawaran berumur ${selisihHari} hari (Batas 20 hari)`,
-      );
-    }
-
     // --- PERBAIKAN UTAMA: OVERRIDE TANGGAL UNTUK FRONTEND ---
-    // Kita paksa tanggal penawaran yang dikirim ke form SO menjadi tanggal hari ini.
+    // Paksa tanggal penawaran menjadi tanggal hari ini agar sinkron di form SO.
     result.pen_tanggal = format(new Date(), "yyyy-MM-dd");
 
-    // Kirim hasil ke frontend
     res.json(result);
   } catch (error) {
     console.error("getPenawaranDetails Error:", error);
@@ -148,7 +59,6 @@ const getDefaultDiscount = async (req, res) => {
   try {
     const { level, total, gudang } = req.query;
 
-    // Pastikan 'level' adalah string sebelum split
     const levelStr = String(level || "");
     const levelCode = levelStr ? levelStr.split(" - ")[0] : "";
 
