@@ -2,7 +2,15 @@ const pool = require("../config/database");
 
 const getKomplainList = async (filters, user) => {
   // Tangkap parameter cabang dari frontend
-  const { term, status, cabang, page = 1, itemsPerPage = 15 } = filters;
+  const {
+    term,
+    status,
+    cabang,
+    startDate,
+    endDate,
+    page = 1,
+    itemsPerPage = 15,
+  } = filters;
   const limit = parseInt(itemsPerPage);
   const offset = (parseInt(page) - 1) * limit;
   const searchTerm = `%${term || ""}%`;
@@ -13,6 +21,12 @@ const getKomplainList = async (filters, user) => {
     WHERE 1=1
   `;
   const params = [];
+
+  // --- [BARU] FILTER TANGGAL ---
+  if (startDate && endDate) {
+    baseQuery += ` AND DATE(h.cmp_tanggal) BETWEEN ? AND ?`;
+    params.push(startDate, endDate);
+  }
 
   // --- LOGIKA FILTER CABANG ---
   if (user.cabang === "KDC") {
@@ -54,12 +68,18 @@ const getKomplainList = async (filters, user) => {
       h.cmp_status, 
       h.date_create
     ${baseQuery}
-    ORDER BY h.date_create DESC
-    ${limit !== -1 ? `LIMIT ? OFFSET ?` : ""}
+    ORDER BY h.cmp_tanggal DESC, h.date_create DESC
   `;
+  // [PERBAIKAN] Kloning params untuk query data agar tidak merusak countQuery
+  const dataParams = [...params];
+  let finalDataQuery = dataQuery;
 
-  if (limit !== -1) params.push(limit, offset);
-  const [items] = await pool.query(dataQuery, params);
+  if (limit !== -1) {
+    finalDataQuery += ` LIMIT ? OFFSET ?`;
+    dataParams.push(limit, offset);
+  }
+
+  const [items] = await pool.query(finalDataQuery, dataParams);
 
   return { items, total: countRows[0].total };
 };
