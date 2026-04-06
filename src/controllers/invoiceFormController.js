@@ -33,25 +33,36 @@ const detectQtyAnomaly = async (soNomor, invoiceItems) => {
   }
 };
 
-const checkSoDeadline = (dateline) => {
-  if (!dateline) return null;
+const checkSoDeadlineDB = async (soNomor) => {
+  if (!soNomor) return null;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  try {
+    // Ambil tanggal dateline asli dari tabel SO
+    const [rows] = await pool.query(
+      "SELECT so_dateline FROM tso_hdr WHERE so_nomor = ?",
+      [soNomor],
+    );
 
-  // Konversi string ke objek Date
-  const deadlineDate = new Date(dateline);
+    if (rows.length === 0 || !rows[0].so_dateline) return null;
 
-  if (isNaN(deadlineDate.getTime())) return null;
+    const dateline = rows[0].so_dateline;
 
-  deadlineDate.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-  if (today > deadlineDate) {
-    // GUNAKAN deadlineDate (Objek), BUKAN dateline (String)
-    const dateString = deadlineDate.toISOString().split("T")[0];
-    return `SO Melebihi Batas Waktu (${dateString})`;
+    const deadlineDate = new Date(dateline);
+    if (isNaN(deadlineDate.getTime())) return null;
+    deadlineDate.setHours(0, 0, 0, 0);
+
+    if (today > deadlineDate) {
+      const dateString = deadlineDate.toISOString().split("T")[0];
+      return `SO Melebihi Batas Waktu (${dateString})`;
+    }
+    return null;
+  } catch (e) {
+    console.warn("Gagal cek dateline SO di database:", e.message);
+    return null;
   }
-  return null;
 };
 
 const loadForEdit = async (req, res) => {
@@ -68,12 +79,12 @@ const loadForEdit = async (req, res) => {
 const save = async (req, res) => {
   try {
     const payload = req.body;
-    const soNomor = payload.so_nomor || payload.header?.so_nomor;
+    const soNomor = payload.header?.nomorSo;
     const dateline = payload.header?.dateline; // Pastikan dikirim dari frontend
 
     // 1. Deteksi Anomali (Qty & Dateline)
     const qtyAnomaly = await detectQtyAnomaly(soNomor, payload.items);
-    const dateAnomaly = checkSoDeadline(dateline);
+    const dateAnomaly = checkSoDeadlineDB(dateline);
 
     // 2. PROSES: Simpan ke DB
     const result = await service.saveData(payload, req.user);
@@ -84,7 +95,7 @@ const save = async (req, res) => {
       if (qtyAnomaly) finalNote += `SELISIH QTY: ${qtyAnomaly} `;
       if (dateAnomaly) finalNote += `DEADLINE TERLEWATI: ${dateAnomaly}`;
 
-      auditService.logActivity(
+      await auditService.logActivity(
         req,
         "ANOMALY_INVOICE_FROM_SO",
         "INVOICE",
