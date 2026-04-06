@@ -142,7 +142,7 @@ const searchSo = async (term, page, itemsPerPage, user) => {
                     FROM tso_dtl dd 
                     WHERE dd.sod_so_nomor = h.so_nomor 
                       AND dd.sod_custom = 'N' 
-                      AND dd.sod_kode NOT LIKE 'JS%'), 0) AS qtyFisikWajibMutasi,
+                      AND dd.sod_kode NOT LIKE 'JASA%'), 0) AS qtyFisikWajibMutasi,
                     
             -- 2. Total Qty yang sudah di-Invoice (Belum lunas total)
             IFNULL((SELECT SUM(dd.invd_jumlah) 
