@@ -132,21 +132,17 @@ const searchSo = async (term, page, itemsPerPage, user) => {
             c.cus_kota AS Kota,
             h.so_dipakai_dtf AS DipakaiDtf,
             
-            -- 1. Total Qty Pesanan
+            -- 1. Total Qty Pesanan Keseluruhan
             IFNULL((SELECT SUM(dd.sod_jumlah) 
                     FROM tso_dtl dd 
                     WHERE dd.sod_so_nomor = h.so_nomor), 0) AS qtyso,
-                    
-            -- 1.A Total Qty Pesanan Fisik (Wajib Mutasi)
-            -- [PERBAIKAN] Pastikan JASA, CUSTOM, dan Tarikan DTF tidak dihitung wajib mutasi
+
+            -- 1.A Total Qty Pesanan Fisik (Wajib Mutasi: Bukan Custom, Bukan Jasa)
             IFNULL((SELECT SUM(dd.sod_jumlah) 
                     FROM tso_dtl dd 
                     WHERE dd.sod_so_nomor = h.so_nomor 
-                      AND (dd.sod_custom IS NULL OR dd.sod_custom = 'N')
-                      AND dd.sod_kode != 'CUSTOM'
-                      AND dd.sod_kode NOT LIKE 'JS%'
-                      AND dd.sod_kode NOT LIKE 'JASA%'
-                      AND (dd.sod_sd_nomor IS NULL OR dd.sod_sd_nomor = '')), 0) AS qtyFisikWajibMutasi,
+                      AND dd.sod_custom = 'N' 
+                      AND dd.sod_kode NOT LIKE 'JASA%'), 0) AS qtyFisikWajibMutasi,
                     
             -- 2. Total Qty yang sudah di-Invoice (Belum lunas total)
             IFNULL((SELECT SUM(dd.invd_jumlah) 
@@ -155,12 +151,12 @@ const searchSo = async (term, page, itemsPerPage, user) => {
                     WHERE hh.inv_sts_pro = 0 
                     AND hh.inv_nomor_so = h.so_nomor), 0) AS qtyinv,
                     
-            -- 3. Total Qty yang sudah di-Scan
+            -- 3. Total Qty yang sudah di-Scan (Ready)
             IFNULL((SELECT SUM(dd.sod_scanned) 
                     FROM tso_dtl dd 
                     WHERE dd.sod_so_nomor = h.so_nomor), 0) AS qtyscanned,
                     
-            -- 4. Total Mutasi Stok SO
+            -- 4. Total Mutasi Stok SO (Hanya menghitung barang fisik)
             IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
                     FROM tmasterstokso m 
                     WHERE m.mst_aktif = 'Y' 
@@ -173,7 +169,7 @@ const searchSo = async (term, page, itemsPerPage, user) => {
                       AND dd.sod_sd_nomor IS NOT NULL 
                       AND dd.sod_sd_nomor != ''), 0) AS total_so_dtf,
                     
-            -- 6. Cek LHK yang sudah dibuat
+            -- 6. Cek LHK yang sudah dibuat (Harus match dengan jumlah SO DTF)
             IFNULL((SELECT COUNT(DISTINCT lhk.sodtf) 
                     FROM tdtf lhk 
                     JOIN tso_dtl dd ON lhk.sodtf = dd.sod_sd_nomor
@@ -190,13 +186,14 @@ const searchSo = async (term, page, itemsPerPage, user) => {
   const baseQuery = `
         FROM (${subQuery}) AS x 
         WHERE x.qtyinv < x.qtyso             -- Belum sepenuhnya di-invoice
-          AND x.qtyscanned >= x.qtyso        -- Semua item sudah di-scan
-          AND x.qtymutated >= x.qtyFisikWajibMutasi -- [FIX] Pengecekan Mutasi Hanya Untuk Fisik
-          AND (x.total_so_dtf = 0 OR x.lhk_created >= x.total_so_dtf) -- Jika ada custom, LHK WAJIB ada
+          AND x.qtyscanned >= x.qtyso        -- Semua item sudah di-scan (Ready/Auto)
+          AND x.qtymutated >= x.qtyFisikWajibMutasi -- [FIX] Hanya cek mutasi untuk barang reguler
+          AND (x.total_so_dtf = 0 OR x.lhk_created >= x.total_so_dtf) -- [FIX] Pastikan semua SO DTF sudah di LHK
     `;
 
   const searchWhere = `AND (x.Nomor LIKE ? OR x.Customer LIKE ?)`;
 
+  // Parameter Query (Subquery params selalu di depan karena dieksekusi dulu)
   const countParams = [user.cabang];
   const dataParams = [user.cabang];
 
@@ -214,13 +211,11 @@ const searchSo = async (term, page, itemsPerPage, user) => {
   // Ambil Data Item
   const dataQuery = `
         SELECT 
-            x.Nomor, 
+            x.Nomor AS NomorSO, -- Sesuaikan alias dengan yang ditangkap Frontend
             x.Tanggal, 
-            x.KdCus, 
             x.Customer,
             x.Alamat,
-            x.Kota,
-            x.DipakaiDtf 
+            x.Kota
         ${baseQuery} 
         ${term ? searchWhere : ""} 
         ORDER BY x.Nomor DESC 
