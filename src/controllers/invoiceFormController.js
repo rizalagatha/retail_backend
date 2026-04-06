@@ -133,8 +133,10 @@ const getSoDetailsForGrid = async (req, res) => {
     const { soNomor } = req.params;
     const data = await service.getSoDetailsForGrid(soNomor, req.user);
 
-    // Deteksi keterlambatan untuk info di UI
-    const overdueNote = checkSoDeadlineDB(data.header.dateline);
+    // [PERBAIKAN] Gunakan checkSoDeadlineDB dan wajib pakai 'await'
+    // Kita passing soNomor, bukan data.header.dateline
+    const overdueNote = await checkSoDeadlineDB(soNomor);
+
     data.header.isOverdue = !!overdueNote;
     data.header.overdueNote = overdueNote;
 
