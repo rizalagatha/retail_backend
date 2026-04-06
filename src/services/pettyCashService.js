@@ -12,13 +12,9 @@ const getList = async (filters) => {
     params.push(cabang);
   }
 
-  // --- UBAH QUERY MENJADI GROUP BY ---
-  // Jika pck_nomor kosong (masih DRAFT), biarkan tampil sendiri-sendiri (IFNULL)
   const query = `
         SELECT 
-            -- Gunakan pck_nomor sebagai ID utama jika ada, jika tidak pakai pc_nomor (DRAFT)
             IFNULL(h.pck_nomor, h.pc_nomor) AS nomor_utama, 
-            
             MAX(h.pc_idrec) AS idrec, 
             MAX(h.pck_nomor) AS pck_nomor,
             MAX(k.pck_bkm_nomor) AS bkm_nomor,
@@ -29,34 +25,35 @@ const getList = async (filters) => {
             MAX(k.date_transfer) AS date_transfer,
             MAX(k.date_received) AS date_received,
             
-            -- Tanggal: Jika sudah diklaim, ambil tanggal klaim. Jika belum, tanggal nota.
             IFNULL(MAX(k.pck_tanggal), MAX(h.pc_tanggal)) AS tanggal, 
-            
             MAX(k.pck_receive_nominal) AS receive_nominal,
             MAX(h.pc_cab) AS cabang,
             MAX(g.gdg_nama) AS namaCabang,
-            
-            -- Jumlahkan semua nominal terpakai dalam satu klaim
             SUM(h.pc_total_terpakai) AS terpakai,
-            
-            -- Saldo & Modal (Ambil dari nota terakhir/salah satu)
             MAX(h.pc_modal) AS modal, 
             MIN(h.pc_saldo) AS saldo,
             
-            -- Status mengikuti status header
-            MAX(h.pc_status) AS status, 
+            MAX(tf.ptd_nomor) AS pck_pth_nomor,
             
-            -- Keterangan digabung
+            -- [BARU] Ambil Nomor BBK Realisasi dari Finance
+            MAX(tf.ptd_jur_no) AS pck_bbk_finance,
+
+            -- [PERBAIKAN STATUS] Cegah status RECEIVED mundur jadi ON_TRANSFER
+            CASE 
+                WHEN MAX(h.pc_status) = 'RECEIVED' THEN 'RECEIVED'
+                WHEN MAX(tf.ptd_nomor) IS NOT NULL THEN 'ON_TRANSFER'
+                ELSE MAX(h.pc_status) 
+            END AS status, 
+            
             IFNULL(MAX(k.pck_keterangan), GROUP_CONCAT(h.pc_ket SEPARATOR ' | ')) AS keterangan,
-            
             MAX(h.user_create) AS userCreate,
-            
-            -- Hitung ada berapa nota di dalam pengajuan ini
             COUNT(h.pc_nomor) AS jumlah_nota
             
         FROM tpettycash_hdr h
         LEFT JOIN tgudang g ON g.gdg_kode = h.pc_cab
         LEFT JOIN tpettycash_klaim_hdr k ON k.pck_nomor = h.pck_nomor
+        LEFT JOIN finance.tpengajuan_transfer_dtl tf ON tf.ptd_trs = h.pck_nomor
+        
         WHERE h.pc_tanggal BETWEEN ? AND ?
         ${branchFilter}
         GROUP BY IFNULL(h.pck_nomor, h.pc_nomor)
@@ -233,7 +230,6 @@ const getListKlaimFinance = async (filters) => {
     params.push(cabang);
   }
 
-  // Jika ALL, sembunyikan DRAFT/SUBMITTED agar Finance fokus ke ACC ke atas
   if (status && status !== "ALL") {
     statusFilter = " AND h.pck_status = ? ";
     params.push(status);
@@ -249,12 +245,26 @@ const getListKlaimFinance = async (filters) => {
         h.pck_cab AS cabang,
         g.gdg_nama AS namaCabang,
         h.pck_total AS terpakai,
-        h.pck_status AS status, 
+        
+        tf.ptd_nomor AS pck_pth_nomor,
+        
+        -- [BARU] Ambil Nomor BBK Realisasi dari Finance
+        tf.ptd_jur_no AS pck_bbk_finance,
+
+        -- [PERBAIKAN STATUS] Cegah status RECEIVED mundur jadi ON_TRANSFER
+        CASE 
+            WHEN h.pck_status = 'RECEIVED' THEN 'RECEIVED'
+            WHEN tf.ptd_nomor IS NOT NULL THEN 'ON_TRANSFER'
+            ELSE h.pck_status 
+        END AS status, 
+        
         h.pck_keterangan AS keterangan,
         h.pck_acc AS approver,
         h.user_create AS userCreate
     FROM tpettycash_klaim_hdr h
     LEFT JOIN tgudang g ON g.gdg_kode = h.pck_cab
+    LEFT JOIN finance.tpengajuan_transfer_dtl tf ON tf.ptd_trs = h.pck_nomor
+    
     WHERE DATE(h.pck_tanggal) >= DATE(?) AND DATE(h.pck_tanggal) <= DATE(?) 
     ${branchFilter}
     ${statusFilter}
