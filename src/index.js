@@ -209,6 +209,10 @@ app.use(
 );
 app.use("/images", express.static(imageFolderPath));
 app.use("/uploads", express.static(path.join(process.cwd(), "public/uploads")));
+app.use(
+  "/api/uploads",
+  express.static(path.join(process.cwd(), "public/uploads")),
+);
 app.use("/memos", (req, res, next) => {
   console.log(`[DEBUG MEMO] Mencari file: ${req.url}`);
   console.log(`[DEBUG MEMO] Path Fisik: ${path.join(memoFolderPath, req.url)}`);
