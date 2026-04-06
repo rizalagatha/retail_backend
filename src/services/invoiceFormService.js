@@ -132,10 +132,17 @@ const searchSo = async (term, page, itemsPerPage, user) => {
             c.cus_kota AS Kota,
             h.so_dipakai_dtf AS DipakaiDtf,
             
-            -- 1. Total Qty Pesanan
+            -- 1. Total Qty Pesanan Keseluruhan
             IFNULL((SELECT SUM(dd.sod_jumlah) 
                     FROM tso_dtl dd 
                     WHERE dd.sod_so_nomor = h.so_nomor), 0) AS qtyso,
+
+            -- 1.A Total Qty Pesanan Fisik (Wajib Mutasi: Bukan Custom, Bukan Jasa)
+            IFNULL((SELECT SUM(dd.sod_jumlah) 
+                    FROM tso_dtl dd 
+                    WHERE dd.sod_so_nomor = h.so_nomor 
+                      AND dd.sod_custom = 'N' 
+                      AND dd.sod_kode NOT LIKE 'JS%'), 0) AS qtyFisikWajibMutasi,
                     
             -- 2. Total Qty yang sudah di-Invoice (Belum lunas total)
             IFNULL((SELECT SUM(dd.invd_jumlah) 
@@ -144,28 +151,29 @@ const searchSo = async (term, page, itemsPerPage, user) => {
                     WHERE hh.inv_sts_pro = 0 
                     AND hh.inv_nomor_so = h.so_nomor), 0) AS qtyinv,
                     
-            -- 3. Total Qty yang sudah di-Scan
+            -- 3. Total Qty yang sudah di-Scan (Ready)
             IFNULL((SELECT SUM(dd.sod_scanned) 
                     FROM tso_dtl dd 
                     WHERE dd.sod_so_nomor = h.so_nomor), 0) AS qtyscanned,
                     
-            -- 4. Total Mutasi Stok SO
+            -- 4. Total Mutasi Stok SO (Hanya menghitung barang fisik)
             IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
                     FROM tmasterstokso m 
                     WHERE m.mst_aktif = 'Y' 
                     AND m.mst_nomor_so = h.so_nomor), 0) AS qtymutated,
                     
-            -- 5. Cek apakah ada item Custom (SO DTF)
-            IFNULL((SELECT SUM(IF(dd.sod_custom = 'Y', 1, 0)) 
+            -- 5. Cek Total SO DTF yang terkait dengan SO ini
+            IFNULL((SELECT COUNT(DISTINCT dd.sod_sd_nomor) 
                     FROM tso_dtl dd 
-                    WHERE dd.sod_so_nomor = h.so_nomor), 0) AS is_custom,
-                    
-            -- 6. Cek apakah LHK sudah dibuat di tabel tdtf (sodtf = nomor SO)
-            IFNULL((SELECT COUNT(*) 
-                    FROM tso_dtl dd 
-                    INNER JOIN tdtf lhk ON lhk.sodtf = dd.sod_sd_nomor 
                     WHERE dd.sod_so_nomor = h.so_nomor 
-                      AND dd.sod_sd_nomor <> ''), 0) AS lhk_created
+                      AND dd.sod_sd_nomor IS NOT NULL 
+                      AND dd.sod_sd_nomor != ''), 0) AS total_so_dtf,
+                    
+            -- 6. Cek LHK yang sudah dibuat (Harus match dengan jumlah SO DTF)
+            IFNULL((SELECT COUNT(DISTINCT lhk.sodtf) 
+                    FROM tdtf lhk 
+                    JOIN tso_dtl dd ON lhk.sodtf = dd.sod_sd_nomor
+                    WHERE dd.sod_so_nomor = h.so_nomor), 0) AS lhk_created
             
         FROM tso_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
@@ -178,13 +186,14 @@ const searchSo = async (term, page, itemsPerPage, user) => {
   const baseQuery = `
         FROM (${subQuery}) AS x 
         WHERE x.qtyinv < x.qtyso             -- Belum sepenuhnya di-invoice
-          AND x.qtyscanned >= x.qtyso        -- Semua item sudah di-scan
-          AND x.qtymutated >= x.qtyso        -- Semua item sudah dimutasi stok
-          AND (x.is_custom = 0 OR x.lhk_created > 0) -- Jika ada custom, LHK WAJIB ada
+          AND x.qtyscanned >= x.qtyso        -- Semua item sudah di-scan (Ready/Auto)
+          AND x.qtymutated >= x.qtyFisikWajibMutasi -- [FIX] Hanya cek mutasi untuk barang reguler
+          AND (x.total_so_dtf = 0 OR x.lhk_created >= x.total_so_dtf) -- [FIX] Pastikan semua SO DTF sudah di LHK
     `;
 
   const searchWhere = `AND (x.Nomor LIKE ? OR x.Customer LIKE ?)`;
 
+  // Parameter Query (Subquery params selalu di depan karena dieksekusi dulu)
   const countParams = [user.cabang];
   const dataParams = [user.cabang];
 
@@ -202,13 +211,11 @@ const searchSo = async (term, page, itemsPerPage, user) => {
   // Ambil Data Item
   const dataQuery = `
         SELECT 
-            x.Nomor, 
+            x.Nomor AS NomorSO, -- Sesuaikan alias dengan yang ditangkap Frontend
             x.Tanggal, 
-            x.KdCus, 
             x.Customer,
             x.Alamat,
-            x.Kota,
-            x.DipakaiDtf 
+            x.Kota
         ${baseQuery} 
         ${term ? searchWhere : ""} 
         ORDER BY x.Nomor DESC 
