@@ -312,12 +312,12 @@ const getSoDetailsForGrid = async (soNomor, user) => {
     d.sod_kode AS kode,
     b.brgd_barcode AS barcode,
     COALESCE(
-            TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)),
-            f.sd_nama,
-            d.sod_custom_nama
-        ) AS nama,
+        d.sod_custom_nama,
+        f.sd_nama,
+        TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna))
+    ) AS nama,
     d.sod_ukuran AS ukuran_asli,
-    dtf.sdd_ukuran AS ukuran_dtf,
+    d.sod_ukuran AS ukuran_dtf,
     d.sod_custom_data AS custom_json,
     d.sod_harga AS harga,
     d.sod_diskon AS diskonRp,
@@ -367,10 +367,6 @@ FROM tso_dtl d
 
     LEFT JOIN tsodtf_hdr f 
         ON f.sd_nomor = d.sod_sd_nomor                -- nama dari SO-DTF
-
-    LEFT JOIN tsodtf_dtl dtf 
-        ON dtf.sdd_nomor = d.sod_sd_nomor             -- ukuran dari SO-DTF
-        AND dtf.sdd_ukuran = d.sod_ukuran
 
     WHERE d.sod_so_nomor = ?;
 `;
