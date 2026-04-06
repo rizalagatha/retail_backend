@@ -1,6 +1,7 @@
 const pool = require("../config/database");
 const { format } = require("date-fns");
 const { get } = require("../routes/salesCounterRoute");
+const auditService = require("./auditService");
 
 /**
  * @description Membuat nomor SO baru (getmaxnomor).
@@ -168,6 +169,56 @@ const save = async (data, user) => {
         soNomor,
       ]);
     }
+
+    // ========================================================================
+    // [BARU] DETEKSI ANOMALI: UMUR PENAWARAN > 20 HARI
+    // ========================================================================
+    if (header.penawaran) {
+      // 1. Ambil tanggal Penawaran dari database
+      const [penRows] = await connection.query(
+        "SELECT pen_tanggal FROM tpenawaran_hdr WHERE pen_nomor = ?",
+        [header.penawaran],
+      );
+
+      if (penRows.length > 0) {
+        const tglPenawaran = new Date(penRows[0].pen_tanggal);
+        const tglSo = new Date(header.tanggal);
+
+        // 2. Hitung selisih hari
+        const selisihWaktu = tglSo.getTime() - tglPenawaran.getTime();
+        const selisihHari = Math.floor(selisihWaktu / (1000 * 3600 * 24));
+
+        // 3. Jika lebih dari 20 hari, lempar log ke Audit Trail
+        if (selisihHari > 20) {
+          // Siapkan mock req object agar logActivity tidak error
+          const mockReq = {
+            user: user,
+            headers: {
+              "user-agent": "System Background Process",
+              "x-forwarded-for": "127.0.0.1",
+            },
+            socket: { remoteAddress: "127.0.0.1" },
+          };
+
+          const pesanAnomali = `Peringatan: SO dibuat dari Penawaran (${header.penawaran}) yang berumur ${selisihHari} hari. (Batas wajar: 20 hari)`;
+
+          // Kita gunakan Prefix ACTION "ANOMALY_" agar tertangkap filter Audit
+          auditService.logActivity(
+            mockReq,
+            "ANOMALY_SO", // Action
+            "SURAT PESANAN", // Module
+            soNomor, // Target ID
+            {
+              penawaran: header.penawaran,
+              tgl_penawaran: penRows[0].pen_tanggal,
+            }, // Old Data (Info penawaran)
+            { so: soNomor, tgl_so: header.tanggal }, // New Data (Info SO)
+            pesanAnomali, // Note
+          );
+        }
+      }
+    }
+    // ========================================================================
 
     // --- 3. PROSES DETAIL (DELETE & INSERT) ---
     await connection.query("DELETE FROM tso_dtl WHERE sod_so_nomor = ?", [

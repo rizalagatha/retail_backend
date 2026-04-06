@@ -266,6 +266,8 @@ const getListKlaimFinance = async (filters) => {
 
 // --- UNTUK RINCIAN NOTA SAAT DI-EXPAND (KLIK PANAH BAWAH) ---
 const getDetailKlaimFinance = async (pck_nomor) => {
+  // [OPTIMASI] Menghapus ORDER BY berantai yang berat, diganti dengan
+  // sorting standar (tanggal & nomor urut) agar query jauh lebih cepat.
   const query = `
     SELECT 
         h.pc_nomor,
@@ -278,13 +280,11 @@ const getDetailKlaimFinance = async (pck_nomor) => {
     FROM tpettycash_hdr h
     INNER JOIN tpettycash_dtl d ON d.pcd_nomor = h.pc_nomor
     WHERE h.pck_nomor = ?
-    -- [FIX] Ubah ORDER BY menjadi urut berdasarkan No PC, lalu PCV
-    ORDER BY h.pc_nomor ASC, d.pcd_pcv ASC, d.pcd_nourut ASC
+    ORDER BY d.pcd_tanggal ASC, d.pcd_nourut ASC
   `;
   const [rows] = await pool.query(query, [pck_nomor]);
   return rows;
 };
-
 // --- MENGAMBIL DATA UNTUK HALAMAN PROSES & CETAK FINANCE ---
 const getKlaimKolektifDetail = async (pck_nomor) => {
   const safeNomor = pck_nomor || "";

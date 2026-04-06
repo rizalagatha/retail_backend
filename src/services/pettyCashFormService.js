@@ -195,7 +195,8 @@ const getDetail = async (nomor) => {
       pcd_file 
     FROM tpettycash_dtl 
     WHERE pcd_nomor = ? 
-    ORDER BY pcd_nourut ASC`,
+    -- [OPTIMASI] Hanya urutkan berdasarkan tanggal lalu pcv agar query instan
+    ORDER BY pcd_tanggal ASC, pcd_pcv ASC`,
     [nomor],
   );
 
