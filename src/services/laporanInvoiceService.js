@@ -59,7 +59,7 @@ const getInvoiceMasterData = async (filters) => {
         FROM tinv_hdr h
         WHERE h.inv_sts_pro = 0
           AND h.inv_tanggal BETWEEN ? AND ?
-          ${!isKdc ? "AND LEFT(h.inv_nomor, 3) = ?" : ""}
+          ${!isKdc ? "AND LEFT(h.inv_nomor, 3) = ?" : "AND LEFT(h.inv_nomor, 3) <> 'KDC'"}
       ) AS x
       
       -- [PERBAIKAN] Selalu Group By berdasarkan Tanggal dan Kode Cabang
@@ -126,7 +126,7 @@ const getInvoiceMasterData = async (filters) => {
         LEFT JOIN tcustomer_level l ON l.level_kode = h.inv_cus_level
         WHERE h.inv_sts_pro = 0
           AND h.inv_tanggal BETWEEN ? AND ?
-          ${!isKdc ? "AND LEFT(h.inv_nomor, 3) = ?" : ""}
+          ${!isKdc ? "AND LEFT(h.inv_nomor, 3) = ?" : "AND LEFT(h.inv_nomor, 3) <> 'KDC'"}
       ) AS x
       GROUP BY x.Inv_cus_kode, x.Cus_nama, x.Cus_alamat, x.Cus_kota, x.xLevel, x.Level_nama
       
@@ -182,7 +182,7 @@ const getInvoiceMasterData = async (filters) => {
             IFNULL(h.inv_pundiamal, 0) AS pundiamal
           FROM tinv_hdr h
           WHERE h.inv_tanggal BETWEEN ? AND ?
-            ${!isKdc ? "AND LEFT(h.inv_nomor, 3) = ?" : ""}
+            ${!isKdc ? "AND LEFT(h.inv_nomor, 3) = ?" : "AND LEFT(h.inv_nomor, 3) <> 'KDC'"}
         ) AS x
         GROUP BY x.inv_cus_level
       ) AS z ON z.inv_cus_level = l.level_kode
@@ -247,7 +247,7 @@ const getDetailCustomerByLevel = async (filters) => {
       FROM tinv_hdr h
       LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
       WHERE h.inv_tanggal BETWEEN ? AND ?
-        ${!isKdc ? "AND LEFT(h.inv_nomor, 3) = ?" : ""}
+        ${!isKdc ? "AND LEFT(h.inv_nomor, 3) = ?" : "AND LEFT(h.inv_nomor, 3) <> 'KDC'"}
     ) AS x
     WHERE x.inv_cus_level = ? 
     GROUP BY x.kdcus, x.nama, x.alamat, x.kota
@@ -280,6 +280,7 @@ const getCabangOptions = async (user) => {
             SELECT * FROM (
                 SELECT gdg_kode AS kode, gdg_nama AS nama 
                 FROM tgudang 
+                WHERE gdg_kode <> 'KDC'
                 ORDER BY gdg_kode
             ) AS x
         `;
