@@ -1253,6 +1253,61 @@ const deleteDp = async (nomorSetoran) => {
   }
 };
 
+/**
+ * @description Mengecek apakah semua item Custom di SO sudah di-LHK.
+ */
+const checkLhkStatus = async (soNomor) => {
+  try {
+    const query = `
+      SELECT 
+          (SELECT COUNT(DISTINCT sod_sd_nomor) 
+           FROM tso_dtl 
+           WHERE sod_so_nomor = ? 
+             AND sod_sd_nomor IS NOT NULL 
+             AND sod_sd_nomor != '') AS total_dtf,
+             
+          (SELECT COUNT(DISTINCT lhk.sodtf) 
+           FROM tdtf lhk 
+           JOIN tso_dtl dd ON lhk.sodtf = dd.sod_sd_nomor 
+           WHERE dd.sod_so_nomor = ?) AS total_lhk,
+           
+          (SELECT COUNT(*) 
+           FROM tso_dtl 
+           WHERE sod_so_nomor = ? 
+             AND sod_custom = 'Y' 
+             AND (sod_sd_nomor IS NULL OR sod_sd_nomor = '')) AS unlinked_custom
+    `;
+
+    const [rows] = await pool.query(query, [soNomor, soNomor, soNomor]);
+    const data = rows[0];
+
+    const totalDtf = Number(data.total_dtf);
+    const totalLhk = Number(data.total_lhk);
+    const unlinkedCustom = Number(data.unlinked_custom);
+
+    // Jika ada Custom yang belum dibikinkan SO DTF, pasti gagal
+    if (unlinkedCustom > 0) {
+      return {
+        isReady: false,
+        reason: "Ada barang Custom yang belum dibuatkan SO DTF.",
+      };
+    }
+
+    // Jika jumlah SO DTF yang dibuat lebih banyak dari LHK yang beres, pasti gagal
+    if (totalDtf > 0 && totalLhk < totalDtf) {
+      return {
+        isReady: false,
+        reason: "Ada SO DTF yang belum diselesaikan (LHK).",
+      };
+    }
+
+    // Aman, bisa lanjut
+    return { isReady: true };
+  } catch (error) {
+    throw new Error("Gagal memeriksa status LHK di database.");
+  }
+};
+
 module.exports = {
   save,
   getSoForEdit,
@@ -1269,4 +1324,5 @@ module.exports = {
   hitungHarga,
   calculateHargaCustom,
   deleteDp,
+  checkLhkStatus,
 };
