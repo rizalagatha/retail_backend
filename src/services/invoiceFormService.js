@@ -211,7 +211,7 @@ const searchSo = async (term, page, itemsPerPage, user) => {
   // Ambil Data Item
   const dataQuery = `
         SELECT 
-            x.Nomor AS NomorSO, -- Sesuaikan alias dengan yang ditangkap Frontend
+            x.Nomor,
             x.Tanggal, 
             x.Customer,
             x.Alamat,
