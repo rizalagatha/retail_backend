@@ -802,16 +802,33 @@ const getExportDetails = async (filters) => {
     params.push(term, term, term, term);
   }
 
-  // 4. Dynamic Column Filters (Opsional)
+  // 4. Dynamic Column Filters (Sesuai key di header Vue)
   let dynamicFilter = "";
   if (columnFilters) {
     try {
       const filtersObj = JSON.parse(columnFilters);
+
+      // [PERBAIKAN] Mapping disesuaikan 100% dengan key header DataTable Vue
       const fieldMap = {
         Nomor: "h.inv_nomor",
-        Customer: "c.cus_nama",
         Kdcus: "h.inv_cus_kode",
+        Nama: "c.cus_nama", // <--- PERBAIKAN: Harus 'Nama', bukan 'Customer'
+        Marketplace: "h.inv_is_marketplace",
+        NoPesanan: "h.inv_mp_nomor_pesanan",
+        NoResi: "h.inv_mp_resi",
+        Posting: "h.inv_sts_pro",
         NomorSO: "h.inv_nomor_so",
+        Top: "h.inv_top",
+        Alamat: "c.cus_alamat",
+        Kota: "c.cus_kota",
+        Telp: "c.cus_telp",
+        Level: "l.level_nama", // Atau join tcustomer_level
+        Hp: "h.inv_mem_hp",
+        Member: "h.inv_mem_nama",
+        Keterangan: "h.inv_ket",
+        NoVoucher: "h.inv_novoucher",
+        NoSetoran: "h.inv_nosetor",
+        SC: "h.inv_sc",
       };
 
       for (const [key, filter] of Object.entries(filtersObj)) {
@@ -837,14 +854,36 @@ const getExportDetails = async (filters) => {
               dynamicFilter += ` AND ${dbField} = ? `;
               params.push(val);
               break;
+            case "!=":
+              dynamicFilter += ` AND ${dbField} != ? `;
+              params.push(val);
+              break;
+            case ">":
+            case ">=":
+            case "<":
+            case "<=":
+              // Asumsi nilai angka
+              dynamicFilter += ` AND ${dbField} ${filter.operator} ? `;
+              params.push(val);
+              break;
             case "contains":
               dynamicFilter += ` AND ${dbField} LIKE ? `;
               params.push(`%${val}%`);
               break;
+            case "starts":
+              dynamicFilter += ` AND ${dbField} LIKE ? `;
+              params.push(`${val}%`);
+              break;
+            case "ends":
+              dynamicFilter += ` AND ${dbField} LIKE ? `;
+              params.push(`%${val}`);
+              break;
           }
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn("Failed to parse columnFilters:", e);
+    }
   }
 
   // 5. Filter Sisa Piutang
@@ -869,7 +908,7 @@ const getExportDetails = async (filters) => {
         SELECT 
             h.inv_nomor AS 'Nomor Invoice',
             
-            -- [FIX] Gunakan format ISO YYYY-MM-DD agar JS Frontend bisa membacanya
+            -- Gunakan format ISO YYYY-MM-DD agar JS Frontend bisa membacanya
             DATE_FORMAT(h.inv_tanggal, '%Y-%m-%d') AS 'Tanggal',
             
             h.inv_nomor_so AS 'Nomor SO',
@@ -900,7 +939,7 @@ const getExportDetails = async (filters) => {
           ${branchFilter}
           ${searchFilter}
           ${dynamicFilter}
-          ${piutangSubQuery} -- Pastikan ini aktif untuk filter piutang
+          ${piutangSubQuery} 
           
         ORDER BY h.inv_nomor, d.invd_nourut;
     `;
