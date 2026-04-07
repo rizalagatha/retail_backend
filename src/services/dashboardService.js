@@ -953,14 +953,15 @@ const getStokKosongReguler = async (
   targetCabang = "",
 ) => {
   // 1. Tentukan Cabang: Jika KDC pilih ALL, kita akan tarik data global
+  // (Penting: Jika KDC tapi tidak pilih cabang spesifik, kita anggap target = ALL)
   let branchToCheck =
     user.cabang === "KDC" && targetCabang ? targetCabang : user.cabang;
   const searchPattern = `%${searchTerm}%`;
 
-  // Buat filter dinamis untuk cabang
   let branchFilter = "";
   const params = [];
 
+  // Jika BUKAN "ALL", artinya kita mau filter cabang spesifik
   if (branchToCheck !== "ALL") {
     branchFilter = "AND m.mst_cab = ?";
     params.push(branchToCheck);
@@ -969,30 +970,39 @@ const getStokKosongReguler = async (
   // Masukkan parameter pencarian
   params.push(searchPattern, searchPattern, searchPattern);
 
+  // [PERBAIKAN KUNCI]
+  // 1. Pakai IFNULL(..., 0) di SUM stok_in/out agar aman.
+  // 2. Filter ukuran dibatasi ke ukuran reguler dewasa saja.
+  // 3. HAVING dipastikan memfilter hasil agregasi SUM yang 0 atau kurang.
   const query = `
     SELECT 
         b.brgd_kode AS kode,
         b.brgd_barcode AS barcode,
-        TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) AS nama_barang,
+        TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), ' ', IFNULL(a.brg_tipe,''), ' ', IFNULL(a.brg_lengan,''), ' ', IFNULL(a.brg_jeniskain,''), ' ', IFNULL(a.brg_warna,''))) AS nama_barang,
         b.brgd_ukuran AS ukuran,
         a.brg_ktgp AS kategori,
-        /* Jika ALL, ini adalah total stok gabungan seluruh toko */
         IFNULL(SUM(m.mst_stok_in - m.mst_stok_out), 0) AS stok_akhir
-    FROM tbarangdc_dtl b
-    JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
+    FROM tbarangdc a
+    JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
+    
+    -- LEFT JOIN ke tabel stok
     LEFT JOIN tmasterstok m ON m.mst_brg_kode = b.brgd_kode 
         AND m.mst_ukuran = b.brgd_ukuran 
         AND m.mst_aktif = 'Y'
         ${branchFilter}
+        
     WHERE a.brg_aktif = 0
+      AND a.brg_logstok = 'Y'
       AND a.brg_ktgp = 'REGULER'
       AND b.brgd_ukuran IN ('S', 'M', 'L', 'XL', '2XL') 
       AND (
           b.brgd_kode LIKE ? OR b.brgd_barcode LIKE ? OR 
-          CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna) LIKE ?
+          CONCAT(IFNULL(a.brg_jeniskaos,''), ' ', IFNULL(a.brg_tipe,''), ' ', IFNULL(a.brg_lengan,''), ' ', IFNULL(a.brg_jeniskain,''), ' ', IFNULL(a.brg_warna,'')) LIKE ?
       )
     GROUP BY b.brgd_kode, b.brgd_barcode, b.brgd_ukuran, a.brg_ktgp, a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna
-    HAVING stok_akhir <= 0
+    
+    -- [PENTING] Tarik hanya barang yang agregat stoknya benar-benar habis/0/minus
+    HAVING IFNULL(SUM(m.mst_stok_in - m.mst_stok_out), 0) <= 0
     ORDER BY nama_barang, ukuran;
   `;
 
@@ -1000,8 +1010,8 @@ const getStokKosongReguler = async (
 
   // 2. Berikan hasil dengan total asli dan data terbatas untuk performa UI
   return {
-    data: allRows.slice(0, 250), // Hanya kirim 250 untuk list agar enteng
-    totalCount: allRows.length, // Kirim angka asli (misal 800) untuk label chip
+    data: allRows.slice(0, 250), // Kirim 250 data pertama saja agar UI/Browser tidak ngelag
+    totalCount: allRows.length, // Tapi beritahu Frontend berapa total aslinya (misal: 1500 barang kosong)
   };
 };
 
