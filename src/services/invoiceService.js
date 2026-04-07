@@ -808,11 +808,10 @@ const getExportDetails = async (filters) => {
     try {
       const filtersObj = JSON.parse(columnFilters);
 
-      // [PERBAIKAN] Mapping disesuaikan 100% dengan key header DataTable Vue
       const fieldMap = {
         Nomor: "h.inv_nomor",
         Kdcus: "h.inv_cus_kode",
-        Nama: "c.cus_nama", // <--- PERBAIKAN: Harus 'Nama', bukan 'Customer'
+        Nama: "c.cus_nama",
         Marketplace: "h.inv_is_marketplace",
         NoPesanan: "h.inv_mp_nomor_pesanan",
         NoResi: "h.inv_mp_resi",
@@ -822,7 +821,7 @@ const getExportDetails = async (filters) => {
         Alamat: "c.cus_alamat",
         Kota: "c.cus_kota",
         Telp: "c.cus_telp",
-        Level: "l.level_nama", // Atau join tcustomer_level
+        Level: "l.level_nama",
         Hp: "h.inv_mem_hp",
         Member: "h.inv_mem_nama",
         Keterangan: "h.inv_ket",
@@ -862,7 +861,6 @@ const getExportDetails = async (filters) => {
             case ">=":
             case "<":
             case "<=":
-              // Asumsi nilai angka
               dynamicFilter += ` AND ${dbField} ${filter.operator} ? `;
               params.push(val);
               break;
@@ -907,21 +905,23 @@ const getExportDetails = async (filters) => {
   const query = `
         SELECT 
             h.inv_nomor AS 'Nomor Invoice',
-            
-            -- Gunakan format ISO YYYY-MM-DD agar JS Frontend bisa membacanya
             DATE_FORMAT(h.inv_tanggal, '%Y-%m-%d') AS 'Tanggal',
-            
             h.inv_nomor_so AS 'Nomor SO',
             c.cus_nama AS 'Customer',
             d.invd_kode AS 'Kode Barang',
             
-            TRIM(CONCAT(
-              IFNULL(a.brg_jeniskaos,''), " ", 
-              IFNULL(a.brg_tipe,''), " ", 
-              IFNULL(a.brg_lengan,''), " ", 
-              IFNULL(a.brg_jeniskain,''), " ", 
-              IFNULL(a.brg_warna,'')
-            )) AS 'Nama Barang',
+            -- [PERBAIKAN] Gunakan COALESCE untuk fallback nama DTF jika tabel reguler kosong
+            COALESCE(
+              NULLIF(TRIM(CONCAT(
+                IFNULL(a.brg_jeniskaos,''), " ", 
+                IFNULL(a.brg_tipe,''), " ", 
+                IFNULL(a.brg_lengan,''), " ", 
+                IFNULL(a.brg_jeniskain,''), " ", 
+                IFNULL(a.brg_warna,'')
+              )), ''),
+              f.sd_nama,
+              d.invd_kode
+            ) AS 'Nama Barang',
             
             d.invd_ukuran AS 'Ukuran',
             d.invd_jumlah AS 'Jumlah',
@@ -933,7 +933,8 @@ const getExportDetails = async (filters) => {
         JOIN tinv_dtl d ON h.inv_nomor = d.invd_inv_nomor
         LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
         LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
-        
+        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode -- [BARU] Join ke SO DTF
+
         WHERE h.inv_sts_pro = 0
           AND DATE(h.inv_tanggal) BETWEEN ? AND ?
           ${branchFilter}
