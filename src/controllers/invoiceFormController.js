@@ -99,7 +99,7 @@ const save = async (req, res) => {
 
       await auditService.logActivity(
         req,
-        "ANOMALY_INVOICE_FROM_SO",
+        "ANOMALY_INV_SO",
         "INVOICE",
         result.nomor || "UNKNOWN",
         null,
