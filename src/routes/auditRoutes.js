@@ -9,19 +9,14 @@ const {
 
 const MENU_ID = "602"; // ID Menu untuk Audit Trail
 
-// Tambahkan checkPermission dengan hak akses 'view'
+// --- 1. RUTE STATIS (HARUS DI ATAS) ---
 router.get(
   "/",
   verifyToken,
   checkPermission(MENU_ID, "view"),
   controller.getLogs,
 );
-router.get(
-  "/:id",
-  verifyToken,
-  checkPermission(MENU_ID, "view"),
-  controller.getLogById,
-);
+
 router.get(
   "/modules",
   verifyToken,
@@ -41,6 +36,14 @@ router.get(
   verifyToken,
   checkPermission(MENU_ID, "view"),
   controller.getCabangList,
+);
+
+// --- 2. RUTE DINAMIS PARAMETER (HARUS PALING BAWAH) ---
+router.get(
+  "/:id",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getLogById,
 );
 
 module.exports = router;

@@ -76,15 +76,17 @@ const loadForEdit = async (req, res) => {
 };
 
 // [AUDIT TRAIL DITERAPKAN DI SINI]
+// [AUDIT TRAIL DITERAPKAN DI SINI]
 const save = async (req, res) => {
   try {
     const payload = req.body;
     const soNomor = payload.header?.nomorSo;
-    const dateline = payload.header?.dateline; // Pastikan dikirim dari frontend
 
     // 1. Deteksi Anomali (Qty & Dateline)
     const qtyAnomaly = await detectQtyAnomaly(soNomor, payload.items);
-    const dateAnomaly = checkSoDeadlineDB(dateline);
+
+    // [PERBAIKAN 1] Wajib pakai await, dan parameternya HARUS soNomor, bukan dateline!
+    const dateAnomaly = await checkSoDeadlineDB(soNomor);
 
     // 2. PROSES: Simpan ke DB
     const result = await service.saveData(payload, req.user);
@@ -92,8 +94,8 @@ const save = async (req, res) => {
     // 3. AUDIT: Catat jika ada anomali Qty atau Tanggal
     if (qtyAnomaly || dateAnomaly) {
       let finalNote = "";
-      if (qtyAnomaly) finalNote += `SELISIH QTY: ${qtyAnomaly} `;
-      if (dateAnomaly) finalNote += `DEADLINE TERLEWATI: ${dateAnomaly}`;
+      if (qtyAnomaly) finalNote += `SELISIH QTY: ${qtyAnomaly} | `;
+      if (dateAnomaly) finalNote += `DEADLINE: ${dateAnomaly}`;
 
       await auditService.logActivity(
         req,
@@ -101,7 +103,7 @@ const save = async (req, res) => {
         "INVOICE",
         result.nomor || "UNKNOWN",
         null,
-        payload,
+        null, // [PERBAIKAN 2] Jangan kirim 'payload' utuh ke sini! Bikin database muntah (Data Too Long). Cukup kirim null.
         `⚠️ ANOMALI PROSES SO: ${finalNote.trim()}`,
       );
     }

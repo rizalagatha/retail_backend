@@ -5,7 +5,7 @@ const getLogs = async (req, res) => {
     const {
       startDate,
       endDate,
-      module: mod, // Alias dari 'module' adalah 'mod'
+      module: mod,
       user,
       action,
       cabang,
@@ -20,7 +20,7 @@ const getLogs = async (req, res) => {
     let conditions = ["1=1"];
     let params = [];
 
-    // Filter khusus anomali
+    // Filter khusus anomali (HARUS PERTAMA)
     if (isAnomaly === "true") {
       conditions.push("action LIKE 'ANOMALY_%'");
     } else if (action && action !== "ALL") {
@@ -33,13 +33,10 @@ const getLogs = async (req, res) => {
       params.push(startDate, endDate);
     }
 
-    // [FIXED] Menggunakan variabel 'mod' yang sudah didefinisikan di atas
     if (mod && mod !== "ALL") {
       conditions.push("module = ?");
       params.push(mod);
     }
-
-    // (Filter 'action' yang duplikat sudah dihapus karena sudah ditangani di blok isAnomaly)
 
     if (user) {
       conditions.push("user_id LIKE ?");
@@ -53,6 +50,9 @@ const getLogs = async (req, res) => {
 
     const whereClause = "WHERE " + conditions.join(" AND ");
 
+    // [PERBAIKAN] Pastikan limit dan offset dipush belakangan ke array copy agar tidak merusak count
+    const queryParams = [...params, limit, offset];
+
     const dataQuery = `
       SELECT id, log_date, user_id, user_nama, user_cabang, action, module, target_id, note 
       FROM taudit_log
@@ -61,10 +61,10 @@ const getLogs = async (req, res) => {
       LIMIT ? OFFSET ?
     `;
 
-    const [rows] = await pool.query(dataQuery, [...params, limit, offset]);
+    const [rows] = await pool.query(dataQuery, queryParams);
     const [countResult] = await pool.query(
       `SELECT COUNT(*) as total FROM taudit_log ${whereClause}`,
-      params,
+      params, // Ini array yang murni filter (tanpa limit offset)
     );
 
     res.json({ items: rows, total: countResult[0].total });
