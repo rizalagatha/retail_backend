@@ -176,11 +176,22 @@ const transferKlaim = async (req, res) => {
   try {
     const { pck_nomor } = req.params;
     const { pth_nomor } = req.body; // Nomor dari program Delphi yang diinput user
-    const result = await service.transferKlaimKolektif(
+    const result = await pettyCashService.transferKlaimKolektif(
       pck_nomor,
       pth_nomor,
       req.user,
     );
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+const deleteData = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    // Panggil service untuk menghapus data, lempar juga info user yang menghapus
+    const result = await pettyCashService.deleteData(nomor, req.user);
     res.json(result);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -201,4 +212,5 @@ module.exports = {
   rejectKlaimKolektif,
   rejectSinglePc,
   transferKlaim,
+  deleteData,
 };

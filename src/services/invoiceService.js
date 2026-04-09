@@ -354,6 +354,22 @@ const getList = async (filters) => {
         DATE_FORMAT(DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY), "%d/%m/%Y") AS Tempo,
         
         h.inv_disc1 AS \`Dis%\`,
+        h.inv_disc2 AS DiskonMapsPersen,
+        
+        -- [BARU] 1. Ekstrak Nominal Diskon Maps
+        IF(h.inv_disc2 > 0 AND h.inv_disc2 < 100, 
+           ROUND(((h.inv_disc2 / 100) * (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0))) / (1 - (h.inv_disc2 / 100))), 
+           0
+        ) AS DiskonMapsNominal,
+
+        -- [BARU] 2. Ekstrak Nominal Diskon Promo (Total Diskon Faktur - Diskon Maps)
+        (COALESCE(h.inv_disc, 0) - 
+          IF(h.inv_disc2 > 0 AND h.inv_disc2 < 100, 
+             ROUND(((h.inv_disc2 / 100) * (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0))) / (1 - (h.inv_disc2 / 100))), 
+             0
+          )
+        ) AS DiskonPromoNominal,
+
         (COALESCE(DC.TotalItemDiscount, 0) + COALESCE(h.inv_disc, 0)) AS Diskon,
         h.inv_dp AS Dp,
         h.inv_bkrm AS Biayakirim,

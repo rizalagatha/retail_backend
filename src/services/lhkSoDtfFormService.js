@@ -49,6 +49,31 @@ const getSoDtfSpecs = async (nomorSo) => {
 
     const isSOReg = nomorSo.includes(".SO."); // SO Reguler (Custom Item JSON)
 
+    // ==========================================================
+    // [BARU] KITA AMBIL NAMA DESAIN/DTF DARI DATABASE DI AWAL!
+    // ==========================================================
+    let namaDtf = "";
+    if (isDTFModul) {
+      const [hdr] = await pool.query(
+        "SELECT sd_nama FROM tsodtf_hdr WHERE sd_nomor = ?",
+        [nomorSo],
+      );
+      if (hdr.length > 0) namaDtf = hdr[0].sd_nama;
+    } else if (isPO) {
+      try {
+        // Asumsi field keterangan/nama di PO adalah pj_ket
+        const [hdr] = await pool.query(
+          "SELECT pj_ket FROM kencanaprint.tpodtf_hdr WHERE pj_nomor = ?",
+          [nomorSo],
+        );
+        if (hdr.length > 0) namaDtf = hdr[0].pj_ket;
+      } catch (e) {
+        console.warn("Tabel PO tidak ada kolom pj_ket", e);
+      }
+    } else if (isSOReg) {
+      namaDtf = `SO REGULER: ${nomorSo}`;
+    }
+
     // --- RUTE A: MODUL DTF (.SD / .DP / .SB) ATAU PO PRODUKSI (.PJ) ---
     if (isDTFModul || isPO) {
       // [BARU] 1. Cek apakah ini SO DTF STOK terlebih dahulu
@@ -103,6 +128,7 @@ const getSoDtfSpecs = async (nomorSo) => {
           totalLuasSistem: 0,
           totalKaos: 0,
           specs: [],
+          nama: namaDtf, // <--- [BARU]
           message: "Data tidak ditemukan di tabel detail modul pengerjaan.",
         };
       }
@@ -129,6 +155,7 @@ const getSoDtfSpecs = async (nomorSo) => {
         totalKaos,
         totalTitikSistem,
         specs,
+        nama: namaDtf, // <--- [BARU] SISIPKAN NAMA DI SINI
         message: `Data ditemukan di Modul Pengerjaan (${isPO ? "PO" : "SO"})`,
       };
     }
@@ -145,6 +172,7 @@ const getSoDtfSpecs = async (nomorSo) => {
           totalLuasSistem: 0,
           totalKaos: 0,
           specs: [],
+          nama: namaDtf, // <--- [BARU]
           message: "Nomor SO tidak ditemukan.",
         };
 
@@ -187,7 +215,8 @@ const getSoDtfSpecs = async (nomorSo) => {
       return {
         totalLuasSistem: Math.round(totalLuasSistem),
         totalKaos,
-        specs: allSpecs, // <--- Hasil ekstraksi dari JSON
+        specs: allSpecs,
+        nama: namaDtf, // <--- [BARU] SISIPKAN NAMA DI SINI
         message: "Data ditemukan di SO Reguler (Item Custom)",
       };
     }
@@ -196,6 +225,7 @@ const getSoDtfSpecs = async (nomorSo) => {
       totalLuasSistem: 0,
       totalKaos: 0,
       specs: [],
+      nama: "",
       message: "Format nomor tidak didukung.",
     };
   } catch (error) {

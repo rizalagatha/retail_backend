@@ -584,6 +584,69 @@ const transferKlaimKolektif = async (pck_nomor, pth_nomor, user) => {
   }
 };
 
+const deleteData = async (nomor, user) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    // 1. Cek keberadaan dan status dokumen
+    const [rows] = await connection.query(
+      "SELECT pc_status, pc_cab FROM tpettycash_hdr WHERE pc_nomor = ?",
+      [nomor],
+    );
+
+    if (rows.length === 0) {
+      throw new Error("Data Petty Cash tidak ditemukan.");
+    }
+
+    const pc = rows[0];
+
+    // 2. Proteksi Status (Hanya DRAFT yang boleh dihapus)
+    if (pc.pc_status !== "DRAFT") {
+      throw new Error(
+        "Gagal! Hanya dokumen berstatus DRAFT yang dapat dihapus.",
+      );
+    }
+
+    // 3. Proteksi Cabang (User hanya boleh hapus data cabangnya sendiri, kecuali KDC/Pusat)
+    if (pc.pc_cab !== user.cabang && user.cabang !== "KDC") {
+      throw new Error(
+        "Anda tidak memiliki akses untuk menghapus data cabang lain.",
+      );
+    }
+
+    // =========================================================================
+    // 4. MENGEMBALIKAN SALDO (HAPUS MUTASI KAS)
+    // Menghapus data pengeluaran di tabel mutasi. Begitu baris KREDIT ini dihapus,
+    // maka saldo toko akan otomatis kembali utuh seperti semula!
+    // =========================================================================
+    await connection.query(
+      "DELETE FROM tpettycash_mutasi WHERE mut_nomor_bukti = ?",
+      [nomor],
+    );
+
+    // 5. Hapus Detail Nota
+    await connection.query("DELETE FROM tpettycash_dtl WHERE pcd_nomor = ?", [
+      nomor,
+    ]);
+
+    // 6. Hapus Header Petty Cash
+    await connection.query("DELETE FROM tpettycash_hdr WHERE pc_nomor = ?", [
+      nomor,
+    ]);
+
+    await connection.commit();
+    return {
+      message: `Laporan Petty Cash ${nomor} berhasil dihapus dan saldo telah dikembalikan.`,
+    };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   getList,
   submitData, // Jangan lupa di-export
@@ -598,4 +661,5 @@ module.exports = {
   rejectKlaimKolektif,
   rejectSinglePc,
   transferKlaimKolektif,
+  deleteData,
 };

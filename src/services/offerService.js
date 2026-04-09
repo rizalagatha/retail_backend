@@ -25,6 +25,10 @@ const getOffers = async (startDate, endDate, cabang) => {
                     FROM tso_hdr so 
                     WHERE so.so_pen_nomor = h.pen_nomor 
                     LIMIT 1), '') AS noSO,
+            (SELECT so.so_tanggal 
+             FROM tso_hdr so 
+             WHERE so.so_pen_nomor = h.pen_nomor 
+             LIMIT 1) AS tanggalSO,
             h.pen_top AS top,
             DATE_ADD(h.pen_tanggal, INTERVAL h.pen_top DAY) as tempo,
             h.pen_ppn AS ppn,

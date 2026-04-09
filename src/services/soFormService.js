@@ -99,6 +99,7 @@ const save = async (data, user) => {
         header.isMarketplace ? 0 : header.top || 0, // 6. so_top
         header.ppnPersen || 0, // 7. so_ppn
         footer.diskonRp || 0, // 8. so_disc
+
         footer.diskonPersen1 || 0, // 9. so_disc1
         footer.diskonPersen2 || 0, // 10. so_disc2
         footer.biayaKirim || 0, // 11. so_bkrm
@@ -701,6 +702,40 @@ const getPenawaranDetailsForSo = async (nomor, cabang) => {
     `,
       [activeBranch, nomor],
     );
+
+    // =======================================================================
+    // --- [BARU] EKSTRAKSI DISKON MURNI AGAR SO TIDAK DOUBLE MAPS ---
+    // =======================================================================
+    let totalBrutoDiscountable = 0;
+    detailRows.forEach((d) => {
+      const isJasaMurni =
+        d.pend_kode.toUpperCase().startsWith("JASA") ||
+        d.pend_kode.toUpperCase().startsWith("JS");
+      const isPengajuan = !!d.pend_ph_nomor;
+
+      if (!isJasaMurni && !isPengajuan) {
+        // Ambil harga asli sebelum dipotong diskon
+        totalBrutoDiscountable += d.pend_jumlah * d.pend_harga;
+      }
+    });
+
+    const combinedDisc = Number(penHeader.pen_disc) || 0;
+    const p2 = Number(penHeader.pen_disc2) || 0;
+
+    let baseDisc = combinedDisc;
+    if (p2 > 0 && p2 < 100 && combinedDisc > 0) {
+      // Aljabar: Mengembalikan nilai diskon murni (misal 25.000) yang sudah tercampur 5% Maps
+      baseDisc = Math.max(
+        0,
+        Math.round(
+          (combinedDisc - (p2 / 100) * totalBrutoDiscountable) / (1 - p2 / 100),
+        ),
+      );
+    }
+
+    // Simpan ke properti baru khusus untuk dibaca halaman SO
+    penHeader.pen_diskon_murni = baseDisc;
+    // =======================================================================
 
     // 3. Ambil Rincian DP yang sudah ada di Penawaran
     const [dpRows] = await connection.query(

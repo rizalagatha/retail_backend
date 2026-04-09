@@ -63,4 +63,6 @@ router.put(
   pettyCashController.transferKlaim,
 );
 
+router.delete("/:nomor", verifyToken, pettyCashController.deleteData);
+
 module.exports = router;

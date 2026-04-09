@@ -410,6 +410,33 @@ FROM tso_dtl d
 
   const [items] = await pool.query(itemsQuery, itemsParams);
 
+  // =======================================================================
+  // --- [FIX MAPS DISCOUNT] EKSTRAK NOMINAL DISKON DASAR SO ---
+  // Karena so_disc di DB menyimpan total gabungan (termasuk 5% Maps),
+  // kita harus mengekstraknya agar Frontend Invoice mendapat nominal murni.
+  // =======================================================================
+
+  // 1. Hitung ulang total Bruto dari items yang didapat
+  let totalBrutoSo = 0;
+  items.forEach((item) => {
+    // qtyso adalah alias dari sod_jumlah (atau sjd_jumlah) di query
+    const qty = Number(item.qtyso || 0);
+    const hrg = Number(item.harga || 0);
+    totalBrutoSo += qty * hrg;
+  });
+
+  const combinedDisc = Number(headerData.diskonRp || 0);
+  const p2 = Number(headerData.diskonPersen2 || 0);
+
+  // 2. Gunakan rumus Aljabar pembalik jika Maps (P2) aktif
+  if (p2 > 0 && p2 < 100 && combinedDisc > 0) {
+    headerData.diskonRp = Math.max(
+      0,
+      Math.round((combinedDisc - (p2 / 100) * totalBrutoSo) / (1 - p2 / 100)),
+    );
+  }
+  // =======================================================================
+
   const dpQuery = `
         SELECT 
             h.sh_nomor AS nomor, 
@@ -672,6 +699,18 @@ const saveData = async (payload, user) => {
     await connection.beginTransaction();
     const { header, items, dps, payment, isNew, pins, totals } = payload;
     const nomorInv = header.nomor;
+
+    // [BARU] Logika Penggabungan ID Promo
+    // Jika header.nomorPromo ada (Promo Bulanan), dan diskonPersen2 ada (Promo Maps), gabungkan ID-nya!
+    let finalPromoID = header.nomorPromo || "";
+    if (header.diskonPersen2 === 5) {
+      if (finalPromoID && finalPromoID !== "PRO-2026-003") {
+        finalPromoID = `${finalPromoID},PRO-2026-003`; // Gabungkan dengan koma
+      } else {
+        finalPromoID = "PRO-2026-003"; // Cuma ada promo Maps
+      }
+    }
+
     if (!isNew && nomorInv) {
       const [rows] = await pool.query(
         "SELECT 1 FROM tform_setorkasir_dtl WHERE fskd_inv = ? LIMIT 1",
@@ -954,17 +993,16 @@ const saveData = async (payload, user) => {
           inv_cab,
           inv_cus_kode, inv_cus_level, inv_ket, inv_sc,
           inv_top,
-          inv_disc, inv_bkrm, inv_dp, inv_bayar, inv_pundiamal, inv_diskon_pembulatan,
+          inv_disc1, inv_disc2, inv_disc, inv_pro_nomor, inv_bkrm, inv_dp, inv_bayar, inv_pundiamal, inv_diskon_pembulatan,
           inv_rptunai, inv_novoucher, inv_rpvoucher, inv_rpcard, inv_nosetor,
           inv_kembali,
           inv_mem_hp, inv_mem_nama, inv_mem_alamat, inv_mem_gender, inv_mem_usia, inv_mem_referensi,
           inv_is_marketplace, inv_mp_nama, inv_mp_nomor_pesanan, inv_mp_resi, inv_mp_biaya_platform,
           inv_print,
           user_create, date_create
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, 
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
       `;
 
       await connection.query(headerSql, [
@@ -981,8 +1019,11 @@ const saveData = async (payload, user) => {
         header.salesCounter,
         finalTop,
 
-        // DISKON FAKTUR
-        totalDiskon, // inv_disc
+        // [PERBAIKAN] DISKON FAKTUR & PROMO
+        header.diskonPersen1 || 0, // inv_disc1
+        header.diskonPersen2 || 0, // inv_disc2
+        totalDiskon, // inv_disc (Total Rupiah)
+        finalPromoID, // inv_pro_nomor (Gabungan ID Promo)
 
         // biaya kirim, dp, pundi
         biayaKirim, // inv_bkrm
@@ -1022,7 +1063,7 @@ const saveData = async (payload, user) => {
       const updateSql = `
         UPDATE tinv_hdr SET
           inv_nomor_so = ?, inv_tanggal = ?, inv_cab = ?, inv_cus_kode = ?, inv_cus_level = ?, inv_ket = ?, inv_sc = ?,
-          inv_top = ?, inv_disc = ?, inv_bkrm = ?, inv_dp = ?, inv_bayar = ?, inv_pundiamal = ?, inv_diskon_pembulatan = ?,
+          inv_top = ?, inv_disc1 = ?, inv_disc2 = ?, inv_disc = ?, inv_pro_nomor = ?, inv_bkrm = ?, inv_dp = ?, inv_bayar = ?, inv_pundiamal = ?, inv_diskon_pembulatan = ?,
           inv_rptunai = ?, inv_novoucher = ?, inv_rpvoucher = ?, inv_rpcard = ?, inv_nosetor = ?,
           inv_kembali = ?,
           inv_mem_hp = ?, inv_mem_nama = ?, inv_mem_alamat = ?, 
@@ -1044,7 +1085,10 @@ const saveData = async (payload, user) => {
         header.keterangan,
         header.salesCounter,
         finalTop,
+        header.diskonPersen1 || 0, // [BARU]
+        header.diskonPersen2 || 0, // [BARU]
         totalDiskon,
+        finalPromoID, // [BARU]
         biayaKirim,
         dpDipakai,
         invBayar,
@@ -3035,11 +3079,23 @@ const updateHeaderOnly = async (nomor, payload, user) => {
       tanggal,
       biayaKirim,
       diskonPersen1,
+      diskonPersen2, // <--- Tangkap ini
       diskonRp,
       ppnPersen,
       memberHp,
       memberNama,
+      nomorPromo, // <--- Dan ini
     } = payload;
+
+    // Gabungkan promo ID untuk header only
+    let finalPromoID = nomorPromo || "";
+    if (diskonPersen2 === 5) {
+      if (finalPromoID && finalPromoID !== "PRO-2026-003") {
+        finalPromoID = `${finalPromoID},PRO-2026-003`;
+      } else {
+        finalPromoID = "PRO-2026-003";
+      }
+    }
 
     const sql = `
       UPDATE tinv_hdr SET 
@@ -3050,7 +3106,9 @@ const updateHeaderOnly = async (nomor, payload, user) => {
         inv_tanggal = ?,
         inv_bkrm = ?,
         inv_disc1 = ?,
+        inv_disc2 = ?, 
         inv_disc = ?,
+        inv_pro_nomor = ?,
         inv_ppn = ?,
         inv_mem_hp = ?,
         inv_mem_nama = ?,
@@ -3067,6 +3125,10 @@ const updateHeaderOnly = async (nomor, payload, user) => {
       toSqlDate(tanggal),
       biayaKirim || 0,
       diskonPersen1 || 0,
+      diskonPersen2 || 0, // [BARU]
+      diskonRp || 0,
+      finalPromoID, // [BARU]
+      ppnPersen || 0,
       diskonRp || 0,
       ppnPersen || 0,
       memberHp || "",
