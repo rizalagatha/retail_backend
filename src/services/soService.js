@@ -33,6 +33,8 @@ const getList = async (filters) => {
 
         y.MpPesanan, y.MpResi,
 
+        y.Disc1, y.Disc2, y.Promo, y.Ppn, y.Bkrm,
+
         (CASE
             WHEN y.DipakaiDTF = 'Y' AND y.Belum = 0 THEN 'CLOSE'
             WHEN y.sts = 2 THEN "DICLOSE"
@@ -78,6 +80,11 @@ const getList = async (filters) => {
                 h.so_top AS Top,
                 h.so_disc AS Diskon,
                 h.so_dp AS Dp,
+                h.so_disc1 AS Disc1,
+                h.so_disc2 AS Disc2,
+                h.so_pro_nomor AS Promo,
+                h.so_ppn AS Ppn,
+                h.so_bkrm AS Bkrm,
                 h.user_modified AS UserModified,
                 h.date_modified AS DateModified,
                 h.so_mp_nomor_pesanan AS MpPesanan,
