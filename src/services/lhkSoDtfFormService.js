@@ -583,19 +583,18 @@ const processLhkRippingImage = async (tempFilePath, lhkNomor, cabang) => {
     throw new Error("File sumber sementara tidak ditemukan.");
   }
 
-  // Nama file menggunakan Nomor LHK, pastikan formatnya aman untuk nama file
-  // Contoh lhkNomor: K06.LHK.2602.0001 -> K06_LHK_2602_0001.jpg
   const safeFileName = lhkNomor.replace(/\./g, "_") + ".jpg";
 
-  // Folder tujuan: public/images/lhk-dtf/K06
+  // [PERBAIKAN KUNCI 1]: Gunakan __dirname agar selalu terikat dengan file service.js ini!
+  // Karena file service ada di dalam folder 'src/services', kita harus naik dua tingkat ('../../')
+  // untuk mencapai folder 'public'
   const folderPath = path.join(
-    process.cwd(),
-    "public",
-    "images",
-    "lhk-dtf",
+    __dirname,
+    "../../public/images/lhk-dtf",
     cabang,
   );
 
+  // Buat folder jika belum ada
   if (!fs.existsSync(folderPath)) {
     fs.mkdirSync(folderPath, { recursive: true });
   }
@@ -604,20 +603,16 @@ const processLhkRippingImage = async (tempFilePath, lhkNomor, cabang) => {
 
   try {
     await sharp(tempFilePath)
-      .flatten({ background: { r: 255, g: 255, b: 255 } }) // Transparan jadi putih
+      .flatten({ background: { r: 255, g: 255, b: 255 } })
       .toFormat("jpeg")
-      .jpeg({ quality: 85 }) // Kompresi agar ringan
+      .jpeg({ quality: 85 })
       .toFile(finalPath);
 
-    if (fs.existsSync(tempFilePath)) {
-      fs.unlinkSync(tempFilePath);
-    }
+    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
 
     return finalPath;
   } catch (error) {
-    if (fs.existsSync(tempFilePath)) {
-      fs.unlinkSync(tempFilePath);
-    }
+    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     console.error("Sharp processing error:", error);
     throw new Error("Gagal mengkonversi gambar bukti ripping.");
   }

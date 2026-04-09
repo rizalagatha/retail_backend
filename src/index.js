@@ -162,6 +162,9 @@ const komplainRoute = require("./routes/komplainRoutes");
 const komplainFormRoute = require("./routes/komplainFormRoutes");
 const mintaAccesoriesRoutes = require("./routes/mintaAccesoriesRoutes");
 const mintaAccesoriesFormRoutes = require("./routes/mintaAccesoriesFormRoutes");
+// const mutasiWorkshopRoutes = require("./routes/mutasiWorkshopRoutes");
+// const mutasiWorkshipFormRoutes = require("./routes/mutasiWorkshopFormRoutes");
+// const terimaWorkshopRoutes = require("./routes/terimaWorkshopRoutes");
 
 const app = express();
 const port = process.env.PORT || 8000;
@@ -171,13 +174,13 @@ const allowedOrigins = [
   "http://192.168.1.191:5173",
   "https://103.94.238.252",
 ];
-const imageFolderPath = path.join(process.cwd(), "public", "images");
-const memoFolderPath = path.join(process.cwd(), "public", "memos");
+const imageFolderPath = path.join(__dirname, "public", "images");
+const memoFolderPath = path.join(__dirname, "public", "memos");
 const requiredDirs = [
-  path.join(process.cwd(), "temp"),
-  path.join(process.cwd(), "public"),
-  path.join(process.cwd(), "public", "images"),
-  path.join(process.cwd(), "public", "memos"),
+  path.join(__dirname, "temp"),
+  path.join(__dirname, "public"),
+  path.join(__dirname, "public", "images"),
+  path.join(__dirname, "public", "memos"),
 ];
 
 // Middleware
@@ -208,11 +211,8 @@ app.use(
   }),
 );
 app.use("/images", express.static(imageFolderPath));
-app.use("/uploads", express.static(path.join(process.cwd(), "public/uploads")));
-app.use(
-  "/api/uploads",
-  express.static(path.join(process.cwd(), "public/uploads")),
-);
+app.use("/uploads", express.static(path.join(__dirname, "public/uploads")));
+app.use("/api/uploads", express.static(path.join(__dirname, "public/uploads")));
 app.use("/memos", (req, res, next) => {
   console.log(`[DEBUG MEMO] Mencari file: ${req.url}`);
   console.log(`[DEBUG MEMO] Path Fisik: ${path.join(memoFolderPath, req.url)}`);
@@ -486,6 +486,9 @@ app.use(
   clientCertAuth,
   mintaAccesoriesFormRoutes,
 );
+// app.use("/api/mutasi-workshop", clientCertAuth, mutasiWorkshopRoutes);
+// app.use("/api/mutasi-workshop-form", clientCertAuth, mutasiWorkshipFormRoutes);
+// app.use("/api/terima-workshop", clientCertAuth, terimaWorkshopRoutes);
 
 // Menjalankan Server
 app.listen(port, () => {
