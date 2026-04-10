@@ -19,12 +19,14 @@ const getPinjamanForReturn = async (nomorPJ) => {
       h.pj_nomor, h.pj_nama AS pic, h.pj_tanggal, h.pj_cab,
       d.idrec AS ref_idrec_dtl, d.pjd_kode AS kode, d.pjd_ukuran AS ukuran,
       TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+      IFNULL(b.brgd_barcode, '') AS barcode,
       d.pjd_qty AS qty_pinjam,
       d.pjd_qty_kembali AS qty_sudah_kembali,
       (d.pjd_qty - d.pjd_qty_kembali) AS sisa_pinjam
     FROM tpeminjaman_hdr h
     JOIN tpeminjaman_dtl d ON d.pjd_nomor = h.pj_nomor
     LEFT JOIN tbarangdc a ON a.brg_kode = d.pjd_kode
+    LEFT JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode AND d.pjd_ukuran = b.brgd_ukuran
     WHERE h.pj_nomor = ? AND (d.pjd_qty - d.pjd_qty_kembali) > 0`;
 
   const [rows] = await pool.query(query, [nomorPJ]);
@@ -48,10 +50,10 @@ const saveData = async (payload, user) => {
 
     const [maxRows] = await connection.query(
       `SELECT IFNULL(MAX(RIGHT(pk_nomor, 4)), 0) as max_nomor FROM tpengembalian_hdr WHERE pk_nomor LIKE ?`,
-      [`${prefix}%`]
+      [`${prefix}%`],
     );
     const nomorPK = `${prefix}${String(
-      parseInt(maxRows[0].max_nomor) + 1
+      parseInt(maxRows[0].max_nomor) + 1,
     ).padStart(4, "0")}`;
 
     // 2. Insert Header
@@ -68,7 +70,7 @@ const saveData = async (payload, user) => {
         header.penerima,
         header.keterangan,
         user.kode,
-      ]
+      ],
     );
 
     // 3. Insert Detail & Validasi
@@ -83,16 +85,16 @@ const saveData = async (payload, user) => {
         await connection.query(
           `INSERT INTO tpengembalian_dtl (idrec, pkd_nomor, pkd_kode, pkd_ukuran, pkd_qty_kembali)
            VALUES (?, ?, ?, ?, ?)`,
-          [idrecDtl, nomorPK, item.kode, item.ukuran, item.jumlah_kembali]
+          [idrecDtl, nomorPK, item.kode, item.ukuran, item.jumlah_kembali],
         );
 
-        // Update qty_kembali di tabel peminjaman_dtl secara manual jika trigger belum ada
-        // Catatan: Ini opsional jika Anda sudah memasang trigger DB di Turn 92
-        await connection.query(
-          `UPDATE tpeminjaman_dtl SET pjd_qty_kembali = pjd_qty_kembali + ? 
-           WHERE pjd_nomor = ? AND pjd_kode = ? AND pjd_ukuran = ?`,
-          [item.jumlah_kembali, header.ref_nomor, item.kode, item.ukuran]
-        );
+        // // Update qty_kembali di tabel peminjaman_dtl secara manual jika trigger belum ada
+        // // Catatan: Ini opsional jika Anda sudah memasang trigger DB di Turn 92
+        // await connection.query(
+        //   `UPDATE tpeminjaman_dtl SET pjd_qty_kembali = pjd_qty_kembali + ?
+        //    WHERE pjd_nomor = ? AND pjd_kode = ? AND pjd_ukuran = ?`,
+        //   [item.jumlah_kembali, header.ref_nomor, item.kode, item.ukuran],
+        // );
       }
     }
 
@@ -105,7 +107,7 @@ const saveData = async (payload, user) => {
            SELECT 1 FROM tpeminjaman_dtl d 
            WHERE d.pjd_nomor = h.pj_nomor AND (d.pjd_qty - d.pjd_qty_kembali) > 0
          )`,
-      [header.ref_nomor]
+      [header.ref_nomor],
     );
 
     await connection.commit();

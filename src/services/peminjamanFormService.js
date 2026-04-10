@@ -241,12 +241,26 @@ const getPrintData = async (nomor) => {
       TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama_barang,
       d.pjd_ukuran,
       d.pjd_qty,
+
+      -- [BARU] Tarik data jumlah kembali per item
+      d.pjd_qty_kembali AS qty_kembali,
+
+      -- [BARU] Ambil informasi pengembalian terbaru dari header pengembalian
+      (SELECT pk_nomor FROM tpengembalian_hdr WHERE pk_ref_pinjam = h.pj_nomor ORDER BY pk_tanggal DESC LIMIT 1) AS no_kembali,
+      (SELECT pk_penerima FROM tpengembalian_hdr WHERE pk_ref_pinjam = h.pj_nomor ORDER BY pk_tanggal DESC LIMIT 1) AS admin_kembali,
+      (SELECT pk_ket FROM tpengembalian_hdr WHERE pk_ref_pinjam = h.pj_nomor ORDER BY pk_tanggal DESC LIMIT 1) AS ket_kembali,
+
+      -- [BARU] Ambil Nama Approver
+      (SELECT o_approver FROM totorisasi WHERE (o_transaksi = h.pj_nomor OR o_transaksi = 'DRAFT') AND o_jenis = 'PEMINJAMAN_BARANG' AND o_status = 'Y' ORDER BY o_approved_at DESC LIMIT 1) AS approver,
+      
+      -- [BARU] Ambil Tanggal & Jam Approver
+      (SELECT DATE_FORMAT(o_approved_at, '%d-%m-%Y %H:%i') FROM totorisasi WHERE (o_transaksi = h.pj_nomor OR o_transaksi = 'DRAFT') AND o_jenis = 'PEMINJAMAN_BARANG' AND o_status = 'Y' ORDER BY o_approved_at DESC LIMIT 1) AS approved_at,
+
       g.gdg_nama AS dari_store,
       g.gdg_inv_nama,
       g.gdg_inv_alamat,
       g.gdg_inv_kota,
       g.gdg_inv_telp,
-      -- Sub-query untuk mengambil nama approver dari log otorisasi
       (SELECT o_approver 
        FROM totorisasi 
        WHERE (o_transaksi = h.pj_nomor OR o_transaksi = 'DRAFT') 
@@ -271,9 +285,15 @@ const getPrintData = async (nomor) => {
     keterangan: rows[0].pj_ket,
     created: rows[0].created,
     user_create: rows[0].user_create,
-    approver: rows[0].approver, // Muncul di kolom "Mengetahui"
+    approver: rows[0].approver,
+    approved_at: rows[0].approved_at,
     dariStore: rows[0].dari_store,
-    // Info Perusahaan dari Tabel Gudang
+
+    // [BARU] Info Pengembalian ke Header
+    no_kembali: rows[0].no_kembali || null,
+    admin_kembali: rows[0].admin_kembali || "....................",
+    ket_kembali: rows[0].ket_kembali || "",
+
     perush_nama: rows[0].gdg_inv_nama,
     perush_alamat: `${rows[0].gdg_inv_alamat || ""}, ${rows[0].gdg_inv_kota || ""}`,
     perush_telp: rows[0].gdg_inv_telp,
@@ -286,6 +306,8 @@ const getPrintData = async (nomor) => {
       nama: r.nama_barang,
       ukuran: r.pjd_ukuran,
       jumlah: r.pjd_qty,
+      // [BARU] Detail kembali
+      jumlah_kembali: r.qty_kembali || 0,
     }));
 
   return { header, details };
