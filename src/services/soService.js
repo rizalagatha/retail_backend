@@ -641,7 +641,8 @@ const trackOrderTimeline = async (nomorSO) => {
     // ==========================================
     const [soRows] = await connection.query(
       `SELECT h.so_nomor, h.so_tanggal, h.so_pen_nomor, h.date_create, h.user_create, h.so_close, 
-              c.cus_nama, h.so_disc, h.so_ppn, h.so_bkrm, h.so_dp 
+              c.cus_nama, h.so_disc, h.so_ppn, h.so_bkrm, h.so_dp,
+              h.so_dateline 
        FROM tso_hdr h 
        LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
        WHERE h.so_nomor = ? LIMIT 1`,
@@ -1465,6 +1466,9 @@ const trackOrderTimeline = async (nomorSO) => {
       logs: timeline,
       orderItems: orderItems,
       orderSummary: orderSummary,
+      datelineCustomer: so.so_dateline
+        ? format(new Date(so.so_dateline), "dd MMMM yyyy")
+        : null,
       estimasiSelesai: estimasiSelesai
         ? format(estimasiSelesai, "dd MMMM yyyy")
         : null,
