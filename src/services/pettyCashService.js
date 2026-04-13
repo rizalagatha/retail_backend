@@ -30,8 +30,20 @@ const getList = async (filters) => {
             MAX(h.pc_cab) AS cabang,
             MAX(g.gdg_nama) AS namaCabang,
             SUM(h.pc_total_terpakai) AS terpakai,
-            MAX(h.pc_modal) AS modal, 
-            MIN(h.pc_saldo) AS saldo,
+            
+            -- =======================================================================
+            -- [PERBAIKAN KUNCI 1] AUTO-HEAL TAMPILAN MODAL
+            -- Jika modal di DB lebih kecil dari terpakai (karena bug sebelumnya), 
+            -- sistem otomatis mengasumsikan Modal Asli = Modal Corrupt + Terpakai
+            -- =======================================================================
+            MAX(CASE WHEN h.pc_modal < h.pc_total_terpakai THEN h.pc_modal + h.pc_total_terpakai ELSE h.pc_modal END) AS modal, 
+            
+            -- =======================================================================
+            -- [PERBAIKAN KUNCI 2] RUMUS SALDO YANG BENAR UNTUK GROUPING
+            -- Saldo = Modal Asli (Max) dikurangi Total Keseluruhan Terpakai (Sum)
+            -- Jangan pakai MIN(saldo) lagi karena bakal kacau kalau klaim digabung!
+            -- =======================================================================
+            MAX(CASE WHEN h.pc_modal < h.pc_total_terpakai THEN h.pc_modal + h.pc_total_terpakai ELSE h.pc_modal END) - SUM(h.pc_total_terpakai) AS saldo,
             
             MAX(tf.ptd_nomor) AS pck_pth_nomor,
             

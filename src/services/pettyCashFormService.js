@@ -26,16 +26,16 @@ const generateNomor = async (cab, conn) => {
 
 // --- RUMUS SALDO BERJALAN ---
 // Modal Awal (Misal 1 Juta) + Semua Pemasukan (Debet) - Semua Pengeluaran (Kredit)
-const getCurrentSaldo = async (cabang, conn) => {
+const getCurrentSaldo = async (cabang, excludeNomor, conn) => {
   const query = `
     SELECT 
       1000000 + 
       IFNULL(SUM(CASE WHEN mut_tipe = 'DEBET' THEN mut_nominal ELSE 0 END), 0) - 
       IFNULL(SUM(CASE WHEN mut_tipe = 'KREDIT' THEN mut_nominal ELSE 0 END), 0) AS saldo_aktif
     FROM tpettycash_mutasi 
-    WHERE mut_cabang = ?
+    WHERE mut_cabang = ? AND mut_nomor_bukti != ?
   `;
-  const [rows] = await conn.query(query, [cabang]);
+  const [rows] = await conn.query(query, [cabang, excludeNomor || ""]);
   return parseFloat(rows[0].saldo_aktif);
 };
 
@@ -52,15 +52,12 @@ const saveData = async (data, files, user) => {
     let nomor = parsedHeader.nomor;
     let idrecHdr = parsedHeader.idrec;
 
+    // [PERBAIKAN KUNCI]: Hitung saldo dengan MENGABAIKAN mutasi dokumen ini
+    const saldoBerjalan = await getCurrentSaldo(user.cabang, nomor, connection);
     const nominalTerpakai = parseFloat(parsedHeader.terpakai);
+    const sisaSaldoSetelahIni = saldoBerjalan - nominalTerpakai;
 
     if (!isEditMode || !nomor) {
-      // ========================================================
-      // [MODE BARU] Tarik Saldo Real-Time
-      // ========================================================
-      const saldoBerjalan = await getCurrentSaldo(user.cabang, connection);
-      const sisaSaldoSetelahIni = saldoBerjalan - nominalTerpakai;
-
       nomor = await generateNomor(user.cabang, connection);
       idrecHdr = generateIdRec(user.cabang, "PCH");
 
@@ -70,14 +67,13 @@ const saveData = async (data, files, user) => {
         nomor,
         parsedHeader.tanggal,
         user.cabang,
-        saldoBerjalan, // <-- Modal dicatat saat ini
+        saldoBerjalan,
         nominalTerpakai,
         sisaSaldoSetelahIni,
         parsedHeader.keterangan,
         user.kode,
       ]);
 
-      // Insert Mutasi sebagai KREDIT
       await connection.query(
         `INSERT INTO tpettycash_mutasi (mut_cabang, mut_tanggal, mut_nomor_bukti, mut_tipe, mut_nominal, mut_keterangan) VALUES (?, ?, ?, 'KREDIT', ?, ?)`,
         [
@@ -89,29 +85,22 @@ const saveData = async (data, files, user) => {
         ],
       );
     } else {
-      // ========================================================
-      // [MODE EDIT] Gunakan Modal Lama, Jangan Hitung Ulang!
-      // ========================================================
-      const modalLama = parseFloat(parsedHeader.modal); // Tarik dari modal yang dikunci frontend
-      const sisaSaldoSetelahIni = modalLama - nominalTerpakai;
-
-      // Update Header PC (Modal tidak berubah)
-      const sqlHdr = `UPDATE tpettycash_hdr SET pc_tanggal = ?, pc_total_terpakai = ?, pc_saldo = ?, pc_ket = ?, user_modified = ?, date_modified = NOW() WHERE pc_nomor = ?`;
+      // [UPDATE DATABASE DENGAN ANGKA MODAL YANG SEHAT]
+      const sqlHdr = `UPDATE tpettycash_hdr SET pc_tanggal = ?, pc_modal = ?, pc_total_terpakai = ?, pc_saldo = ?, pc_ket = ?, user_modified = ?, date_modified = NOW() WHERE pc_nomor = ?`;
       await connection.query(sqlHdr, [
         parsedHeader.tanggal,
+        saldoBerjalan, // Modal kembali normal 1 Juta
         nominalTerpakai,
-        sisaSaldoSetelahIni,
+        sisaSaldoSetelahIni, // Saldo otomatis normal
         parsedHeader.keterangan,
         user.kode,
         nomor,
       ]);
 
-      // Hapus detail lama
       await connection.query("DELETE FROM tpettycash_dtl WHERE pcd_nomor = ?", [
         nomor,
       ]);
 
-      // Update Mutasi KREDIT dengan nominal baru
       await connection.query(
         "UPDATE tpettycash_mutasi SET mut_nominal = ?, mut_tanggal = ?, mut_keterangan = ? WHERE mut_nomor_bukti = ? AND mut_tipe = 'KREDIT'",
         [
@@ -128,7 +117,6 @@ const saveData = async (data, files, user) => {
       fs.mkdirSync(finalDir, { recursive: true });
     }
 
-    // --- LOGIKA MULTIPLE INSERT DETAILS BARU ---
     let urut = 1;
     for (const item of parsedDetails) {
       let fileNames = item.existingFiles || [];
@@ -193,13 +181,10 @@ const getDetail = async (nomor) => {
   const headerData = headerRows[0];
 
   // ====================================================================
-  // [AUTO-HEAL] KALKULASI MODAL MURNI
-  // Hitung saldo dari tabel mutasi, TETAPI abaikan dokumen ini sendiri.
-  // Ini akan menghasilkan nilai Modal yang benar-benar utuh sebelum terpakai.
+  // [SIHIR AUTO-HEAL] PENYEMBUHAN DATABASE OTOMATIS SAAT DIBUKA!
   // ====================================================================
   const querySaldo = `
-    SELECT 
-      1000000 + 
+    SELECT 1000000 + 
       IFNULL(SUM(CASE WHEN mut_tipe = 'DEBET' THEN mut_nominal ELSE 0 END), 0) - 
       IFNULL(SUM(CASE WHEN mut_tipe = 'KREDIT' THEN mut_nominal ELSE 0 END), 0) AS saldo_murni
     FROM tpettycash_mutasi 
@@ -207,10 +192,18 @@ const getDetail = async (nomor) => {
   `;
   const [saldoRows] = await pool.query(querySaldo, [headerData.pc_cab, nomor]);
   const realModal = parseFloat(saldoRows[0].saldo_murni);
+  const newSaldo = realModal - parseFloat(headerData.pc_total_terpakai);
 
-  // Timpa nilai corrupt dari database dengan nilai asli yang benar
+  // Timpa nilai corrupt dengan nilai asli yang benar untuk dikirim ke layar
   headerData.pc_modal = realModal;
-  headerData.pc_saldo = realModal - parseFloat(headerData.pc_total_terpakai);
+  headerData.pc_saldo = newSaldo;
+
+  // JALANKAN UPDATE KE DATABASE!
+  // Sehingga halaman Browse langsung ikut sembuh tanpa perlu klik Simpan lagi!
+  await pool.query(
+    "UPDATE tpettycash_hdr SET pc_modal = ?, pc_saldo = ? WHERE pc_nomor = ?",
+    [realModal, newSaldo, nomor],
+  );
 
   const [detailRows] = await pool.query(
     `SELECT 
