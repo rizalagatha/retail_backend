@@ -190,6 +190,28 @@ const getDetail = async (nomor) => {
   );
   if (headerRows.length === 0) throw new Error("Data tidak ditemukan");
 
+  const headerData = headerRows[0];
+
+  // ====================================================================
+  // [AUTO-HEAL] KALKULASI MODAL MURNI
+  // Hitung saldo dari tabel mutasi, TETAPI abaikan dokumen ini sendiri.
+  // Ini akan menghasilkan nilai Modal yang benar-benar utuh sebelum terpakai.
+  // ====================================================================
+  const querySaldo = `
+    SELECT 
+      1000000 + 
+      IFNULL(SUM(CASE WHEN mut_tipe = 'DEBET' THEN mut_nominal ELSE 0 END), 0) - 
+      IFNULL(SUM(CASE WHEN mut_tipe = 'KREDIT' THEN mut_nominal ELSE 0 END), 0) AS saldo_murni
+    FROM tpettycash_mutasi 
+    WHERE mut_cabang = ? AND mut_nomor_bukti != ?
+  `;
+  const [saldoRows] = await pool.query(querySaldo, [headerData.pc_cab, nomor]);
+  const realModal = parseFloat(saldoRows[0].saldo_murni);
+
+  // Timpa nilai corrupt dari database dengan nilai asli yang benar
+  headerData.pc_modal = realModal;
+  headerData.pc_saldo = realModal - parseFloat(headerData.pc_total_terpakai);
+
   const [detailRows] = await pool.query(
     `SELECT 
       pcd_idrec,
@@ -202,12 +224,11 @@ const getDetail = async (nomor) => {
       pcd_file 
     FROM tpettycash_dtl 
     WHERE pcd_nomor = ? 
-    -- [OPTIMASI] Hanya urutkan berdasarkan tanggal lalu pcv agar query instan
     ORDER BY pcd_tanggal ASC, pcd_pcv ASC`,
     [nomor],
   );
 
-  return { header: headerRows[0], details: detailRows };
+  return { header: headerData, details: detailRows };
 };
 
 const approveClaim = async (nomor, userKode) => {
