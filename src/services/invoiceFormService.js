@@ -2053,17 +2053,19 @@ const getPrintData = async (nomor) => {
     return rankA - rankB;
   });
 
-  // =============== FIX DP (AMBIL DARI TSETOR_DTL) ===============
-  const [dpRows] = await pool.query(
-    `
-    SELECT SUM(sd_bayar) AS dpDipakai
-    FROM tsetor_dtl
-    WHERE sd_inv = ?
-      AND sd_ket = 'DP LINK DARI INV'
-    `,
+  // =============== FIX PEMBAYARAN (AMBIL SEMUA SETORAN TERKAIT) ===============
+  // 1. Ambil SEMUA jenis setoran (DP + Transfer + QRIS + Cicilan)
+  const [setorRows] = await pool.query(
+    `SELECT SUM(sd_bayar) AS totalSetoran FROM tsetor_dtl WHERE sd_inv = ?`,
     [nomor],
   );
+  const totalSetoran = applyRoundingPolicy(setorRows?.[0]?.totalSetoran || 0);
 
+  // 2. Ambil khusus DP (Hanya untuk ditampilkan sebagai baris DP di struk)
+  const [dpRows] = await pool.query(
+    `SELECT SUM(sd_bayar) AS dpDipakai FROM tsetor_dtl WHERE sd_inv = ? AND sd_ket = 'DP LINK DARI INV'`,
+    [nomor],
+  );
   const dpDipakai = applyRoundingPolicy(dpRows?.[0]?.dpDipakai || 0);
 
   // =============== SUMMARY CALC ===============
@@ -2100,6 +2102,12 @@ const getPrintData = async (nomor) => {
   // =================== FIX TOTAL BAYAR ===================
   const totalBayar = bayarTunai + bayarCard + bayarVoucher + dpDipakai;
 
+  // [BARU] Total Telah Dibayar Riil = Tunai + Voucher + SEMUA Setoran di sistem
+  const totalTelahDibayar = bayarTunai + bayarVoucher + totalSetoran;
+
+  // [BARU] Hitung Sisa Piutang
+  const sisaPiutang = Math.max(grandTotal - totalTelahDibayar, 0);
+
   const kembali = Number(
     header.inv_kembali ??
       Math.max(totalBayar - grandTotal - Number(header.inv_pundiamal || 0), 0),
@@ -2116,6 +2124,8 @@ const getPrintData = async (nomor) => {
     bayar: totalBayar, // << FIX: BAYAR = semua payment + DP
     pundiAmal: header.inv_pundiamal,
     kembali, // << FIX: KEMBALIAN BENAR
+    telahDibayar: totalTelahDibayar,
+    sisaPiutang: sisaPiutang,
   };
 
   header.terbilang =
