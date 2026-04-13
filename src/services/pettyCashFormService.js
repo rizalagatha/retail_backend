@@ -52,11 +52,15 @@ const saveData = async (data, files, user) => {
     let nomor = parsedHeader.nomor;
     let idrecHdr = parsedHeader.idrec;
 
-    const saldoBerjalan = await getCurrentSaldo(user.cabang, connection);
     const nominalTerpakai = parseFloat(parsedHeader.terpakai);
-    const sisaSaldoSetelahIni = saldoBerjalan - nominalTerpakai;
 
     if (!isEditMode || !nomor) {
+      // ========================================================
+      // [MODE BARU] Tarik Saldo Real-Time
+      // ========================================================
+      const saldoBerjalan = await getCurrentSaldo(user.cabang, connection);
+      const sisaSaldoSetelahIni = saldoBerjalan - nominalTerpakai;
+
       nomor = await generateNomor(user.cabang, connection);
       idrecHdr = generateIdRec(user.cabang, "PCH");
 
@@ -66,14 +70,14 @@ const saveData = async (data, files, user) => {
         nomor,
         parsedHeader.tanggal,
         user.cabang,
-        saldoBerjalan,
+        saldoBerjalan, // <-- Modal dicatat saat ini
         nominalTerpakai,
-        sisaSaldoSetelahIni, // <--- Dinamis dari mutasi
+        sisaSaldoSetelahIni,
         parsedHeader.keterangan,
         user.kode,
       ]);
 
-      // 2. Insert Mutasi sebagai KREDIT
+      // Insert Mutasi sebagai KREDIT
       await connection.query(
         `INSERT INTO tpettycash_mutasi (mut_cabang, mut_tanggal, mut_nomor_bukti, mut_tipe, mut_nominal, mut_keterangan) VALUES (?, ?, ?, 'KREDIT', ?, ?)`,
         [
@@ -85,11 +89,16 @@ const saveData = async (data, files, user) => {
         ],
       );
     } else {
-      // 1. Update Header PC
-      const sqlHdr = `UPDATE tpettycash_hdr SET pc_tanggal = ?, pc_modal = ?, pc_total_terpakai = ?, pc_saldo = ?, pc_ket = ?, user_modified = ?, date_modified = NOW() WHERE pc_nomor = ?`;
+      // ========================================================
+      // [MODE EDIT] Gunakan Modal Lama, Jangan Hitung Ulang!
+      // ========================================================
+      const modalLama = parseFloat(parsedHeader.modal); // Tarik dari modal yang dikunci frontend
+      const sisaSaldoSetelahIni = modalLama - nominalTerpakai;
+
+      // Update Header PC (Modal tidak berubah)
+      const sqlHdr = `UPDATE tpettycash_hdr SET pc_tanggal = ?, pc_total_terpakai = ?, pc_saldo = ?, pc_ket = ?, user_modified = ?, date_modified = NOW() WHERE pc_nomor = ?`;
       await connection.query(sqlHdr, [
         parsedHeader.tanggal,
-        saldoBerjalan,
         nominalTerpakai,
         sisaSaldoSetelahIni,
         parsedHeader.keterangan,
@@ -97,7 +106,7 @@ const saveData = async (data, files, user) => {
         nomor,
       ]);
 
-      // 2. Hapus detail & mutasi lama untuk diganti yang baru (agar saldo selalu akurat)
+      // Hapus detail lama
       await connection.query("DELETE FROM tpettycash_dtl WHERE pcd_nomor = ?", [
         nomor,
       ]);
@@ -122,9 +131,8 @@ const saveData = async (data, files, user) => {
     // --- LOGIKA MULTIPLE INSERT DETAILS BARU ---
     let urut = 1;
     for (const item of parsedDetails) {
-      let fileNames = item.existingFiles || []; // Ambil array file lama jika ada
+      let fileNames = item.existingFiles || [];
 
-      // Cari semua file yang depannya "file_0_", "file_1_", dst di request Multer
       const prefixKey = `file_${item.index}_`;
       const newFiles = files
         ? files.filter((f) => f.fieldname.startsWith(prefixKey))
@@ -137,11 +145,10 @@ const saveData = async (data, files, user) => {
 
         if (fs.existsSync(uploadedFile.path)) {
           fs.renameSync(uploadedFile.path, finalPath);
-          fileNames.push(finalFileName); // Tambahkan nama file baru ke array
+          fileNames.push(finalFileName);
         }
       }
 
-      // Gabungkan array ['NOTA-1.jpg', 'NOTA-2.pdf'] menjadi string pakai koma
       const finalFilesString =
         fileNames.length > 0 ? fileNames.join(",") : null;
 
@@ -160,7 +167,7 @@ const saveData = async (data, files, user) => {
         item.no_transaksi || null,
         item.kategori,
         item.nominal,
-        finalFilesString, // Masukkan string gabungan ke database
+        finalFilesString,
         urut,
       ]);
       urut++;
