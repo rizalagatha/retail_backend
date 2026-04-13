@@ -25,7 +25,7 @@ router.get(
 );
 
 // Rute untuk Tracking SO
-router.get("/track/:nomor", verifyToken, soController.trackOrder);
+router.get("/track/:nomor", soController.trackOrder);
 
 router.get("/search-track/:nomor", soController.searchTrackingItems);
 
