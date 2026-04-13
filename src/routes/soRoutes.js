@@ -1,33 +1,73 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const soController = require('../controllers/soController');
-const { verifyToken, checkPermission } = require('../middleware/authMiddleware');
+const soController = require("../controllers/soController");
+const {
+  verifyToken,
+  checkPermission,
+} = require("../middleware/authMiddleware");
 
-const MENU_ID = '26'; // Sesuai permintaan Anda
+const MENU_ID = "26"; // Sesuai permintaan Anda
 
 // GET: Mengambil daftar Surat Pesanan berdasarkan filter
-router.get('/', verifyToken, checkPermission(MENU_ID, 'view'), soController.getAll);
+router.get(
+  "/",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  soController.getAll,
+);
 
 // [BARU] Route Export Detail
 router.get(
   "/export-details",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  soController.getExportDetails
+  soController.getExportDetails,
 );
 
+// Rute untuk Tracking SO
+router.get("/track/:nomor", verifyToken, soController.trackOrder);
+
+router.get("/search-track/:nomor", soController.searchTrackingItems);
+
+router.get("/public/active-promos", soController.getPublicActivePromos);
+
 // GET: Mengambil detail untuk satu SO
-router.get('/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), soController.getDetails);
+router.get(
+  "/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  soController.getDetails,
+);
 
 // GET: Mengambil daftar cabang untuk filter
-router.get('/lookup/cabang', verifyToken, checkPermission(MENU_ID, 'view'), soController.getCabangList);
+router.get(
+  "/lookup/cabang",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  soController.getCabangList,
+);
 
 // POST: Menutup Surat Pesanan
-router.post('/close', verifyToken, checkPermission(MENU_ID, 'edit'), soController.close);
+router.post(
+  "/close",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  soController.close,
+);
 
 // DELETE: Menghapus Surat Pesanan
-router.delete('/:nomor', verifyToken, checkPermission(MENU_ID, 'delete'), soController.remove);
+router.delete(
+  "/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "delete"),
+  soController.remove,
+);
 
-router.get('/print-data/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), soController.getPrintData);
+router.get(
+  "/print-data/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  soController.getPrintData,
+);
 
 module.exports = router;

@@ -2007,7 +2007,8 @@ const getPrintData = async (nomor) => {
       src.gdg_inv_instagram,
       src.gdg_inv_fb,
       src.gdg_akun,
-      src.gdg_transferbank
+      src.gdg_transferbank,
+      src.gdg_inv_komplain
     FROM tinv_hdr h
     LEFT JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
     LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
@@ -2590,7 +2591,8 @@ END AS total,
         src.gdg_inv_instagram,
         src.gdg_inv_fb,
         src.gdg_akun,
-        src.gdg_transferbank
+        src.gdg_transferbank,
+        src.gdg_inv_komplain
 
     FROM tinv_hdr h
     LEFT JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor

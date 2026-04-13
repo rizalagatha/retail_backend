@@ -114,6 +114,53 @@ const getExportDetails = async (req, res) => {
   }
 };
 
+const trackOrder = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    if (!nomor) {
+      return res
+        .status(400)
+        .json({ message: "Nomor Surat Pesanan tidak valid." });
+    }
+
+    const data = await soService.trackOrderTimeline(nomor);
+    res.json(data);
+  } catch (error) {
+    console.error("Error in trackOrder controller:", error);
+    res.status(500).json({ message: "Gagal memuat jejak pesanan." });
+  }
+};
+
+const searchTrackingItems = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const data = await soService.searchTrackingItems(nomor);
+    res.json(data);
+  } catch (error) {
+    res.status(404).json({ message: error.message });
+  }
+};
+
+const getPublicActivePromos = async (req, res) => {
+  try {
+    // Ambil tanggal hari ini dengan format YYYY-MM-DD
+    const today = new Date().toISOString().split("T")[0];
+
+    // Default cari promo untuk cabang pusat (K01) jika tidak ada param cabang
+    const cabang = req.query.cabang || "K01";
+
+    // Kita panggil fungsi service yang sama persis seperti aslinya
+    const data = await soService.getActivePromos({
+      tanggal: today,
+      cabang: cabang,
+    });
+
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getAll,
   getDetails,
@@ -122,4 +169,7 @@ module.exports = {
   remove,
   getPrintData,
   getExportDetails,
+  trackOrder,
+  searchTrackingItems,
+  getPublicActivePromos,
 };
