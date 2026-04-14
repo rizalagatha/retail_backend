@@ -19,6 +19,11 @@ const getList = async (filters) => {
             MAX(h.pck_nomor) AS pck_nomor,
             MAX(k.pck_bkm_nomor) AS bkm_nomor,
 
+            -- =======================================================
+            -- [PERBAIKAN KUNCI] Tarik jam asli saat toko bikin Draft
+            -- =======================================================
+            MIN(h.date_create) AS date_draft, 
+
             MAX(k.date_create) AS date_submitted,
             MAX(k.date_acc) AS date_acc,
             MAX(k.date_approved) AS date_approved,
@@ -31,26 +36,12 @@ const getList = async (filters) => {
             MAX(g.gdg_nama) AS namaCabang,
             SUM(h.pc_total_terpakai) AS terpakai,
             
-            -- =======================================================================
-            -- [PERBAIKAN KUNCI 1] AUTO-HEAL TAMPILAN MODAL
-            -- Jika modal di DB lebih kecil dari terpakai (karena bug sebelumnya), 
-            -- sistem otomatis mengasumsikan Modal Asli = Modal Corrupt + Terpakai
-            -- =======================================================================
             MAX(CASE WHEN h.pc_modal < h.pc_total_terpakai THEN h.pc_modal + h.pc_total_terpakai ELSE h.pc_modal END) AS modal, 
-            
-            -- =======================================================================
-            -- [PERBAIKAN KUNCI 2] RUMUS SALDO YANG BENAR UNTUK GROUPING
-            -- Saldo = Modal Asli (Max) dikurangi Total Keseluruhan Terpakai (Sum)
-            -- Jangan pakai MIN(saldo) lagi karena bakal kacau kalau klaim digabung!
-            -- =======================================================================
             MAX(CASE WHEN h.pc_modal < h.pc_total_terpakai THEN h.pc_modal + h.pc_total_terpakai ELSE h.pc_modal END) - SUM(h.pc_total_terpakai) AS saldo,
             
             MAX(tf.ptd_nomor) AS pck_pth_nomor,
-            
-            -- [BARU] Ambil Nomor BBK Realisasi dari Finance
             MAX(tf.ptd_jur_no) AS pck_bbk_finance,
 
-            -- [PERBAIKAN STATUS] Cegah status RECEIVED mundur jadi ON_TRANSFER
             CASE 
                 WHEN MAX(h.pc_status) = 'RECEIVED' THEN 'RECEIVED'
                 WHEN MAX(tf.ptd_nomor) IS NOT NULL THEN 'ON_TRANSFER'
