@@ -249,12 +249,15 @@ const getListKlaimFinance = async (filters) => {
         g.gdg_nama AS namaCabang,
         h.pck_total AS terpakai,
         
+        -- =========================================================================
+        -- [BARU] Tarik Modal dan Saldo dari tabel child (Dengan fitur Auto-Heal)
+        -- =========================================================================
+        (SELECT MAX(CASE WHEN pc_modal < pc_total_terpakai THEN pc_modal + pc_total_terpakai ELSE pc_modal END) FROM tpettycash_hdr WHERE pck_nomor = h.pck_nomor) AS modal,
+        (SELECT MAX(CASE WHEN pc_modal < pc_total_terpakai THEN pc_modal + pc_total_terpakai ELSE pc_modal END) - SUM(pc_total_terpakai) FROM tpettycash_hdr WHERE pck_nomor = h.pck_nomor) AS saldo,
+
         tf.ptd_nomor AS pck_pth_nomor,
-        
-        -- [BARU] Ambil Nomor BBK Realisasi dari Finance
         tf.ptd_jur_no AS pck_bbk_finance,
 
-        -- [PERBAIKAN STATUS] Cegah status RECEIVED mundur jadi ON_TRANSFER
         CASE 
             WHEN h.pck_status = 'RECEIVED' THEN 'RECEIVED'
             WHEN tf.ptd_nomor IS NOT NULL THEN 'ON_TRANSFER'
