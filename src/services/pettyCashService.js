@@ -137,7 +137,7 @@ const submitKlaimKolektif = async (payload, user) => {
     const sqlInsert = `
       INSERT INTO tpettycash_klaim_hdr 
       (pck_idrec, pck_nomor, pck_tanggal, pck_cab, pck_keterangan, pck_total, pck_status, pck_acc, date_acc, user_create, date_create) 
-      VALUES (?, ?, CURDATE(), ?, ?, ?, 'ACC', ?, NOW(), ?, NOW()) 
+      VALUES (?, ?, CURDATE(), ?, ?, ?, 'SUBMITTED', ?, NULL, ?, NOW()) 
     `;
 
     await connection.query(sqlInsert, [
@@ -146,12 +146,12 @@ const submitKlaimKolektif = async (payload, user) => {
       user.cabang,
       keterangan,
       totalKlaim,
-      approver,
+      approver, // Masih nyimpan nama Estu, tapi statusnya SUBMITTED
       user.kode,
     ]);
 
     // 4. Update tabel Petty Cash Lama (Tetap sama)
-    const updateQuery = `UPDATE tpettycash_hdr SET pc_status = 'ACC', pck_nomor = ?, user_modified = ?, date_modified = NOW() WHERE pc_nomor IN (${placeholders})`;
+    const updateQuery = `UPDATE tpettycash_hdr SET pc_status = 'SUBMITTED', pck_nomor = ?, user_modified = ?, date_modified = NOW() WHERE pc_nomor IN (${placeholders})`;
     await connection.query(updateQuery, [pck_nomor, user.kode, ...nomorList]);
 
     await connection.commit();
