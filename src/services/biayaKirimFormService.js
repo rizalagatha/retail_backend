@@ -88,30 +88,75 @@ const getInvoiceDetails = async (nomorInv) => {
 const saveData = async (payload, user) => {
   const { isNew, header } = payload;
   const connection = await pool.getConnection();
+
   try {
     await connection.beginTransaction();
+
+    // Pastikan nominal biaya diparsing jadi angka biar aman
+    const nominalBiaya = Number(header.biaya) || 0;
+
     if (isNew) {
+      // 1. Generate Nomor & Insert Header Biaya Kirim
       header.nomor = await generateBkNumber(user.cabang, header.tanggal);
       const sql = `INSERT INTO tbiayakirim (bk_nomor, bk_tanggal, bk_inv_nomor, bk_nominal, bk_ket, user_create, date_create, bk_cab) VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)`;
       await connection.query(sql, [
         header.nomor,
         header.tanggal,
         header.inv_nomor,
-        header.biaya,
+        nominalBiaya,
         header.keterangan,
         user.kode,
         user.cabang,
       ]);
+
+      // 2. [BARU] Insert Otomatis ke Piutang Detail (DEBET)
+      // Tambahkan nominal biaya kirim sebagai tagihan ke invoice tersebut
+      const uraianDebet = `BIAYA KIRIM (${header.nomor}) - ${header.keterangan || ""}`;
+      const sqlPiutang = `
+        INSERT INTO tpiutang_dtl 
+        (pd_ph_nomor, pd_tanggal, pd_uraian, pd_debet, pd_kredit, pd_ket, pd_bk, user_create, date_create) 
+        VALUES (?, ?, ?, ?, 0, ?, 'Y', ?, NOW())
+      `;
+      await connection.query(sqlPiutang, [
+        header.inv_nomor, // Nyambung ke nomor Invoice
+        header.tanggal, // Tanggal transaksi
+        uraianDebet, // Uraian (Ada nomor referensi BK-nya)
+        nominalBiaya, // Masuk ke kolom Debet (+)
+        header.keterangan, // Keterangan dari user
+        user.kode,
+      ]);
     } else {
+      // 1. Update Header Biaya Kirim
       const sql = `UPDATE tbiayakirim SET bk_inv_nomor = ?, bk_nominal = ?, bk_ket = ?, user_modified = ?, date_modified = NOW() WHERE bk_nomor = ?`;
       await connection.query(sql, [
         header.inv_nomor,
-        header.biaya,
+        nominalBiaya,
         header.keterangan,
         user.kode,
         header.nomor,
       ]);
+
+      // 2. [BARU] Update Piutang Detail (DEBET) jika diedit
+      // Cari baris di piutang_dtl yang mereferensikan dokumen biaya kirim ini
+      const uraianDebet = `BIAYA KIRIM (${header.nomor}) - ${header.keterangan || ""}`;
+      const sqlUpdatePiutang = `
+        UPDATE tpiutang_dtl 
+        SET pd_tanggal = ?, pd_uraian = ?, pd_debet = ?, pd_ket = ?, user_modified = ?, date_modified = NOW()
+        WHERE pd_ph_nomor = ? AND pd_uraian LIKE ? AND pd_bk = 'Y'
+      `;
+      // LIKE pattern untuk mencari baris yang mengandung nomor dokumen ini
+      const likePattern = `BIAYA KIRIM (${header.nomor})%`;
+      await connection.query(sqlUpdatePiutang, [
+        header.tanggal,
+        uraianDebet,
+        nominalBiaya,
+        header.keterangan,
+        user.kode,
+        header.inv_nomor,
+        likePattern,
+      ]);
     }
+
     await connection.commit();
     return { nomor: header.nomor };
   } catch (error) {
