@@ -100,12 +100,11 @@ const authPinService = {
           today >= new Date(2026, 0, 12) && today < new Date(2026, 0, 17);
         const isPeminjaman = String(jenis).trim() === "PEMINJAMAN_BARANG";
         const isKlaimPettyCash = String(jenis).trim() === "KLAIM_PETTYCASH";
+        const isSubmitBap = String(jenis).trim() === "SUBMIT_BAP";
 
         let managerCodes = ["DARUL"]; // Darul selalu dikirim
 
-        if (isPeminjaman || isKlaimPettyCash) {
-          // [UBAH INI]
-          // Jika peminjaman barang ATAU klaim petty cash, notifikasi ke ESTU
+        if (isPeminjaman || isKlaimPettyCash || isSubmitBap) {
           if (!managerCodes.includes("ESTU")) managerCodes.push("ESTU");
         }
 
@@ -115,7 +114,7 @@ const authPinService = {
         } else {
           // Periode Normal: Transaksi Manager lari ke HARIS
           // [PERBAIKAN] Haris TIDAK dikirimi notif jika jenisnya Peminjaman / Petty Cash (karena itu milik Estu)
-          if (!isPeminjaman && !isKlaimPettyCash) {
+          if (!isPeminjaman && !isKlaimPettyCash && !isSubmitBap) {
             managerCodes.push("HARIS");
           }
         }
@@ -189,27 +188,24 @@ const authPinService = {
     if (userCabang === "KDC") {
       if (userKodeUpper === "ESTU") {
         if (isEstuManagerPeriod) {
-          // [UBAH INI]
           query +=
-            " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '' OR o_jenis IN ('PEMINJAMAN_BARANG', 'KLAIM_PETTYCASH')) ";
+            " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '' OR o_jenis IN ('PEMINJAMAN_BARANG', 'KLAIM_PETTYCASH', 'SUBMIT_BAP')) ";
         } else {
-          // [UBAH INI]
-          query += " AND o_jenis IN ('PEMINJAMAN_BARANG', 'KLAIM_PETTYCASH') ";
+          query +=
+            " AND o_jenis IN ('PEMINJAMAN_BARANG', 'KLAIM_PETTYCASH', 'SUBMIT_BAP') ";
         }
       } else if (userKodeUpper === "HARIS") {
         if (isEstuManagerPeriod) {
           query += " AND 1=0 "; // Kosongkan list
         } else {
-          // [PERBAIKAN] Kecualikan Peminjaman & Petty Cash dari daftar Haris
           query +=
-            " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '') AND o_jenis NOT IN ('PEMINJAMAN_BARANG', 'KLAIM_PETTYCASH') ";
+            " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '') AND o_jenis NOT IN ('PEMINJAMAN_BARANG', 'KLAIM_PETTYCASH', 'SUBMIT_BAP') ";
         }
       } else if (userKodeUpper === "RIO") {
         query += " AND o_jenis = 'TRANSFER_SOP' ";
       } else {
-        // [UBAH INI]
         query +=
-          " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '' OR o_jenis IN ('PEMINJAMAN_BARANG', 'KLAIM_PETTYCASH')) ";
+          " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '' OR o_jenis IN ('PEMINJAMAN_BARANG', 'KLAIM_PETTYCASH', 'SUBMIT_BAP')) ";
       }
     } else {
       query +=

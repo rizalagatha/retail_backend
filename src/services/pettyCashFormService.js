@@ -27,6 +27,9 @@ const generateNomor = async (cab, conn) => {
 // --- RUMUS SALDO BERJALAN ---
 // Modal Awal (Misal 1 Juta) + Semua Pemasukan (Debet) - Semua Pengeluaran (Kredit)
 const getCurrentSaldo = async (cabang, excludeNomor, conn) => {
+  // [PERBAIKAN] Gunakan pool jika conn tidak dikirim dari controller
+  const db = conn || pool;
+
   const query = `
     SELECT 
       1000000 + 
@@ -35,7 +38,7 @@ const getCurrentSaldo = async (cabang, excludeNomor, conn) => {
     FROM tpettycash_mutasi 
     WHERE mut_cabang = ? AND mut_nomor_bukti != ?
   `;
-  const [rows] = await conn.query(query, [cabang, excludeNomor || ""]);
+  const [rows] = await db.query(query, [cabang, excludeNomor || ""]);
   return parseFloat(rows[0].saldo_aktif);
 };
 

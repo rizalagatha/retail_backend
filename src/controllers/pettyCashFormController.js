@@ -76,17 +76,19 @@ const getPrintData = async (req, res) => {
 
 const getSaldoStore = async (req, res) => {
   try {
-    // Meminjam fungsi dari file form service
-    const pettyCashFormService = require("../services/pettyCashFormService");
-    const connection = await pool.getConnection(); // import pool dari config
+    // [PERBAIKAN] Langsung gunakan pettyCashService yang sudah kita buat pinter
+    // Parameter ke-2 (excludeNomor) diisi null, parameter ke-3 (conn) dikosongkan agar pakai pool default
     const saldo = await pettyCashFormService.getCurrentSaldo(
       req.user.cabang,
-      connection,
+      null,
     );
-    connection.release();
+
     res.json({ saldo });
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    console.error("Error getSaldoStore:", error);
+    res
+      .status(400)
+      .json({ message: error.message || "Gagal mengambil saldo." });
   }
 };
 

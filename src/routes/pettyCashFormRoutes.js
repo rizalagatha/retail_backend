@@ -28,5 +28,6 @@ router.get("/:nomor", verifyToken, pettyCashFormController.getDetail);
 router.put("/approve/:nomor", verifyToken, pettyCashFormController.approve);
 router.put("/reject/:nomor", verifyToken, pettyCashFormController.reject);
 router.get("/print/:nomor", verifyToken, pettyCashFormController.getPrintData);
+router.get("/saldo", verifyToken, pettyCashFormController.getSaldoStore);
 
 module.exports = router;
