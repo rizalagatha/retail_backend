@@ -2,32 +2,15 @@ const pool = require("../config/database");
 const { format } = require("date-fns");
 const fcmService = require("../services/fcmService");
 
-// Helper untuk generate Nomor Urut: CAB.AUTH.YYMM.0001
+// Helper untuk generate Nomor Urut yang PASTI UNIK
 const generateAuthNumber = async (cabang) => {
-  const date = new Date();
-  const yyMM = format(date, "yyMM");
-  const prefix = `${cabang}.AUTH.${yyMM}.`;
+  // Ganti pakai format yyyyMMddHHmmssSSS biar anti-bentrok walau diklik dobel!
+  const timestamp = format(new Date(), "yyyyMMddHHmmssSSS");
+  const random = Math.floor(Math.random() * 100)
+    .toString()
+    .padStart(2, "0");
 
-  const query = `
-        SELECT o_nomor 
-        FROM totorisasi 
-        WHERE o_nomor LIKE ? 
-        ORDER BY o_nomor DESC 
-        LIMIT 1
-    `;
-
-  const [rows] = await pool.query(query, [`${prefix}%`]);
-
-  let sequence = 1;
-  if (rows.length > 0) {
-    const lastNomor = rows[0].o_nomor;
-    const lastSeqString = lastNomor.split(".").pop();
-    const lastSeq = parseInt(lastSeqString, 10);
-    if (!isNaN(lastSeq)) sequence = lastSeq + 1;
-  }
-
-  const formattedSeq = sequence.toString().padStart(4, "0");
-  return `${prefix}${formattedSeq}`;
+  return `${cabang}.AUTH.${timestamp}${random}`;
 };
 
 const authPinService = {
