@@ -85,8 +85,8 @@ const submitData = async (nomor, userKode) => {
 };
 
 const submitKlaimKolektif = async (payload, user) => {
-  // 1. Tambahkan 'approver' ke dalam destructuring payload
-  const { nomorList, keterangan, approver } = payload;
+  // 1. Tambahkan 'approver' DAN 'authNomor' ke dalam destructuring payload
+  const { nomorList, keterangan, approver, authNomor } = payload; // <--- TANGKAP authNomor DARI FRONTEND
 
   if (!nomorList || nomorList.length === 0) {
     throw new Error("Tidak ada dokumen Petty Cash yang dipilih.");
@@ -101,7 +101,7 @@ const submitKlaimKolektif = async (payload, user) => {
   try {
     await connection.beginTransaction();
 
-    // --- (Bagian 1 & 2 tetap sama untuk hitung total dan generate nomor) ---
+    // --- Hitung Total Klaim ---
     const placeholders = nomorList.map(() => "?").join(",");
     const checkQuery = `SELECT SUM(pc_total_terpakai) as total_klaim FROM tpettycash_hdr WHERE pc_nomor IN (${placeholders}) AND pc_status IN ('DRAFT', 'REJECTED') AND pc_cab = ?`;
     const [checkRows] = await connection.query(checkQuery, [
@@ -116,6 +116,7 @@ const submitKlaimKolektif = async (payload, user) => {
     }
     const totalKlaim = checkRows[0].total_klaim;
 
+    // --- Generate Nomor ---
     const now = new Date();
     const yearMonth = format(now, "yyMM");
     const prefix = `${user.cabang}.KPC.${yearMonth}.`;
@@ -124,11 +125,12 @@ const submitKlaimKolektif = async (payload, user) => {
     const pck_nomor = `${prefix}${nomorRows[0].next_num.toString().padStart(4, "0")}`;
     const pck_idrec = `${user.cabang}PK${format(now, "yyyyMMddHHmmss.SSS")}`;
 
-    // 3. Update Insert ke tabel Header (Tambah kolom pck_acc)
+    // 3. Update Insert ke tabel Header (UBAH date_acc DARI NULL JADI NOW())
+    // Karena approver-nya sudah pasti ACC dari HP
     const sqlInsert = `
       INSERT INTO tpettycash_klaim_hdr 
       (pck_idrec, pck_nomor, pck_tanggal, pck_cab, pck_keterangan, pck_total, pck_status, pck_acc, date_acc, user_create, date_create) 
-      VALUES (?, ?, CURDATE(), ?, ?, ?, 'SUBMITTED', ?, NULL, ?, NOW()) 
+      VALUES (?, ?, CURDATE(), ?, ?, ?, 'SUBMITTED', ?, NOW(), ?, NOW()) 
     `;
 
     await connection.query(sqlInsert, [
@@ -137,13 +139,23 @@ const submitKlaimKolektif = async (payload, user) => {
       user.cabang,
       keterangan,
       totalKlaim,
-      approver, // Masih nyimpan nama Estu, tapi statusnya SUBMITTED
+      approver, // Nama SPV yang nge-ACC di HP (misal: ESTU / IRSYAD)
       user.kode,
     ]);
 
-    // 4. Update tabel Petty Cash Lama (Tetap sama)
+    // 4. Update tabel Petty Cash Lama (Status menjadi SUBMITTED ke Finance)
     const updateQuery = `UPDATE tpettycash_hdr SET pc_status = 'SUBMITTED', pck_nomor = ?, user_modified = ?, date_modified = NOW() WHERE pc_nomor IN (${placeholders})`;
     await connection.query(updateQuery, [pck_nomor, user.kode, ...nomorList]);
+
+    // ====================================================================
+    // 5. [BARU] Tautkan Nomor PCK ke Tabel Otorisasi agar history-nya rapi!
+    // ====================================================================
+    if (authNomor) {
+      await connection.query(
+        `UPDATE totorisasi SET o_transaksi = ? WHERE o_nomor = ?`,
+        [pck_nomor, authNomor],
+      );
+    }
 
     await connection.commit();
     return {
