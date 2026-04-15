@@ -78,7 +78,8 @@ const getList = async (filters) => {
   // Tambahkan pengecekan: cabang !== "ALL"
   let cab = (cabang || "").toUpperCase().trim();
 
-  if (cab && cab !== "KDC" && cab !== "ALL") {
+  // [PERBAIKAN]: Hapus cab !== "KDC"
+  if (cab && cab !== "ALL") {
     cabangFilter = " AND h.inv_cab = ?";
     params.push(cab);
   }
@@ -626,11 +627,12 @@ const getExportHeader = async (filters) => {
 
   // 1. Filter Cabang
   let cabangFilter = "";
-  if (cabang && cabang !== "KDC" && cabang !== "ALL") {
+
+  // [PERBAIKAN KUNCI]: Hapus syarat cabang !== "KDC"
+  if (cabang && cabang !== "ALL") {
     cabangFilter = " AND h.inv_cab = ?";
     params.push(cabang);
   }
-
   // 2. Global Search
   let searchFilter = "";
   if (search) {
@@ -798,11 +800,12 @@ const getExportDetails = async (filters) => {
 
   // 2. Filter Cabang
   let branchFilter = "";
-  if (cabang && cabang !== "KDC" && cabang !== "ALL") {
+
+  // [PERBAIKAN KUNCI]: Hapus syarat cabang !== "KDC"
+  if (cabang && cabang !== "ALL") {
     branchFilter = " AND h.inv_cab = ? ";
     params.push(cabang);
   }
-
   // 3. Filter Pencarian Global
   let searchFilter = "";
   if (search) {

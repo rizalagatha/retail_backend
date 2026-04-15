@@ -2295,8 +2295,9 @@ const findByBarcode = async (barcode, gudang) => {
       d.brgd_ukuran AS ukuran,
       d.brgd_hrg3 AS harga3,
       d.brgd_hrg1 AS harga1,
-      d.brgd_harga AS harga,
+      IF(? = 'KDC', d.brgd_hpp, d.brgd_harga) AS harga,
       h.brg_ktgp AS kategori,
+      d.brgd_hpp AS hpp,
       IFNULL((
         SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
         FROM tmasterstok m 
@@ -2313,8 +2314,13 @@ const findByBarcode = async (barcode, gudang) => {
       AND (d.brgd_barcode = ? OR d.brgd_barcode = ?);
   `;
 
-  // Masukkan parameter: [gudang, barcode_asli, barcode_bersih]
-  const [rows] = await pool.query(query, [gudang, barcode, cleanedBarcode]);
+  // Masukkan parameter: [gudang_kdc, gudang_stok, barcode_asli, barcode_bersih]
+  const [rows] = await pool.query(query, [
+    gudang,
+    gudang,
+    barcode,
+    cleanedBarcode,
+  ]);
 
   if (rows.length === 0) {
     throw new Error("Barcode tidak ditemukan atau barang tidak aktif.");
@@ -2340,7 +2346,8 @@ const searchProducts = async (filters, user) => {
   let baseWhere = ` WHERE a.brg_aktif = 0 `;
 
   let promoFilterJoin = "";
-  let hargaSelect = "b.brgd_harga AS harga";
+  let hargaSelect =
+    user.cabang === "KDC" ? "b.brgd_hpp AS harga" : "b.brgd_harga AS harga";
 
   // ---------- PROMO ----------
   if (promoNomor === "PRO-2025-005") {
