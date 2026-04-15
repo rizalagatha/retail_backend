@@ -292,7 +292,7 @@ const getDataForPrint = async (nomor) => {
     SELECT 
         h.so_nomor, h.so_tanggal, h.so_top, h.so_ket, h.so_sc, h.user_create,
         DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
-        h.so_disc, h.so_ppn, h.so_bkrm, h.so_dp,
+        h.so_disc, h.so_ppn, h.so_bkrm, h.so_dp, h.so_dateline,
         c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
         g.gdg_inv_nama, g.gdg_inv_alamat, g.gdg_inv_kota, g.gdg_inv_telp,
         g.gdg_inv_instagram, 
