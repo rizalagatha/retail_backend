@@ -123,7 +123,7 @@ const trackOrder = async (req, res) => {
         .json({ message: "Nomor Surat Pesanan tidak valid." });
     }
 
-    const data = await soService.trackOrderTimeline(nomor);
+    const data = await soService.trackOrderTimeline(nomor, req.user);
     res.json(data);
   } catch (error) {
     console.error("Error in trackOrder controller:", error);
