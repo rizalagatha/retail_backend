@@ -52,6 +52,7 @@ const getSoDtfList = async (filters, user) => {
             (x.Jumlah * x.Titik) AS TotalTitik, 
             -- [FIX] Pastikan LHK yang null menjadi 0
             IFNULL(x.LHK_Count, 0) AS LHK,
+            x.TotalHarga,
             x.NoSO, x.NoINV, x.Sales, x.BagDesain, x.KdCus, x.Customer, x.Kain, 
             x.Finishing, x.Workshop, x.Keterangan, x.AlasanClose, x.Created, x.Close,
             x.UserModified, x.DateModified,
@@ -70,6 +71,7 @@ const getSoDtfList = async (filters, user) => {
                 DATE_FORMAT(h.sd_datekerja, '%d-%m-%Y') AS TglPengerjaan, 
                 h.sd_dateline AS DatelineCus, h.sd_nama AS NamaDTF,
                 IFNULL((SELECT SUM(i.sdd_jumlah) FROM tsodtf_dtl i WHERE i.sdd_nomor = h.sd_nomor), 0) AS Jumlah,
+                IFNULL((SELECT SUM(i.sdd_jumlah * i.sdd_harga) FROM tsodtf_dtl i WHERE i.sdd_nomor = h.sd_nomor), 0) AS TotalHarga,
                 IFNULL((SELECT COUNT(*) FROM tsodtf_dtl2 i WHERE i.sdd2_nomor = h.sd_nomor), 0) AS Titik,
                 -- [FIX] Beri alias berbeda agar bisa di-IFNULL di luar
                 (SELECT COUNT(*) FROM tdtf f WHERE f.sodtf = h.sd_nomor) AS LHK_Count,
