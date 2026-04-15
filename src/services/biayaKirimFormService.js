@@ -111,7 +111,7 @@ const saveData = async (payload, user) => {
 
       // 2. [BARU] Insert Otomatis ke Piutang Detail (DEBET)
       // Tambahkan nominal biaya kirim sebagai tagihan ke invoice tersebut
-      const uraianDebet = `BIAYA KIRIM (${header.nomor}) - ${header.keterangan || ""}`;
+      const uraianDebet = `BIAYA KIRIM`;
       const sqlPiutang = `
         INSERT INTO tpiutang_dtl 
         (pd_ph_nomor, pd_tanggal, pd_uraian, pd_debet, pd_kredit, pd_ket, pd_bk) 
@@ -136,7 +136,7 @@ const saveData = async (payload, user) => {
 
       // 2. [BARU] Update Piutang Detail (DEBET) jika diedit
       // Cari baris di piutang_dtl yang mereferensikan dokumen biaya kirim ini
-      const uraianDebet = `BIAYA KIRIM (${header.nomor}) - ${header.keterangan || ""}`;
+      const uraianDebet = `BIAYA KIRIM`;
       const sqlUpdatePiutang = `
         UPDATE tpiutang_dtl 
         SET pd_tanggal = ?, pd_uraian = ?, pd_debet = ?, pd_ket = ?
