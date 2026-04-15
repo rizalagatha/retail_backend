@@ -1,6 +1,5 @@
 const pool = require("../config/database");
 const { format } = require("date-fns");
-const { logActivity } = require("./auditService");
 
 // Mengambil daftar data (SQLMaster)
 const getList = async (filters) => {
@@ -606,85 +605,10 @@ const getExportDetails = async (filters) => {
   return rows;
 };
 
-// =================================================================
-// Fungsi Satpam Anomali (Sesuai dengan Audit Service Baru)
-// =================================================================
-const checkAndLogAnomalies = async (connection, nomorSO, timeline, reqUser) => {
-  let anomaliDitemukan = [];
-
-  // Aturan 1: Cek apakah ada proses Selesai/Invoice tapi tidak ada SO Dibuat
-  const hasSO = timeline.some((t) => t.title.includes("Pesanan Dibuat"));
-  const hasInvoice = timeline.some((t) => t.title.includes("Invoice"));
-  if (hasInvoice && !hasSO) {
-    anomaliDitemukan.push(
-      "Lompat Proses: Terdapat Invoice tetapi data SO Dibuat tidak ditemukan.",
-    );
-  }
-
-  // Aturan 2: Cek Timestamp Mundur (Proses baru tanggalnya lebih lampau dari proses lama)
-  // timeline sudah diurutkan Descending (yang terbaru di index 0)
-  for (let i = 0; i < timeline.length - 1; i++) {
-    const prosesBaru = timeline[i];
-    const prosesLama = timeline[i + 1];
-
-    if (
-      prosesBaru.rawDate &&
-      prosesLama.rawDate &&
-      prosesBaru.rawDate < prosesLama.rawDate
-    ) {
-      // Catat jika selisihnya lebih dari 1 menit
-      if (prosesLama.rawDate.getTime() - prosesBaru.rawDate.getTime() > 60000) {
-        anomaliDitemukan.push(
-          `Waktu Mundur: '${prosesBaru.title}' tercatat mendahului '${prosesLama.title}'.`,
-        );
-      }
-    }
-  }
-
-  if (anomaliDitemukan.length > 0) {
-    for (const pesan of anomaliDitemukan) {
-      // Cek dulu apakah anomali yang sama persis sudah pernah dicatat untuk SO ini
-      // Kita cek langsung ke tabel taudit_log milik Mas Rizal
-      const [existingLog] = await connection.query(
-        `SELECT id FROM taudit_log WHERE target_id = ? AND action = 'ANOMALY_TRACKING' AND note = ? LIMIT 1`,
-        [nomorSO, pesan],
-      );
-
-      // Kalau belum pernah dicatat, panggil fungsi logActivity!
-      if (existingLog.length === 0) {
-        // Kita "palsukan" req object (karena di Service kita nggak selalu punya akses utuh ke express req)
-        // Yang dibutuhkan auditService hanyalah req.user dan req.headers
-        const mockReq = {
-          user: reqUser || {
-            kode: "SISTEM",
-            nama: "Sistem Tracking",
-            cabang: "PUSAT",
-          },
-          headers: { "user-agent": "Internal System Worker" },
-          socket: { remoteAddress: "127.0.0.1" },
-        };
-
-        // Panggil fungsi audit Mas Rizal
-        await logActivity(
-          mockReq, // req object
-          "ANOMALY_TRACKING", // action (prefix ANOMALY_ agar kebaca filter controller)
-          "TRACKING_SO", // module
-          nomorSO, // target_id
-          null, // oldData
-          null, // newData
-          pesan, // note (Isi pesannya)
-        );
-
-        console.warn(`[ANOMALI DETECTED] SO: ${nomorSO} - ${pesan}`);
-      }
-    }
-  }
-};
-
 /**
  * @description Menyusuri jejak (tracking) Surat Pesanan dari hulu ke hilir beserta rincian item
  */
-const trackOrderTimeline = async (nomorSO, reqUser = null) => {
+const trackOrderTimeline = async (nomorSO) => {
   const connection = await pool.getConnection();
   try {
     const timeline = [];
@@ -1597,8 +1521,6 @@ const trackOrderTimeline = async (nomorSO, reqUser = null) => {
     else if (qtyScanned >= qtySO && qtySO > 0) milestones[3].isCurrent = true;
     else if (isProduksiActive) milestones[2].isCurrent = true;
     else milestones[1].isCurrent = true;
-
-    await checkAndLogAnomalies(connection, nomorSO, timeline, reqUser);
 
     return {
       nomorSo: nomorSO,
