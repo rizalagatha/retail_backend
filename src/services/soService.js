@@ -659,7 +659,14 @@ const trackOrderTimeline = async (nomorSO) => {
       `SELECT d.sod_kode, d.sod_ukuran, d.sod_jumlah, d.sod_harga, d.sod_diskon,
               d.sod_sd_nomor, d.sod_custom, d.sod_custom_nama, d.sod_scanned, 
               TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), " ", IFNULL(a.brg_tipe,''), " ", IFNULL(a.brg_lengan,''), " ", IFNULL(a.brg_jeniskain,''), " ", IFNULL(a.brg_warna,''))) AS nama_normal,
-              f.sd_nama AS nama_dtf
+              f.sd_nama AS nama_dtf,
+              
+              (SELECT s.spk_nama 
+               FROM kencanaprint.tspk s 
+               JOIN kencanaprint.tspk_dc dc ON dc.spkd_nomor = s.spk_nomor 
+               WHERE s.spk_invdc = d.sod_so_nomor AND dc.spkd_kode = d.sod_kode 
+               LIMIT 1) AS nama_spk
+
        FROM tso_dtl d
        LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_sd_nomor
@@ -673,20 +680,19 @@ const trackOrderTimeline = async (nomorSO) => {
     let targetQtySO = 0;
     let targetQtyScanned = 0;
 
-    const orderItems = detailRows.map((r) => {
+    // Map untuk Grouping Item
+    const groupedItemsMap = new Map();
+
+    detailRows.forEach((r) => {
       let namaBarang = r.nama_normal;
       if (r.sod_custom === "Y" && r.sod_custom_nama)
         namaBarang = r.sod_custom_nama;
       else if (r.nama_dtf) namaBarang = r.nama_dtf;
 
-      const subtotal = r.sod_jumlah * (r.sod_harga - r.sod_diskon);
+      const qty = Number(r.sod_jumlah || 0);
+      const scanned = Number(r.sod_scanned || 0);
+      const subtotal = qty * (r.sod_harga - r.sod_diskon);
       totalBruto += subtotal;
-
-      let imageUrl = "";
-      if (r.sod_sd_nomor) {
-        const cabang = r.sod_sd_nomor.substring(0, 3);
-        imageUrl = `https://103.94.238.252/images/${cabang}/${r.sod_sd_nomor}.jpg`;
-      }
 
       // --- LOGIKA MENGABAIKAN BARANG AUTO-READY (JASA/CUSTOM/DTF) ---
       const kodeUp = (r.sod_kode || "").toUpperCase();
@@ -704,20 +710,78 @@ const trackOrderTimeline = async (nomorSO) => {
 
       // Jika BUKAN barang auto-ready, maka masuk ke hitungan Wajib Scan
       if (!isJasaMurni && !isSpecialOrder) {
-        targetQtySO += Number(r.sod_jumlah || 0);
-        targetQtyScanned += Number(r.sod_scanned || 0);
+        targetQtySO += qty;
+        targetQtyScanned += scanned;
       }
 
+      // --- LOGIKA GROUPING BERDASARKAN KODE BARANG SAJA ---
+      const groupKey = `${r.sod_kode}_${r.sod_sd_nomor || ""}`;
+
+      if (groupedItemsMap.has(groupKey)) {
+        const existing = groupedItemsMap.get(groupKey);
+        existing.qty += qty;
+        existing.subtotal += subtotal;
+        existing.scanned += scanned;
+
+        if (r.sod_ukuran && !existing.ukuranArr.includes(r.sod_ukuran)) {
+          existing.ukuranArr.push(r.sod_ukuran);
+        }
+
+        // Simpan rincian untuk tooltip di Frontend
+        existing.breakdown.push({
+          ukuran: r.sod_ukuran || "-",
+          qty: qty,
+          harga: r.sod_harga,
+          diskon: r.sod_diskon,
+          subtotal: subtotal,
+        });
+      } else {
+        let imageUrl = "";
+        if (r.sod_sd_nomor) {
+          const cabang = r.sod_sd_nomor.substring(0, 3);
+          imageUrl = `https://103.94.238.252/images/${cabang}/${r.sod_sd_nomor}.jpg`;
+        }
+
+        groupedItemsMap.set(groupKey, {
+          kode: r.sod_kode,
+          nama: namaBarang,
+          nama_spk: r.nama_spk,
+          ukuranArr: r.sod_ukuran ? [r.sod_ukuran] : [],
+          qty: qty,
+          subtotal: subtotal,
+          sd_nomor: r.sod_sd_nomor,
+          imageUrl: imageUrl,
+          scanned: scanned,
+          isJasaMurni: isJasaMurni,
+          isJasa: isJasaMurni || isSpecialOrder,
+          breakdown: [
+            {
+              ukuran: r.sod_ukuran || "-",
+              qty: qty,
+              harga: r.sod_harga,
+              diskon: r.sod_diskon,
+              subtotal: subtotal,
+            },
+          ],
+        });
+      }
+    });
+
+    // Format Map kembali ke Array
+    const orderItems = Array.from(groupedItemsMap.values()).map((item) => {
       return {
-        kode: r.sod_kode,
-        nama: namaBarang,
-        ukuran: r.sod_ukuran,
-        qty: r.sod_jumlah,
-        harga: r.sod_harga,
-        diskon: r.sod_diskon,
-        subtotal: subtotal,
-        sd_nomor: r.sod_sd_nomor,
-        imageUrl: imageUrl,
+        kode: item.kode,
+        nama: item.nama,
+        nama_spk: item.nama_spk,
+        ukuran: item.ukuranArr.join(", "),
+        qty: item.qty,
+        subtotal: item.subtotal,
+        sd_nomor: item.sd_nomor,
+        imageUrl: item.imageUrl,
+        isJasaMurni: item.isJasaMurni,
+        isFullyScanned: item.scanned >= item.qty && !item.isJasa,
+        hasHoverDetail: true,
+        breakdown: item.breakdown, // <-- Kirim data rincian
       };
     });
 

@@ -114,8 +114,8 @@ const saveData = async (payload, user) => {
       const uraianDebet = `BIAYA KIRIM (${header.nomor}) - ${header.keterangan || ""}`;
       const sqlPiutang = `
         INSERT INTO tpiutang_dtl 
-        (pd_ph_nomor, pd_tanggal, pd_uraian, pd_debet, pd_kredit, pd_ket, pd_bk, user_create, date_create) 
-        VALUES (?, ?, ?, ?, 0, ?, 'Y', ?, NOW())
+        (pd_ph_nomor, pd_tanggal, pd_uraian, pd_debet, pd_kredit, pd_ket, pd_bk) 
+        VALUES (?, ?, ?, ?, 0, ?, 'Y')
       `;
       await connection.query(sqlPiutang, [
         header.inv_nomor, // Nyambung ke nomor Invoice
@@ -123,16 +123,14 @@ const saveData = async (payload, user) => {
         uraianDebet, // Uraian (Ada nomor referensi BK-nya)
         nominalBiaya, // Masuk ke kolom Debet (+)
         header.keterangan, // Keterangan dari user
-        user.kode,
       ]);
     } else {
       // 1. Update Header Biaya Kirim
-      const sql = `UPDATE tbiayakirim SET bk_inv_nomor = ?, bk_nominal = ?, bk_ket = ?, user_modified = ?, date_modified = NOW() WHERE bk_nomor = ?`;
+      const sql = `UPDATE tbiayakirim SET bk_inv_nomor = ?, bk_nominal = ?, bk_ket = ? WHERE bk_nomor = ?`;
       await connection.query(sql, [
         header.inv_nomor,
         nominalBiaya,
         header.keterangan,
-        user.kode,
         header.nomor,
       ]);
 
@@ -141,17 +139,15 @@ const saveData = async (payload, user) => {
       const uraianDebet = `BIAYA KIRIM (${header.nomor}) - ${header.keterangan || ""}`;
       const sqlUpdatePiutang = `
         UPDATE tpiutang_dtl 
-        SET pd_tanggal = ?, pd_uraian = ?, pd_debet = ?, pd_ket = ?, user_modified = ?, date_modified = NOW()
+        SET pd_tanggal = ?, pd_uraian = ?, pd_debet = ?, pd_ket = ?
         WHERE pd_ph_nomor = ? AND pd_uraian LIKE ? AND pd_bk = 'Y'
       `;
-      // LIKE pattern untuk mencari baris yang mengandung nomor dokumen ini
       const likePattern = `BIAYA KIRIM (${header.nomor})%`;
       await connection.query(sqlUpdatePiutang, [
         header.tanggal,
         uraianDebet,
         nominalBiaya,
         header.keterangan,
-        user.kode,
         header.inv_nomor,
         likePattern,
       ]);
