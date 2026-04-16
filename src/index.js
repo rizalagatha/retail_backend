@@ -277,32 +277,34 @@ app.use((req, res, next) => {
 });
 
 // --- [PERBAIKAN] Endpoint Khusus untuk Stream PDF ---
+// --- [PERBAIKAN] Endpoint Khusus untuk Stream PDF (Versi Debug) ---
 app.get("/api/memos/stream/:filename", (req, res) => {
-  const filename = req.params.filename;
-
-  // Amankan nama file dari serangan path traversal (misal: ../../../etc/passwd)
+  // 1. Decode URL (Jaga-jaga kalau ada spasi berubah jadi %20 dll)
+  const filename = decodeURIComponent(req.params.filename);
   const safeFilename = path.basename(filename);
+
+  // 2. Gabungkan path
   const filePath = path.join(memoFolderPath, safeFilename);
 
   console.log(`[DEBUG API MEMO] Request streaming PDF: ${safeFilename}`);
+  console.log(`[DEBUG API MEMO] Mencari di: ${filePath}`);
 
   // Cek apakah file ada secara fisik
   if (fs.existsSync(filePath)) {
-    // Set Header agar browser membaca ini sebagai PDF yang di-embed
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", "inline; filename=" + safeFilename);
-
-    // Alirkan (stream) file-nya dari harddisk ke browser frontend
     const fileStream = fs.createReadStream(filePath);
     fileStream.pipe(res);
   } else {
+    // 3. JADIKAN NODE.JS CEPU! Tampilkan path yang dicari ke layar
     console.error(`[ERROR API MEMO] File tidak ditemukan di: ${filePath}`);
-    res
-      .status(404)
-      .json({ success: false, message: "File PDF tidak ditemukan." });
+    res.status(404).json({
+      success: false,
+      message: "File PDF tidak ditemukan secara fisik di server.",
+      path_yang_dicari_server: filePath, // <--- INI KUNCI JAWABANNYA
+    });
   }
 });
-
 // cron.schedule(
 //   "5 0 * * *",
 //   async () => {
