@@ -213,48 +213,48 @@ app.use(
 app.use("/images", express.static(imageFolderPath));
 app.use("/uploads", express.static(path.join(__dirname, "public/uploads")));
 app.use("/api/uploads", express.static(path.join(__dirname, "public/uploads")));
-app.use("/memos", (req, res, next) => {
-  console.log(`[DEBUG MEMO] Mencari file: ${req.url}`);
-  console.log(`[DEBUG MEMO] Path Fisik: ${path.join(memoFolderPath, req.url)}`);
+// app.use("/memos", (req, res, next) => {
+//   console.log(`[DEBUG MEMO] Mencari file: ${req.url}`);
+//   console.log(`[DEBUG MEMO] Path Fisik: ${path.join(memoFolderPath, req.url)}`);
 
-  // Cek apakah filenya benar-benar ada di disk saat direquest
-  const fullPath = path.join(memoFolderPath, req.url);
-  if (fs.existsSync(fullPath)) {
-    console.log("✅ File ditemukan di disk!");
-  } else {
-    console.error("❌ File TIDAK ditemukan di disk!");
-  }
-  next();
-});
-app.use(
-  "/memos",
-  express.static(memoFolderPath, {
-    setHeaders: (res, filePath) => {
-      // Cek jika file yang direquest adalah PDF
-      if (path.extname(filePath).toLowerCase() === ".pdf") {
-        // Paksa browser untuk menampilkan file, bukan mengunduh
-        res.setHeader("Content-Type", "application/pdf");
-        res.setHeader("Content-Disposition", "inline");
-      }
-    },
-  }),
-);
-app.use("/api/memos", (req, res, next) => {
-  console.log(`[DEBUG API MEMO] Request masuk ke: /api/memos${req.url}`);
-  next();
-});
+//   // Cek apakah filenya benar-benar ada di disk saat direquest
+//   const fullPath = path.join(memoFolderPath, req.url);
+//   if (fs.existsSync(fullPath)) {
+//     console.log("✅ File ditemukan di disk!");
+//   } else {
+//     console.error("❌ File TIDAK ditemukan di disk!");
+//   }
+//   next();
+// });
+// app.use(
+//   "/memos",
+//   express.static(memoFolderPath, {
+//     setHeaders: (res, filePath) => {
+//       // Cek jika file yang direquest adalah PDF
+//       if (path.extname(filePath).toLowerCase() === ".pdf") {
+//         // Paksa browser untuk menampilkan file, bukan mengunduh
+//         res.setHeader("Content-Type", "application/pdf");
+//         res.setHeader("Content-Disposition", "inline");
+//       }
+//     },
+//   }),
+// );
+// app.use("/api/memos", (req, res, next) => {
+//   console.log(`[DEBUG API MEMO] Request masuk ke: /api/memos${req.url}`);
+//   next();
+// });
 
-app.use(
-  "/api/memos",
-  express.static(memoFolderPath, {
-    setHeaders: (res, filePath) => {
-      if (path.extname(filePath).toLowerCase() === ".pdf") {
-        res.setHeader("Content-Type", "application/pdf");
-        res.setHeader("Content-Disposition", "inline");
-      }
-    },
-  }),
-);
+// app.use(
+//   "/api/memos",
+//   express.static(memoFolderPath, {
+//     setHeaders: (res, filePath) => {
+//       if (path.extname(filePath).toLowerCase() === ".pdf") {
+//         res.setHeader("Content-Type", "application/pdf");
+//         res.setHeader("Content-Disposition", "inline");
+//       }
+//     },
+//   }),
+// );
 app.disable("etag");
 requiredDirs.forEach((dir) => {
   if (!fs.existsSync(dir)) {
@@ -274,6 +274,33 @@ app.use((req, res, next) => {
   );
 
   next();
+});
+
+// --- [PERBAIKAN] Endpoint Khusus untuk Stream PDF ---
+app.get("/api/memos/stream/:filename", (req, res) => {
+  const filename = req.params.filename;
+
+  // Amankan nama file dari serangan path traversal (misal: ../../../etc/passwd)
+  const safeFilename = path.basename(filename);
+  const filePath = path.join(memoFolderPath, safeFilename);
+
+  console.log(`[DEBUG API MEMO] Request streaming PDF: ${safeFilename}`);
+
+  // Cek apakah file ada secara fisik
+  if (fs.existsSync(filePath)) {
+    // Set Header agar browser membaca ini sebagai PDF yang di-embed
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", "inline; filename=" + safeFilename);
+
+    // Alirkan (stream) file-nya dari harddisk ke browser frontend
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+  } else {
+    console.error(`[ERROR API MEMO] File tidak ditemukan di: ${filePath}`);
+    res
+      .status(404)
+      .json({ success: false, message: "File PDF tidak ditemukan." });
+  }
 });
 
 // cron.schedule(
