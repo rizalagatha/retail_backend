@@ -2099,18 +2099,24 @@ const getPrintData = async (nomor) => {
   const bayarCard = Number(header.inv_rpcard || 0);
   const bayarVoucher = Number(header.inv_rpvoucher || 0);
 
-  // =================== FIX TOTAL BAYAR ===================
-  const totalBayar = bayarTunai + bayarCard + bayarVoucher + dpDipakai;
+  const pundiAmal = Number(header.inv_pundiamal || 0);
+  const kembaliDB = Number(header.inv_kembali || 0);
 
-  // [BARU] Total Telah Dibayar Riil = Tunai + Voucher + SEMUA Setoran di sistem
-  const totalTelahDibayar = bayarTunai + bayarVoucher + totalSetoran;
+  // [PERBAIKAN KUNCI]: Re-konstruksi Uang Fisik Pelanggan
+  // Karena DB lama menyimpan inv_rptunai secara "Netto",
+  // Uang fisik asli = Netto + Pundi Amal + Kembalian
+  const uangFisikTunai = bayarTunai + pundiAmal + kembaliDB;
+
+  // =================== FIX TOTAL BAYAR ===================
+  // Yang tampil di struk sebagai "Telah Dibayar" adalah Gross Payment (Uang Fisik + Card + Voucher + Setoran)
+  const totalTelahDibayar =
+    uangFisikTunai + bayarCard + bayarVoucher + totalSetoran;
 
   // [BARU] Hitung Sisa Piutang
-  const sisaPiutang = Math.max(grandTotal - totalTelahDibayar, 0);
-
-  const kembali = Number(
-    header.inv_kembali ??
-      Math.max(totalBayar - grandTotal - Number(header.inv_pundiamal || 0), 0),
+  // Perhitungan piutang TETAP menggunakan nilai Netto (bayarTunai) agar tidak minus
+  const sisaPiutang = Math.max(
+    grandTotal - (bayarTunai + bayarCard + bayarVoucher + totalSetoran),
+    0,
   );
 
   header.summary = {
@@ -2119,12 +2125,12 @@ const getPrintData = async (nomor) => {
     netto,
     ppn,
     biayaKirim: header.inv_bkrm || 0,
-    dp: dpDipakai, // << FIX: DP BENAR DARI SETORAN
+    dp: dpDipakai,
     grandTotal,
-    bayar: totalBayar, // << FIX: BAYAR = semua payment + DP
-    pundiAmal: header.inv_pundiamal,
-    kembali, // << FIX: KEMBALIAN BENAR
-    telahDibayar: totalTelahDibayar,
+    bayar: totalTelahDibayar, // Opsional jika dipakai untuk kalkulasi lain
+    pundiAmal: pundiAmal,
+    kembali: kembaliDB,
+    telahDibayar: totalTelahDibayar, // <--- INI YANG MUNCUL DI STRUK (550.000)
     sisaPiutang: sisaPiutang,
   };
 
