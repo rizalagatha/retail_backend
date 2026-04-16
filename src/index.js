@@ -175,7 +175,7 @@ const allowedOrigins = [
   "https://103.94.238.252",
 ];
 const imageFolderPath = path.join(__dirname, "public", "images");
-const memoFolderPath = path.join(__dirname, "public", "memos");
+const memoFolderPath = path.join(__dirname, "../public/memos");
 const requiredDirs = [
   path.join(__dirname, "temp"),
   path.join(__dirname, "public"),
