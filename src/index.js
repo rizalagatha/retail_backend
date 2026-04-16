@@ -239,6 +239,22 @@ app.use(
     },
   }),
 );
+app.use("/api/memos", (req, res, next) => {
+  console.log(`[DEBUG API MEMO] Request masuk ke: /api/memos${req.url}`);
+  next();
+});
+
+app.use(
+  "/api/memos",
+  express.static(memoFolderPath, {
+    setHeaders: (res, filePath) => {
+      if (path.extname(filePath).toLowerCase() === ".pdf") {
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", "inline");
+      }
+    },
+  }),
+);
 app.disable("etag");
 requiredDirs.forEach((dir) => {
   if (!fs.existsSync(dir)) {
