@@ -112,9 +112,10 @@ const save = async (payload, user) => {
               [nomorMutasi, tanggal, cabang, header.nomorStbj, user.kode],
             );
 
-            const mutasiDtlValues = itemsForCabang.map((item) => [
+            // [FIX KUNCI] Ganti (1) menjadi (index + 1)
+            const mutasiDtlValues = itemsForCabang.map((item, index) => [
               nomorMutasi,
-              `${cabang}.MTS.${format(new Date(tanggal), "yyMM")}${(1).toString().padStart(5, "0")}`,
+              `${cabang}.MTS.${format(new Date(tanggal), "yyMM")}${(index + 1).toString().padStart(5, "0")}`,
               item.spk,
               item.kode,
               item.ukuran,
