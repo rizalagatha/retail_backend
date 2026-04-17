@@ -2092,9 +2092,12 @@ const getPrintData = async (nomor) => {
 
   // =============== SUMMARY CALC REVISED ===============
   const netto = applyRoundingPolicy(grossSubTotal - totalDiskonKeseluruhan);
-  const ppn = applyRoundingPolicy((Number(header.inv_ppn) || 0 / 100) * netto);
+  const ppn = applyRoundingPolicy(
+    ((Number(header.inv_ppn) || 0) / 100) * netto,
+  ); // [FIX] Tanda kurungnya salah tadi
   const grandTotal = applyRoundingPolicy(netto + ppn + (header.inv_bkrm || 0));
 
+  // Ambil data pembayaran murni dari Invoice Header (Pembayaran Kasir)
   const bayarTunai = Number(header.inv_rptunai || 0);
   const bayarCard = Number(header.inv_rpcard || 0);
   const bayarVoucher = Number(header.inv_rpvoucher || 0);
@@ -2102,18 +2105,17 @@ const getPrintData = async (nomor) => {
   const pundiAmal = Number(header.inv_pundiamal || 0);
   const kembaliDB = Number(header.inv_kembali || 0);
 
-  // [PERBAIKAN KUNCI]: Re-konstruksi Uang Fisik Pelanggan
-  // Karena DB lama menyimpan inv_rptunai secara "Netto",
-  // Uang fisik asli = Netto + Pundi Amal + Kembalian
+  // [PERBAIKAN KUNCI]: Re-konstruksi Uang Fisik Pelanggan dari Transaksi Kasir
+  // Uang yang DITERIMA kasir (termasuk pundi & kembalian)
   const uangFisikTunai = bayarTunai + pundiAmal + kembaliDB;
 
-  // =================== FIX TOTAL BAYAR ===================
-  // Yang tampil di struk sebagai "Telah Dibayar" adalah Gross Payment (Uang Fisik + Card + Voucher + Setoran)
+  // [PERBAIKAN TOTAL DIBAYAR]: HANYA dari uang kasir + pembayaran kartu + voucher + DP Murni
+  // Jangan tambahkan totalSetoran di sini, karena totalSetoran (Pelunasan Piutang) BUKAN bagian dari struk penjualan awal
   const totalTelahDibayar =
-    uangFisikTunai + bayarCard + bayarVoucher + totalSetoran;
+    uangFisikTunai + bayarCard + bayarVoucher + dpDipakai;
 
-  // [BARU] Hitung Sisa Piutang
-  // Perhitungan piutang TETAP menggunakan nilai Netto (bayarTunai) agar tidak minus
+  // [PERBAIKAN SISA PIUTANG]
+  // Piutang dihitung dari: GrandTotal dikurangi (Tunai Netto + Card + Voucher + Semua Setoran yang masuk)
   const sisaPiutang = Math.max(
     grandTotal - (bayarTunai + bayarCard + bayarVoucher + totalSetoran),
     0,
@@ -2130,7 +2132,7 @@ const getPrintData = async (nomor) => {
     bayar: totalTelahDibayar, // Opsional jika dipakai untuk kalkulasi lain
     pundiAmal: pundiAmal,
     kembali: kembaliDB,
-    telahDibayar: totalTelahDibayar, // <--- INI YANG MUNCUL DI STRUK (550.000)
+    telahDibayar: totalTelahDibayar, // <--- INI YANG BENAR UNTUK MUNCUL DI STRUK KASIR
     sisaPiutang: sisaPiutang,
   };
 
