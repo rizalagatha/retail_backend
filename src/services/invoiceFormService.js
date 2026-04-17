@@ -2105,17 +2105,12 @@ const getPrintData = async (nomor) => {
   const pundiAmal = Number(header.inv_pundiamal || 0);
   const kembaliDB = Number(header.inv_kembali || 0);
 
-  // [PERBAIKAN KUNCI]: Re-konstruksi Uang Fisik Pelanggan dari Transaksi Kasir
-  // Uang yang DITERIMA kasir (termasuk pundi & kembalian)
-  const uangFisikTunai = bayarTunai + pundiAmal + kembaliDB;
+  // [PERBAIKAN KUNCI]:
+  // HANYA jumlahkan uang yang BENAR-BENAR memotong tagihan (Netto).
+  // Jangan tambahkan inv_kembali agar kebal dari "angka hantu" Delphi jika kasir salah ketik.
+  const totalTelahDibayar = bayarTunai + bayarCard + bayarVoucher + dpDipakai;
 
-  // [PERBAIKAN TOTAL DIBAYAR]: HANYA dari uang kasir + pembayaran kartu + voucher + DP Murni
-  // Jangan tambahkan totalSetoran di sini, karena totalSetoran (Pelunasan Piutang) BUKAN bagian dari struk penjualan awal
-  const totalTelahDibayar =
-    uangFisikTunai + bayarCard + bayarVoucher + dpDipakai;
-
-  // [PERBAIKAN SISA PIUTANG]
-  // Piutang dihitung dari: GrandTotal dikurangi (Tunai Netto + Card + Voucher + Semua Setoran yang masuk)
+  // Sisa Piutang TETAP mengacu ke totalSetoran jika ini adalah nota cicilan
   const sisaPiutang = Math.max(
     grandTotal - (bayarTunai + bayarCard + bayarVoucher + totalSetoran),
     0,
@@ -2129,10 +2124,10 @@ const getPrintData = async (nomor) => {
     biayaKirim: header.inv_bkrm || 0,
     dp: dpDipakai,
     grandTotal,
-    bayar: totalTelahDibayar, // Opsional jika dipakai untuk kalkulasi lain
+    bayar: totalTelahDibayar,
     pundiAmal: pundiAmal,
-    kembali: kembaliDB,
-    telahDibayar: totalTelahDibayar, // <--- INI YANG BENAR UNTUK MUNCUL DI STRUK KASIR
+    kembali: kembaliDB, // Kembalian tetap di-passing jika mau ditampilkan terpisah, tapi tidak masuk total bayar
+    telahDibayar: totalTelahDibayar, // <--- INI SUDAH PASTI PRESISI
     sisaPiutang: sisaPiutang,
   };
 
