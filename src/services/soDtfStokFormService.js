@@ -27,14 +27,14 @@ const getTemplateItems = async (jenisOrder) => {
 const loadDataForEdit = async (nomor) => {
   const [headerRows] = await pool.query(
     "SELECT h.*, s.sal_nama, j.jo_nama, g.pab_nama FROM tsodtf_hdr h LEFT JOIN kencanaprint.tsales s ON s.sal_kode=h.sd_sal_kode LEFT JOIN kencanaprint.tjenisorder j ON j.jo_kode=h.sd_jo_kode LEFT JOIN kencanaprint.tpabrik g ON g.pab_kode=h.sd_workshop WHERE h.sd_nomor = ?",
-    [nomor]
+    [nomor],
   );
 
   if (headerRows.length === 0) throw new Error("Data tidak ditemukan.");
 
   const [detailRows] = await pool.query(
     "SELECT * FROM tsodtf_stok WHERE sds_nomor = ? ORDER BY sds_nourut",
-    [nomor]
+    [nomor],
   );
 
   // Cari gambar dengan berbagai ekstensi
@@ -189,7 +189,7 @@ const searchJenisOrderStok = async (term) => {
       jo_kode AS kode, 
       jo_nama AS nama 
     FROM kencanaprint.tjenisorder
-    WHERE jo_kode IN ('SD', 'DP') 
+    WHERE jo_kode IN ('SD', 'DP', 'BR') 
       AND (jo_kode LIKE ? OR jo_nama LIKE ?)
     ORDER BY jo_nama
   `;
@@ -214,7 +214,7 @@ const processSoDtfStokImage = async (tempFilePath, nomorSo) => {
       process.cwd(),
       "public",
       "images",
-      cabang
+      cabang,
     );
 
     fs.mkdirSync(branchFolderPath, { recursive: true });
