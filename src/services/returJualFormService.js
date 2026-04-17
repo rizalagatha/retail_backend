@@ -316,7 +316,7 @@ function terbilang(n) {
 const getPrintData = async (nomor) => {
   const query = `
     SELECT 
-        h.rj_nomor, h.rj_tanggal, h.rj_inv, h.rj_ket,
+        h.rj_nomor, h.rj_tanggal, h.rj_inv, h.rj_ket, h.rj_jenis, -- [TAMBAH INI] Ambil Jenis Retur
         DATE_FORMAT(h.date_create, '%d-%m-%Y %H:%i:%s') AS created,
         h.user_create,
         c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
@@ -350,6 +350,7 @@ const getPrintData = async (nomor) => {
     nomor: rows[0].rj_nomor,
     tanggal: rows[0].rj_tanggal,
     invoice: rows[0].rj_inv,
+    jenis: rows[0].rj_jenis, // [TAMBAH INI] Map ke object header
     keterangan: rows[0].rj_ket,
     created: rows[0].created,
     user_create: rows[0].user_create,
