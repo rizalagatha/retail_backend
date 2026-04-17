@@ -5,7 +5,16 @@ const { format } = require("date-fns");
 
 // Fungsi untuk mengambil template grid (dari edtjoExit)
 const getTemplateItems = async (jenisOrder) => {
-  const brg_kode = jenisOrder === "SD" ? "2500053" : "2500060"; // SD=DTF, DP=DTF Premium
+  // --- [PERBAIKAN KUNCI] Penentuan Kode Barang berdasarkan Jenis Order ---
+  let brg_kode = "";
+  if (jenisOrder === "SD") {
+    brg_kode = "2500053"; // SD = DTF
+  } else if (jenisOrder === "DP") {
+    brg_kode = "2500060"; // DP = DTF Premium
+  } else if (jenisOrder === "BR") {
+    brg_kode = "2600019"; // BR = Bordir
+  }
+
   const query = `
     SELECT 
       b.brgd_kode AS kode,
