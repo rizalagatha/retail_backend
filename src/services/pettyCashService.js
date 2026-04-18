@@ -50,7 +50,13 @@ const getList = async (filters) => {
             
             IFNULL(MAX(k.pck_keterangan), GROUP_CONCAT(h.pc_ket SEPARATOR ' | ')) AS keterangan,
             MAX(h.user_create) AS userCreate,
-            COUNT(h.pc_nomor) AS jumlah_nota
+            
+            -- ======================================================================
+            -- [PERBAIKAN KUNCI JML NOTA] Subquery agar hitungannya akurat
+            -- ======================================================================
+            IF(MAX(h.pck_nomor) IS NULL, 1, 
+              (SELECT COUNT(pc_nomor) FROM tpettycash_hdr WHERE pck_nomor = MAX(h.pck_nomor))
+            ) AS jumlah_nota
             
         FROM tpettycash_hdr h
         LEFT JOIN tgudang g ON g.gdg_kode = h.pc_cab
