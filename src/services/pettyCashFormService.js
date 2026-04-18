@@ -27,18 +27,21 @@ const generateNomor = async (cab, conn) => {
 // --- RUMUS SALDO BERJALAN ---
 // Modal Awal (Misal 1 Juta) + Semua Pemasukan (Debet) - Semua Pengeluaran (Kredit)
 const getCurrentSaldo = async (cabang, excludeNomor, conn) => {
-  // [PERBAIKAN] Gunakan pool jika conn tidak dikirim dari controller
   const db = conn || pool;
+
+  // [SETTING MODAL AWAL DISINI]
+  const modalAwal = cabang === "K03" ? 500000 : 1000000;
 
   const query = `
     SELECT 
-      1000000 + 
+      ? + 
       IFNULL(SUM(CASE WHEN mut_tipe = 'DEBET' THEN mut_nominal ELSE 0 END), 0) - 
       IFNULL(SUM(CASE WHEN mut_tipe = 'KREDIT' THEN mut_nominal ELSE 0 END), 0) AS saldo_aktif
     FROM tpettycash_mutasi 
     WHERE mut_cabang = ? AND mut_nomor_bukti != ?
   `;
-  const [rows] = await db.query(query, [cabang, excludeNomor || ""]);
+  // Masukkan modalAwal sebagai parameter pertama
+  const [rows] = await db.query(query, [modalAwal, cabang, excludeNomor || ""]);
   return parseFloat(rows[0].saldo_aktif);
 };
 
@@ -199,21 +202,30 @@ const getDetail = async (nomor) => {
 
   const headerData = headerRows[0];
 
+  // [SETTING MODAL AWAL DISINI]
+  const modalAwal = headerData.pc_cab === "K03" ? 500000 : 1000000;
+
   // ====================================================================
   // [SIHIR AUTO-HEAL] PENYEMBUHAN DATABASE OTOMATIS SAAT DIBUKA!
   // ====================================================================
   const querySaldo = `
-    SELECT 1000000 + 
+    SELECT ? + 
       IFNULL(SUM(CASE WHEN mut_tipe = 'DEBET' THEN mut_nominal ELSE 0 END), 0) - 
       IFNULL(SUM(CASE WHEN mut_tipe = 'KREDIT' THEN mut_nominal ELSE 0 END), 0) AS saldo_murni
     FROM tpettycash_mutasi 
     WHERE mut_cabang = ? AND mut_nomor_bukti != ?
   `;
-  const [saldoRows] = await pool.query(querySaldo, [headerData.pc_cab, nomor]);
+
+  // Masukkan modalAwal sebagai parameter pertama
+  const [saldoRows] = await pool.query(querySaldo, [
+    modalAwal,
+    headerData.pc_cab,
+    nomor,
+  ]);
   let realModal = parseFloat(saldoRows[0].saldo_murni);
 
   // [PERBAIKAN KUNCI]: Hormati input manual dari database!
-  // Jika pc_modal di database LEBIH BESAR dari perhitungan mutasi murni 1 juta,
+  // Jika pc_modal di database LEBIH BESAR dari perhitungan mutasi murni,
   // berarti ada limit store yang lebih besar / disuntik manual. Jangan ditimpa!
   const dbModal = parseFloat(headerData.pc_modal || 0);
   if (dbModal > realModal) {
