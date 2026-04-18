@@ -55,8 +55,24 @@ const saveData = async (data, files, user) => {
     let nomor = parsedHeader.nomor;
     let idrecHdr = parsedHeader.idrec;
 
-    // [PERBAIKAN KUNCI]: Hitung saldo dengan MENGABAIKAN mutasi dokumen ini
-    const saldoBerjalan = await getCurrentSaldo(user.cabang, nomor, connection);
+    // Hitung saldo dengan MENGABAIKAN mutasi dokumen ini
+    let saldoBerjalan = await getCurrentSaldo(user.cabang, nomor, connection);
+
+    // [PERBAIKAN KUNCI]: Cek apakah ada override limit manual di database saat Edit!
+    if (isEditMode && nomor) {
+      const [existingHdr] = await connection.query(
+        "SELECT pc_modal FROM tpettycash_hdr WHERE pc_nomor = ?",
+        [nomor],
+      );
+      if (existingHdr.length > 0) {
+        const dbModal = parseFloat(existingHdr[0].pc_modal || 0);
+        // Jika modal di DB lebih besar dari hitungan 1 juta, gunakan modal dari DB!
+        if (dbModal > saldoBerjalan) {
+          saldoBerjalan = dbModal;
+        }
+      }
+    }
+
     const nominalTerpakai = parseFloat(parsedHeader.terpakai);
     const sisaSaldoSetelahIni = saldoBerjalan - nominalTerpakai;
 
@@ -92,9 +108,9 @@ const saveData = async (data, files, user) => {
       const sqlHdr = `UPDATE tpettycash_hdr SET pc_tanggal = ?, pc_modal = ?, pc_total_terpakai = ?, pc_saldo = ?, pc_ket = ?, user_modified = ?, date_modified = NOW() WHERE pc_nomor = ?`;
       await connection.query(sqlHdr, [
         parsedHeader.tanggal,
-        saldoBerjalan, // Modal kembali normal 1 Juta
+        saldoBerjalan, // Modal akan pakai yang sudah di-override (jika ada)
         nominalTerpakai,
-        sisaSaldoSetelahIni, // Saldo otomatis normal
+        sisaSaldoSetelahIni,
         parsedHeader.keterangan,
         user.kode,
         nomor,
@@ -194,18 +210,32 @@ const getDetail = async (nomor) => {
     WHERE mut_cabang = ? AND mut_nomor_bukti != ?
   `;
   const [saldoRows] = await pool.query(querySaldo, [headerData.pc_cab, nomor]);
-  const realModal = parseFloat(saldoRows[0].saldo_murni);
-  const newSaldo = realModal - parseFloat(headerData.pc_total_terpakai);
+  let realModal = parseFloat(saldoRows[0].saldo_murni);
+
+  // [PERBAIKAN KUNCI]: Hormati input manual dari database!
+  // Jika pc_modal di database LEBIH BESAR dari perhitungan mutasi murni 1 juta,
+  // berarti ada limit store yang lebih besar / disuntik manual. Jangan ditimpa!
+  const dbModal = parseFloat(headerData.pc_modal || 0);
+  if (dbModal > realModal) {
+    realModal = dbModal;
+  }
+
+  const [dtlRows] = await pool.query(
+    "SELECT SUM(pcd_nominal) as total_terpakai FROM tpettycash_dtl WHERE pcd_nomor = ?",
+    [nomor],
+  );
+  const totalTerpakai = parseFloat(dtlRows[0].total_terpakai || 0);
+  const newSaldo = realModal - totalTerpakai;
 
   // Timpa nilai corrupt dengan nilai asli yang benar untuk dikirim ke layar
   headerData.pc_modal = realModal;
+  headerData.pc_total_terpakai = totalTerpakai;
   headerData.pc_saldo = newSaldo;
 
   // JALANKAN UPDATE KE DATABASE!
-  // Sehingga halaman Browse langsung ikut sembuh tanpa perlu klik Simpan lagi!
   await pool.query(
-    "UPDATE tpettycash_hdr SET pc_modal = ?, pc_saldo = ? WHERE pc_nomor = ?",
-    [realModal, newSaldo, nomor],
+    "UPDATE tpettycash_hdr SET pc_modal = ?, pc_total_terpakai = ?, pc_saldo = ? WHERE pc_nomor = ?",
+    [realModal, totalTerpakai, newSaldo, nomor],
   );
 
   const [detailRows] = await pool.query(
