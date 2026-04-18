@@ -52,10 +52,13 @@ const getList = async (filters) => {
             MAX(h.user_create) AS userCreate,
             
             -- ======================================================================
-            -- [PERBAIKAN KUNCI JML NOTA] Subquery agar hitungannya akurat
+            -- [PERBAIKAN KUNCI JML NOTA] Hitung dari Tabel Detail (PCV)
             -- ======================================================================
-            IF(MAX(h.pck_nomor) IS NULL, 1, 
-              (SELECT COUNT(pc_nomor) FROM tpettycash_hdr WHERE pck_nomor = MAX(h.pck_nomor))
+            (
+                SELECT COUNT(d.pcd_pcv) 
+                FROM tpettycash_dtl d 
+                JOIN tpettycash_hdr h2 ON h2.pc_nomor = d.pcd_nomor
+                WHERE IFNULL(h2.pck_nomor, h2.pc_nomor) = IFNULL(MAX(h.pck_nomor), MAX(h.pc_nomor))
             ) AS jumlah_nota
             
         FROM tpettycash_hdr h
