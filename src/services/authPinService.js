@@ -230,10 +230,7 @@ const authPinService = {
 
     const query = `
             UPDATE totorisasi 
-            SET 
-                o_status = ?, 
-                o_approver = ?, 
-                o_approved_at = NOW()
+            SET o_status = ?, o_approver = ?, o_approved_at = NOW()
             WHERE o_nomor = ? AND o_status = 'P'
         `;
 
@@ -247,6 +244,44 @@ const authPinService = {
       throw new Error(
         "Gagal memproses. Request mungkin sudah diproses atau tidak ditemukan.",
       );
+    }
+
+    // =========================================================================
+    // [BARU] HOOK UNTUK MENG-ACC PETTY CASH SECARA OTOMATIS (WEB VERSION)
+    // =========================================================================
+    const [authData] = await pool.query(
+      "SELECT o_transaksi, o_jenis FROM totorisasi WHERE o_nomor = ?",
+      [authNomor],
+    );
+
+    if (authData.length > 0) {
+      const { o_transaksi, o_jenis } = authData[0];
+
+      if (o_jenis === "KLAIM_PETTYCASH" && o_transaksi) {
+        if (action === "APPROVE") {
+          await pool.query(
+            `UPDATE tpettycash_klaim_hdr SET pck_status = 'ACC', pck_acc = ?, date_acc = NOW(), user_modified = ?, date_modified = NOW() WHERE pck_nomor = ? AND pck_status = 'SUBMITTED'`,
+            [managerUser, managerUser, o_transaksi],
+          );
+          await pool.query(
+            `UPDATE tpettycash_hdr SET pc_status = 'ACC', user_modified = ?, date_modified = NOW() WHERE pck_nomor = ?`,
+            [managerUser, o_transaksi],
+          );
+        } else if (action === "REJECT") {
+          const alasan = "Ditolak via Web Otorisasi";
+
+          await pool.query(
+            `UPDATE tpettycash_klaim_hdr SET pck_status = 'REJECTED', pck_keterangan = CONCAT(IFNULL(pck_keterangan, ''), '\n[Catatan Revisi]: ', ?), user_modified = ?, date_modified = NOW() WHERE pck_nomor = ? AND pck_status = 'SUBMITTED'`,
+            [alasan, managerUser, o_transaksi],
+          );
+
+          // [PERBAIKAN KUNCI]: Lepaskan ikatan pck_nomor
+          await pool.query(
+            `UPDATE tpettycash_hdr SET pc_status = 'REJECTED', pck_nomor = NULL, user_modified = ?, date_modified = NOW() WHERE pck_nomor = ?`,
+            [managerUser, o_transaksi],
+          );
+        }
+      }
     }
 
     return { success: true, message: `Otorisasi berhasil di-${action}` };

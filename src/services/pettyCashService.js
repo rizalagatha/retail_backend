@@ -452,10 +452,10 @@ const rejectKlaimKolektif = async (pck_nomor, user, alasan) => {
       throw new Error("Gagal memproses. Dokumen mungkin sudah diproses.");
     }
 
-    // 2. Update status semua PC yang terikat menjadi REJECTED (Agar Store bisa mengeditnya lagi)
+    // 2. Update status semua PC yang terikat menjadi REJECTED & Lepaskan ikatan pck_nomor
     const updatePc = `
       UPDATE tpettycash_hdr 
-      SET pc_status = 'REJECTED', user_modified = ?, date_modified = NOW() 
+      SET pc_status = 'REJECTED', pck_nomor = NULL, user_modified = ?, date_modified = NOW() 
       WHERE pck_nomor = ?
     `;
     await connection.query(updatePc, [usrKode, safeNomor]);
