@@ -165,12 +165,16 @@ const mintaAccesoriesFormRoutes = require("./routes/mintaAccesoriesFormRoutes");
 // const mutasiWorkshopRoutes = require("./routes/mutasiWorkshopRoutes");
 // const mutasiWorkshipFormRoutes = require("./routes/mutasiWorkshopFormRoutes");
 // const terimaWorkshopRoutes = require("./routes/terimaWorkshopRoutes");
+// const soDtfTrialRoutes = require("./routes/soDtfTrialRoutes");
+// const soDtfTrialFormRoutes = require("./routes/soDtfTrialFormRoutes");
+// const dtfMachineLogRoutes = require("./routes/dtfMachineLogRoutes");
 
 const app = express();
 const port = process.env.PORT || 8000;
 const allowedOrigins = [
   "http://localhost:5173", // vite dev server
   "http://103.94.238.252",
+  "https://retail.kaosanofficial.com",
   "http://192.168.1.191:5173",
   "https://103.94.238.252",
 ];
@@ -211,6 +215,10 @@ app.use(
   }),
 );
 app.use("/images", express.static(imageFolderPath));
+app.use(
+  "/images",
+  express.static(path.join(process.cwd(), "public", "images")),
+);
 app.use("/uploads", express.static(path.join(__dirname, "public/uploads")));
 app.use("/api/uploads", express.static(path.join(__dirname, "public/uploads")));
 // app.use("/memos", (req, res, next) => {
@@ -534,6 +542,9 @@ app.use(
 // app.use("/api/mutasi-workshop", clientCertAuth, mutasiWorkshopRoutes);
 // app.use("/api/mutasi-workshop-form", clientCertAuth, mutasiWorkshipFormRoutes);
 // app.use("/api/terima-workshop", clientCertAuth, terimaWorkshopRoutes);
+// app.use("/api/so-dtf-trial-form", clientCertAuth, soDtfTrialFormRoutes);
+// app.use("/api/so-dtf-trial", clientCertAuth, soDtfTrialRoutes);
+// app.use("/api/dtf-machine-log", clientCertAuth, dtfMachineLogRoutes);
 
 // Menjalankan Server
 app.listen(port, () => {
