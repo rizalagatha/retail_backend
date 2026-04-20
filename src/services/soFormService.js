@@ -51,11 +51,7 @@ const save = async (data, user) => {
     // Jika Marketplace -> Selalu 'Y'
     // Jika statusRaw 'AKTIF' -> 'Y'
     // Selain itu -> 'N'
-    const finalAktifStatus = header.isMarketplace
-      ? "Y"
-      : statusRaw === "AKTIF"
-        ? "Y"
-        : "N";
+    const finalAktifStatus = "Y";
 
     // --- 2. QUERY HEADER ---
     if (isNew) {
@@ -76,7 +72,8 @@ const save = async (data, user) => {
             so_is_marketplace, so_mp_nomor_pesanan, so_mp_resi,
             so_accdp, so_ket, so_aktif, so_sc, 
             so_jenisorder, so_namadtf, 
-            so_pro_nomor, so_pro_nama, 
+            so_pro_nomor, so_pro_nama,
+            so_mem_hp, so_mem_nama, so_mem_alamat, so_mem_gender, so_mem_usia, so_mem_referensi, 
             so_cab, user_create, date_create
            )
           VALUES (
@@ -86,6 +83,7 @@ const save = async (data, user) => {
             ?, ?, ?, ?, 
             ?, ?, 
             ?, ?, 
+            ?, ?, ?, ?, ?, ?,
             ?, ?, NOW()
           )
         `;
@@ -117,8 +115,17 @@ const save = async (data, user) => {
         header.namaDtf ? String(header.namaDtf) : null, // 23. so_namadtf
         header.nomorPromo || "", // 24. so_pro_nomor
         header.namaPromo || "", // 25. so_pro_nama
-        header.gudang.kode, // 26. so_cab
-        user.kode, // 27. user_create
+
+        // --- [BARU] ---
+        header.memberHp || "", // 26. so_mem_hp
+        header.memberNama || "", // 27. so_mem_nama
+        header.memberAlamat || "", // 28. so_mem_alamat
+        header.memberGender || "", // 29. so_mem_gender
+        header.memberUsia || "", // 30. so_mem_usia
+        header.memberReferensi || "", // 31. so_mem_referensi
+
+        header.gudang.kode, // 32. so_cab
+        user.kode, // 33. user_create
       ]);
     } else {
       const [idrecRows] = await connection.query(
@@ -138,6 +145,7 @@ const save = async (data, user) => {
           so_disc = ?, so_disc1 = ?, so_disc2 = ?, so_bkrm = ?, so_dp = ?, 
           so_aktif = ?, so_sc = ?, 
           so_pro_nomor = ?, so_pro_nama = ?,
+          so_mem_hp = ?, so_mem_nama = ?, so_mem_alamat = ?, so_mem_gender = ?, so_mem_usia = ?, so_mem_referensi = ?,
           user_modified = ?, date_modified = NOW()
         WHERE so_nomor = ?
       `;
@@ -166,6 +174,15 @@ const save = async (data, user) => {
         header.salesCounter,
         header.nomorPromo || "",
         header.namaPromo || "",
+
+        // --- [BARU] ---
+        header.memberHp || "",
+        header.memberNama || "",
+        header.memberAlamat || "",
+        header.memberGender || "",
+        header.memberUsia || "",
+        header.memberReferensi || "",
+
         user.kode,
         soNomor,
       ]);
@@ -531,6 +548,14 @@ const getSoForEdit = async (nomor) => {
       so_is_marketplace: firstRow.so_is_marketplace === "Y",
       so_mp_nomor_pesanan: firstRow.so_mp_nomor_pesanan || "",
       so_mp_resi: firstRow.so_mp_resi || "",
+
+      // --- [BARU] Mapping data member ---
+      memberHp: firstRow.so_mem_hp || "",
+      memberNama: firstRow.so_mem_nama || "",
+      memberAlamat: firstRow.so_mem_alamat || "",
+      memberGender: firstRow.so_mem_gender || "",
+      memberUsia: firstRow.so_mem_usia || "",
+      memberReferensi: firstRow.so_mem_referensi || "",
     };
 
     const itemsData = mainRows.map((row, index) => {
