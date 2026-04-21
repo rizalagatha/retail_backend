@@ -22,7 +22,7 @@ const getDataFromSO = async (soNumber, branchCode) => {
         FROM tso_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
         LEFT JOIN tcustomer_level l ON l.level_kode = h.so_cus_level
-        WHERE h.so_nomor = ? AND h.inv_cab = ?;
+        WHERE h.so_nomor = ? AND h.so_cab = ?;
     `;
   const [headerRows] = await pool.query(headerQuery, [soNumber, branchCode]);
   if (headerRows.length === 0) throw new Error("Nomor SO tidak ditemukan.");
@@ -127,7 +127,7 @@ const saveData = async (payload, user) => {
       nomorProforma = await generateNewNumber(
         connection,
         header.cabang,
-        header.tanggal
+        header.tanggal,
       );
     }
 
