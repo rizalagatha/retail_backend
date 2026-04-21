@@ -131,18 +131,19 @@ const saveData = async (payload, user) => {
       );
     }
 
-    // Hapus detail lama jika mode edit
-    if (isEdit) {
-      await connection.query("DELETE FROM tinv_dtl WHERE invd_inv_nomor = ?", [
-        nomorProforma,
-      ]);
-    }
+    // ========================================================
+    // [PERBAIKAN] Potong string level, ambil kodenya saja!
+    // Misal: "1 - DISTRIBUTOR" -> split -> array ["1", "DISTRIBUTOR"] -> ambil index [0]
+    // ========================================================
+    const levelKodeOlah = header.level
+      ? header.level.split(" - ")[0].trim()
+      : null;
 
     // Simpan header (INSERT atau UPDATE)
     const headerData = {
       Inv_tanggal: header.tanggal,
       Inv_nomor_so: header.nomorSo,
-      inv_cus_level: header.level,
+      inv_cus_level: levelKodeOlah, // <--- GUNAKAN VARIABEL YANG SUDAH DIPOTONG TADI
       Inv_top: header.top,
       inv_ppn: header.ppn,
       inv_disc: header.diskon,
