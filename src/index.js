@@ -165,8 +165,8 @@ const mintaAccesoriesFormRoutes = require("./routes/mintaAccesoriesFormRoutes");
 // const mutasiWorkshopRoutes = require("./routes/mutasiWorkshopRoutes");
 // const mutasiWorkshipFormRoutes = require("./routes/mutasiWorkshopFormRoutes");
 // const terimaWorkshopRoutes = require("./routes/terimaWorkshopRoutes");
-// const soDtfTrialRoutes = require("./routes/soDtfTrialRoutes");
-// const soDtfTrialFormRoutes = require("./routes/soDtfTrialFormRoutes");
+const soDtfTrialRoutes = require("./routes/soDtfTrialRoutes");
+const soDtfTrialFormRoutes = require("./routes/soDtfTrialFormRoutes");
 // const dtfMachineLogRoutes = require("./routes/dtfMachineLogRoutes");
 
 const app = express();
@@ -548,8 +548,8 @@ app.use(
 // app.use("/api/mutasi-workshop", clientCertAuth, mutasiWorkshopRoutes);
 // app.use("/api/mutasi-workshop-form", clientCertAuth, mutasiWorkshipFormRoutes);
 // app.use("/api/terima-workshop", clientCertAuth, terimaWorkshopRoutes);
-// app.use("/api/so-dtf-trial-form", clientCertAuth, soDtfTrialFormRoutes);
-// app.use("/api/so-dtf-trial", clientCertAuth, soDtfTrialRoutes);
+app.use("/api/so-dtf-trial-form", clientCertAuth, soDtfTrialFormRoutes);
+app.use("/api/so-dtf-trial", clientCertAuth, soDtfTrialRoutes);
 // app.use("/api/dtf-machine-log", clientCertAuth, dtfMachineLogRoutes);
 
 // Menjalankan Server

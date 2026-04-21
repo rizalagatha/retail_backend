@@ -20,7 +20,8 @@ const findById = async (nomor) => {
                  LIMIT 1) as customerLevel,
                 sd_jo_kode as jenisOrderKode, jo_nama as jenisOrderNama, sd_nama as namaDtf, sd_kain as kain,
                 sd_finishing as finishing, sd_desain as desain, sd_workshop as workshopKode,
-                pab_nama as workshopNama, sd_ket as keterangan, h.user_create as user
+                pab_nama as workshopNama, sd_ket as keterangan, h.user_create as user,
+                sd_trial_ref as refTrial
             FROM tsodtf_hdr h
             LEFT JOIN kencanaprint.tsales s ON h.sd_sal_kode = s.sal_kode
             LEFT JOIN tcustomer c ON h.sd_cus_kode = c.cus_kode
@@ -129,9 +130,10 @@ const create = async (data, user) => {
         sd_idrec, sd_nomor, sd_tanggal, sd_datekerja, sd_dateline,
         sd_cus_kode, sd_customer, sd_sal_kode, sd_jo_kode,
         sd_so_nomor, sd_nama, sd_kain, sd_finishing,
-        sd_desain, sd_workshop, sd_ket, sd_cab, user_create, date_create
+        sd_desain, sd_workshop, sd_ket, sd_cab, user_create, date_create,
+        sd_trial_ref
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
     `;
     await connection.query(headerQuery, [
       headerIdRec,
@@ -152,6 +154,7 @@ const create = async (data, user) => {
       header.keterangan,
       user.cabang,
       user.kode,
+      header.refTrial || null, // <--- TAMBAH INI (Ambil dari frontend)
     ]);
 
     // 4. Insert Detail Ukuran (Tambahkan sdd_idrec)
@@ -279,7 +282,8 @@ const update = async (nomor, data, user) => {
         sd_tanggal = ?, sd_datekerja = ?, sd_dateline = ?, sd_cus_kode = ?, sd_customer = ?, 
         sd_sal_kode = ?, sd_jo_kode = ?, sd_so_nomor = ?, sd_nama = ?, sd_kain = ?, 
         sd_finishing = ?, sd_desain = ?, sd_workshop = ?, sd_ket = ?, 
-        user_modified = ?, date_modified = NOW()
+        user_modified = ?, date_modified = NOW(),
+        sd_trial_ref = ?
       WHERE sd_nomor = ?
     `;
 
@@ -300,6 +304,7 @@ const update = async (nomor, data, user) => {
       header.workshopKode,
       header.keterangan,
       userKode,
+      header.refTrial || null,
       nomor, // Berdasarkan nomor asli sebelum update
     ]);
 
