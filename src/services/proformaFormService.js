@@ -165,6 +165,12 @@ const saveData = async (payload, user) => {
       ]);
     } else {
       headerData.inv_nomor = nomorProforma;
+
+      // ==========================================
+      // [TAMBAHAN 1] Buat KTP/IDREC untuk Header
+      // ==========================================
+      headerData.inv_idrec = `${header.cabang}INV${format(new Date(), "yyyyMMddHHmmss.SSS")}`;
+
       headerData.inv_cab = header.cabang;
       headerData.user_create = user.kode;
       headerData.date_create = new Date();
@@ -174,7 +180,14 @@ const saveData = async (payload, user) => {
     // Simpan detail
     for (const [index, item] of items.entries()) {
       if (item.kode && item.jumlah > 0) {
+        // ==========================================
+        // [TAMBAHAN 2] Buat KTP/IDREC untuk setiap baris Detail
+        // Wajib ditambah index di belakang agar tidak kembar walau dieksekusi di detik yang sama
+        // ==========================================
+        const detailIdrec = `${header.cabang}IND${format(new Date(), "yyyyMMddHHmmss.SSS")}${index}`;
+
         const itemData = {
+          invd_idrec: detailIdrec, // <--- MASUKKAN KE SINI
           Invd_Inv_nomor: nomorProforma,
           Invd_kode: item.kode,
           invd_ukuran: item.ukuran,
