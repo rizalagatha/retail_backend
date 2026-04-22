@@ -29,9 +29,10 @@ const getSoDtfList = async (filters, user) => {
       params.push(cabang);
     }
   } else {
-    // Toko biasa lock ke cabangnya sendiri
-    branchQuery = "AND h.sd_cab = ?";
-    params.push(user.cabang);
+    // [PERBAIKAN]: Toko bisa lihat data yang dibuat cabangnya
+    // ATAU data yang memang ditujukan untuk cabangnya (berdasarkan prefix nomor)
+    branchQuery = "AND (h.sd_cab = ? OR h.sd_nomor LIKE ?)";
+    params.push(user.cabang, `${user.cabang}%`);
   }
 
   const query = `
