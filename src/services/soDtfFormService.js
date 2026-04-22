@@ -650,27 +650,81 @@ const getUkuranSodtfDetail = async (jenisOrder, ukuran) => {
  * @param {number} totalJumlahKaos - Total kuantitas kaos.
  * @returns {Promise<number>} Total harga DTG.
  */
-const calculateDtgPrice = async (detailsTitik, totalJumlahKaos) => {
+const calculateDtgPrice = async (detailsTitik, totalJumlahKaos, namaBarang) => {
   let totalHarga = 0;
+
+  // Deteksi warna kaos: Jika ada kata "PUTIH", berarti kaos terang.
+  const isKaosPutih = namaBarang && namaBarang.toUpperCase().includes("PUTIH");
+
+  // Ambil semua master harga DTG dari database
   const query = `
-        SELECT us_qty, us_promo, us_harga 
+        SELECT us_ukuran, us_panjang, us_lebar, us_qty, us_promo, us_harga 
         FROM tukuran_sodtf 
-        WHERE us_jenis = 'TG' AND us_ukuran = ?
+        WHERE us_jenis = 'TG'
     `;
+  const [rules] = await pool.query(query);
 
   for (const titik of detailsTitik) {
-    if (titik.sizeCetak) {
-      const [rows] = await pool.query(query, [titik.sizeCetak]);
-      if (rows.length > 0) {
-        const hargaRule = rows[0];
-        if (totalJumlahKaos >= hargaRule.us_qty) {
-          totalHarga += hargaRule.us_promo; // Harga promo
-        } else {
-          totalHarga += hargaRule.us_harga; // Harga reguler
-        }
+    let matchedRule = null;
+
+    // 1. Jika user pilih ukuran baku (A3, A4, dll), pakai harga itu langsung
+    if (titik.sizeCetak && titik.sizeCetak.toUpperCase() !== "CUSTOM") {
+      matchedRule = rules.find((r) => r.us_ukuran === titik.sizeCetak);
+    }
+    // 2. Jika user pilih CUSTOM (ada input P dan L)
+    else if (titik.panjang && titik.lebar) {
+      const inputArea = parseFloat(titik.panjang) * parseFloat(titik.lebar);
+
+      // --- FILTER BERDASARKAN WARNA KAOS ---
+      let filteredRules = rules;
+      if (isKaosPutih) {
+        // Cari ukuran yang namanya ada kata TERANG atau PUTIH
+        const rulesPutih = rules.filter(
+          (r) =>
+            r.us_ukuran.toUpperCase().includes("TERANG") ||
+            r.us_ukuran.toUpperCase().includes("PUTIH"),
+        );
+        if (rulesPutih.length > 0) filteredRules = rulesPutih;
+      } else {
+        // Cari ukuran yang namanya ada kata GELAP atau WARNA
+        const rulesWarna = rules.filter(
+          (r) =>
+            r.us_ukuran.toUpperCase().includes("GELAP") ||
+            r.us_ukuran.toUpperCase().includes("WARNA"),
+        );
+        if (rulesWarna.length > 0) filteredRules = rulesWarna;
+      }
+
+      // --- CARI LUASAN TERDEKAT ---
+      // Hitung luas (P x L) semua master harga, lalu urutkan dari yang terkecil ke terbesar
+      const rulesWithArea = filteredRules
+        .filter((r) => r.us_panjang && r.us_lebar)
+        .map((r) => ({
+          ...r,
+          area: parseFloat(r.us_panjang) * parseFloat(r.us_lebar),
+        }))
+        .sort((a, b) => a.area - b.area);
+
+      // Cari luasan master yang PERTAMA KALI mampu menampung luasan input user
+      matchedRule = rulesWithArea.find((r) => r.area >= inputArea);
+
+      // Jika input user SANGAT BESAR (melebihi ukuran maksimal di DB),
+      // kita patok pakai harga ukuran yang paling besar.
+      if (!matchedRule && rulesWithArea.length > 0) {
+        matchedRule = rulesWithArea[rulesWithArea.length - 1];
+      }
+    }
+
+    // --- TERAPKAN HARGA (Grosir vs Reguler) ---
+    if (matchedRule) {
+      if (totalJumlahKaos >= matchedRule.us_qty) {
+        totalHarga += matchedRule.us_promo; // Harga promo/grosir
+      } else {
+        totalHarga += matchedRule.us_harga; // Harga reguler
       }
     }
   }
+
   return totalHarga;
 };
 

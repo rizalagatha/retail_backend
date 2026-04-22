@@ -236,14 +236,20 @@ const getUkuranSodtfDetail = async (req, res) => {
 
 const calculateDtgPrice = async (req, res) => {
   try {
-    const { detailsTitik, totalJumlahKaos } = req.body;
+    // [PERBAIKAN]: Ambil namaBarang dari body
+    const { detailsTitik, totalJumlahKaos, namaBarang } = req.body;
+
     if (!detailsTitik || totalJumlahKaos === undefined) {
       return res.status(400).json({ message: "Parameter tidak lengkap." });
     }
+
+    // [PERBAIKAN]: Oper namaBarang sebagai parameter ketiga
     const harga = await soDtfFormService.calculateDtgPrice(
       detailsTitik,
       totalJumlahKaos,
+      namaBarang,
     );
+
     res.json({ harga });
   } catch (error) {
     res.status(500).json({ message: error.message });
