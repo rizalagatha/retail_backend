@@ -29,10 +29,16 @@ const getSoDtfList = async (filters, user) => {
       params.push(cabang);
     }
   } else {
-    // [PERBAIKAN]: Toko bisa lihat data yang dibuat cabangnya
-    // ATAU data yang memang ditujukan untuk cabangnya (berdasarkan prefix nomor)
-    branchQuery = "AND (h.sd_cab = ? OR h.sd_nomor LIKE ?)";
-    params.push(user.cabang, `${user.cabang}%`);
+    // ========================================================
+    // [PERBAIKAN KUNCI]: Gunakan Triple Protection
+    // Toko bisa lihat jika:
+    // 1. Dia yang bikin (sd_cab)
+    // 2. Nomornya jatah dia (sd_nomor LIKE)
+    // 3. Dia yang ngerjain / Target Workshop (sd_workshop)
+    // ========================================================
+    branchQuery =
+      "AND (h.sd_cab = ? OR h.sd_nomor LIKE ? OR h.sd_workshop = ?)";
+    params.push(user.cabang, `${user.cabang}%`, user.cabang);
   }
 
   const query = `
