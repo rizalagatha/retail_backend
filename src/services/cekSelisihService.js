@@ -96,17 +96,24 @@ const getList = async (filters) => {
  * Mengambil opsi cabang untuk filter.
  */
 const getCabangOptions = async (user) => {
-  // ... (fungsi ini sama seperti modul sebelumnya, bisa di-copy-paste)
   let query;
   const params = [];
+
   if (user.cabang === "KDC") {
-    query =
-      'SELECT gdg_kode as kode, gdg_nama as nama FROM tgudang WHERE gdg_dc<>0 AND gdg_kode NOT IN ("KBS","KPS") ORDER BY gdg_kode';
+    // [PERBAIKAN]: Ambil semua cabang yang aktif, bukan cuma DC
+    query = `
+      SELECT gdg_kode as kode, gdg_nama as nama 
+      FROM tgudang 
+      WHERE gdg_aktif = 'Y' 
+        AND gdg_kode NOT IN ("KBS","KPS","KDC") 
+      ORDER BY gdg_kode
+    `;
   } else {
     query =
       "SELECT gdg_kode as kode, gdg_nama as nama FROM tgudang WHERE gdg_kode = ? ORDER BY gdg_kode";
     params.push(user.cabang);
   }
+
   const [rows] = await pool.query(query, params);
   return rows;
 };
