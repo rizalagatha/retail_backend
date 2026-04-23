@@ -1,9 +1,11 @@
 const pool = require("../config/database");
 
 const getList = async (filters, user) => {
-  const { startDate, endDate, hargaNol, hppNol } = filters;
+  // [TAMBAHKAN search di destructuring]
+  const { startDate, endDate, hargaNol, hppNol, search } = filters;
 
-  // Query Master dari Delphi
+  let params = [startDate, endDate];
+
   let query = `
         SELECT x.kode, x.kategori, x.nama, x.date_create, x.otomatis, x.adaStok, x.status
         FROM (
@@ -22,7 +24,6 @@ const getList = async (filters, user) => {
         ) x
     `;
 
-  // Terapkan filter checkbox
   const whereConditions = [];
   if (hargaNol === "true" || hargaNol === true) {
     whereConditions.push("x.harga = 0");
@@ -31,13 +32,22 @@ const getList = async (filters, user) => {
     whereConditions.push("x.hpp <= 50");
   }
 
+  // ==========================================
+  // [TAMBAHAN]: Logika Pencarian Global
+  // ==========================================
+  if (search) {
+    whereConditions.push("(x.kode LIKE ? OR x.nama LIKE ?)");
+    const searchTerm = `%${search}%`;
+    params.push(searchTerm, searchTerm);
+  }
+
   if (whereConditions.length > 0) {
     query += ` WHERE ${whereConditions.join(" AND ")}`;
   }
 
   query += " ORDER BY x.nama";
 
-  const [rows] = await pool.query(query, [startDate, endDate]);
+  const [rows] = await pool.query(query, params);
   return rows;
 };
 
@@ -70,9 +80,17 @@ const getDetails = async (kode, user) => {
 
 // [BARU] Export Header dari Server
 const getExportHeaders = async (filters) => {
-  const { startDate, endDate } = filters;
-  
-  // Query Header: Ambil data master barang sesuai range tanggal pembuatan
+  const { startDate, endDate, search } = filters;
+
+  let params = [startDate, endDate];
+  let searchFilter = "";
+
+  if (search) {
+    searchFilter = ` AND (a.brg_kode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) LIKE ?)`;
+    const searchTerm = `%${search}%`;
+    params.push(searchTerm, searchTerm);
+  }
+
   const query = `
     SELECT 
         a.brg_kode AS 'Kode',
@@ -83,20 +101,19 @@ const getExportHeaders = async (filters) => {
         IF(a.brg_stok='Y', 'Y', 'N') AS 'AdaStok',
         IF(a.brg_aktif=0, 'AKTIF', 'PASIF') AS 'Status'
     FROM tbarangdc a
-    WHERE 
-        -- [FIX] Gunakan DATE() agar jam diabaikan
-        DATE(a.date_create) BETWEEN ? AND ?
+    WHERE DATE(a.date_create) BETWEEN ? AND ? ${searchFilter}
     ORDER BY a.date_create DESC, a.brg_kode ASC;
   `;
-  
-  const [rows] = await pool.query(query, [startDate, endDate]);
+
+  const [rows] = await pool.query(query, params);
   return rows;
 };
 
 // [UPDATE] Export Detail
 const getExportDetails = async (filters) => {
-  const { startDate, endDate, hargaNol, hppNol } = filters;
+  const { startDate, endDate, hargaNol, hppNol, search } = filters;
 
+  let params = [startDate, endDate];
   let baseQuery = `
         SELECT 
             a.brg_kode AS 'Kode Barang',
@@ -108,19 +125,23 @@ const getExportDetails = async (filters) => {
             IF(a.brg_aktif=0, "AKTIF", "PASIF") AS 'Status'
         FROM tbarangdc a
         INNER JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
-        WHERE 
-            -- [FIX] Gunakan DATE()
-            DATE(a.date_create) BETWEEN ? AND ?
+        WHERE DATE(a.date_create) BETWEEN ? AND ?
     `;
 
   const whereConditions = [];
-  
-  // Filter Khusus
   if (hargaNol === "true" || hargaNol === true) {
     whereConditions.push("b.brgd_harga = 0");
   }
   if (hppNol === "true" || hppNol === true) {
-    whereConditions.push("b.brgd_hpp <= 50"); // Asumsi logic <= 50 sesuai request sebelumnya
+    whereConditions.push("b.brgd_hpp <= 50");
+  }
+
+  if (search) {
+    whereConditions.push(
+      "(a.brg_kode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos,' ',a.brg_tipe,' ',a.brg_lengan,' ',a.brg_jeniskain,' ',a.brg_warna)) LIKE ?)",
+    );
+    const searchTerm = `%${search}%`;
+    params.push(searchTerm, searchTerm);
   }
 
   if (whereConditions.length > 0) {
@@ -129,7 +150,7 @@ const getExportDetails = async (filters) => {
 
   baseQuery += " ORDER BY a.brg_kode, b.brgd_ukuran";
 
-  const [rows] = await pool.query(baseQuery, [startDate, endDate]);
+  const [rows] = await pool.query(baseQuery, params);
   return rows;
 };
 
