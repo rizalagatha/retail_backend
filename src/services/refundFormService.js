@@ -98,8 +98,8 @@ const getInvoiceLookup = async (cabang) => {
             LEFT JOIN tpiutang_hdr p ON p.ph_inv_nomor = h.inv_nomor
             WHERE LEFT(h.inv_nomor, 3) = ?
         ) X
-        -- [PERBAIKAN] Tarik semua sisa minus (berapapun) DAN sisa plus maksimal 500, tapi abaikan yang lunas (0)
-        WHERE (X.Nominal - X.Bayar) <= 500 
+        -- [PERBAIKAN] Gunakan BETWEEN agar sisa yang ribuan tidak ikut masuk
+        WHERE (X.Nominal - X.Bayar) BETWEEN -500 AND 500 
           AND (X.Nominal - X.Bayar) <> 0
         ORDER BY X.Nomor;
     `;

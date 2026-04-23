@@ -102,7 +102,7 @@ const remove = async (nomor) => {
 
     const [headers] = await connection.query(
       "SELECT sj_noterima, sj_stbj, sj_closing FROM tdc_sj_hdr WHERE sj_nomor = ?",
-      [nomor]
+      [nomor],
     );
     if (headers.length === 0) {
       throw new Error("Data tidak ditemukan.");
@@ -219,6 +219,7 @@ const getPrintData = async (nomor) => {
             h.sj_nomor,
             h.sj_tanggal,
             h.sj_mt_nomor,
+            h.sj_so_nomor,
             h.sj_ket,
             h.user_create,
             h.date_create,

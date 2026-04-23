@@ -587,7 +587,7 @@ const getStagnantStockSummary = async (user) => {
 };
 
 /**
- * @description Menghitung total sisa piutang.
+ * @description Menghitung total sisa piutang (Sisa >= 500).
  */
 const getTotalSisaPiutang = async (user) => {
   let branchFilter = "AND u.ph_cab = ?";
@@ -598,8 +598,6 @@ const getTotalSisaPiutang = async (user) => {
     params = [];
   }
 
-  // Ini akan mengubah semua nilai negatif (kelebihan bayar) menjadi 0
-  // SEBELUM menjumlahkannya.
   const query = `
     SELECT 
       SUM(GREATEST(0, IFNULL(v.debet, 0) - IFNULL(v.kredit, 0))) AS totalSisaPiutang
@@ -611,7 +609,7 @@ const getTotalSisaPiutang = async (user) => {
         FROM tpiutang_dtl 
         GROUP BY pd_ph_nomor
     ) v ON v.pd_ph_nomor = u.ph_nomor
-    WHERE 1=1 ${branchFilter};
+    WHERE (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) >= 500 ${branchFilter};
   `;
 
   const [rows] = await pool.query(query, params);
@@ -619,15 +617,11 @@ const getTotalSisaPiutang = async (user) => {
 };
 
 /**
- * @description Menghitung sisa piutang per cabang (HANYA UNTUK KDC).
+ * @description Menghitung sisa piutang per cabang (HANYA UNTUK KDC, Sisa >= 500).
  */
 const getPiutangPerCabang = async (user) => {
-  // Fitur ini hanya untuk KDC
-  if (user.cabang !== "KDC") {
-    return []; // Kembalikan array kosong jika bukan KDC
-  }
+  if (user.cabang !== "KDC") return [];
 
-  // Query ini mengambil total sisa piutang > 0, dikelompokkan per cabang
   const query = `
     SELECT 
       u.ph_cab AS cabang_kode,
@@ -642,7 +636,7 @@ const getPiutangPerCabang = async (user) => {
         GROUP BY pd_ph_nomor
     ) v ON v.pd_ph_nomor = u.ph_nomor
     LEFT JOIN tgudang g ON g.gdg_kode = u.ph_cab
-    WHERE (v.debet - v.kredit) > 0  -- Hanya ambil yang masih ada sisa
+    WHERE (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) >= 500
     GROUP BY u.ph_cab, g.gdg_nama
     ORDER BY sisa_piutang DESC;
   `;
@@ -652,16 +646,22 @@ const getPiutangPerCabang = async (user) => {
 };
 
 /**
- * @description Invoice yang masih punya sisa piutang untuk store tertentu.
+ * @description Invoice yang masih punya sisa piutang untuk store tertentu (Sisa >= 500 + Nama Customer).
  */
-const getPiutangPerInvoice = async (user) => {
-  // Hanya untuk store, bukan KDC
-  if (user.cabang === "KDC") return [];
+const getPiutangPerInvoice = async (user, targetCabang) => {
+  let filterCabang =
+    user.cabang === "KDC" && targetCabang ? targetCabang : user.cabang;
+
+  if (!filterCabang) return [];
+
+  // [PERBAIKAN KUNCI]: Gunakan LIKE pada nomor invoice untuk menjamin akurasi
+  const prefix = `${filterCabang}.INV.%`;
 
   const query = `
         SELECT 
             u.ph_inv_nomor AS invoice,
             DATE_FORMAT(h.inv_tanggal, '%Y-%m-%d') AS tanggal,
+            c.cus_nama AS customer_nama,
             IFNULL(v.debet - v.kredit, 0) AS sisa_piutang
         FROM tpiutang_hdr u
         LEFT JOIN (
@@ -672,12 +672,14 @@ const getPiutangPerInvoice = async (user) => {
             GROUP BY pd_ph_nomor
         ) v ON v.pd_ph_nomor = u.ph_nomor
         LEFT JOIN tinv_hdr h ON h.inv_nomor = u.ph_inv_nomor
-        WHERE u.ph_cab = ?
-          AND (v.debet - v.kredit) > 0
+        LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+        -- [PERBAIKAN KUNCI]: Filter by awalan nomor invoice, BUKAN u.ph_cab
+        WHERE u.ph_inv_nomor LIKE ?
+          AND (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) >= 500 
         ORDER BY sisa_piutang DESC;
     `;
 
-  const [rows] = await pool.query(query, [user.cabang]);
+  const [rows] = await pool.query(query, [prefix]);
   return rows;
 };
 
@@ -951,68 +953,90 @@ const getStokKosongReguler = async (
   user,
   searchTerm = "",
   targetCabang = "",
+  isExport = false,
 ) => {
-  // 1. Tentukan Cabang: Jika KDC pilih ALL, kita akan tarik data global
-  // (Penting: Jika KDC tapi tidak pilih cabang spesifik, kita anggap target = ALL)
   let branchToCheck =
     user.cabang === "KDC" && targetCabang ? targetCabang : user.cabang;
   const searchPattern = `%${searchTerm}%`;
+  const limitClause = isExport ? "" : "LIMIT 250";
 
-  let branchFilter = "";
-  const params = [];
+  let query = "";
+  let params = [];
 
-  // Jika BUKAN "ALL", artinya kita mau filter cabang spesifik
-  if (branchToCheck !== "ALL") {
-    branchFilter = "AND m.mst_cab = ?";
-    params.push(branchToCheck);
+  if (branchToCheck === "ALL") {
+    // --- MODE PECAH PER TOKO (ALL) ---
+    query = `
+      WITH ActiveStores AS (
+          SELECT gdg_kode, gdg_nama FROM tgudang WHERE gdg_dc = 0
+      ),
+      MasterItems AS (
+          SELECT 
+              b.brgd_kode AS kode,
+              b.brgd_barcode AS barcode,
+              TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), ' ', IFNULL(a.brg_tipe,''), ' ', IFNULL(a.brg_lengan,''), ' ', IFNULL(a.brg_jeniskain,''), ' ', IFNULL(a.brg_warna,''))) AS nama_barang,
+              b.brgd_ukuran AS ukuran
+          FROM tbarangdc a
+          JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
+          WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y' AND a.brg_ktgp = 'REGULER'
+            AND b.brgd_ukuran IN ('S', 'M', 'L', 'XL', '2XL')
+            AND (b.brgd_kode LIKE ? OR b.brgd_barcode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos,' ',a.brg_tipe,' ',a.brg_lengan,' ',a.brg_jeniskain,' ',a.brg_warna)) LIKE ?)
+      )
+      SELECT 
+          s.gdg_nama AS nama_cabang,
+          mi.kode,
+          mi.barcode,
+          mi.nama_barang,
+          mi.ukuran,
+          IFNULL(SUM(m.mst_stok_in - m.mst_stok_out), 0) AS stok_akhir
+      FROM ActiveStores s
+      CROSS JOIN MasterItems mi -- Gabungkan tiap toko dengan tiap barang
+      LEFT JOIN tmasterstok m ON m.mst_brg_kode = mi.kode 
+          AND m.mst_ukuran = mi.ukuran 
+          AND m.mst_cab = s.gdg_kode
+          AND m.mst_aktif = 'Y'
+      GROUP BY s.gdg_kode, mi.kode, mi.ukuran
+      HAVING stok_akhir <= 0
+      ORDER BY s.gdg_kode, mi.nama_barang, mi.ukuran
+      ${limitClause};
+    `;
+    params = [searchPattern, searchPattern, searchPattern];
+  } else {
+    // --- MODE SINGLE CABANG (TETAP) ---
+    query = `
+      WITH MasterData AS (
+          SELECT 
+              b.brgd_kode AS kode,
+              b.brgd_barcode AS barcode,
+              TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), ' ', IFNULL(a.brg_tipe,''), ' ', IFNULL(a.brg_lengan,''), ' ', IFNULL(a.brg_jeniskain,''), ' ', IFNULL(a.brg_warna,''))) AS nama_barang,
+              b.brgd_ukuran AS ukuran
+          FROM tbarangdc a
+          JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
+          WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y' AND a.brg_ktgp = 'REGULER'
+            AND b.brgd_ukuran IN ('S', 'M', 'L', 'XL', '2XL')
+            AND (b.brgd_kode LIKE ? OR b.brgd_barcode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos,' ',a.brg_tipe,' ',a.brg_lengan,' ',a.brg_jeniskain,' ',a.brg_warna)) LIKE ?)
+      )
+      SELECT 
+          '' AS nama_cabang,
+          md.kode,
+          md.barcode,
+          md.nama_barang,
+          md.ukuran,
+          IFNULL(SUM(m.mst_stok_in - m.mst_stok_out), 0) AS stok_akhir
+      FROM MasterData md
+      LEFT JOIN tmasterstok m ON m.mst_brg_kode = md.kode 
+          AND m.mst_ukuran = md.ukuran 
+          AND m.mst_aktif = 'Y'
+          AND m.mst_cab = ?
+      GROUP BY md.kode, md.ukuran
+      HAVING stok_akhir <= 0
+      ORDER BY md.nama_barang, md.ukuran
+      ${limitClause};
+    `;
+    params = [searchPattern, searchPattern, searchPattern, branchToCheck];
   }
 
-  // Masukkan parameter pencarian
-  params.push(searchPattern, searchPattern, searchPattern);
-
-  // [PERBAIKAN KUNCI]
-  // 1. Pakai IFNULL(..., 0) di SUM stok_in/out agar aman.
-  // 2. Filter ukuran dibatasi ke ukuran reguler dewasa saja.
-  // 3. HAVING dipastikan memfilter hasil agregasi SUM yang 0 atau kurang.
-  const query = `
-    SELECT 
-        b.brgd_kode AS kode,
-        b.brgd_barcode AS barcode,
-        TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), ' ', IFNULL(a.brg_tipe,''), ' ', IFNULL(a.brg_lengan,''), ' ', IFNULL(a.brg_jeniskain,''), ' ', IFNULL(a.brg_warna,''))) AS nama_barang,
-        b.brgd_ukuran AS ukuran,
-        a.brg_ktgp AS kategori,
-        IFNULL(SUM(m.mst_stok_in - m.mst_stok_out), 0) AS stok_akhir
-    FROM tbarangdc a
-    JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
-    
-    -- LEFT JOIN ke tabel stok
-    LEFT JOIN tmasterstok m ON m.mst_brg_kode = b.brgd_kode 
-        AND m.mst_ukuran = b.brgd_ukuran 
-        AND m.mst_aktif = 'Y'
-        ${branchFilter}
-        
-    WHERE a.brg_aktif = 0
-      AND a.brg_logstok = 'Y'
-      AND a.brg_ktgp = 'REGULER'
-      AND b.brgd_ukuran IN ('S', 'M', 'L', 'XL', '2XL') 
-      AND (
-          b.brgd_kode LIKE ? OR b.brgd_barcode LIKE ? OR 
-          CONCAT(IFNULL(a.brg_jeniskaos,''), ' ', IFNULL(a.brg_tipe,''), ' ', IFNULL(a.brg_lengan,''), ' ', IFNULL(a.brg_jeniskain,''), ' ', IFNULL(a.brg_warna,'')) LIKE ?
-      )
-    GROUP BY b.brgd_kode, b.brgd_barcode, b.brgd_ukuran, a.brg_ktgp, a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna
-    
-    -- [PENTING] Tarik hanya barang yang agregat stoknya benar-benar habis/0/minus
-    HAVING IFNULL(SUM(m.mst_stok_in - m.mst_stok_out), 0) <= 0
-    ORDER BY nama_barang, ukuran;
-  `;
-
   const [allRows] = await pool.query(query, params);
-
-  // 2. Berikan hasil dengan total asli dan data terbatas untuk performa UI
-  return {
-    data: allRows.slice(0, 250), // Kirim 250 data pertama saja agar UI/Browser tidak ngelag
-    totalCount: allRows.length, // Tapi beritahu Frontend berapa total aslinya (misal: 1500 barang kosong)
-  };
+  return { data: allRows, totalCount: allRows.length };
 };
 
 const getParetoStockHealth = async (req, res) => {
@@ -1357,36 +1381,92 @@ const getMasterJadwalRutin = async () => {
 };
 
 const getCashflowSummary = async (user, targetDate = null) => {
-  // Pastikan targetDate ada dan bukan string 'undefined' atau 'null'
-  let finalDate;
-  if (targetDate && targetDate !== "undefined" && targetDate !== "") {
-    finalDate = targetDate;
-  } else {
-    finalDate = format(subDays(new Date(), 1), "yyyy-MM-dd"); // Default H-1
-  }
+  let finalDate =
+    targetDate && targetDate !== "undefined" && targetDate !== ""
+      ? targetDate
+      : format(subDays(new Date(), 1), "yyyy-MM-dd");
 
-  let branchFilter = "";
+  // Filter cabang
+  let branchFilterInv =
+    user.cabang !== "KDC"
+      ? "AND LEFT(h.inv_nomor, 3) = ?"
+      : "AND LEFT(h.inv_nomor, 3) <> 'KDC'";
+
+  // [PERBAIKAN KUNCI 1] Sesuaikan nama alias 'h' untuk tabel header Petty Cash
+  let branchFilterPc =
+    user.cabang !== "KDC" ? "AND h.pc_cab = ?" : "AND h.pc_cab <> 'KDC'";
+
   let params = [finalDate];
+  if (user.cabang !== "KDC") params.push(user.cabang);
 
-  if (user.cabang !== "KDC") {
-    branchFilter = "AND LEFT(h.fsk_nomor, 3) = ?";
-    params.push(user.cabang);
-  }
-
-  // Query menggunakan parameter '?' untuk finalDate
-  const query = `
+  // 1. Query Invoice (Omset, HPP, Laba Kotor, Kas Aktual, Transaksi)
+  const invQuery = `
     SELECT 
-        d.fskd2_jenis AS jenis,
-        SUM(d.fskd2_nominal) AS total_reported,
-        SUM(IFNULL(d.fskd2_nominalv, 0)) AS total_verified
-    FROM tform_setorkasir_hdr h
-    JOIN tform_setorkasir_dtl2 d ON h.fsk_nomor = d.fskd2_nomor
-    WHERE h.fsk_tanggal = ? ${branchFilter}
-    GROUP BY d.fskd2_jenis
+      IFNULL(SUM(ROUND(x.nominal)), 0) AS omset,
+      IFNULL(SUM(ROUND(x.hpp)), 0) AS hpp,
+      IFNULL(SUM(ROUND(x.nominal - x.hpp)), 0) AS laba_kotor,
+      IFNULL(SUM(x.kas_masuk), 0) AS kas_aktual,
+      COUNT(x.inv_nomor) AS jml_transaksi
+    FROM (
+      SELECT 
+        h.inv_nomor,
+        (
+          SELECT (SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) - hh.inv_disc + (hh.inv_ppn / 100 * (SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) - hh.inv_disc)))
+          FROM tinv_dtl dd LEFT JOIN tinv_hdr hh ON hh.inv_nomor = dd.invd_inv_nomor
+          WHERE hh.inv_nomor = h.inv_nomor
+        ) AS nominal,
+        (
+          SELECT SUM(dd.invd_jumlah * dd.invd_hpp)
+          FROM tinv_dtl dd LEFT JOIN tinv_hdr hh ON hh.inv_nomor = dd.invd_inv_nomor
+          WHERE hh.inv_nomor = h.inv_nomor
+        ) AS hpp,
+        -- Kas Masuk Riil: Tunai + Card/Transfer + DP (Tidak termasuk Piutang Murni)
+        (h.inv_rptunai + h.inv_rpcard + h.inv_dp) AS kas_masuk
+      FROM tinv_hdr h
+      WHERE h.inv_sts_pro = 0 AND h.inv_tanggal = ? ${branchFilterInv}
+    ) AS x
   `;
+  const [invRows] = await pool.query(invQuery, params);
 
-  const [rows] = await pool.query(query, params);
-  return rows;
+  // ========================================================================
+  // [PERBAIKAN KUNCI 2] Query Petty Cash Akurat Harian
+  // Kita jumlahkan dari tabel Detail (pcd_nominal) berdasarkan tanggal notanya
+  // ========================================================================
+  const pcQuery = `
+    SELECT IFNULL(SUM(d.pcd_nominal), 0) AS pengeluaran 
+    FROM tpettycash_dtl d
+    INNER JOIN tpettycash_hdr h ON h.pc_nomor = d.pcd_nomor
+    WHERE h.pc_status NOT IN ('REJECTED') 
+      AND DATE(d.pcd_tanggal) = DATE(?) 
+      ${branchFilterPc}
+  `;
+  const [pcRows] = await pool.query(pcQuery, params);
+
+  const omset = Number(invRows[0].omset);
+  const hpp = Number(invRows[0].hpp);
+  const labaKotor = Number(invRows[0].laba_kotor);
+  const kasAktual = Number(invRows[0].kas_aktual);
+  const jmlTransaksi = Number(invRows[0].jml_transaksi);
+
+  // Ambil total pengeluaran dari detail nota harian
+  const pengeluaran = Number(pcRows[0].pengeluaran);
+
+  // 3. Kalkulasi Business Intelligenconst sqlinsertce
+  const labaBersih = labaKotor - pengeluaran;
+  const margin = omset > 0 ? (labaKotor / omset) * 100 : 0;
+  const basketSize = jmlTransaksi > 0 ? omset / jmlTransaksi : 0;
+
+  return {
+    omset,
+    hpp,
+    labaKotor,
+    margin: Number(margin.toFixed(2)),
+    pengeluaran,
+    labaBersih,
+    kasAktual,
+    jmlTransaksi,
+    basketSize: Math.round(basketSize),
+  };
 };
 
 /**

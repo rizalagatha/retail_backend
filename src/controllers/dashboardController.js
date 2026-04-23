@@ -119,7 +119,11 @@ const getPiutangPerCabang = async (req, res) => {
 
 const getPiutangPerInvoice = async (req, res) => {
   try {
-    const data = await dashboardService.getPiutangPerInvoice(req.user);
+    // [PERBAIKAN] Kirim req.query.cabang ke service
+    const data = await dashboardService.getPiutangPerInvoice(
+      req.user,
+      req.query.cabang,
+    );
     res.json(data);
   } catch (error) {
     console.error("Error in getPiutangPerInvoice controller:", error);
@@ -211,24 +215,22 @@ const getStockAlerts = async (req, res) => {
 
 const getStokKosong = async (req, res) => {
   try {
-    const searchTerm = req.query.q || "";
-    // Get the 'cabang' parameter from the URL query string (e.g., ?q=kaos&cabang=K01)
-    const targetCabang = req.query.cabang || "";
+    const { q, cabang, export: isExportParam } = req.query; // Tangkap parameter 'export'
 
-    const items = await dashboardService.getStokKosongReguler(
+    // Ubah string 'true' dari axios menjadi nilai boolean
+    const isExport = isExportParam === "true";
+
+    // Oper boolean isExport ke service
+    const result = await dashboardService.getStokKosongReguler(
       req.user,
-      searchTerm,
-      targetCabang,
+      q,
+      cabang,
+      isExport,
     );
 
-    res.json({
-      success: true,
-      data: items,
-      total: items.length,
-    });
+    res.json(result);
   } catch (error) {
-    console.error("Error getStokKosong:", error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ message: error.message });
   }
 };
 

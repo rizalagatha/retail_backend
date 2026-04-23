@@ -1,30 +1,64 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const sjFormController = require('../controllers/suratJalanFormController');
-const { verifyToken, checkPermission } = require('../middleware/authMiddleware');
+const sjFormController = require("../controllers/suratJalanFormController");
+const {
+  verifyToken,
+  checkPermission,
+} = require("../middleware/authMiddleware");
 
-const MENU_ID = '213'; // Menu ID Surat Jalan ke Store
+const MENU_ID = "213"; // Menu ID Surat Jalan ke Store
 
-router.get('/lookup/stores', verifyToken, checkPermission(MENU_ID, 'view'), sjFormController.searchStores);
+router.get(
+  "/lookup/stores",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  sjFormController.searchStores,
+);
 router.get(
   "/load-from-pl",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  sjFormController.loadItemsFromPackingList
+  sjFormController.loadItemsFromPackingList,
 );
-router.get('/search/terima-rb', verifyToken, checkPermission(MENU_ID, 'view'), sjFormController.searchTerimaRb);
+router.get(
+  "/search/terima-rb",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  sjFormController.searchTerimaRb,
+);
 router.get(
   "/search/permintaan",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  sjFormController.searchPermintaan
+  sjFormController.searchPermintaan,
 );
-router.get('/by-barcode/:barcode', verifyToken, sjFormController.getByBarcode);
+router.get(
+  "/lookup/so-bordir",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  sjFormController.searchSoBordirGlobal,
+);
+router.get("/by-barcode/:barcode", verifyToken, sjFormController.getByBarcode);
 // Load items from Permintaan or Terima RB
-router.get('/load-items', verifyToken, checkPermission(MENU_ID, 'view'), sjFormController.getItemsForLoad);
+router.get(
+  "/load-items",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  sjFormController.getItemsForLoad,
+);
 // Save data
-router.post('/save', verifyToken, checkPermission(MENU_ID, 'insert'), sjFormController.save); // Asumsi save untuk insert & edit
+router.post(
+  "/save",
+  verifyToken,
+  checkPermission(MENU_ID, "insert"),
+  sjFormController.save,
+); // Asumsi save untuk insert & edit
 // Load data for edit mode
-router.get('/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), sjFormController.loadForEdit);
+router.get(
+  "/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  sjFormController.loadForEdit,
+);
 
 module.exports = router;

@@ -118,6 +118,20 @@ const loadItemsFromPackingList = async (req, res) => {
   }
 };
 
+const searchSoBordirGlobal = async (req, res) => {
+  try {
+    const { term, page = 1, itemsPerPage = 10 } = req.query;
+    const data = await sjFormService.searchSoBordirGlobal(
+      term,
+      page,
+      itemsPerPage,
+    );
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getItemsForLoad,
   save,
@@ -127,4 +141,5 @@ module.exports = {
   searchTerimaRb,
   getByBarcode,
   loadItemsFromPackingList,
+  searchSoBordirGlobal,
 };

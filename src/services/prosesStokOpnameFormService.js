@@ -1,7 +1,9 @@
 const pool = require("../config/database");
 const { format } = require("date-fns");
+const path = require("path");
+const fs = require("fs");
 
-// Fungsi untuk membuat nomor SOP baru
+// Fungsi untuk membuat nomor SOP baru (Format SO Opname kita samakan dengan KOR)
 const generateNewNumber = async (connection, branchCode, date) => {
   const prefix = `${branchCode}.SOP.${format(new Date(date), "yyMM")}`;
   const query = `SELECT IFNULL(MAX(RIGHT(sop_nomor, 4)), 0) as max_nomor FROM tsop_hdr WHERE LEFT(sop_nomor, 12) = ?`;
@@ -11,8 +13,10 @@ const generateNewNumber = async (connection, branchCode, date) => {
 };
 
 /**
- * Mengambil data selisih dari hasil hitung stok.
- * Sekarang menerima parameter cabang dinamis.
+ * [REVISI] Mengambil data AWAL stok opname.
+ * LOGIKA: Tarik SEMUA barang aktif.
+ * - Jika tidak di-scan, Jumlah Fisik = 0 (Otomatis selisih jadi minus).
+ * - Jika di-scan, Jumlah Fisik = Hasil Scan (Selisih otomatis menyesuaikan).
  */
 const getInitialData = async (user, targetCabang = null) => {
   const cabang = targetCabang || user.cabang;
@@ -30,33 +34,54 @@ const getInitialData = async (user, targetCabang = null) => {
   const zsoptgl = sopTanggalRows[0].st_tanggal;
 
   const query = `
-    SELECT y.Kode, y.Barcode, y.Nama, y.Ukuran, y.hpp, y.lokasi,
-           (y.showroom + y.pesan) AS Stok, y.hitung AS Jumlah, y.Selisih,
-           ((y.showroom + y.pesan) * y.hpp) AS valueSistem,
-           (y.hitung * y.hpp) AS valueFisik
+    SELECT 
+        y.Kode, y.Barcode, y.Nama, y.Ukuran, y.hpp,
+        (y.showroom + y.pesan) AS Stok, 
+        y.hitung AS Jumlah, -- [PERBAIKAN KUNCI]: Tarik nilai fisik dari hasil scan!
+        (y.hitung - (y.showroom + y.pesan)) AS Selisih, -- Selisih otomatis terhitung
+        ((y.showroom + y.pesan) * y.hpp) AS valueSistem,
+        (y.hitung * y.hpp) AS valueFisik,
+        "" AS Lokasi
     FROM (
-        SELECT x.*, (x.hitung - (x.showroom + x.pesan)) AS Selisih
-        FROM (
-            SELECT 
-                a.brg_kode AS Kode, b.brgd_barcode AS Barcode, 
-                TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS Nama,
-                b.brgd_ukuran AS Ukuran, IF(b.brgd_hpp=0, 1, b.brgd_hpp) AS hpp,
-                IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_tanggal < ? AND m.mst_brg_kode=b.brgd_kode AND m.mst_ukuran=b.brgd_ukuran), 0) AS showroom,
-                IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstokso m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_tanggal < ? AND m.mst_brg_kode=b.brgd_kode AND m.mst_ukuran=b.brgd_ukuran), 0) AS pesan,
-                IFNULL((SELECT SUM(u.hs_qty) FROM thitungstok u WHERE u.hs_proses="N" AND u.hs_cab=? AND u.hs_kode=b.brgd_kode AND u.hs_ukuran=b.brgd_ukuran), 0) AS hitung,
-                IFNULL((SELECT CAST(GROUP_CONCAT(CONCAT(h.hs_lokasi,"=",h.hs_qty) SEPARATOR ", ") AS CHAR) FROM thitungstok h WHERE h.hs_proses="N" AND h.hs_cab=? AND h.hs_kode=b.brgd_kode AND h.hs_ukuran=b.brgd_ukuran), "") AS lokasi
-            FROM tbarangdc_dtl b
-            JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
-            WHERE a.brg_logstok="Y"
-        ) x
-        -- Filter inner tetap ada agar barang yang benar-benar kosong di kedua sisi tidak tampil
-        WHERE (x.showroom + x.pesan) <> 0 OR x.hitung <> 0
+        SELECT 
+            a.brg_kode AS Kode, b.brgd_barcode AS Barcode, 
+            TRIM(CONCAT(COALESCE(a.brg_jeniskaos,'')," ",COALESCE(a.brg_tipe,'')," ",COALESCE(a.brg_lengan,'')," ",COALESCE(a.brg_jeniskain,'')," ",COALESCE(a.brg_warna,''))) AS Nama,
+            b.brgd_ukuran AS Ukuran, IF(b.brgd_hpp=0, 1, b.brgd_hpp) AS hpp,
+            
+            -- Subquery Stok Showroom berjalan
+            IFNULL((
+                SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
+                FROM tmasterstok m 
+                WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_tanggal <= ? 
+                  AND m.mst_brg_kode=b.brgd_kode AND m.mst_ukuran=b.brgd_ukuran
+            ), 0) AS showroom,
+            
+            -- Subquery Stok Pesanan berjalan
+            IFNULL((
+                SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
+                FROM tmasterstokso m 
+                WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_tanggal <= ? 
+                  AND m.mst_brg_kode=b.brgd_kode AND m.mst_ukuran=b.brgd_ukuran
+            ), 0) AS pesan,
+
+            -- [PERBAIKAN KUNCI] Subquery Hasil Scan Fisik (Tarik dari HP/Scanner)
+            IFNULL((
+                SELECT SUM(u.hs_qty) 
+                FROM thitungstok u 
+                WHERE u.hs_proses="N" AND u.hs_cab=? AND u.hs_kode=b.brgd_kode AND u.hs_ukuran=b.brgd_ukuran
+            ), 0) AS hitung
+            
+        FROM tbarangdc_dtl b
+        JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
+        WHERE a.brg_logstok="Y" AND a.brg_aktif=0
     ) y
-    -- [DIHAPUS] WHERE y.Selisih <> 0 (Agar semua data tampil sesuai program lama)
-    ORDER BY y.Nama, RIGHT(y.barcode, 2)
+    -- Tampilkan HANYA jika barang ada Saldo di komputer ATAU pernah di-scan oleh toko
+    WHERE (y.showroom + y.pesan) <> 0 OR y.hitung <> 0 
+    ORDER BY y.Nama, y.Ukuran
   `;
 
-  const params = [cabang, zsoptgl, cabang, zsoptgl, cabang, cabang];
+  // Parameter query: cabang, tanggal, cabang, tanggal, cabang (untuk hitungstok)
+  const params = [cabang, zsoptgl, cabang, zsoptgl, cabang];
   const [items] = await pool.query(query, params);
 
   return { tanggal: zsoptgl, items };
@@ -115,8 +140,7 @@ const saveData = async (payload, user) => {
         );
       }
 
-      // --- PERBAIKAN: Ambil lokasi gabungan dari thitungstok ---
-      // Menggunakan IFNULL agar hasil GROUP_CONCAT tidak null jika data tidak ditemukan
+      // --- PERBAIKAN LOKASI ---
       const [lokasiRows] = await connection.query(
         `SELECT IFNULL(GROUP_CONCAT(CONCAT(hs_lokasi, "=", hs_qty) SEPARATOR ", "), '') AS lokasi_string
          FROM thitungstok
@@ -125,7 +149,6 @@ const saveData = async (payload, user) => {
         [item.Kode, item.Ukuran, targetCabang],
       );
 
-      // Jika data ditemukan gunakan hasil query, jika tidak gunakan string kosong
       const finalLokasi =
         lokasiRows.length > 0 ? lokasiRows[0].lokasi_string : "";
 
@@ -137,7 +160,6 @@ const saveData = async (payload, user) => {
         sopd_jumlah: item.Jumlah,
         sopd_selisih: item.Selisih,
         sopd_hpp: item.hpp,
-        // Gunakan hasil lokasi dari thitungstok
         sopd_ket: finalLokasi,
       };
 
@@ -158,11 +180,10 @@ const saveData = async (payload, user) => {
 };
 
 const getDataForEdit = async (nomor) => {
-  // Query ini adalah terjemahan dari 'loaddataall'
   const query = `
         SELECT 
             h.sop_nomor, h.sop_tanggal, h.sop_ket, g.gdg_nama, d.sopd_kode,
-            TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS Nama,
+            TRIM(CONCAT(COALESCE(a.brg_jeniskaos,'')," ",COALESCE(a.brg_tipe,'')," ",COALESCE(a.brg_lengan,'')," ",COALESCE(a.brg_jeniskain,'')," ",COALESCE(a.brg_warna,''))) AS Nama,
             d.sopd_ukuran, d.sopd_stok, d.sopd_jumlah, d.sopd_selisih, d.sopd_hpp, d.sopd_ket,
             (d.sopd_selisih * d.sopd_hpp) AS Nominal, b.brgd_barcode, (d.sopd_stok * d.sopd_hpp) AS valueSistem,
             (d.sopd_jumlah * d.sopd_hpp) AS valueFisik
@@ -180,7 +201,6 @@ const getDataForEdit = async (nomor) => {
     );
   }
 
-  // Proses data menjadi format { header, items }
   const header = {
     nomor: rows[0].sop_nomor,
     tanggal: format(new Date(rows[0].sop_tanggal), "yyyy-MM-dd"),
@@ -207,12 +227,12 @@ const getDataForEdit = async (nomor) => {
   return { header, items };
 };
 
+// [BARU] Fungsi Product Details yang di-adjust untuk logika 'Nolkan Fisik'
 const getProductDetailsForSop = async (barcode, cabang, tanggalSop) => {
-  // 1. Ambil detail produk berdasarkan barcode
   const productQuery = `
         SELECT 
             b.brgd_kode, b.brgd_barcode,
-            TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS nama,
+            TRIM(CONCAT(COALESCE(a.brg_jeniskaos,'')," ",COALESCE(a.brg_tipe,'')," ",COALESCE(a.brg_lengan,'')," ",COALESCE(a.brg_jeniskain,'')," ",COALESCE(a.brg_warna,''))) AS nama,
             b.brgd_ukuran, IF(b.brgd_hpp = 0, 1, b.brgd_hpp) AS hpp
         FROM tbarangdc_dtl b
         INNER JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
@@ -222,13 +242,12 @@ const getProductDetailsForSop = async (barcode, cabang, tanggalSop) => {
   if (productRows.length === 0) throw new Error("Barcode tidak terdaftar.");
   const product = productRows[0];
 
-  // 2. Hitung stok awal (logika dari getStokawal)
   const stockQuery = `
         SELECT 
             (
-                IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_tanggal < ? AND m.mst_brg_kode=? AND m.mst_ukuran=?), 0)
+                IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_tanggal <= ? AND m.mst_brg_kode=? AND m.mst_ukuran=?), 0)
                 +
-                IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstokso m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_tanggal < ? AND m.mst_brg_kode=? AND m.mst_ukuran=?), 0)
+                IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstokso m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_tanggal <= ? AND m.mst_brg_kode=? AND m.mst_ukuran=?), 0)
             ) as stok
     `;
   const stockParams = [
@@ -244,7 +263,7 @@ const getProductDetailsForSop = async (barcode, cabang, tanggalSop) => {
   const [stockRows] = await pool.query(stockQuery, stockParams);
   const stokAwal = stockRows[0].stok;
 
-  // 3. Gabungkan hasilnya
+  // [KUNCI REVISI]: Kita return Fisik=0 agar konsisten dengan logika massal
   return {
     Kode: product.brgd_kode,
     Barcode: product.brgd_barcode,
@@ -252,17 +271,16 @@ const getProductDetailsForSop = async (barcode, cabang, tanggalSop) => {
     Ukuran: product.brgd_ukuran,
     hpp: product.hpp,
     Stok: stokAwal,
+    Jumlah: 0, // Langsung paksa 0
+    Selisih: 0 - stokAwal, // Selisih ngikut minus dari stokAwal
+    valueSistem: stokAwal * product.hpp,
+    valueFisik: 0,
   };
 };
 
-/**
- * Mengambil dan memproses data dari tabel staging 'tsop_data' (unpivot).
- * Ini adalah migrasi dari prosedur btndataClick.
- */
 const getDataFromStaging = async (user) => {
   const { cabang } = user;
 
-  // 1. Dapatkan tanggal stok opname yang aktif
   const [sopTanggalRows] = await pool.query(
     "SELECT st_tanggal FROM tsop_tanggal WHERE st_cab = ? AND st_transfer = 'N' LIMIT 1",
     [cabang],
@@ -274,7 +292,6 @@ const getDataFromStaging = async (user) => {
   }
   const zsoptgl = sopTanggalRows[0].st_tanggal;
 
-  // 2. Query utama yang melakukan UNPIVOT dan kalkulasi
   const query = `
         SELECT 
             y.kode AS Kode,
@@ -287,8 +304,8 @@ const getDataFromStaging = async (user) => {
             (y.jumlah - y.stok_awal) AS Selisih,
             ((y.jumlah - y.stok_awal) * y.hpp) AS Total,
             (y.stok_awal * y.hpp) AS valueSistem,
-            (y.jumlah * y.hpp) AS valueFisik
-            '' AS Lokasi -- Kolom lokasi tidak tersedia di tsop_data, diisi string kosong
+            (y.jumlah * y.hpp) AS valueFisik,
+            '' AS Lokasi
         FROM (
             SELECT
                 unpivoted.kode,
@@ -298,12 +315,11 @@ const getDataFromStaging = async (user) => {
                 IF(dtl.brgd_hpp = 0, 1, dtl.brgd_hpp) AS hpp,
                 dtl.brgd_barcode AS barcode,
                 (
-                    IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_tanggal < ? AND m.mst_brg_kode=unpivoted.kode AND m.mst_ukuran=unpivoted.ukuran), 0)
+                    IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_tanggal <= ? AND m.mst_brg_kode=unpivoted.kode AND m.mst_ukuran=unpivoted.ukuran), 0)
                     +
-                    IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstokso m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_tanggal < ? AND m.mst_brg_kode=unpivoted.kode AND m.mst_ukuran=unpivoted.ukuran), 0)
+                    IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstokso m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_tanggal <= ? AND m.mst_brg_kode=unpivoted.kode AND m.mst_ukuran=unpivoted.ukuran), 0)
                 ) AS stok_awal
             FROM (
-                -- Proses UNPIVOT dari tsop_data
                 SELECT kd_kode AS kode, 'ALLSIZE' AS ukuran, allsize AS jumlah FROM retail.tsop_data UNION ALL
                 SELECT kd_kode, 'XS' AS ukuran, xs AS jumlah FROM retail.tsop_data UNION ALL
                 SELECT kd_kode, 'S' AS ukuran, s AS jumlah FROM retail.tsop_data UNION ALL
@@ -319,9 +335,8 @@ const getDataFromStaging = async (user) => {
             ) AS unpivoted
             JOIN tbarangdc dc ON dc.brg_kode = unpivoted.kode
             LEFT JOIN tbarangdc_dtl dtl ON dtl.brgd_kode = unpivoted.kode AND dtl.brgd_ukuran = unpivoted.ukuran
-            WHERE unpivoted.jumlah > 0 -- Hanya ambil yang ada jumlahnya
+            WHERE unpivoted.jumlah > 0 
         ) y
-        -- Filter akhir dari Delphi: tampilkan jika ada selisih atau ada jumlah fisik
         WHERE (y.jumlah - y.stok_awal) <> 0 OR y.jumlah <> 0
     `;
 

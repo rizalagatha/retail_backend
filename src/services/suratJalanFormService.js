@@ -123,28 +123,33 @@ const saveData = async (payload, user) => {
 
     let sjNomor = header.nomor;
 
+    // [BARU] Pastikan so_nomor hanya disave jika tujuan W01
+    const soNomorRef = header.store.kode === "W01" ? header.soNomor || "" : "";
+
     if (isNew) {
       sjNomor = await generateNewSjNumber(header.gudang.kode, header.tanggal);
       const headerSql = `
-                INSERT INTO tdc_sj_hdr (sj_nomor, sj_tanggal, sj_kecab, sj_mt_nomor, sj_ket, user_create, date_create)
-                VALUES (?, ?, ?, ?, ?, ?, NOW());
+                INSERT INTO tdc_sj_hdr (sj_nomor, sj_tanggal, sj_kecab, sj_mt_nomor, sj_so_nomor, sj_ket, user_create, date_create)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NOW());
             `;
       await connection.query(headerSql, [
         sjNomor,
         header.tanggal,
         header.store.kode,
         header.permintaan,
+        soNomorRef, // <--- [INSERT BARU]
         header.keterangan,
         user.kode,
       ]);
     } else {
       const headerSql = `
-                UPDATE tdc_sj_hdr SET sj_tanggal = ?, sj_kecab = ?, sj_ket = ?, user_modified = ?, date_modified = NOW()
+                UPDATE tdc_sj_hdr SET sj_tanggal = ?, sj_kecab = ?, sj_so_nomor = ?, sj_ket = ?, user_modified = ?, date_modified = NOW()
                 WHERE sj_nomor = ?;
             `;
       await connection.query(headerSql, [
         header.tanggal,
         header.store.kode,
+        soNomorRef, // <--- [UPDATE BARU]
         header.keterangan,
         user.kode,
         sjNomor,
@@ -209,6 +214,7 @@ const loadForEdit = async (nomor, user) => {
             h.sj_tanggal AS tanggal,
             h.sj_ket AS keterangan,
             h.sj_mt_nomor AS permintaan,
+            h.sj_so_nomor AS soNomor,
             LEFT(h.sj_nomor, 3) AS gudang_kode,
             g.gdg_nama AS gudang_nama,
             h.sj_kecab AS store_kode,
@@ -263,7 +269,7 @@ const searchStores = async (term, pageStr, itemsPerPageStr, excludeBranch) => {
     params.push(excludeBranch);
   } else {
     // Ini adalah kondisi DEFAULT untuk form lain (seperti Surat Jalan)
-    whereConditions.push("(gdg_dc = 0 OR gdg_dc = 3)");
+    whereConditions.push("(gdg_dc = 0 OR gdg_dc = 3 OR gdg_dc = 4)");
   }
 
   whereConditions.push(`(gdg_kode LIKE ? OR gdg_nama LIKE ?)`);
@@ -456,6 +462,59 @@ const loadItemsFromPackingList = async (nomorPL) => {
   return rows;
 };
 
+/**
+ * Mencari SO Lintas Cabang Khusus yang memiliki SO DTF Bordir (.BR.)
+ */
+const searchSoBordirGlobal = async (term, page, itemsPerPage) => {
+  const limit = parseInt(itemsPerPage) || 10;
+  const offset = (parseInt(page) - 1) * limit;
+  const searchTerm = `%${term || ""}%`;
+
+  // Query untuk mengambil SO dari SEMUA cabang (tanpa filter h.so_cab)
+  // Syarat: Aktif, Belum Close, dan punya detail SO DTF berawalan/mengandung '.BR.'
+  const baseQuery = `
+    FROM tso_hdr h
+    LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
+    WHERE h.so_aktif = 'Y' 
+      AND h.so_close = 0
+      AND EXISTS (
+          SELECT 1 FROM tso_dtl d 
+          WHERE d.sod_so_nomor = h.so_nomor 
+            AND d.sod_sd_nomor LIKE '%.BR.%'
+      )
+  `;
+
+  const searchWhere = ` AND (h.so_nomor LIKE ? OR c.cus_nama LIKE ?)`;
+  const params = [];
+
+  let finalWhere = baseQuery;
+  if (term) {
+    finalWhere += searchWhere;
+    params.push(searchTerm, searchTerm);
+  }
+
+  // Hitung Total Data (Untuk Pagination)
+  const countQuery = `SELECT COUNT(*) AS total ${finalWhere}`;
+  const [countRows] = await pool.query(countQuery, params);
+
+  // Tarik Data
+  const dataQuery = `
+    SELECT 
+        h.so_nomor AS Nomor, 
+        h.so_tanggal AS Tanggal, 
+        h.so_cus_kode AS KdCus, 
+        c.cus_nama AS Customer
+    ${finalWhere}
+    ORDER BY h.so_tanggal DESC, h.so_nomor DESC
+    LIMIT ? OFFSET ?
+  `;
+
+  const dataParams = [...params, limit, offset];
+  const [items] = await pool.query(dataQuery, dataParams);
+
+  return { items, total: countRows[0].total };
+};
+
 module.exports = {
   getItemsForLoad,
   saveData,
@@ -466,4 +525,5 @@ module.exports = {
   findByBarcode,
   getExportDetails,
   loadItemsFromPackingList,
+  searchSoBordirGlobal,
 };

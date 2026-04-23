@@ -64,7 +64,9 @@ const validateTransferPin = async (code, pin) => {
 };
 
 /**
- * Proses Transfer Stok Opname.
+ * [REVISI] Proses Transfer Stok Opname.
+ * Sistem BARU: Tidak lagi menghapus/men-disable (Sapu Jagat) riwayat stok.
+ * Sistem BARU: Menggunakan Jurnal Penyesuaian (Menyuntikkan angka selisih minus/plus ke tmasterstok).
  */
 const transferSop = async (nomor, pin, user) => {
   // Di aplikasi web modern, validasi PIN sebaiknya lebih kompleks.
@@ -76,9 +78,9 @@ const transferSop = async (nomor, pin, user) => {
   try {
     await connection.beginTransaction();
 
-    // Ambil data header untuk validasi
+    // 1. Ambil data header untuk validasi
     const [headers] = await connection.query(
-      "SELECT sop_nomor, sop_tanggal, sop_transfer, sop_cab as cabang FROM tsop_hdr WHERE sop_nomor = ?",
+      "SELECT sop_nomor, DATE_FORMAT(sop_tanggal, '%Y-%m-%d') AS tanggal_str, sop_transfer, sop_cab as cabang FROM tsop_hdr WHERE sop_nomor = ?",
       [nomor],
     );
     if (headers.length === 0) throw new Error("Dokumen tidak ditemukan.");
@@ -86,57 +88,93 @@ const transferSop = async (nomor, pin, user) => {
     if (doc.sop_transfer === "Y")
       throw new Error("Dokumen ini sudah pernah ditransfer.");
 
-    const tanggalSop = format(new Date(doc.sop_tanggal), "yyyy-MM-dd");
+    // [KUNCI PERBAIKAN]: Gunakan tanggal_str langsung tanpa new Date()
+    const tanggalSop = doc.tanggal_str;
     const cabang = doc.cabang;
 
-    // 1. Hapus data lama di tsop_dtl
+    // 2. Ambil data detail (dari tabel temporary dtl2) SEBELUM dipindah ke dtl
+    const [details] = await connection.query(
+      "SELECT * FROM tsop_dtl2 WHERE sopd_nomor = ?",
+      [nomor],
+    );
+
+    // =================================================================================
+    // 3. [KUNCI REVISI] INJEKSI JURNAL PENYESUAIAN KE tmasterstok
+    // =================================================================================
+    for (const [index, item] of details.entries()) {
+      const selisih = Number(item.sopd_selisih);
+
+      // Hanya proses barang yang memang ada selisihnya
+      if (selisih !== 0) {
+        // Generate ID unik untuk mutasi koreksi
+        const now = new Date();
+        const uniqueTime = new Date(now.getTime() + index);
+        const timestamp = format(uniqueTime, "yyyyMMddHHmmss.SSS");
+        const mstIdrec = `${cabang}SOK${timestamp}`; // Prefix SOK (Stok Opname Koreksi)
+
+        const qtyIn = selisih > 0 ? selisih : 0; // Jika surplus, masuk stok IN
+        const qtyOut = selisih < 0 ? Math.abs(selisih) : 0; // Jika minus, masuk stok OUT
+
+        await connection.query(
+          `
+          INSERT INTO tmasterstok 
+          (mst_idrec, mst_cab, mst_brg_kode, mst_ukuran, mst_noreferensi, mst_tanggal, mst_stok_in, mst_stok_out, mst_ket, mst_aktif, date_create)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'KOREKSI STOK OPNAME', 'Y', NOW())
+        `,
+          [
+            mstIdrec,
+            cabang,
+            item.sopd_kode,
+            item.sopd_ukuran,
+            nomor, // Referensi ke nomor dokumen SOP
+            tanggalSop,
+            qtyIn,
+            qtyOut,
+          ],
+        );
+      }
+    }
+    // =================================================================================
+
+    // 4. Hapus data lama di tsop_dtl (jika ada sisa)
     await connection.query("DELETE FROM tsop_dtl WHERE sopd_nomor = ?", [
       nomor,
     ]);
 
-    // 2 & 3. Nonaktifkan stok lama di tmasterstok dan tmasterstokso
-    const ketSop = format(new Date(tanggalSop), "dd-MM-yyyy");
-    await connection.query(
-      'UPDATE tmasterstok SET mst_aktif="N", mst_ket = ? WHERE mst_aktif="Y" AND mst_cab = ? AND mst_tanggal < ?',
-      [ketSop, cabang, tanggalSop],
-    );
-    await connection.query(
-      'UPDATE tmasterstokso SET mst_aktif="N", mst_ket = ? WHERE mst_aktif="Y" AND mst_cab = ? AND mst_tanggal < ?',
-      [ketSop, cabang, tanggalSop],
-    );
-
-    // 4. Salin data dari tsop_dtl2 ke tsop_dtl
+    // 5. Salin data dari tsop_dtl2 ke tsop_dtl
     await connection.query(
       "INSERT INTO tsop_dtl SELECT * FROM tsop_dtl2 WHERE sopd_nomor = ?",
       [nomor],
     );
 
-    // 5. Update status transfer di tsop_hdr
+    // 6. Update status transfer di tsop_hdr
     await connection.query(
       'UPDATE tsop_hdr SET sop_transfer="Y" WHERE sop_nomor = ?',
       [nomor],
     );
 
-    // 6. Update status proses di thitungstok
+    // 7. Update status proses di thitungstok
     await connection.query(
       'UPDATE thitungstok SET hs_proses="Y" WHERE hs_proses="N" AND hs_cab = ?',
       [cabang],
     );
 
-    // 7. Update tanggal SOP terakhir di tgudang
+    // 8. Update tanggal SOP terakhir di tgudang
     await connection.query(
       "UPDATE tgudang SET gdg_lastSopOld = gdg_last_sop, gdg_last_sop = ? WHERE gdg_kode = ?",
       [tanggalSop, cabang],
     );
 
-    // 8. Update status transfer di tsop_tanggal
+    // 9. Update status transfer di tsop_tanggal
     await connection.query(
       'UPDATE tsop_tanggal SET st_transfer="Y" WHERE st_cab = ? AND st_tanggal = ?',
       [cabang, tanggalSop],
     );
 
     await connection.commit();
-    return { message: `Transfer Stok Opname untuk nomor ${nomor} berhasil.` };
+    return {
+      message: `Transfer Stok Opname untuk nomor ${nomor} berhasil. Stok telah dikoreksi.`,
+    };
   } catch (error) {
     await connection.rollback();
     throw error;

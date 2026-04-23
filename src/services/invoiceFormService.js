@@ -1990,6 +1990,7 @@ const getPrintData = async (nomor) => {
       h.inv_nomor, h.inv_tanggal, h.inv_nomor_so, h.inv_top, h.inv_ket, h.inv_sc,
       h.inv_disc, h.inv_ppn, h.inv_bkrm, h.inv_dp, h.inv_pundiamal,
       h.inv_rptunai, h.inv_rpcard, h.inv_rpvoucher, h.inv_kembali,
+      h.inv_rj_rp,
       DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY) AS tempo,
       c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
       d.invd_kode, d.invd_ukuran, d.invd_jumlah, d.invd_harga, d.invd_diskon,
@@ -2026,6 +2027,7 @@ const getPrintData = async (nomor) => {
   if (rows.length === 0) throw new Error("Data Invoice tidak ditemukan.");
 
   const header = { ...rows[0] };
+  const returJual = Number(header.inv_rj_rp || 0);
 
   // 1. Map Rows ke Object Detail
   const details = rows.map((row) => ({
@@ -2095,7 +2097,9 @@ const getPrintData = async (nomor) => {
   const ppn = applyRoundingPolicy(
     ((Number(header.inv_ppn) || 0) / 100) * netto,
   ); // [FIX] Tanda kurungnya salah tadi
-  const grandTotal = applyRoundingPolicy(netto + ppn + (header.inv_bkrm || 0));
+  const grandTotal = applyRoundingPolicy(
+    netto + ppn + (header.inv_bkrm || 0) - returJual,
+  );
 
   // Ambil data pembayaran murni dari Invoice Header (Pembayaran Kasir)
   const bayarTunai = Number(header.inv_rptunai || 0);
@@ -2115,6 +2119,7 @@ const getPrintData = async (nomor) => {
     grandTotal - (bayarTunai + bayarCard + bayarVoucher + totalSetoran),
     0,
   );
+  const kembaliOtomatis = Math.max(totalTelahDibayar - grandTotal, 0);
 
   header.summary = {
     subTotal: grossSubTotal,
@@ -2122,11 +2127,12 @@ const getPrintData = async (nomor) => {
     netto,
     ppn,
     biayaKirim: header.inv_bkrm || 0,
+    returJual: returJual,
     dp: dpDipakai,
     grandTotal,
     bayar: totalTelahDibayar,
     pundiAmal: pundiAmal,
-    kembali: kembaliDB, // Kembalian tetap di-passing jika mau ditampilkan terpisah, tapi tidak masuk total bayar
+    kembali: kembaliOtomatis, // Kembalian tetap di-passing jika mau ditampilkan terpisah, tapi tidak masuk total bayar
     telahDibayar: totalTelahDibayar, // <--- INI SUDAH PASTI PRESISI
     sisaPiutang: sisaPiutang,
   };
