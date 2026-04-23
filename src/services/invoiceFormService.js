@@ -1990,7 +1990,7 @@ const getPrintData = async (nomor) => {
       h.inv_nomor, h.inv_tanggal, h.inv_nomor_so, h.inv_top, h.inv_ket, h.inv_sc,
       h.inv_disc, h.inv_ppn, h.inv_bkrm, h.inv_dp, h.inv_pundiamal,
       h.inv_rptunai, h.inv_rpcard, h.inv_rpvoucher, h.inv_kembali,
-      h.inv_rj_rp,
+      h.inv_rj_rp, -- [AMBIL NOMINAL RETUR JUAL]
       DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY) AS tempo,
       c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
       d.invd_kode, d.invd_ukuran, d.invd_jumlah, d.invd_harga, d.invd_diskon,
@@ -2027,7 +2027,6 @@ const getPrintData = async (nomor) => {
   if (rows.length === 0) throw new Error("Data Invoice tidak ditemukan.");
 
   const header = { ...rows[0] };
-  const returJual = Number(header.inv_rj_rp || 0);
 
   // 1. Map Rows ke Object Detail
   const details = rows.map((row) => ({
@@ -2040,30 +2039,40 @@ const getPrintData = async (nomor) => {
     total: row.total, // Ini adalah Net Total per baris
   }));
 
-  // 3. LOGIKA SORTING JAVASCRIPT (Nama Barang ASC -> Ukuran ASC)
+  // 2. LOGIKA SORTING JAVASCRIPT (Nama Barang ASC -> Ukuran ASC)
   details.sort((a, b) => {
-    // A. Prioritas Utama: Kelompokkan berdasarkan Nama Barang dulu
     const nameA = a.nama_barang.toUpperCase();
     const nameB = b.nama_barang.toUpperCase();
     if (nameA < nameB) return -1;
     if (nameA > nameB) return 1;
 
-    // B. Prioritas Kedua: Jika nama barang sama, urutkan berdasarkan Ukuran (S < M < L)
+    // Asumsi fungsi getSizeRank ada di atas (bawaan kode Mas Rizal)
     const rankA = getSizeRank(a.invd_ukuran);
     const rankB = getSizeRank(b.invd_ukuran);
-
     return rankA - rankB;
   });
 
-  // =============== FIX PEMBAYARAN (AMBIL SEMUA SETORAN TERKAIT) ===============
-  // 1. Ambil SEMUA jenis setoran (DP + Transfer + QRIS + Cicilan)
+  // =============== FIX PEMBAYARAN (AMBIL SEMUA SETORAN & SISA TERKAIT) ===============
+  // 1. Ambil SEMUA jenis setoran yang TERPAKAI (DP + Transfer + QRIS + Cicilan)
   const [setorRows] = await pool.query(
     `SELECT SUM(sd_bayar) AS totalSetoran FROM tsetor_dtl WHERE sd_inv = ?`,
     [nomor],
   );
   const totalSetoran = applyRoundingPolicy(setorRows?.[0]?.totalSetoran || 0);
 
-  // 2. Ambil khusus DP (Hanya untuk ditampilkan sebagai baris DP di struk)
+  // 2. [PERBAIKAN KUNCI]: Ambil SISA SETORAN yang nyangkut (belum terpakai) dari setoran terkait invoice ini
+  // Ini mencari Total Asli Setoran (sh_nominal) dikurangi semua yang sudah dipakai di detail
+  const [sisaRows] = await pool.query(
+    `SELECT SUM(h.sh_nominal - COALESCE((SELECT SUM(d2.sd_bayar) FROM tsetor_dtl d2 WHERE d2.sd_sh_nomor = h.sh_nomor), 0)) AS sisaSetoran
+     FROM tsetor_hdr h
+     WHERE h.sh_nomor IN (
+         SELECT DISTINCT sd_sh_nomor FROM tsetor_dtl WHERE sd_inv = ?
+     )`,
+    [nomor],
+  );
+  const sisaSetoran = applyRoundingPolicy(sisaRows?.[0]?.sisaSetoran || 0);
+
+  // 3. Ambil khusus DP (Hanya untuk ditampilkan sebagai baris DP di struk)
   const [dpRows] = await pool.query(
     `SELECT SUM(sd_bayar) AS dpDipakai FROM tsetor_dtl WHERE sd_inv = ? AND sd_ket = 'DP LINK DARI INV'`,
     [nomor],
@@ -2071,23 +2080,18 @@ const getPrintData = async (nomor) => {
   const dpDipakai = applyRoundingPolicy(dpRows?.[0]?.dpDipakai || 0);
 
   // =============== SUMMARY CALC ===============
-  // 2. Hitung Akumulasi Diskon
-  // Total Diskon dari semua baris (Qty * Diskon per Item)
   const totalDiskonItem = details.reduce(
     (sum, it) =>
       sum + Number(it.invd_diskon || 0) * Number(it.invd_jumlah || 0),
     0,
   );
 
-  // Subtotal Kotor (Qty * Harga sebelum diskon) agar hitungan summary sinkron
   const grossSubTotal = details.reduce(
     (sum, it) => sum + Number(it.invd_harga || 0) * Number(it.invd_jumlah || 0),
     0,
   );
 
   const diskonFaktur = Number(header.inv_disc || 0);
-
-  // Akumulasi Diskon Keseluruhan
   const totalDiskonKeseluruhan = applyRoundingPolicy(
     totalDiskonItem + diskonFaktur,
   );
@@ -2096,7 +2100,10 @@ const getPrintData = async (nomor) => {
   const netto = applyRoundingPolicy(grossSubTotal - totalDiskonKeseluruhan);
   const ppn = applyRoundingPolicy(
     ((Number(header.inv_ppn) || 0) / 100) * netto,
-  ); // [FIX] Tanda kurungnya salah tadi
+  );
+  const returJual = Number(header.inv_rj_rp || 0); // Ambil nominal retur jual
+
+  // Grand Total dipotong Retur Jual
   const grandTotal = applyRoundingPolicy(
     netto + ppn + (header.inv_bkrm || 0) - returJual,
   );
@@ -2105,20 +2112,21 @@ const getPrintData = async (nomor) => {
   const bayarTunai = Number(header.inv_rptunai || 0);
   const bayarCard = Number(header.inv_rpcard || 0);
   const bayarVoucher = Number(header.inv_rpvoucher || 0);
-
   const pundiAmal = Number(header.inv_pundiamal || 0);
-  const kembaliDB = Number(header.inv_kembali || 0);
 
   // [PERBAIKAN KUNCI]:
-  // HANYA jumlahkan uang yang BENAR-BENAR memotong tagihan (Netto).
-  // Jangan tambahkan inv_kembali agar kebal dari "angka hantu" Delphi jika kasir salah ketik.
-  const totalTelahDibayar = bayarTunai + bayarCard + bayarVoucher + dpDipakai;
+  // Tambahkan "sisaSetoran" agar uang sisa DP 25.000 tadi terdeteksi sebagai UANG PELANGGAN
+  const totalTelahDibayar =
+    bayarTunai + bayarCard + bayarVoucher + totalSetoran + sisaSetoran;
 
-  // Sisa Piutang TETAP mengacu ke totalSetoran jika ini adalah nota cicilan
+  // Sisa Piutang
   const sisaPiutang = Math.max(
-    grandTotal - (bayarTunai + bayarCard + bayarVoucher + totalSetoran),
+    grandTotal -
+      (bayarTunai + bayarCard + bayarVoucher + totalSetoran + sisaSetoran),
     0,
   );
+
+  // [KEMBALI OTOMATIS]: Langsung selisih dari Total Uang vs Grand Total
   const kembaliOtomatis = Math.max(totalTelahDibayar - grandTotal, 0);
 
   header.summary = {
@@ -2127,13 +2135,13 @@ const getPrintData = async (nomor) => {
     netto,
     ppn,
     biayaKirim: header.inv_bkrm || 0,
-    returJual: returJual,
+    returJual: returJual, // Masukkan retur
     dp: dpDipakai,
     grandTotal,
     bayar: totalTelahDibayar,
     pundiAmal: pundiAmal,
-    kembali: kembaliOtomatis, // Kembalian tetap di-passing jika mau ditampilkan terpisah, tapi tidak masuk total bayar
-    telahDibayar: totalTelahDibayar, // <--- INI SUDAH PASTI PRESISI
+    kembali: kembaliOtomatis, // Otomatis nangkep sisa setoran (25.000)
+    telahDibayar: totalTelahDibayar, // Total uang customer (1.310.500)
     sisaPiutang: sisaPiutang,
   };
 
