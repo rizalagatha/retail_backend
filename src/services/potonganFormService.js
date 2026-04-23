@@ -2,18 +2,18 @@ const pool = require("../config/database");
 const { format, addDays } = require("date-fns");
 
 /**
- * Helper: Mengambil nomor baru (Anti-Tabrakan dengan FOR UPDATE)
+ * Helper: Mengambil nomor baru (Fix Panjang Prefix)
  */
 const generateNewNomor = async (connection, gudangKode, tanggal) => {
   const ayymm = format(new Date(tanggal), "yyMM");
-  const prefix = `${gudangKode}.POT.${ayymm}.`;
+  const prefix = `${gudangKode}.POT.${ayymm}.`; // Contoh: K01.POT.2604. (13 Karakter)
 
-  // [PERBAIKAN 1]: Gunakan FOR UPDATE agar query ini mengunci tabel sampai transaksi selesai
+  // [PERBAIKAN]: Gunakan LEFT 13 agar sesuai dengan panjang prefix di atas
   const query = `
     SELECT IFNULL(MAX(CAST(RIGHT(pt_nomor, 4) AS UNSIGNED)), 0) as max_nomor 
     FROM tpotongan_hdr 
     WHERE LEFT(pt_nomor, 13) = ? 
-    FOR UPDATE`; // 13 karena ada titik di akhir prefix
+    FOR UPDATE`;
 
   const [rows] = await connection.query(query, [prefix]);
   const nextNum = parseInt(rows[0].max_nomor, 10) + 1;
@@ -173,7 +173,7 @@ const getDataForEdit = async (nomor) => {
 };
 
 /**
- * Menyimpan data Potongan
+ * Menyimpan data Potongan (Tanpa idrec di tabel potongan)
  */
 const saveData = async (data, user) => {
   const { header, details, isEditMode } = data;
@@ -208,27 +208,25 @@ const saveData = async (data, user) => {
         ],
       );
     } else {
-      // [PERBAIKAN 2]: Tambahkan pt_idrec (KTP Header)
-      const pt_idrec = `${header.gudang.kode}POT${timestamp}`;
-
+      // [PERBAIKAN]: Hapus pt_idrec karena kolomnya tidak ada di CREATE TABLE Mas Rizal
       await connection.query(
         `INSERT INTO tpotongan_hdr 
-            (pt_idrec, pt_nomor, pt_cus_kode, pt_tanggal, pt_akun, pt_nominal, user_cab, user_create, date_create) 
+            (pt_nomor, pt_cus_kode, pt_tanggal, pt_akun, pt_nominal, user_cab, pt_cab, user_create, date_create) 
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
-          pt_idrec,
           ptNomor,
           header.customer.kode,
           header.tanggal,
           header.akun.kode,
           header.nominalPotongan,
           header.gudang.kode,
+          header.gudang.kode,
           user.kode,
         ],
       );
     }
 
-    // Bersihkan data lama sebelum insert baru
+    // Bersihkan data lama
     await connection.query("DELETE FROM tpotongan_dtl WHERE ptd_nomor = ?", [
       ptNomor,
     ]);
@@ -239,36 +237,26 @@ const saveData = async (data, user) => {
     // Insert detail baru
     for (const [index, item] of details.entries()) {
       if (item.invoice && item.bayar > 0) {
-        // [PERBAIKAN 3]: Buat KTP Unik untuk Detail (IDREC)
-        // Gunakan index agar jika ada 2 baris di milidetik yang sama, ID-nya tetap beda
-        const ptd_idrec = `${header.gudang.kode}PTD${timestamp}${index}`;
-        const pd_idrec = `${header.gudang.kode}PIU${timestamp}${index}`;
-
-        // Insert ke tpotongan_dtl
+        // 1. Insert ke tpotongan_dtl (Gunakan ptd_angsur sebagai PK)
         await connection.query(
-          `INSERT INTO tpotongan_dtl (ptd_idrec, ptd_nomor, ptd_tanggal, ptd_inv, ptd_bayar, ptd_angsur) 
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [
-            ptd_idrec,
-            ptNomor,
-            item.tglBayar,
-            item.invoice,
-            item.bayar,
-            item.angsuranId,
-          ],
+          `INSERT INTO tpotongan_dtl (ptd_nomor, ptd_tanggal, ptd_inv, ptd_bayar, ptd_angsur) 
+           VALUES (?, ?, ?, ?, ?)`,
+          [ptNomor, item.tglBayar, item.invoice, item.bayar, item.angsuranId],
         );
 
-        // Insert ke tpiutang_dtl
+        // 2. Insert ke tpiutang_dtl (Wajib pakai pd_idrec karena tabel ini biasanya punya idrec)
+        // Jika nanti muncul error 'Unknown column pd_idrec', silakan hapus bagian pd_idrec-nya saja.
+        const pd_idrec = `${header.gudang.kode}PIU${timestamp}${index}`;
+
         await connection.query(
-          `INSERT INTO tpiutang_dtl (pd_idrec, pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur) 
-           VALUES (?, ?, ?, "Potongan", ?, ?, ?)`,
+          `INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur, pd_bk) 
+           VALUES (?, ?, "Potongan", ?, ?, ?, "")`,
           [
-            pd_idrec,
-            `${header.customer.kode}${item.invoice}`,
-            item.tglBayar,
-            item.bayar,
-            ptNomor,
-            item.angsuranId,
+            `${header.customer.kode}${item.invoice}`, // pd_ph_nomor (biasanya gabungan kode cus + no inv)
+            item.tglBayar, // pd_tanggal
+            item.bayar, // pd_kredit
+            ptNomor, // pd_ket (nomor PT)
+            item.angsuranId, // pd_sd_angsur (PRIMARY KEY)
           ],
         );
       }
@@ -281,7 +269,7 @@ const saveData = async (data, user) => {
     };
   } catch (error) {
     await connection.rollback();
-    console.error("ERROR SIMPAN POTONGAN:", error);
+    console.error("ERROR SIMPAN POTONGAN:", error.message);
     throw error;
   } finally {
     connection.release();
