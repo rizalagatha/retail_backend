@@ -104,8 +104,7 @@ const getCabangOptions = async (user) => {
     query = `
       SELECT gdg_kode as kode, gdg_nama as nama 
       FROM tgudang 
-      WHERE gdg_aktif = 'Y' 
-        AND gdg_kode NOT IN ("KBS","KPS","KDC") 
+      WHERE gdg_kode NOT IN ("KBS","KPS","KDC") 
       ORDER BY gdg_kode
     `;
   } else {
