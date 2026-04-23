@@ -2,13 +2,19 @@ const pool = require("../config/database");
 const { format, addDays } = require("date-fns");
 
 /**
- * Helper: Mengambil nomor baru (getmaxnomor)
- *
+ * Helper: Mengambil nomor baru (Anti-Tabrakan dengan FOR UPDATE)
  */
 const generateNewNomor = async (connection, gudangKode, tanggal) => {
   const ayymm = format(new Date(tanggal), "yyMM");
   const prefix = `${gudangKode}.POT.${ayymm}.`;
-  const query = `SELECT IFNULL(MAX(RIGHT(pt_nomor, 4)), 0) as max_nomor FROM tpotongan_hdr WHERE LEFT(pt_nomor, 12) = ?`;
+
+  // [PERBAIKAN 1]: Gunakan FOR UPDATE agar query ini mengunci tabel sampai transaksi selesai
+  const query = `
+    SELECT IFNULL(MAX(CAST(RIGHT(pt_nomor, 4) AS UNSIGNED)), 0) as max_nomor 
+    FROM tpotongan_hdr 
+    WHERE LEFT(pt_nomor, 13) = ? 
+    FOR UPDATE`; // 13 karena ada titik di akhir prefix
+
   const [rows] = await connection.query(query, [prefix]);
   const nextNum = parseInt(rows[0].max_nomor, 10) + 1;
   return `${prefix}${String(nextNum).padStart(4, "0")}`;
@@ -21,7 +27,7 @@ const generateNewNomor = async (connection, gudangKode, tanggal) => {
 const getInitialData = async (user) => {
   const [gudangRows] = await pool.query(
     "SELECT gdg_kode, gdg_nama FROM tgudang WHERE gdg_kode = ?",
-    [user.cabang]
+    [user.cabang],
   );
   return {
     gudang: {
@@ -167,8 +173,7 @@ const getDataForEdit = async (nomor) => {
 };
 
 /**
- * Menyimpan data Potongan (simpandata)
- *
+ * Menyimpan data Potongan
  */
 const saveData = async (data, user) => {
   const { header, details, isEditMode } = data;
@@ -182,30 +187,36 @@ const saveData = async (data, user) => {
       ptNomor = await generateNewNomor(
         connection,
         header.gudang.kode,
-        header.tanggal
+        header.tanggal,
       );
     }
+
+    const timestamp = format(new Date(), "yyyyMMddHHmmssSSS");
 
     if (isEditMode) {
       await connection.query(
         `UPDATE tpotongan_hdr SET 
-                    pt_tanggal = ?, pt_nominal = ?, pt_akun = ?, 
-                    user_modified = ?, date_modified = NOW() 
-                 WHERE pt_nomor = ?`,
+            pt_tanggal = ?, pt_nominal = ?, pt_akun = ?, 
+            user_modified = ?, date_modified = NOW() 
+         WHERE pt_nomor = ?`,
         [
           header.tanggal,
           header.nominalPotongan,
           header.akun.kode,
           user.kode,
           ptNomor,
-        ]
+        ],
       );
     } else {
+      // [PERBAIKAN 2]: Tambahkan pt_idrec (KTP Header)
+      const pt_idrec = `${header.gudang.kode}POT${timestamp}`;
+
       await connection.query(
         `INSERT INTO tpotongan_hdr 
-                    (pt_nomor, pt_cus_kode, pt_tanggal, pt_akun, pt_nominal, user_cab, user_create, date_create) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+            (pt_idrec, pt_nomor, pt_cus_kode, pt_tanggal, pt_akun, pt_nominal, user_cab, user_create, date_create) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
+          pt_idrec,
           ptNomor,
           header.customer.kode,
           header.tanggal,
@@ -217,53 +228,60 @@ const saveData = async (data, user) => {
       );
     }
 
-    // Hapus detail lama
+    // Bersihkan data lama sebelum insert baru
     await connection.query("DELETE FROM tpotongan_dtl WHERE ptd_nomor = ?", [
       ptNomor,
     ]);
-
-    // Hapus dari tpiutang_dtl (ROLLBACK)
     await connection.query("DELETE FROM tpiutang_dtl WHERE pd_ket = ?", [
       ptNomor,
     ]);
 
     // Insert detail baru
-    for (const item of details) {
+    for (const [index, item] of details.entries()) {
       if (item.invoice && item.bayar > 0) {
+        // [PERBAIKAN 3]: Buat KTP Unik untuk Detail (IDREC)
+        // Gunakan index agar jika ada 2 baris di milidetik yang sama, ID-nya tetap beda
+        const ptd_idrec = `${header.gudang.kode}PTD${timestamp}${index}`;
+        const pd_idrec = `${header.gudang.kode}PIU${timestamp}${index}`;
+
         // Insert ke tpotongan_dtl
         await connection.query(
-          "INSERT INTO tpotongan_dtl (ptd_nomor, ptd_tanggal, ptd_inv, ptd_bayar, ptd_angsur) VALUES (?, ?, ?, ?, ?)",
-          [ptNomor, item.tglBayar, item.invoice, item.bayar, item.angsuranId]
+          `INSERT INTO tpotongan_dtl (ptd_idrec, ptd_nomor, ptd_tanggal, ptd_inv, ptd_bayar, ptd_angsur) 
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            ptd_idrec,
+            ptNomor,
+            item.tglBayar,
+            item.invoice,
+            item.bayar,
+            item.angsuranId,
+          ],
         );
 
         // Insert ke tpiutang_dtl
         await connection.query(
-          'INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur) VALUES (?, ?, "Potongan", ?, ?, ?)',
+          `INSERT INTO tpiutang_dtl (pd_idrec, pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur) 
+           VALUES (?, ?, ?, "Potongan", ?, ?, ?)`,
           [
+            pd_idrec,
             `${header.customer.kode}${item.invoice}`,
             item.tglBayar,
             item.bayar,
             ptNomor,
             item.angsuranId,
-          ]
+          ],
         );
       }
     }
 
     await connection.commit();
-
-    // TODO: Jalankan Syncho.exe jika diperlukan
-    // const ccab = header.gudang.kode;
-    // if (['K02','K03','K04','K05','K06','K07','K08'].includes(ccab)) {
-    //     // Panggil logika sinkronisasi di sini
-    // }
-
     return {
       message: `Transaksi Potongan ${ptNomor} berhasil disimpan.`,
       nomor: ptNomor,
     };
   } catch (error) {
     await connection.rollback();
+    console.error("ERROR SIMPAN POTONGAN:", error);
     throw error;
   } finally {
     connection.release();
