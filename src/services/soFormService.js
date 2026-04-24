@@ -548,6 +548,7 @@ const getSoForEdit = async (nomor) => {
       so_is_marketplace: firstRow.so_is_marketplace === "Y",
       so_mp_nomor_pesanan: firstRow.so_mp_nomor_pesanan || "",
       so_mp_resi: firstRow.so_mp_resi || "",
+      so_accdp: firstRow.so_accdp || "",
 
       // --- [BARU] Mapping data member ---
       memberHp: firstRow.so_mem_hp || "",
