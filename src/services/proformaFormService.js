@@ -46,7 +46,7 @@ const getDataFromSO = async (soNumber, branchCode) => {
 
 // Fungsi untuk mengambil data Proforma yang sudah ada (mode Ubah)
 const getDataForEdit = async (nomor) => {
-  // Query ini adalah terjemahan dari 'loaddataall'
+  // Query ini adalah terjemahan dari 'loaddataall' (sudah dioptimasi Anti-Dobel)
   const query = `
         SELECT 
             h.inv_nomor AS nomor, h.inv_tanggal AS tanggal, h.inv_nomor_so AS nomorSo, o.so_tanggal AS tanggalSo,
@@ -57,7 +57,10 @@ const getDataForEdit = async (nomor) => {
             d.invd_kode AS item_kode, d.invd_ukuran AS item_ukuran, d.invd_jumlah AS item_jumlah, 
             d.invd_harga AS item_harga, d.invd_disc AS item_diskonPersen, d.invd_diskon AS item_diskonRp,
             IFNULL(TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)), f.sd_nama) AS item_nama,
-            b.brgd_barcode AS item_barcode
+            
+            -- [PERBAIKAN]: Ambil HANYA SATU barcode pakai subquery untuk menghindari row ganda (double data)
+            (SELECT brgd_barcode FROM tbarangdc_dtl WHERE brgd_kode = d.invd_kode AND brgd_ukuran = d.invd_ukuran LIMIT 1) AS item_barcode
+
         FROM tinv_hdr h
         INNER JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
         LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
@@ -65,7 +68,6 @@ const getDataForEdit = async (nomor) => {
         LEFT JOIN tcustomer_level l ON l.level_kode = h.inv_cus_level
         LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
         LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
-        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.invd_kode AND b.brgd_ukuran = d.invd_ukuran
         WHERE h.inv_sts_pro = 2 AND h.inv_nomor = ?
         ORDER BY d.invd_nourut;
     `;
