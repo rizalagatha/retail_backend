@@ -165,6 +165,10 @@ const saveData = async (payload, user) => {
         headerData,
         nomorProforma,
       ]);
+
+      await connection.query("DELETE FROM tinv_dtl WHERE invd_inv_nomor = ?", [
+        nomorProforma,
+      ]);
     } else {
       headerData.inv_nomor = nomorProforma;
 
