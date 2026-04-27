@@ -102,7 +102,7 @@ const save = async (payload, user) => {
       // agar IDDREC detail tetap konsisten dengan Header-nya
       const [existingHeader] = await connection.query(
         "SELECT msk_idrec FROM tmsk_hdr WHERE msk_nomor = ? AND msk_cab = ?",
-        [nomorDokumen, user.cabang]
+        [nomorDokumen, user.cabang],
       );
 
       if (existingHeader.length > 0) {
@@ -229,6 +229,7 @@ const findByBarcode = async (barcode, gudang) => {
 };
 
 const getPrintData = async (nomor, user) => {
+  // [PERBAIKAN KUNCI]: Hapus validasi h.msk_cab = user.cabang agar dokumen bisa diprint oleh user Admin Pusat/ESTU
   const query = `
     SELECT 
       h.msk_nomor,
@@ -243,7 +244,7 @@ const getPrintData = async (nomor, user) => {
       d.mskd_ukuran,
       d.mskd_jumlah,
       g_asal.gdg_inv_nama,
-      g_asal.gdg_inv_alamat, -- Asumsi nama kolom alamat adalah gdg_inv_alamat
+      g_asal.gdg_inv_alamat, 
       g_asal.gdg_inv_kota,
       g_asal.gdg_inv_telp
     FROM tmsk_hdr h
@@ -251,10 +252,12 @@ const getPrintData = async (nomor, user) => {
     LEFT JOIN tgudang g_tujuan ON g_tujuan.gdg_kode = h.msk_kecab
     LEFT JOIN tgudang g_asal ON g_asal.gdg_kode = h.msk_cab
     LEFT JOIN tbarangdc a ON a.brg_kode = d.mskd_kode
-    WHERE h.msk_nomor = ? AND h.msk_cab = ?
+    WHERE h.msk_nomor = ?
     ORDER BY nama_barang, d.mskd_ukuran;
   `;
-  const [rows] = await pool.query(query, [nomor, user.cabang]);
+
+  // [PERBAIKAN]: Hapus user.cabang dari parameter query
+  const [rows] = await pool.query(query, [nomor]);
   if (rows.length === 0) {
     throw new Error("Data untuk dicetak tidak ditemukan");
   }
