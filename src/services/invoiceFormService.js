@@ -363,7 +363,9 @@ const getSoDetailsForGrid = async (soNomor, user) => {
              JOIN tinv_hdr ih ON id.invd_inv_nomor = ih.inv_nomor
              WHERE ih.inv_nomor_so = d.sod_so_nomor
                AND id.invd_kode = d.sod_kode
-               AND id.invd_ukuran = d.sod_ukuran),
+               AND id.invd_ukuran = d.sod_ukuran
+               AND ih.inv_sts_pro = 0
+            ),
             0
         )) AS qtyso
 FROM tso_dtl d

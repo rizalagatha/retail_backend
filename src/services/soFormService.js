@@ -422,7 +422,7 @@ const getSoForEdit = async (nomor) => {
   const connection = await pool.getConnection();
   try {
     const [invoiceRows] = await connection.query(
-      "SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor_so = ?",
+      "SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor_so = ? AND inv_sts_pro = 1",
       [nomor],
     );
     const isInvoiced = invoiceRows.length > 0;
