@@ -17,12 +17,14 @@ const getList = async (filters, user) => {
             h.inv_dp AS dp,
             h.inv_bkrm AS biayaKirim,
             
-            -- [PERBAIKAN KUNCI]: Ambil langsung dari field Header agar tidak ganda
-            -- Rumus: ((Total Kotor - Diskon) + PPN + Biaya Kirim) - (Semua Pembayaran Tunai/Transfer/Voucher)
+            -- [PERBAIKAN KUNCI]: Hitung Subtotal dari tabel detail yang sudah di-grouping
             ROUND(
-                ((h.inv_total - h.inv_disc) + h.inv_ppn_rp + h.inv_bkrm) 
-                - 
-                (h.inv_rptunai + h.inv_rpcard + h.inv_rpvoucher + h.inv_dp)
+                (
+                    (COALESCE(dtl.subtotal, 0) - h.inv_disc) 
+                    + ((h.inv_ppn / 100) * (COALESCE(dtl.subtotal, 0) - h.inv_disc))
+                    + h.inv_bkrm
+                )
+                - (h.inv_rptunai + h.inv_rpcard + h.inv_rpvoucher + h.inv_dp)
             ) AS nominal,
 
             h.Inv_cus_kode AS kdCus,
@@ -35,6 +37,14 @@ const getList = async (filters, user) => {
         FROM tinv_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode = h.Inv_cus_kode
         LEFT JOIN tcustomer_level l ON l.level_kode = h.inv_cus_level
+        
+        -- [JURUS ANTI DOBEL]: Grouping detail terlebih dahulu, baru di-Join
+        LEFT JOIN (
+            SELECT invd_inv_nomor, SUM(invd_jumlah * (invd_harga - invd_diskon)) AS subtotal 
+            FROM tinv_dtl 
+            GROUP BY invd_inv_nomor
+        ) dtl ON dtl.invd_inv_nomor = h.inv_nomor
+        
         WHERE h.inv_sts_pro = 2 AND h.Inv_tanggal BETWEEN ? AND ?
     `;
   const params = [startDate, endDate];
@@ -46,7 +56,8 @@ const getList = async (filters, user) => {
     query += " AND h.inv_cab = ?";
     params.push(cabang);
   }
-  query += " ORDER BY h.Inv_nomor DESC"; // Diurutkan dari yang terbaru
+
+  query += " ORDER BY h.Inv_nomor DESC";
 
   const [rows] = await pool.query(query, params);
   return rows;
