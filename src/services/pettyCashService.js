@@ -647,6 +647,74 @@ const deleteData = async (nomor, user) => {
   }
 };
 
+const closeData = async (nomor_utama, user) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const isPck = nomor_utama.includes(".KPC.");
+
+    let sqlSelect = "";
+    let paramsSelect = [];
+    if (isPck) {
+      // [PERBAIKAN]: Ambil pc_total_terpakai (nilai klaim)
+      sqlSelect = `SELECT pc_nomor, pc_cab, pc_status, pc_total_terpakai FROM tpettycash_hdr WHERE pck_nomor = ?`;
+      paramsSelect = [nomor_utama];
+    } else {
+      sqlSelect = `SELECT pc_nomor, pc_cab, pc_status, pc_total_terpakai FROM tpettycash_hdr WHERE pc_nomor = ?`;
+      paramsSelect = [nomor_utama];
+    }
+
+    const [rows] = await connection.query(sqlSelect, paramsSelect);
+
+    if (rows.length === 0) {
+      throw new Error("Data Petty Cash tidak ditemukan.");
+    }
+
+    for (const row of rows) {
+      // Lewati jika sudah closed agar tidak dobel
+      if (row.pc_status === "CLOSED") continue;
+
+      // Update status PC menjadi CLOSED
+      await connection.query(
+        "UPDATE tpettycash_hdr SET pc_status = 'CLOSED', user_modified = ?, date_modified = NOW() WHERE pc_nomor = ?",
+        [user.kode, row.pc_nomor],
+      );
+
+      // [PERBAIKAN KUNCI]: Kembalikan nilai KLAIM (terpakai) sebagai DEBET agar saldo utuh kembali
+      if (row.pc_total_terpakai > 0) {
+        await connection.query(
+          `INSERT INTO tpettycash_mutasi (mut_cabang, mut_tanggal, mut_nomor_bukti, mut_tipe, mut_nominal, mut_keterangan) 
+           VALUES (?, CURDATE(), ?, 'DEBET', ?, ?)`,
+          [
+            row.pc_cab,
+            row.pc_nomor,
+            row.pc_total_terpakai,
+            `Pengembalian nominal klaim (Close) ${row.pc_nomor}`,
+          ],
+        );
+      }
+    }
+
+    if (isPck) {
+      await connection.query(
+        "UPDATE tpettycash_klaim_hdr SET pck_status = 'CLOSED', user_modified = ?, date_modified = NOW() WHERE pck_nomor = ?",
+        [user.kode, nomor_utama],
+      );
+    }
+
+    await connection.commit();
+    return {
+      message: `Petty Cash ${nomor_utama} berhasil ditutup dan nominal klaim telah dikembalikan ke saldo Store.`,
+    };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   getList,
   submitData, // Jangan lupa di-export
@@ -662,4 +730,5 @@ module.exports = {
   rejectSinglePc,
   transferKlaimKolektif,
   deleteData,
+  closeData,
 };

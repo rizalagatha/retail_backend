@@ -198,6 +198,17 @@ const deleteData = async (req, res) => {
   }
 };
 
+const closeData = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    // Panggil service untuk tutup PC, lempar info user
+    const result = await pettyCashService.closeData(nomor, req.user);
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getList,
   submitData, // Jangan lupa di-export
@@ -213,4 +224,5 @@ module.exports = {
   rejectSinglePc,
   transferKlaim,
   deleteData,
+  closeData,
 };
