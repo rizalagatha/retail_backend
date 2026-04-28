@@ -11,7 +11,7 @@ const generateNewKode = async (connection, date) => {
   const ayy = format(new Date(date), "yy");
   const [rows] = await pool.query(
     'SELECT IFNULL(MAX(RIGHT(brg_kode, 5)), 0) as max_nomor FROM tbarangdc WHERE (brg_ktg <> "" OR brg_kelompok <> "") AND LEFT(brg_kode, 2) = ?',
-    [ayy]
+    [ayy],
   );
   const nextNum = parseInt(rows[0].max_nomor, 10) + 1;
   return `${ayy}${String(nextNum).padStart(5, "0")}`;
@@ -25,7 +25,7 @@ const getNewBarcodeId = async (date) => {
 
     const [rows] = await pool.query(
       'SELECT IFNULL(MAX(brg_bcdid), 0) as max_id FROM tbarangdc WHERE DATE_FORMAT(date_create, "%Y") = ?',
-      [tahun]
+      [tahun],
     );
 
     const newId = parseInt(rows[0].max_id, 10) + 1;
@@ -47,10 +47,10 @@ const generateBarcode = (date, barcodeId, kodeUkuran) => {
 // Mengambil data untuk filter dan load awal (dari FormCreate)
 const getInitialData = async () => {
   const [ktg] = await pool.query(
-    'SELECT DISTINCT(kategori) FROM tukuran WHERE kategori <> "" ORDER BY kategori'
+    'SELECT DISTINCT(kategori) FROM tukuran WHERE kategori <> "" ORDER BY kategori',
   );
   const [ktgp] = await pool.query(
-    'SELECT DISTINCT(brg_ktgp) FROM tbarangdc WHERE brg_ktgp <> "" ORDER BY brg_ktgp'
+    'SELECT DISTINCT(brg_ktgp) FROM tbarangdc WHERE brg_ktgp <> "" ORDER BY brg_ktgp',
   );
   const [versi] = await pool.query("SELECT hpprezso FROM tversi");
   return {
@@ -64,7 +64,7 @@ const getInitialData = async () => {
 const getUkuranOptions = async (kategori) => {
   const [rows] = await pool.query(
     "SELECT kode, ukuran FROM tukuran WHERE kategori = ? ORDER BY kode",
-    [kategori]
+    [kategori],
   );
   return rows.map((r) => ({
     no: String(r.kode).padStart(2, "0"),
@@ -81,7 +81,7 @@ const getUkuranOptions = async (kategori) => {
 const getDataForEdit = async (kode) => {
   const [headerRows] = await pool.query(
     'SELECT *, brg_warna AS nama, brg_bahan AS bahan FROM tbarangdc WHERE brg_ktg <> "" AND brg_kode = ?',
-    [kode]
+    [kode],
   );
   if (headerRows.length === 0)
     throw new Error("Kode barang external tidak ditemukan.");
@@ -89,7 +89,7 @@ const getDataForEdit = async (kode) => {
 
   const [detailRows] = await pool.query(
     "SELECT * FROM tbarangdc_dtl WHERE brgd_kode = ?",
-    [kode]
+    [kode],
   );
 
   // Ambil path gambar
@@ -104,13 +104,14 @@ const getDataForEdit = async (kode) => {
 // Menyimpan data (dari simpandata)
 const saveData = async (data, file, user) => {
   const { header, items } = data;
-  const isEdit = !!header.kode && header.kode !== "<-- Kosong=Baru";
+  const currentKode = header.kode || header.brg_kode;
+  const isEdit = !!currentKode && currentKode !== "<-- Kosong=Baru";
   const connection = await pool.getConnection();
 
   try {
     await connection.beginTransaction();
 
-    let brgKode = header.kode;
+    let brgKode = currentKode;
     let barcodeId = parseInt(header.brg_bcdid || "0", 10);
 
     if (!isEdit) {
@@ -136,7 +137,7 @@ const saveData = async (data, file, user) => {
           barcodeId,
           user.kode,
           brgKode,
-        ]
+        ],
       );
     } else {
       await connection.query(
@@ -153,7 +154,7 @@ const saveData = async (data, file, user) => {
           barcodeId,
           user.kode,
           header.date_create,
-        ]
+        ],
       );
     }
 
@@ -188,7 +189,7 @@ const saveData = async (data, file, user) => {
             item.harga,
             item.hpp,
             item.harga,
-          ]
+          ],
         );
       }
     }
