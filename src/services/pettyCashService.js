@@ -379,7 +379,8 @@ const receiveKlaim = async (pck_nomor, payload, user) => {
           date_received = NOW(), 
           user_modified = ?, 
           date_modified = NOW() 
-      WHERE pck_nomor = ? AND pck_status = 'ON_TRANSFER'
+      -- [PERBAIKAN KUNCI]: Izinkan status APPROVED juga, karena kadang Delphi Finance lupa update status web
+      WHERE pck_nomor = ? AND pck_status IN ('ON_TRANSFER', 'APPROVED')
     `;
     const [resPck] = await connection.query(updatePck, [
       tanggal,
