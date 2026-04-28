@@ -249,7 +249,9 @@ const getInvoiceDetailsForKomplain = async (nomorInv) => {
   const query = `
     SELECT d.invd_kode AS kode_barang,
            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) as nama_barang,
-           d.invd_ukuran AS ukuran, d.invd_jumlah AS qty_invoice
+           d.invd_ukuran AS ukuran, 
+           d.invd_jumlah AS qty_invoice,
+           (d.invd_harga - d.invd_diskon) AS harga_netto -- [TAMBAHAN] Ambil harga satuan setelah diskon item
     FROM tinv_dtl d
     LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
     LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
