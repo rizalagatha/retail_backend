@@ -832,6 +832,9 @@ const searchApprovedPriceProposals = async (params) => {
  * @description Mengambil semua detail dari Pengajuan Harga untuk diimpor.
  */
 const getPriceProposalDetailsForSo = async (nomor) => {
+  // [PERBAIKAN KUNCI 1]: Ambil 3 huruf pertama dari nomor untuk dijadikan kode cabang (Misal: 'K05')
+  const cabang = nomor ? nomor.substring(0, 3) : "";
+
   // 1. Ambil Header
   const [headerRows] = await pool.query(
     "SELECT * FROM tpengajuanharga WHERE ph_nomor = ?",
@@ -867,7 +870,9 @@ const getPriceProposalDetailsForSo = async (nomor) => {
         ) stok ON stok.mst_brg_kode = d.phs_kode AND stok.mst_ukuran = d.phs_size
         WHERE d.phs_nomor = ?
     `;
-  const [detailRows] = await pool.query(detailQuery, [nomor, nomor]);
+
+  // [PERBAIKAN KUNCI 2]: Masukkan 'cabang' ke ? pertama, dan 'nomor' ke ? kedua
+  const [detailRows] = await pool.query(detailQuery, [cabang, nomor]);
 
   return { headerData: headerRows[0], itemsData: detailRows };
 };
