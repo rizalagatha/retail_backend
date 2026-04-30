@@ -103,11 +103,18 @@ const getList = async (filters, user) => {
             h.user_create AS userCreate,
             k.pk_nomor AS noKembali,
             k.pk_tanggal AS tanggalKembali,
-            
-            -- [BARU] Ambil catatan kondisi pengembalian
             k.pk_ket AS keteranganKembali,
             
-            (SELECT SUM(pjd_qty) FROM tpeminjaman_dtl WHERE pjd_nomor = h.pj_nomor) AS totalQty
+            (SELECT SUM(pjd_qty) FROM tpeminjaman_dtl WHERE pjd_nomor = h.pj_nomor) AS totalQty,
+
+            -- [BARU] Hitung Total Nominal (Qty x Harga Barang)
+            IFNULL((
+                SELECT SUM(d.pjd_qty * IFNULL(b.brgd_harga, 0)) 
+                FROM tpeminjaman_dtl d 
+                LEFT JOIN tbarangdc_dtl b ON d.pjd_kode = b.brgd_kode AND d.pjd_ukuran = b.brgd_ukuran 
+                WHERE d.pjd_nomor = h.pj_nomor
+            ), 0) AS totalNominal
+
         FROM tpeminjaman_hdr h
         LEFT JOIN tpengembalian_hdr k ON k.pk_ref_pinjam = h.pj_nomor
         WHERE h.pj_tanggal BETWEEN ? AND ?
