@@ -2,9 +2,12 @@ const pool = require("../config/database");
 
 const getMutasiReport = async (filters) => {
   const { startDate, endDate, cabang } = filters;
-  const limitSaldo = 1000000;
 
-  // 1. HITUNG SALDO AWAL (Tetap sama)
+  // [PERBAIKAN] Logika Dinamis Limit Saldo
+  // K03 diset 500.000, sisanya 1.000.000
+  const limitSaldo = cabang === "K03" ? 500000 : 1000000;
+
+  // 1. HITUNG SALDO AWAL
   const querySaldoAwal = `
     SELECT 
       IFNULL(SUM(CASE WHEN mut_tipe = 'DEBET' THEN mut_nominal ELSE 0 END), 0) - 
@@ -14,6 +17,8 @@ const getMutasiReport = async (filters) => {
   `;
   const [saldoRows] = await pool.query(querySaldoAwal, [cabang, startDate]);
   const mutasiSebelumnya = parseFloat(saldoRows[0].mutasi_sebelumnya) || 0;
+
+  // Saldo awal bergantung dari limit awal toko tersebut + mutasinya
   const saldoAwal = limitSaldo + mutasiSebelumnya;
 
   // 2. AMBIL DATA MUTASI (DIPERBAIKI)
@@ -47,7 +52,7 @@ const getMutasiReport = async (filters) => {
     endDate,
   ]);
 
-  // 3. AMBIL RINGKASAN (Tetap sama)
+  // 3. AMBIL RINGKASAN
   const queryKategori = `
     SELECT 
       d.pcd_kategori AS kategori, 
@@ -68,7 +73,7 @@ const getMutasiReport = async (filters) => {
   ]);
 
   return {
-    limit_saldo: limitSaldo,
+    limit_saldo: limitSaldo, // <-- Otomatis ngirim 500.000 kalau K03
     saldo_awal: saldoAwal,
     mutasi: mutasiRows,
     summary_kategori: kategoriRows,
