@@ -51,8 +51,6 @@ const searchTshirtTypes = async (term, custom) => {
  * Mengambil daftar ukuran dan harga dasar berdasarkan jenis kaos.
  * Mereplikasi logika dari loadjeniskaos di Delphi.
  */
-// di file: src/services/priceProposalFormService.js
-
 const getTshirtTypeDetails = async (jenisKaos, custom) => {
   // 1. Siapkan kedua query
   const sizeQuery = `
@@ -146,12 +144,29 @@ const searchProductsByType = async (jenisKaos) => {
 
   const params = [];
 
-  // 2. Tambahkan kondisi LIKE untuk setiap token kata
+  // =========================================================================
+  // [KUNCI PERBAIKAN]: Manipulasi Token Pertama (Jenis Kaos)
+  // Jika jenisKaos-nya 'KO', kita izinkan juga 'KK' untuk ikut masuk pencarian.
+  // =========================================================================
   if (tokens.length > 0) {
-    tokens.forEach((token) => {
+    const firstToken = tokens[0].toUpperCase();
+
+    // Cek apakah token pertama adalah 'KO'
+    if (firstToken === "KO") {
+      // Izinkan KO atau KK di token pertama
+      query += ` AND (a.brg_jeniskaos LIKE ? OR a.brg_jeniskaos LIKE ?)`;
+      params.push(`%KO%`, `%KK%`);
+    } else {
+      // Kalau bukan KO, jalankan normal
       query += ` AND TRIM(CONCAT_WS(' ', a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain)) LIKE ?`;
-      params.push(`%${token}%`);
-    });
+      params.push(`%${tokens[0]}%`);
+    }
+
+    // Lanjutkan pencarian untuk sisa token (mulai dari index 1)
+    for (let i = 1; i < tokens.length; i++) {
+      query += ` AND TRIM(CONCAT_WS(' ', a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain)) LIKE ?`;
+      params.push(`%${tokens[i]}%`);
+    }
   }
 
   query += ` ORDER BY Nama`;
