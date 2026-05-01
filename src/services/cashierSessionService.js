@@ -53,12 +53,9 @@ const getCurrentSession = async (cabang) => {
 
   // =========================================================================
   // [PERBAIKAN KUNCI] MENGHITUNG SALDO SISTEM SECARA REAL-TIME
-  // Agar frontend tau saldo yang sebenarnya (Modal + Omset - Pengeluaran)
   // =========================================================================
   const sesiId = session.sesi_id;
   const modalAwal = Number(session.modal_awal) || 0;
-
-  // [HAPUS] Tarikan dari tinv_hdr (Karena sudah masuk ke tsetor_hdr semua)
 
   // 1. UANG MASUK (Semua Tunai: Invoice Baru, DP, Pelunasan Piutang)
   const [setorRows] = await pool.query(
@@ -67,15 +64,10 @@ const getCurrentSession = async (cabang) => {
   );
   const tunaiMasuk = Number(setorRows[0].total_tunai) || 0;
 
-  // 2. UANG KELUAR untuk Kas Kecil / Petty Cash
-  const [pcRows] = await pool.query(
-    "SELECT SUM(pc_total_terpakai) as total_pc FROM tpettycash_hdr WHERE pc_sesi_id = ?",
-    [sesiId],
-  );
-  const tunaiKeluarPc = Number(pcRows[0].total_pc) || 0;
+  // [HAPUS] Tarikan uang keluar Petty Cash karena PC punya modul & dompet sendiri
 
   // Timpa nilai 0 dari database dengan hasil hitungan real-time
-  session.saldo_sistem = modalAwal + tunaiMasuk - tunaiKeluarPc;
+  session.saldo_sistem = modalAwal + tunaiMasuk;
   // =========================================================================
 
   return session;
@@ -224,24 +216,17 @@ const endSession = async (
     if (sesiRows[0].status === "CLOSED")
       throw new Error("Sesi sudah ditutup sebelumnya.");
 
-    // =========================================================================
-    // [PERBAIKAN] Validasi PIN Otomatis Cerdas
-    // =========================================================================
+    // Validasi PIN Otomatis Cerdas
     if (kasirPenerima === "TUTUP_TOKO") {
-      // Jika tutup toko, verifikasi menggunakan PIN kasir yang sedang login
       await validatePin(connection, kasirUtama, pinPenerima);
     } else {
-      // Jika serah terima shift, verifikasi menggunakan PIN kasir penerima (Shift 2)
       await validatePin(connection, kasirPenerima, pinPenerima);
     }
-    // =========================================================================
 
     // =========================================================================
-    // 🧮 MENGHITUNG SALDO SISTEM (HANYA UANG TUNAI DI LACI)
+    // 🧮 MENGHITUNG SALDO SISTEM (HANYA UANG TUNAI DI LACI KASIR)
     // =========================================================================
     const modalAwal = Number(sesiRows[0].modal_awal) || 0;
-
-    // [HAPUS] Tarikan dari tinv_hdr
 
     // 1. UANG MASUK (Semua Tunai dari Invoice, DP, & Piutang yang direkam di TSetor)
     const [setorRows] = await connection.query(
@@ -250,15 +235,10 @@ const endSession = async (
     );
     const tunaiMasuk = Number(setorRows[0].total_tunai) || 0;
 
-    // 2. UANG KELUAR untuk Kas Kecil / Petty Cash
-    const [pcRows] = await connection.query(
-      "SELECT SUM(pc_total_terpakai) as total_pc FROM tpettycash_hdr WHERE pc_sesi_id = ?",
-      [sesiId],
-    );
-    const tunaiKeluarPc = Number(pcRows[0].total_pc) || 0;
+    // [HAPUS] Tarikan uang keluar Petty Cash karena PC punya modul & dompet sendiri
 
-    // RUMUS FINAL SALDO SISTEM
-    const saldoSistemReal = modalAwal + tunaiMasuk - tunaiKeluarPc;
+    // RUMUS FINAL SALDO SISTEM KASIR
+    const saldoSistemReal = modalAwal + tunaiMasuk;
     // =========================================================================
 
     const saldoFisik = Number(saldoFisikDariLayar) || 0;
@@ -302,7 +282,7 @@ const endSession = async (
     return {
       message: `Shift ditutup. Laci diserahkan ke ${kasirPenerima}.`,
       selisih,
-      saldo_sistem: saldoSistemReal, // Kirim balik untuk info di frontend jika perlu
+      saldo_sistem: saldoSistemReal,
     };
   } catch (error) {
     await connection.rollback();
