@@ -29,7 +29,6 @@ const generateSesiId = async (connection, cabang) => {
 };
 
 // 1. Dapatkan Sesi Aktif di Cabang
-// 1. Dapatkan Sesi Aktif di Cabang
 const getCurrentSession = async (cabang) => {
   const query = `
     SELECT * FROM tkasir_sesi 
@@ -59,21 +58,16 @@ const getCurrentSession = async (cabang) => {
   const sesiId = session.sesi_id;
   const modalAwal = Number(session.modal_awal) || 0;
 
-  // 1. Uang Masuk dari Penjualan Langsung (Hanya Tunai)
-  const [invRows] = await pool.query(
-    "SELECT SUM(inv_rptunai) as total_tunai_inv FROM tinv_hdr WHERE inv_sesi_id = ?",
+  // [HAPUS] Tarikan dari tinv_hdr (Karena sudah masuk ke tsetor_hdr semua)
+
+  // 1. UANG MASUK (Semua Tunai: Invoice Baru, DP, Pelunasan Piutang)
+  const [setorRows] = await pool.query(
+    "SELECT SUM(sh_nominal) as total_tunai FROM tsetor_hdr WHERE sh_sesi_id = ? AND sh_jenis = 0",
     [sesiId],
   );
-  const tunaiInvoice = Number(invRows[0].total_tunai_inv) || 0;
+  const tunaiMasuk = Number(setorRows[0].total_tunai) || 0;
 
-  // 2. Uang Masuk dari Setoran DP/Piutang (Hanya Tunai)
-  const [dpRows] = await pool.query(
-    "SELECT SUM(sh_nominal) as total_tunai_dp FROM tsetor_hdr WHERE sh_sesi_id = ? AND sh_jenis = 0",
-    [sesiId],
-  );
-  const tunaiDp = Number(dpRows[0].total_tunai_dp) || 0;
-
-  // 3. Uang Keluar untuk Kas Kecil / Petty Cash
+  // 2. UANG KELUAR untuk Kas Kecil / Petty Cash
   const [pcRows] = await pool.query(
     "SELECT SUM(pc_total_terpakai) as total_pc FROM tpettycash_hdr WHERE pc_sesi_id = ?",
     [sesiId],
@@ -81,7 +75,7 @@ const getCurrentSession = async (cabang) => {
   const tunaiKeluarPc = Number(pcRows[0].total_pc) || 0;
 
   // Timpa nilai 0 dari database dengan hasil hitungan real-time
-  session.saldo_sistem = modalAwal + tunaiInvoice + tunaiDp - tunaiKeluarPc;
+  session.saldo_sistem = modalAwal + tunaiMasuk - tunaiKeluarPc;
   // =========================================================================
 
   return session;
@@ -247,21 +241,16 @@ const endSession = async (
     // =========================================================================
     const modalAwal = Number(sesiRows[0].modal_awal) || 0;
 
-    // 1. Uang Masuk dari Penjualan Langsung (Hanya kolom inv_rptunai)
-    const [invRows] = await connection.query(
-      "SELECT SUM(inv_rptunai) as total_tunai_inv FROM tinv_hdr WHERE inv_sesi_id = ?",
+    // [HAPUS] Tarikan dari tinv_hdr
+
+    // 1. UANG MASUK (Semua Tunai dari Invoice, DP, & Piutang yang direkam di TSetor)
+    const [setorRows] = await connection.query(
+      "SELECT SUM(sh_nominal) as total_tunai FROM tsetor_hdr WHERE sh_sesi_id = ? AND sh_jenis = 0",
       [sesiId],
     );
-    const tunaiInvoice = Number(invRows[0].total_tunai_inv) || 0;
+    const tunaiMasuk = Number(setorRows[0].total_tunai) || 0;
 
-    // 2. Uang Masuk dari Setoran DP/Piutang (Hanya yang jenisnya TUNAI = 0)
-    const [dpRows] = await connection.query(
-      "SELECT SUM(sh_nominal) as total_tunai_dp FROM tsetor_hdr WHERE sh_sesi_id = ? AND sh_jenis = 0",
-      [sesiId],
-    );
-    const tunaiDp = Number(dpRows[0].total_tunai_dp) || 0;
-
-    // 3. Uang Keluar untuk Kas Kecil / Petty Cash
+    // 2. UANG KELUAR untuk Kas Kecil / Petty Cash
     const [pcRows] = await connection.query(
       "SELECT SUM(pc_total_terpakai) as total_pc FROM tpettycash_hdr WHERE pc_sesi_id = ?",
       [sesiId],
@@ -269,7 +258,7 @@ const endSession = async (
     const tunaiKeluarPc = Number(pcRows[0].total_pc) || 0;
 
     // RUMUS FINAL SALDO SISTEM
-    const saldoSistemReal = modalAwal + tunaiInvoice + tunaiDp - tunaiKeluarPc;
+    const saldoSistemReal = modalAwal + tunaiMasuk - tunaiKeluarPc;
     // =========================================================================
 
     const saldoFisik = Number(saldoFisikDariLayar) || 0;
