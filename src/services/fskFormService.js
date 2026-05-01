@@ -30,69 +30,53 @@ const loadInitialData = async (tanggal, user) => {
   const { cabang } = user;
   const params = [cabang, tanggal];
 
-  // =====================================================================
-  // GEMBOK VALIDASI "TUTUP SHIFT" DIHAPUS SESUAI REQUEST
-  // FSK sekarang bisa dibuka kapan saja (menjadi trigger End of Day)
-  // =====================================================================
-
   // 1. Query untuk grid pertama (detail setoran)
+  // [PERBAIKAN] Cukup panggil dari tsetor_hdr.
+  // Karena inv_rptunai sekarang sudah diinsert ke tsetor_hdr (sh_jenis=0),
+  // kita tinggal membedakan keterangannya.
   const detail1Query = `
-        -- A. SETORAN KASIR TUNAI (DARI INVOICE) -> Backward Compatible
+        -- A. PEMBAYARAN TUNAI (GABUNGAN DARI INVOICE & MANUAL)
         SELECT 
-            'SETORAN KASIR TUNAI' AS jenis, h.inv_tanggal AS tgltrf, h.inv_cus_kode AS kdcus, 
-            c.cus_nama AS nmcus, c.cus_alamat AS alamat, h.inv_nomor AS inv, 
-            IFNULL(sh.sh_nomor, '') AS nomor, 
-            IFNULL(h.inv_rptunai, 0) AS nominal
-        FROM tinv_hdr h
-        LEFT JOIN tcustomer c ON c.cus_kode=h.inv_cus_kode
-        LEFT JOIN tsetor_dtl sd ON sd.sd_inv = h.inv_nomor AND sd.sd_ket = 'PEMBAYARAN TUNAI KASIR'
-        LEFT JOIN tsetor_hdr sh ON sh.sh_nomor = sd.sd_sh_nomor AND sh.sh_jenis = 0
-        WHERE LEFT(h.inv_nomor,3)=? AND h.inv_sts_pro=0 AND h.inv_rptunai<>0 AND h.inv_tanggal=?
-        
-        UNION ALL
-        
-        -- B. PEMBAYARAN TUNAI (PELUNASAN) -> Filter khusus manual
-        SELECT 
-            'PEMBAYARAN TUNAI' AS jenis, NULL AS tgltrf, h.sh_cus_kode, 
-            c.cus_nama, c.cus_alamat, 
+            'PEMBAYARAN TUNAI' AS jenis, NULL AS tgltrf, h.sh_cus_kode AS kdcus, 
+            c.cus_nama AS nmcus, c.cus_alamat AS alamat, 
             (SELECT d.sd_inv FROM tsetor_dtl d WHERE d.sd_sh_nomor=h.sh_nomor ORDER BY d.sd_tanggal DESC LIMIT 1) AS inv,
             h.sh_nomor AS nomor, h.sh_nominal AS nominal
         FROM tsetor_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode=h.sh_cus_kode
-        WHERE LEFT(h.sh_nomor,3)=? AND h.sh_jenis=0 AND h.sh_ket NOT LIKE '%PEMBAYARAN TUNAI KASIR%' AND h.sh_tanggal=?
+        WHERE LEFT(h.sh_nomor,3)=? AND h.sh_jenis=0 AND h.sh_tanggal=?
         
         UNION ALL
         
-        -- C. PEMBAYARAN TRANSFER (KECUALI YANG ADA KATA QRIS)
+        -- B. PEMBAYARAN TRANSFER (KECUALI YANG ADA KATA QRIS)
         SELECT 
-            'PEMBAYARAN TRANSFER' AS jenis, h.sh_tgltransfer, h.sh_cus_kode, 
-            c.cus_nama, c.cus_alamat,
+            'PEMBAYARAN TRANSFER' AS jenis, h.sh_tgltransfer AS tgltrf, h.sh_cus_kode AS kdcus, 
+            c.cus_nama AS nmcus, c.cus_alamat AS alamat,
             (SELECT d.sd_inv FROM tsetor_dtl d WHERE d.sd_sh_nomor=h.sh_nomor ORDER BY d.sd_tanggal DESC LIMIT 1) AS inv,
-            h.sh_nomor, h.sh_nominal AS nominal
+            h.sh_nomor AS nomor, h.sh_nominal AS nominal
         FROM tsetor_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode=h.sh_cus_kode
         WHERE LEFT(h.sh_nomor,3)=? AND h.sh_jenis=1 AND h.sh_ket NOT LIKE '%QRIS%' AND h.sh_tanggal=?
         
         UNION ALL
 
-        -- D. PEMBAYARAN QRIS (JENIS 1 DENGAN KETERANGAN QRIS)
+        -- C. PEMBAYARAN QRIS (JENIS 1 DENGAN KETERANGAN QRIS)
         SELECT 
-            'PEMBAYARAN QRIS' AS jenis, h.sh_tgltransfer, h.sh_cus_kode, 
-            c.cus_nama, c.cus_alamat,
+            'PEMBAYARAN QRIS' AS jenis, h.sh_tgltransfer AS tgltrf, h.sh_cus_kode AS kdcus, 
+            c.cus_nama AS nmcus, c.cus_alamat AS alamat,
             (SELECT d.sd_inv FROM tsetor_dtl d WHERE d.sd_sh_nomor=h.sh_nomor ORDER BY d.sd_tanggal DESC LIMIT 1) AS inv,
-            h.sh_nomor, h.sh_nominal AS nominal
+            h.sh_nomor AS nomor, h.sh_nominal AS nominal
         FROM tsetor_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode=h.sh_cus_kode
         WHERE LEFT(h.sh_nomor,3)=? AND h.sh_jenis=1 AND h.sh_ket LIKE '%QRIS%' AND h.sh_tanggal=?
         
         UNION ALL
         
-        -- E. PEMBAYARAN GIRO
+        -- D. PEMBAYARAN GIRO
         SELECT 
-            'PEMBAYARAN GIRO' AS jenis, h.sh_tglgiro, h.sh_cus_kode, 
-            c.cus_nama, c.cus_alamat, 
+            'PEMBAYARAN GIRO' AS jenis, h.sh_tglgiro AS tgltrf, h.sh_cus_kode AS kdcus, 
+            c.cus_nama AS nmcus, c.cus_alamat AS alamat, 
             (SELECT d.sd_inv FROM tsetor_dtl d WHERE d.sd_sh_nomor=h.sh_nomor ORDER BY d.sd_tanggal DESC LIMIT 1) AS inv,
-            h.sh_nomor, h.sh_nominal AS nominal
+            h.sh_nomor AS nomor, h.sh_nominal AS nominal
         FROM tsetor_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode=h.sh_cus_kode
         WHERE LEFT(h.sh_nomor,3)=? AND h.sh_jenis=2 AND h.sh_tanggal=?;
@@ -103,14 +87,12 @@ const loadInitialData = async (tanggal, user) => {
     ...params,
     ...params,
     ...params,
-    ...params,
   ]);
 
   // 2. Query untuk grid kedua (summary per jenis)
+  // Sama, hapus tarikan dari tinv_hdr.
   const detail2Query = `
-        SELECT 'SETORAN KASIR TUNAI' AS jenis, IFNULL(SUM(h.inv_rptunai), 0) AS nominal FROM tinv_hdr h WHERE LEFT(h.inv_nomor,3)=? AND h.inv_sts_pro=0 AND h.inv_rptunai<>0 AND h.inv_tanggal=?
-        UNION ALL
-        SELECT "PEMBAYARAN TUNAI" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=0 AND s.sh_ket NOT LIKE '%PEMBAYARAN TUNAI KASIR%' AND s.sh_tanggal=?
+        SELECT "PEMBAYARAN TUNAI" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=0 AND s.sh_tanggal=?
         UNION ALL
         SELECT "PEMBAYARAN TRANSFER" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=1 AND s.sh_ket NOT LIKE '%QRIS%' AND s.sh_tanggal=?
         UNION ALL
@@ -126,12 +108,12 @@ const loadInitialData = async (tanggal, user) => {
     ...params,
     ...params,
     ...params,
-    ...params,
     ...params, // Params untuk Selisih Kasir
   ]);
 
   return { details1, details2 };
 };
+
 const loadForEdit = async (nomor, user) => {
   const isKDC = user.cabang === "KDC";
   // 1. Ambil data header
@@ -153,9 +135,11 @@ const loadForEdit = async (nomor, user) => {
     throw new Error("Data FSK tidak ditemukan atau bukan milik cabang Anda.");
 
   // 2. Ambil detail 1
+  // [PERBAIKAN] Jika ada record lama yang jenisnya "SETORAN KASIR TUNAI", anggap sebagai "PEMBAYARAN TUNAI"
   const detail1Query = `
         SELECT
-            d.fskd_jenis AS jenis, d.fskd_tgltrf AS tgltrf, d.fskd_kdcus AS kdcus,
+            IF(d.fskd_jenis = 'SETORAN KASIR TUNAI', 'PEMBAYARAN TUNAI', d.fskd_jenis) AS jenis, 
+            d.fskd_tgltrf AS tgltrf, d.fskd_kdcus AS kdcus,
             c.cus_nama AS nmcus, c.cus_alamat AS alamat, d.fskd_inv AS inv,
             d.fskd_sh_nomor AS nomor, d.fskd_nominal AS nominal
         FROM tform_setorkasir_dtl d
@@ -167,15 +151,27 @@ const loadForEdit = async (nomor, user) => {
   // 3. Ambil detail 2
   const detail2Query = `
         SELECT 
-            fskd2_jenis AS jenis,
+            IF(fskd2_jenis = 'SETORAN KASIR TUNAI', 'PEMBAYARAN TUNAI', fskd2_jenis) AS jenis,
             fskd2_nominal AS nominal,
             fskd2_nominalv AS nominalv
         FROM tform_setorkasir_dtl2
         WHERE fskd2_nomor = ?;
     `;
-  const [details2] = await pool.query(detail2Query, [nomor]);
+  // Agregasi ulang jika diedit ada 2 "PEMBAYARAN TUNAI" (karena merge nama)
+  const [rawDetails2] = await pool.query(detail2Query, [nomor]);
 
-  return { header: headerRows[0], details1, details2 };
+  const mergedDetails2 = [];
+  rawDetails2.forEach((row) => {
+    const existing = mergedDetails2.find((d) => d.jenis === row.jenis);
+    if (existing) {
+      existing.nominal += Number(row.nominal);
+      existing.nominalv += Number(row.nominalv);
+    } else {
+      mergedDetails2.push({ ...row });
+    }
+  });
+
+  return { header: headerRows[0], details1, details2: mergedDetails2 };
 };
 
 const saveData = async (payload, user) => {
