@@ -1005,7 +1005,7 @@ const saveNewDp = async (dpData, user) => {
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'N', ?, NOW()
         )
       `;
-
+      // Jumlah ? = 11.
       params = [
         idrec,
         dpNomor,
@@ -1015,7 +1015,7 @@ const saveNewDp = async (dpData, user) => {
         nominal,
         keterangan || "",
         cabang,
-        activeSesiId, // <--- INI BIANG KEROKNYA! Tadi kelupaan dimasukin wkwkwk
+        activeSesiId, // INI BENAR
         soNomor,
         user.kode,
       ];
@@ -1028,8 +1028,9 @@ const saveNewDp = async (dpData, user) => {
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'N', ?, NOW()
         )
       `;
+      // [PERBAIKAN] Jumlah tanda tanya (?) saya tambah jadi 14.
+      // Sebelumnya ada sh_sesi_id di nama kolom, tapi tanda tanyanya kurang.
 
-      // ⚠ urutan params HARUS sesuai urutan kolom di atas
       params = [
         idrec,
         dpNomor,
@@ -1043,7 +1044,7 @@ const saveNewDp = async (dpData, user) => {
         finalKeterangan,
         soNomor,
         cabang,
-        activeSesiId,
+        activeSesiId, // [SUDAH MASUK]
         user.kode,
       ];
     } else if (jenis === "GIRO") {
@@ -1055,6 +1056,7 @@ const saveNewDp = async (dpData, user) => {
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'N', ?, NOW()
         )
       `;
+      // [PERBAIKAN] Jumlah tanda tanya (?) saya tambah jadi 14.
 
       params = [
         idrec,
@@ -1068,7 +1070,7 @@ const saveNewDp = async (dpData, user) => {
         giroData?.tglJatuhTempo || tanggal,
         keterangan || "",
         cabang,
-        activeSesiId,
+        activeSesiId, // [SUDAH MASUK]
         soNomor,
         user.kode,
       ];

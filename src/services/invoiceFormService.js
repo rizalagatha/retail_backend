@@ -719,6 +719,13 @@ const saveData = async (payload, user) => {
       [user.cabang],
     );
     const activeSesiId = sesiRows.length > 0 ? sesiRows[0].sesi_id : null;
+
+    // [TAMBAHAN GEMBOK]
+    if (!activeSesiId) {
+      throw new Error(
+        "Gagal menyimpan transaksi: Sesi Kasir belum dibuka! Silakan Buka Shift terlebih dahulu.",
+      );
+    }
     // =========================================================
 
     const { header, items, dps, payment, isNew, pins, totals } = payload;
