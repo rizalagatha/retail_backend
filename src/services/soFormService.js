@@ -949,6 +949,16 @@ const saveNewDp = async (dpData, user) => {
   try {
     const cabang = user.cabang;
 
+    // =========================================================
+    // [BARU] AMBIL SESI KASIR AKTIF
+    // =========================================================
+    const [sesiRows] = await connection.query(
+      "SELECT sesi_id FROM tkasir_sesi WHERE cabang = ? AND status IN ('OPEN', 'PAUSED') ORDER BY waktu_buka DESC LIMIT 1",
+      [cabang],
+    );
+    const activeSesiId = sesiRows.length > 0 ? sesiRows[0].sesi_id : null;
+    // =========================================================
+
     // 1. Buat nomor setoran: K06.STR.2512.0001
     const datePrefix = format(new Date(tanggal), "yyMM");
     const prefix = `${cabang}.STR.${datePrefix}`;
@@ -989,20 +999,10 @@ const saveNewDp = async (dpData, user) => {
     if (jenis === "TUNAI") {
       query = `
         INSERT INTO tsetor_hdr (
-          sh_idrec,
-          sh_nomor,
-          sh_cus_kode,
-          sh_tanggal,
-          sh_jenis,
-          sh_nominal,
-          sh_ket,
-          sh_cab,
-          sh_so_nomor,
-          sh_otomatis,
-          user_create,
-          date_create
+          sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal,
+          sh_ket, sh_cab, sh_sesi_id, sh_so_nomor, sh_otomatis, user_create, date_create
         ) VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, 'N', ?, NOW()
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'N', ?, NOW()
         )
       `;
 
@@ -1015,29 +1015,17 @@ const saveNewDp = async (dpData, user) => {
         nominal,
         keterangan || "",
         cabang,
+        activeSesiId, // <--- INI BIANG KEROKNYA! Tadi kelupaan dimasukin wkwkwk
         soNomor,
         user.kode,
       ];
     } else if (jenis === "TRANSFER" || jenis === "QRIS") {
       query = `
         INSERT INTO tsetor_hdr (
-          sh_idrec,
-          sh_nomor,
-          sh_cus_kode,
-          sh_tanggal,
-          sh_jenis,
-          sh_nominal,
-          sh_akun,
-          sh_norek,
-          sh_tgltransfer,
-          sh_ket,
-          sh_so_nomor,
-          sh_cab,
-          sh_otomatis,
-          user_create,
-          date_create
+          sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal,
+          sh_akun, sh_norek, sh_tgltransfer, sh_ket, sh_so_nomor, sh_cab, sh_sesi_id, sh_otomatis, user_create, date_create
         ) VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'N', ?, NOW()
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'N', ?, NOW()
         )
       `;
 
@@ -1053,30 +1041,18 @@ const saveNewDp = async (dpData, user) => {
         bankData?.norek || "",
         bankData?.tglTransfer || tanggal,
         finalKeterangan,
-        soNomor, // sh_so_nomor
-        cabang, // sh_cab
+        soNomor,
+        cabang,
+        activeSesiId,
         user.kode,
       ];
     } else if (jenis === "GIRO") {
       query = `
         INSERT INTO tsetor_hdr (
-          sh_idrec,
-          sh_nomor,
-          sh_cus_kode,
-          sh_tanggal,
-          sh_jenis,
-          sh_nominal,
-          sh_giro,
-          sh_tglgiro,
-          sh_tempogiro,
-          sh_ket,
-          sh_cab,
-          sh_so_nomor,
-          sh_otomatis,
-          user_create,
-          date_create
+          sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal,
+          sh_giro, sh_tglgiro, sh_tempogiro, sh_ket, sh_cab, sh_sesi_id, sh_so_nomor, sh_otomatis, user_create, date_create
         ) VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'N', ?, NOW()
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'N', ?, NOW()
         )
       `;
 
@@ -1092,6 +1068,7 @@ const saveNewDp = async (dpData, user) => {
         giroData?.tglJatuhTempo || tanggal,
         keterangan || "",
         cabang,
+        activeSesiId,
         soNomor,
         user.kode,
       ];

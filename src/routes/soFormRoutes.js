@@ -104,4 +104,11 @@ router.post(
   soFormController.deleteDp,
 );
 
+router.post(
+  "/auto-mutasi-scan",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  soFormController.autoMutasiScan,
+);
+
 module.exports = router;

@@ -253,9 +253,10 @@ const loadData = async (nomorLhk) => {
       d.buangan, 
       d.luas_sistem, 
       d.luas_riil,
-      d.keterangan, -- Gunakan nama asli 'keterangan' agar mudah diakses di frontend
+      d.keterangan,
       d.cab, 
-      d.jo_kode
+      d.jo_kode,
+      d.stitch 
     FROM tdtf d
     LEFT JOIN tsodtf_hdr h ON h.sd_nomor = d.sodtf
     WHERE d.lhk_nomor = ?
@@ -445,11 +446,12 @@ const saveData = async (payload, user) => {
   const {
     tanggal,
     cabang,
-    layout, // <-- array layout dari vue
-    specsData, // <-- array spesifikasi (termasuk cadangan) dari vue
+    layout,
+    specsData,
     items,
     panjang,
     buangan,
+    stitch, // <--- [TAMBAHAN] Tangkap data stitch dari payload header
     jenisOrder,
     isEdit,
     lhkNomor,
@@ -503,9 +505,9 @@ const saveData = async (payload, user) => {
             depan, belakang, lengan, variasi, saku, 
             jumlah, jumlah_sistem, reject, 
             panjang, buangan, luas_sistem, luas_riil, 
-            jo_kode, cab, keterangan, user_create, date_create
+            jo_kode, cab, keterangan, stitch, user_create, date_create
           ) 
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
           [
             lhkNomorFinal,
             tanggal,
@@ -525,6 +527,7 @@ const saveData = async (payload, user) => {
             jenisOrder.kode,
             finalCab,
             ketValue, // Menyimpan JSON Layout
+            Number(stitch || 0),
             user.kode,
           ],
         );

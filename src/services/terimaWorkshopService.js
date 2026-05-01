@@ -51,6 +51,7 @@ const getDetails = async (nomor) => {
   return rows;
 };
 
+// Fungsi untuk membatalkan penerimaan (meniru cxButton4Click)
 const cancelReceipt = async (nomorKirim, user) => {
   const connection = await pool.getConnection();
   try {
@@ -88,13 +89,19 @@ const cancelReceipt = async (nomorKirim, user) => {
       throw new Error("Penerimaan sudah di-closing dan tidak bisa dibatalkan.");
     }
 
-    // [BARU] Hapus header & detail penerimaan di tabel khusus Workshop
-    await connection.query("DELETE FROM tmwt_hdr WHERE mwt_nomor = ?", [
-      nomorTerima,
-    ]);
+    // =======================================================================
+    // [PERBAIKAN SANGAT PENTING]: Hapus DETAIL dulu baru HEADER!
+    // Ini wajib agar Trigger BEFORE DELETE di tmwt_dtl bisa jalan dengan aman
+    // =======================================================================
     await connection.query("DELETE FROM tmwt_dtl WHERE mwtd_nomor = ?", [
       nomorTerima,
     ]);
+
+    // Setelah detail (dan stok via trigger) terhapus, baru hapus HEADER-nya
+    await connection.query("DELETE FROM tmwt_hdr WHERE mwt_nomor = ?", [
+      nomorTerima,
+    ]);
+    // =======================================================================
 
     // Kosongkan referensi di header pengiriman workshop
     await connection.query(

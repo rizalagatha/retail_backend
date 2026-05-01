@@ -79,16 +79,32 @@ const saveData = async (data, files, user) => {
     const nominalTerpakai = parseFloat(parsedHeader.terpakai);
     const sisaSaldoSetelahIni = saldoBerjalan - nominalTerpakai;
 
+    // =========================================================
+    // [BARU] AMBIL SESI KASIR AKTIF
+    // =========================================================
+    const [sesiRows] = await connection.query(
+      "SELECT sesi_id FROM tkasir_sesi WHERE cabang = ? AND status IN ('OPEN', 'PAUSED') ORDER BY waktu_buka DESC LIMIT 1",
+      [user.cabang],
+    );
+    const activeSesiId = sesiRows.length > 0 ? sesiRows[0].sesi_id : null;
+    // =========================================================
+
     if (!isEditMode || !nomor) {
       nomor = await generateNomor(user.cabang, connection);
       idrecHdr = generateIdRec(user.cabang, "PCH");
 
-      const sqlHdr = `INSERT INTO tpettycash_hdr (pc_idrec, pc_nomor, pc_tanggal, pc_cab, pc_modal, pc_total_terpakai, pc_saldo, pc_status, pc_ket, user_create, date_create) VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, NOW())`;
+      const sqlHdr = `
+        INSERT INTO tpettycash_hdr (
+          pc_idrec, pc_nomor, pc_tanggal, pc_cab, pc_sesi_id, pc_modal, 
+          pc_total_terpakai, pc_saldo, pc_status, pc_ket, user_create, date_create
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, NOW())`;
+
       await connection.query(sqlHdr, [
         idrecHdr,
         nomor,
         parsedHeader.tanggal,
         user.cabang,
+        activeSesiId, // <--- Sesi ID masuk sini
         saldoBerjalan,
         nominalTerpakai,
         sisaSaldoSetelahIni,

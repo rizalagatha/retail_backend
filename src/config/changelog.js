@@ -1,4 +1,21 @@
 const changelogs = {
+  "1.4.1": {
+    date: "2026-05-01",
+    changes: [
+      {
+        title: "Pembaruan:",
+        items: [
+          "Setting Promo Kaosan bulan Mei 2026.",
+          "Fitur baru Serah Terima Kasir, meliputi Serah Terima Sementara saat istirahat dan Serah Terima Shift saat tutup Shift (dari kasir Shift 1 ke Shift 2). Ketika Tutup Shift, kasir 1 wajib menginputkan total uang cash selama periode Shift 1 tadi.",
+          "Scan Ready pada Surat Pesanan sekarang sudah otomatis memutasikan ke stok pesanan, sehingga tidak perlu klik Mutasikan ke Stok Pesanan lagi. Jadi pastikan SO sudah benar-benar fix sebelum scan Ready barang, dan pastikan SO sudah disimpan sebelum barangnya discan.",
+          "Pencarian berdasarkan kata kunci pada halaman Laporan Stok Real Time, sehingga tidak harus cari barang satu per satu berdasarkan kodenya.",
+          "Setting Diskon Barang New Arrival untuk Priority/KPR",
+          "Barang yang belum memiliki harga tidak bisa dibuatkan SJ",
+          "Penambahan Inputan Jumlah Stitch untuk LHK SO Bordir",
+        ],
+      },
+    ],
+  },
   "1.4.0": {
     date: "2026-04-01",
     changes: [

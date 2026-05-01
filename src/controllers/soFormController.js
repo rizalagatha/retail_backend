@@ -1,5 +1,6 @@
 const soFormService = require("../services/soFormService");
 const { format } = require("date-fns");
+const mutasiStokService = require("../services/mutasiStokFormService");
 
 const getForEdit = async (req, res) => {
   try {
@@ -175,6 +176,23 @@ const checkLhkStatus = async (req, res) => {
   }
 };
 
+const autoMutasiScan = async (req, res) => {
+  try {
+    const { nomor_so, kode_barang, ukuran, qty } = req.body;
+
+    if (!nomor_so || !kode_barang) {
+      return res.status(400).json({ message: "Parameter tidak lengkap." });
+    }
+
+    // Panggil fungsi autoMutasiScan dari service
+    const result = await mutasiStokService.autoMutasiScan(req.body, req.user);
+    res.json(result);
+  } catch (error) {
+    console.error("Controller Error (autoMutasiScan):", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getForEdit,
   save,
@@ -191,4 +209,5 @@ module.exports = {
   calculateHargaCustom,
   deleteDp,
   checkLhkStatus,
+  autoMutasiScan,
 };

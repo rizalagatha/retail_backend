@@ -79,6 +79,16 @@ const saveData = async (payload, user) => {
   try {
     await connection.beginTransaction();
 
+    // =========================================================
+    // [BARU] AMBIL SESI KASIR AKTIF
+    // =========================================================
+    const [sesiRows] = await connection.query(
+      "SELECT sesi_id FROM tkasir_sesi WHERE cabang = ? AND status IN ('OPEN', 'PAUSED') ORDER BY waktu_buka DESC LIMIT 1",
+      [user.cabang],
+    );
+    const activeSesiId = sesiRows.length > 0 ? sesiRows[0].sesi_id : null;
+    // =========================================================
+
     // --- VALIDASI ---
     if (!header.customer?.kode && !isNew)
       throw new Error("Customer harus diisi.");
@@ -133,8 +143,8 @@ const saveData = async (payload, user) => {
         INSERT INTO tsetor_hdr (
           sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal,
           sh_akun, sh_norek, sh_tgltransfer, sh_giro, sh_tglgiro, sh_tempogiro,
-          sh_ket, sh_so_nomor, user_create, date_create
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
+          sh_ket, sh_so_nomor, sh_cab, sh_sesi_id, user_create, date_create
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
       `;
 
       await connection.query(headerSql, [
@@ -152,7 +162,9 @@ const saveData = async (payload, user) => {
         tglTempoGiro,
         finalKeterangan,
         header.nomorSo || "",
-        user.kode,
+        user.cabang,
+        activeSesiId,
+        user.kode, // [BARU]
       ]);
 
       if (header.nomorSo) {

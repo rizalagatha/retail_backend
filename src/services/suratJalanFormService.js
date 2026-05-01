@@ -431,25 +431,22 @@ const loadItemsFromPackingList = async (nomorPL) => {
       d.pld_kode AS kode,
       TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
       d.pld_ukuran AS ukuran,
-      
-      -- Jumlah SJ default diambil dari Jumlah di Packing List
       d.pld_jumlah AS jumlah, 
-      d.pld_jumlah AS minta, -- PL dianggap sebagai target/permintaan
-      
+      d.pld_jumlah AS minta,
       b.brgd_barcode AS barcode,
-
-      -- [TAMBAHAN] Data Buffer Stok & Sudah
       IFNULL(b.brgd_min, 0) AS stokmin,
       IFNULL(b.brgd_max, 0) AS stokmax,
-      0 AS sudah, -- Default 0 karena ini SJ pertama untuk PL tersebut
+      0 AS sudah,
       
-      -- Stok Aktual Gudang DC
       IFNULL((
          SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
          FROM tmasterstok m 
          WHERE m.mst_aktif='Y' AND m.mst_cab='KDC' 
            AND m.mst_brg_kode=d.pld_kode AND m.mst_ukuran=d.pld_ukuran
-      ), 0) AS stok
+      ), 0) AS stok,
+
+      IFNULL(b.brgd_harga, 0) AS harga,
+      IFNULL(b.brgd_hpp, 0) AS hpp
 
     FROM tpacking_list_dtl d
     LEFT JOIN tbarangdc a ON a.brg_kode = d.pld_kode
@@ -461,7 +458,6 @@ const loadItemsFromPackingList = async (nomorPL) => {
   const [rows] = await pool.query(query, [nomorPL]);
   return rows;
 };
-
 /**
  * Mencari SO Lintas Cabang Khusus yang memiliki SO DTF Bordir (.BR.)
  */

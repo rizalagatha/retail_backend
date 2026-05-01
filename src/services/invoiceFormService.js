@@ -45,6 +45,17 @@ const getKprItemDiscount = (namaBarang, kategori) => {
   const kat = (kategori || "").toUpperCase();
 
   // ==============================================================================
+  // PRIORITAS 0: ITEM NEW ARRIVAL (Pengecualian khusus)
+  // ==============================================================================
+  if (
+    nama.includes("KO POLOS OVERSIZED KANTONG VICTORY COTTON DARK GREY") ||
+    nama.includes("LL POLOS PANJANG JAKET RUNNING BIRU MUDA") ||
+    nama.includes("LL POLOS PANJANG JAKET RUNNING HITAM")
+  ) {
+    return 5; // <--- Diskon 5% untuk New Arrival
+  }
+
+  // ==============================================================================
   // PRIORITAS 1: PENGECEKAN BAHAN SPESIFIK (Tidak peduli Reguler atau Sesional)
   // ==============================================================================
 
@@ -699,6 +710,17 @@ const saveData = async (payload, user) => {
     }
 
     await connection.beginTransaction();
+
+    // =========================================================
+    // [BARU] AMBIL SESI KASIR AKTIF
+    // =========================================================
+    const [sesiRows] = await connection.query(
+      "SELECT sesi_id FROM tkasir_sesi WHERE cabang = ? AND status IN ('OPEN', 'PAUSED') ORDER BY waktu_buka DESC LIMIT 1",
+      [user.cabang],
+    );
+    const activeSesiId = sesiRows.length > 0 ? sesiRows[0].sesi_id : null;
+    // =========================================================
+
     const { header, items, dps, payment, isNew, pins, totals } = payload;
     const nomorInv = header.nomor;
 
@@ -904,6 +926,23 @@ const saveData = async (payload, user) => {
       }
     }
 
+    // =====================================================================
+    // [UPDATE BARU] Generate Nomor Setoran untuk Tunai
+    // =====================================================================
+    let nomorSetoranTunai = "";
+    if (bayarTunaiBersih > 0) {
+      nomorSetoranTunai = await generateNewSetorNumber(
+        connection,
+        user.cabang,
+        header.tanggal,
+      );
+      // Jadikan referensi nomor utama jika transfer/qris kosong
+      if (!nomorSetoran) {
+        nomorSetoran = nomorSetoranTunai;
+      }
+    }
+    // =====================================================================
+
     // [BARU] Tentukan apakah transaksi ini bersifat Piutang
     const isPiutang = isBelumLunas || isPotongGaji || isMarketplace;
 
@@ -992,7 +1031,7 @@ const saveData = async (payload, user) => {
       const headerSql = `
         INSERT INTO tinv_hdr (
           inv_idrec, inv_nomor, inv_nomor_so, inv_tanggal,
-          inv_cab,
+          inv_cab, inv_sesi_id,
           inv_cus_kode, inv_cus_level, inv_ket, inv_sc,
           inv_top,
           inv_disc1, inv_disc2, inv_disc, inv_pro_nomor, inv_bkrm, inv_dp, inv_bayar, inv_pundiamal, inv_diskon_pembulatan,
@@ -1002,7 +1041,7 @@ const saveData = async (payload, user) => {
           inv_is_marketplace, inv_mp_nama, inv_mp_nomor_pesanan, inv_mp_resi, inv_mp_biaya_platform,
           inv_print,
           user_create, date_create
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?, ?, ?, ?, ?, 
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
       `;
@@ -1013,6 +1052,7 @@ const saveData = async (payload, user) => {
         header.nomorSo,
         toSqlDate(header.tanggal),
         user.cabang,
+        activeSesiId,
         header.customer.kode,
         String(header.customer.level || "")
           .trim()
@@ -1333,7 +1373,7 @@ const saveData = async (payload, user) => {
           "Bayar Tunai Langsung",
           0,
           bayarTunaiBersih, // Masuk Kredit
-          "",
+          nomorSetoranTunai || "", // <--- [UPDATE] Masukkan nomor setoran tunai
         ]);
       }
 
@@ -1511,6 +1551,47 @@ const saveData = async (payload, user) => {
       }
     }
 
+    // =====================================================================
+    // [UPDATE BARU] Pembayaran via Tunai (Mencatat Form Setoran Kasir Tunai)
+    // =====================================================================
+    if (bayarTunaiBersih > 0 && nomorSetoranTunai) {
+      // Gunakan akhiran 'T' untuk pembeda unik IDREC di ms yang sama
+      const idrecTunai = `${user.cabang}SH${format(new Date(), "yyyyMMddHHmmssSSS")}T`;
+
+      const tunaiHdrSql = `
+        INSERT INTO tsetor_hdr (
+          sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal,
+          sh_otomatis, sh_ket, sh_cab, sh_sesi_id, user_create, date_create
+        )
+        VALUES (?, ?, ?, ?, 0, ?, 'Y', 'PEMBAYARAN TUNAI KASIR', ?, ?, ?, NOW());
+      `;
+      await connection.query(tunaiHdrSql, [
+        idrecTunai,
+        nomorSetoranTunai,
+        header.customer.kode,
+        toSqlDateTime(header.tanggal),
+        bayarTunaiBersih, // sh_jenis = 0 (TUNAI)
+        user.cabang,
+        activeSesiId,
+        user.kode,
+      ]);
+
+      const angsurIdTunai = `${user.cabang}CT${format(new Date(), "yyyyMMddHHmmssSSS")}`;
+      const tunaiDtlSql = `
+        INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut)
+        VALUES (?, ?, ?, ?, ?, 'PEMBAYARAN TUNAI KASIR', ?, 1);
+      `;
+      await connection.query(tunaiDtlSql, [
+        idrecTunai,
+        nomorSetoranTunai,
+        toSqlDateTime(header.tanggal),
+        invNomor,
+        bayarTunaiBersih,
+        angsurIdTunai,
+      ]);
+    }
+    // =====================================================================
+
     // Pembayaran via Card/Transfer (PEMBAYARAN DARI KASIR)
     if ((payment.transfer?.nominal || 0) > 0) {
       const nomorSetoranReal =
@@ -1526,8 +1607,11 @@ const saveData = async (payload, user) => {
       ]);
 
       const setorHdrSql = `
-        INSERT INTO tsetor_hdr (sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_akun, sh_norek, sh_tgltransfer, sh_otomatis, user_create, date_create)
-        VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 'Y', ?, NOW());
+        INSERT INTO tsetor_hdr (
+          sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, 
+          sh_akun, sh_norek, sh_tgltransfer, sh_otomatis, sh_cab, sh_sesi_id, user_create, date_create
+        )
+        VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 'Y', ?, ?, ?, NOW());
       `;
       await connection.query(setorHdrSql, [
         idrecSetoran,
@@ -1538,7 +1622,9 @@ const saveData = async (payload, user) => {
         payment.transfer.akun?.kode || "",
         payment.transfer.akun?.rekening || "",
         toSqlDateTime(payment.transfer.tanggal),
-        user.kode,
+        user.cabang,
+        activeSesiId,
+        user.kode, // [BARU]
       ]);
 
       // Insert detail setoran
@@ -1582,15 +1668,13 @@ const saveData = async (payload, user) => {
 
       // 1. Insert ke Header Setoran (sh_jenis = 3 untuk QRIS)
       const qrisHdrSql = `
-    INSERT INTO tsetor_hdr (
-      sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, 
-      sh_jenis, -- Kita isi 1 (TRANSFER)
-      sh_nominal, sh_akun, sh_norek, sh_tgltransfer, sh_otomatis, 
-      sh_ket, -- Kita isi 'PEMBAYARAN QRIS KASIR'
-      user_create, date_create
-    )
-    VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 'Y', 'PEMBAYARAN QRIS KASIR', ?, NOW());
-  `;
+        INSERT INTO tsetor_hdr (
+          sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, 
+          sh_jenis, sh_nominal, sh_akun, sh_norek, sh_tgltransfer, sh_otomatis, 
+          sh_ket, sh_cab, sh_sesi_id, user_create, date_create
+        )
+        VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 'Y', 'PEMBAYARAN QRIS KASIR', ?, ?, ?, NOW());
+      `;
       await connection.query(qrisHdrSql, [
         idrecQris,
         nomorSetoranQris,
@@ -1600,7 +1684,9 @@ const saveData = async (payload, user) => {
         payment.qris.akun?.kode || "",
         payment.qris.akun?.rekening || "",
         toSqlDateTime(payment.qris.tanggal),
-        user.kode,
+        user.cabang,
+        activeSesiId,
+        user.kode, // [BARU]
       ]);
 
       // Insert detail setoran
@@ -2057,7 +2143,9 @@ const getPrintData = async (nomor) => {
   // =============== FIX PEMBAYARAN (AMBIL SEMUA SETORAN & SISA TERKAIT) ===============
   // 1. Ambil SEMUA jenis setoran yang TERPAKAI (DP + Transfer + QRIS + Cicilan)
   const [setorRows] = await pool.query(
-    `SELECT SUM(sd_bayar) AS totalSetoran FROM tsetor_dtl WHERE sd_inv = ?`,
+    `SELECT SUM(sd_bayar) AS totalSetoran 
+     FROM tsetor_dtl 
+     WHERE sd_inv = ? AND sd_ket NOT LIKE '%PEMBAYARAN TUNAI KASIR%'`,
     [nomor],
   );
   const totalSetoran = applyRoundingPolicy(setorRows?.[0]?.totalSetoran || 0);
@@ -2067,7 +2155,8 @@ const getPrintData = async (nomor) => {
   const [sisaRows] = await pool.query(
     `SELECT SUM(h.sh_nominal - COALESCE((SELECT SUM(d2.sd_bayar) FROM tsetor_dtl d2 WHERE d2.sd_sh_nomor = h.sh_nomor), 0)) AS sisaSetoran
      FROM tsetor_hdr h
-     WHERE h.sh_nomor IN (
+     WHERE h.sh_jenis != 0 -- Abaikan Tunai
+       AND h.sh_nomor IN (
          SELECT DISTINCT sd_sh_nomor FROM tsetor_dtl WHERE sd_inv = ?
      )`,
     [nomor],
@@ -2112,21 +2201,17 @@ const getPrintData = async (nomor) => {
 
   // Ambil data pembayaran murni dari Invoice Header (Pembayaran Kasir)
   const bayarTunai = Number(header.inv_rptunai || 0);
-  const bayarCard = Number(header.inv_rpcard || 0);
+  // const bayarCard = Number(header.inv_rpcard || 0);
   const bayarVoucher = Number(header.inv_rpvoucher || 0);
   const pundiAmal = Number(header.inv_pundiamal || 0);
 
   // [PERBAIKAN KUNCI]:
   // Tambahkan "sisaSetoran" agar uang sisa DP 25.000 tadi terdeteksi sebagai UANG PELANGGAN
   const totalTelahDibayar =
-    bayarTunai + bayarCard + bayarVoucher + totalSetoran + sisaSetoran;
+    bayarTunai + bayarVoucher + totalSetoran + sisaSetoran;
 
   // Sisa Piutang
-  const sisaPiutang = Math.max(
-    grandTotal -
-      (bayarTunai + bayarCard + bayarVoucher + totalSetoran + sisaSetoran),
-    0,
-  );
+  const sisaPiutang = Math.max(grandTotal - totalTelahDibayar, 0);
 
   // [KEMBALI OTOMATIS]: Langsung selisih dari Total Uang vs Grand Total
   const kembaliOtomatis = Math.max(totalTelahDibayar - grandTotal, 0);

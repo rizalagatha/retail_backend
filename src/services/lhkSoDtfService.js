@@ -49,6 +49,8 @@ const getLhkList = async (filters) => {
         SUM(d.jumlah_sistem) AS TotalJumlahSistem,
         SUM(d.jumlah) AS TotalJumlahRiil,
         SUM(d.reject) AS TotalReject,
+
+        SUM(d.stitch) AS TotalStitch,
         
         COUNT(d.sodtf) as TotalOrder,
         IF(MAX(d.luas_riil) > 0, 

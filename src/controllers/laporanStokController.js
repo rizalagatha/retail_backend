@@ -5,6 +5,7 @@ const getRealTimeStock = async (req, res) => {
     const filters = {
       gudang: req.query.gudang,
       kodeBarang: req.query.kodeBarang,
+      keyword: req.query.keyword, // <--- [UPDATE PENTING] Tangkap Keyword di sini!
       jenisStok: req.query.jenisStok,
       tampilkanKosong: req.query.tampilkanKosong === "true",
       tanggal: req.query.tanggal,

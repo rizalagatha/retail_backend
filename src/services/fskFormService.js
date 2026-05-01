@@ -26,36 +26,40 @@ const generateNewFskNumber = async (cabang, tanggal) => {
   return `${prefix}${nextNumber}`;
 };
 
-/**
- * Memuat data setoran harian untuk form baru.
- * Diperbarui untuk membedakan Transfer manual dan QRIS (Legacy Mode).
- */
 const loadInitialData = async (tanggal, user) => {
   const { cabang } = user;
   const params = [cabang, tanggal];
 
+  // =====================================================================
+  // GEMBOK VALIDASI "TUTUP SHIFT" DIHAPUS SESUAI REQUEST
+  // FSK sekarang bisa dibuka kapan saja (menjadi trigger End of Day)
+  // =====================================================================
+
   // 1. Query untuk grid pertama (detail setoran)
   const detail1Query = `
-        -- A. TUNAI DARI INVOICE
+        -- A. SETORAN KASIR TUNAI (DARI INVOICE) -> Backward Compatible
         SELECT 
             'SETORAN KASIR TUNAI' AS jenis, h.inv_tanggal AS tgltrf, h.inv_cus_kode AS kdcus, 
             c.cus_nama AS nmcus, c.cus_alamat AS alamat, h.inv_nomor AS inv, 
-            '' AS nomor, IFNULL(h.inv_rptunai, 0) AS nominal
+            IFNULL(sh.sh_nomor, '') AS nomor, 
+            IFNULL(h.inv_rptunai, 0) AS nominal
         FROM tinv_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode=h.inv_cus_kode
+        LEFT JOIN tsetor_dtl sd ON sd.sd_inv = h.inv_nomor AND sd.sd_ket = 'PEMBAYARAN TUNAI KASIR'
+        LEFT JOIN tsetor_hdr sh ON sh.sh_nomor = sd.sd_sh_nomor AND sh.sh_jenis = 0
         WHERE LEFT(h.inv_nomor,3)=? AND h.inv_sts_pro=0 AND h.inv_rptunai<>0 AND h.inv_tanggal=?
         
         UNION ALL
         
-        -- B. PEMBAYARAN TUNAI (PELUNASAN)
+        -- B. PEMBAYARAN TUNAI (PELUNASAN) -> Filter khusus manual
         SELECT 
             'PEMBAYARAN TUNAI' AS jenis, NULL AS tgltrf, h.sh_cus_kode, 
             c.cus_nama, c.cus_alamat, 
             (SELECT d.sd_inv FROM tsetor_dtl d WHERE d.sd_sh_nomor=h.sh_nomor ORDER BY d.sd_tanggal DESC LIMIT 1) AS inv,
-            h.sh_nomor, h.sh_nominal AS nominal
+            h.sh_nomor AS nomor, h.sh_nominal AS nominal
         FROM tsetor_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode=h.sh_cus_kode
-        WHERE LEFT(h.sh_nomor,3)=? AND h.sh_jenis=0 AND h.sh_tanggal=?
+        WHERE LEFT(h.sh_nomor,3)=? AND h.sh_jenis=0 AND h.sh_ket NOT LIKE '%PEMBAYARAN TUNAI KASIR%' AND h.sh_tanggal=?
         
         UNION ALL
         
@@ -94,7 +98,6 @@ const loadInitialData = async (tanggal, user) => {
         WHERE LEFT(h.sh_nomor,3)=? AND h.sh_jenis=2 AND h.sh_tanggal=?;
     `;
 
-  // Total 5 Spread Params untuk 5 blok UNION ALL
   const [details1] = await pool.query(detail1Query, [
     ...params,
     ...params,
@@ -107,14 +110,15 @@ const loadInitialData = async (tanggal, user) => {
   const detail2Query = `
         SELECT 'SETORAN KASIR TUNAI' AS jenis, IFNULL(SUM(h.inv_rptunai), 0) AS nominal FROM tinv_hdr h WHERE LEFT(h.inv_nomor,3)=? AND h.inv_sts_pro=0 AND h.inv_rptunai<>0 AND h.inv_tanggal=?
         UNION ALL
-        SELECT "PEMBAYARAN TUNAI" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=0 AND s.sh_tanggal=?
+        SELECT "PEMBAYARAN TUNAI" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=0 AND s.sh_ket NOT LIKE '%PEMBAYARAN TUNAI KASIR%' AND s.sh_tanggal=?
         UNION ALL
         SELECT "PEMBAYARAN TRANSFER" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=1 AND s.sh_ket NOT LIKE '%QRIS%' AND s.sh_tanggal=?
         UNION ALL
-        -- [FIX] Filter QRIS menggunakan LIKE pada keterangan
         SELECT "PEMBAYARAN QRIS" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=1 AND s.sh_ket LIKE '%QRIS%' AND s.sh_tanggal=?
         UNION ALL
-        SELECT "PEMBAYARAN GIRO" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=2 AND s.sh_tanggal=?;
+        SELECT "PEMBAYARAN GIRO" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=2 AND s.sh_tanggal=?
+        UNION ALL
+        SELECT "SELISIH FISIK KASIR" AS jenis, IFNULL(SUM(selisih),0) AS nominal FROM tkasir_sesi WHERE cabang=? AND DATE(waktu_tutup)=?;
     `;
 
   const [details2] = await pool.query(detail2Query, [
@@ -123,11 +127,11 @@ const loadInitialData = async (tanggal, user) => {
     ...params,
     ...params,
     ...params,
+    ...params, // Params untuk Selisih Kasir
   ]);
 
   return { details1, details2 };
 };
-
 const loadForEdit = async (nomor, user) => {
   const isKDC = user.cabang === "KDC";
   // 1. Ambil data header
@@ -268,9 +272,22 @@ const saveData = async (payload, user) => {
       await connection.query(dtl2Sql, [dtl2Values]);
     }
 
+    // =====================================================================
+    // [BARU] AUTO-CLOSE SESI KASIR (END OF DAY TRIGGER)
+    // Karena pembuatan FSK dianggap sebagai proses Tutup Toko,
+    // maka semua sesi kasir yang masih 'OPEN' di cabang ini otomatis di-CLOSE.
+    // =====================================================================
+    const autoCloseSql = `
+        UPDATE tkasir_sesi 
+        SET status = 'CLOSED', waktu_tutup = NOW() 
+        WHERE cabang = ? AND status IN ('OPEN', 'PAUSED')
+    `;
+    await connection.query(autoCloseSql, [user.cabang]);
+    // =====================================================================
+
     await connection.commit();
     return {
-      message: `Form Setoran Kasir ${fskNomor} berhasil disimpan.`,
+      message: `Form Setoran Kasir ${fskNomor} berhasil disimpan. Sesi Kasir hari ini otomatis ditutup.`,
       nomor: fskNomor,
     };
   } catch (error) {

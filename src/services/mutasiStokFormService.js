@@ -388,6 +388,132 @@ const getExportDetails = async (filters) => {
   return rows;
 };
 
+/**
+ * @description Menyimpan mutasi stok secara otomatis via Scan Barcode (Showroom -> Pesanan)
+ */
+const autoMutasiScan = async (payload, user) => {
+  const { nomor_so, kode_barang, ukuran, qty } = payload;
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const cabang = user.cabang;
+    const tanggal = format(new Date(), "yyyy-MM-dd");
+
+    // =======================================================================
+    // 1. CEK ATAU BUAT HEADER MSO
+    // =======================================================================
+    const [existingMso] = await connection.query(
+      `SELECT mso_nomor, mso_idrec FROM tmutasistok_hdr 
+       WHERE mso_so_nomor = ? AND mso_tanggal = ? AND mso_jenis = 'SP' AND mso_cab = ? LIMIT 1`,
+      [nomor_so, tanggal, cabang],
+    );
+
+    let msoNomor, idrec;
+
+    if (existingMso.length > 0) {
+      msoNomor = existingMso[0].mso_nomor;
+      idrec = existingMso[0].mso_idrec;
+    } else {
+      msoNomor = await generateNewMsoNumber(cabang, tanggal);
+      idrec = `${cabang}MSO${format(new Date(), "yyyyMMddHHmmssSSS")}`;
+      await connection.query(
+        `INSERT INTO tmutasistok_hdr (
+          mso_idrec, mso_nomor, mso_tanggal, mso_so_nomor, mso_ket, mso_jenis, mso_cab, user_create, date_create
+        ) VALUES (?, ?, ?, ?, ?, 'SP', ?, ?, NOW())`,
+        [
+          idrec,
+          msoNomor,
+          tanggal,
+          nomor_so,
+          "AUTO-MUTASI SCAN BARCODE",
+          cabang,
+          user.kode,
+        ],
+      );
+    }
+
+    // =======================================================================
+    // 2. CEK APAKAH BARANG INI SUDAH ADA DI DALAM DOKUMEN MSO TERSEBUT
+    // =======================================================================
+    const [existingDetail] = await connection.query(
+      `SELECT msod_nomorin, msod_nourut, msod_jumlah 
+       FROM tmutasistok_dtl 
+       WHERE msod_nomor = ? AND msod_kode = ? AND msod_ukuran = ? LIMIT 1`,
+      [msoNomor, kode_barang, ukuran],
+    );
+
+    if (existingDetail.length > 0) {
+      // -------------------------------------------------------------------
+      // SKENARIO A: BARANG SUDAH ADA (LAKUKAN UPDATE GROUPING)
+      // -------------------------------------------------------------------
+      const currentQty = existingDetail[0].msod_jumlah;
+      const newQty = currentQty + qty;
+      const msodNomorIn = existingDetail[0].msod_nomorin;
+      const nourut = existingDetail[0].msod_nourut;
+
+      // Update Qty di tabel mutasi detail
+      await connection.query(
+        `UPDATE tmutasistok_dtl SET msod_jumlah = ? WHERE msod_nomor = ? AND msod_kode = ? AND msod_ukuran = ?`,
+        [newQty, msoNomor, kode_barang, ukuran],
+      );
+
+      // KARENA TRIGGER 'AFTER INSERT' TIDAK BUNYI SAAT KITA MELAKUKAN 'UPDATE',
+      // MAKA KITA UPDATE STOKNYA SECARA MANUAL VIA BACKEND!
+      const idrecMaster = `${msoNomor}${nourut}`; // Sesuai rumus CONCAT di Trigger
+      await connection.query(
+        `UPDATE tmasterstok SET mst_stok_out = ? WHERE mst_idrec = ?`,
+        [newQty, idrecMaster],
+      );
+
+      const idrecMasterSo = `${msodNomorIn}${nourut}`; // Sesuai rumus CONCAT di Trigger
+      await connection.query(
+        `UPDATE tmasterstokso SET mst_stok_in = ? WHERE mst_idrec = ?`,
+        [newQty, idrecMasterSo],
+      );
+    } else {
+      // -------------------------------------------------------------------
+      // SKENARIO B: BARANG BELUM ADA (LAKUKAN INSERT BARU)
+      // -------------------------------------------------------------------
+      const [urutRows] = await connection.query(
+        "SELECT IFNULL(MAX(msod_nourut), 0) + 1 AS nextUrut FROM tmutasistok_dtl WHERE msod_nomor = ?",
+        [msoNomor],
+      );
+      const nextUrut = urutRows[0].nextUrut;
+      const msodNomorIn = await generateNewMsodNomorIn(
+        connection,
+        cabang,
+        tanggal,
+      );
+
+      await connection.query(
+        `INSERT INTO tmutasistok_dtl (
+          msod_idrec, msod_nomor, msod_nomorin, msod_kode, msod_ukuran, msod_jumlah, msod_nourut
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [idrec, msoNomor, msodNomorIn, kode_barang, ukuran, qty, nextUrut],
+      );
+      // (Trigger database otomatis memotong/memindahkan stok karena perintahnya INSERT)
+    }
+
+    await connection.commit();
+
+    return {
+      success: true,
+      message: `Item otomatis dimutasi ke dokumen ${msoNomor}`,
+      mso_nomor: msoNomor,
+    };
+  } catch (error) {
+    await connection.rollback();
+    console.error("Error Auto Mutasi Scan:", error);
+    throw new Error(
+      "Gagal mengeksekusi Auto-Mutasi di database: " + error.message,
+    );
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   searchSo,
   loadFromSo,
@@ -395,4 +521,5 @@ module.exports = {
   loadForEdit,
   getPrintData,
   getExportDetails,
+  autoMutasiScan,
 };
