@@ -2093,6 +2093,7 @@ const getPrintData = async (nomor) => {
       h.inv_disc, h.inv_ppn, h.inv_bkrm, h.inv_dp, h.inv_pundiamal,
       h.inv_rptunai, h.inv_rpcard, h.inv_rpvoucher, h.inv_kembali,
       h.inv_rj_rp, -- [AMBIL NOMINAL RETUR JUAL]
+      h.inv_diskon_pembulatan, -- 👈 [TAMBAHKAN INI]
       DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY) AS tempo,
       c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
       d.invd_kode, d.invd_ukuran, d.invd_jumlah, d.invd_harga, d.invd_diskon,
@@ -2207,10 +2208,11 @@ const getPrintData = async (nomor) => {
     ((Number(header.inv_ppn) || 0) / 100) * netto,
   );
   const returJual = Number(header.inv_rj_rp || 0); // Ambil nominal retur jual
+  const diskonPembulatan = Number(header.inv_diskon_pembulatan || 0); // 👈 [TAMBAHKAN INI]
 
-  // Grand Total dipotong Retur Jual
+  // Grand Total dipotong Retur Jual & Diskon Pembulatan
   const grandTotal = applyRoundingPolicy(
-    netto + ppn + (header.inv_bkrm || 0) - returJual,
+    netto + ppn + (header.inv_bkrm || 0) - returJual - diskonPembulatan, // 👈 [KURANGI DISINI]
   );
 
   // Ambil data pembayaran murni dari Invoice Header (Pembayaran Kasir)
@@ -2233,6 +2235,7 @@ const getPrintData = async (nomor) => {
   header.summary = {
     subTotal: grossSubTotal,
     diskon: totalDiskonKeseluruhan,
+    diskonPembulatan: diskonPembulatan,
     netto,
     ppn,
     biayaKirim: header.inv_bkrm || 0,
