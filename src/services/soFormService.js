@@ -263,6 +263,27 @@ const save = async (data, user) => {
         }
       }
 
+      // ===================================================================
+      // [FIX MUTASI IN]: Ambil qty dari Mutasi In untuk Mencegah Double Count
+      // Karena dari frontend kita menipu mengirim nilai gabungan (Scan + Mutasi In)
+      // ===================================================================
+
+      const [miRows] = await connection.query(
+        `
+        SELECT SUM(md.mid_jumlah) AS mi_qty 
+        FROM tmutasiin_dtl md 
+        JOIN tmutasiin_hdr mh ON mh.mi_nomor = md.mid_nomor 
+        WHERE mh.mi_so_nomor = ? AND md.mid_kode = ? AND md.mid_ukuran = ?`,
+        [soNomor, kodeBarang, item.ukuran || ""],
+      );
+      const miQty = Number(miRows[0]?.mi_qty || 0);
+
+      // Kurangi total scanned dari frontend dengan miQty agar yang
+      // tersimpan di DB murni hasil scan kasir.
+      let pureScanned = Number(item.sod_scanned || 0) - miQty;
+      if (pureScanned < 0) pureScanned = 0;
+      // ===================================================================
+
       const sodIdrec = `${idrec}${String(index + 1).padStart(3, "0")}`;
 
       await connection.query(
@@ -277,7 +298,7 @@ const save = async (data, user) => {
           item.noSoDtf || "",
           item.ukuran || "",
           item.jumlah || 0,
-          item.sod_scanned || 0,
+          pureScanned, // <--- GUNAKAN PURE SCANNED DI SINI
           item.harga || 0,
           item.diskonPersen || 0,
           item.diskonRp || 0,
@@ -422,7 +443,7 @@ const getSoForEdit = async (nomor) => {
   const connection = await pool.getConnection();
   try {
     const [invoiceRows] = await connection.query(
-      "SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor_so = ? AND inv_sts_pro = 1",
+      "SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor_so = ? AND inv_sts_pro = 0", // <--- UBAH JADI 0
       [nomor],
     );
     const isInvoiced = invoiceRows.length > 0;
@@ -431,7 +452,17 @@ const getSoForEdit = async (nomor) => {
     const mainQuery = `
   SELECT 
       h.*, d.*, 
-      d.sod_scanned AS scannedQty,
+      (
+        d.sod_scanned + 
+        IFNULL((
+          SELECT SUM(md.mid_jumlah)
+          FROM tmutasiin_dtl md
+          JOIN tmutasiin_hdr mh ON mh.mi_nomor = md.mid_nomor
+          WHERE mh.mi_so_nomor = h.so_nomor 
+            AND md.mid_kode = d.sod_kode 
+            AND md.mid_ukuran = d.sod_ukuran
+        ), 0)
+      ) AS scannedQty,
       IFNULL((
         SELECT SUM(m.mst_stok_in - m.mst_stok_out)
         FROM tmasterstokso m 

@@ -162,10 +162,17 @@ const searchSo = async (term, page, itemsPerPage, user) => {
                     WHERE hh.inv_sts_pro = 0 
                     AND hh.inv_nomor_so = h.so_nomor), 0) AS qtyinv,
                     
-            -- 3. Total Qty yang sudah di-Scan (Ready)
-            IFNULL((SELECT SUM(dd.sod_scanned) 
-                    FROM tso_dtl dd 
-                    WHERE dd.sod_so_nomor = h.so_nomor), 0) AS qtyscanned,
+           -- 3. Total Qty yang sudah di-Scan (Ready) + Mutasi In (Pusat)
+            (
+                IFNULL((SELECT SUM(dd.sod_scanned) 
+                        FROM tso_dtl dd 
+                        WHERE dd.sod_so_nomor = h.so_nomor), 0)
+                +
+                IFNULL((SELECT SUM(md.mid_jumlah) 
+                        FROM tmutasiin_dtl md 
+                        JOIN tmutasiin_hdr mh ON mh.mi_nomor = md.mid_nomor 
+                        WHERE mh.mi_so_nomor = h.so_nomor), 0)
+            ) AS qtyscanned,
                     
             -- 4. Total Mutasi Stok SO (Hanya menghitung barang fisik)
             IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
