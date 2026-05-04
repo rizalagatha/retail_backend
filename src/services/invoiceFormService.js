@@ -727,8 +727,12 @@ const saveData = async (payload, user) => {
     );
     const activeSesiId = sesiRows.length > 0 ? sesiRows[0].sesi_id : null;
 
-    // [TAMBAHAN GEMBOK]
-    if (!activeSesiId) {
+    // [TAMBAHAN GEMBOK - FIX UNTUK KPR & NON-STORE]
+    // Deteksi apakah cabang adalah toko reguler (K01, K02, dst)
+    const isStoreUser = /^K\d+/.test(user.cabang);
+
+    // Hanya wajibkan Sesi Kasir jika dia adalah Toko Reguler
+    if (isStoreUser && !activeSesiId) {
       throw new Error(
         "Gagal menyimpan transaksi: Sesi Kasir belum dibuka! Silakan Buka Shift terlebih dahulu.",
       );
