@@ -2207,45 +2207,43 @@ const getPrintData = async (nomor) => {
   const ppn = applyRoundingPolicy(
     ((Number(header.inv_ppn) || 0) / 100) * netto,
   );
-  const returJual = Number(header.inv_rj_rp || 0); // Ambil nominal retur jual
-  const diskonPembulatan = Number(header.inv_diskon_pembulatan || 0); // 👈 [TAMBAHKAN INI]
+  const returJual = Number(header.inv_rj_rp || 0);
+  const diskonPembulatan = Number(header.inv_diskon_pembulatan || 0); // 👈 AMBIL DISKON PEMBULATAN
 
   // Grand Total dipotong Retur Jual & Diskon Pembulatan
   const grandTotal = applyRoundingPolicy(
-    netto + ppn + (header.inv_bkrm || 0) - returJual - diskonPembulatan, // 👈 [KURANGI DISINI]
+    netto + ppn + (header.inv_bkrm || 0) - returJual - diskonPembulatan,
   );
 
-  // Ambil data pembayaran murni dari Invoice Header (Pembayaran Kasir)
   const bayarTunai = Number(header.inv_rptunai || 0);
-  // const bayarCard = Number(header.inv_rpcard || 0);
   const bayarVoucher = Number(header.inv_rpvoucher || 0);
   const pundiAmal = Number(header.inv_pundiamal || 0);
 
-  // [PERBAIKAN KUNCI]:
-  // Tambahkan "sisaSetoran" agar uang sisa DP 25.000 tadi terdeteksi sebagai UANG PELANGGAN
+  // Mengambil total bayar MURNI DARI DATABASE (TSetor & Tunai), mengabaikan inputan kasir yg salah
   const totalTelahDibayar =
     bayarTunai + bayarVoucher + totalSetoran + sisaSetoran;
-
-  // Sisa Piutang
   const sisaPiutang = Math.max(grandTotal - totalTelahDibayar, 0);
-
-  // [KEMBALI OTOMATIS]: Langsung selisih dari Total Uang vs Grand Total
   const kembaliOtomatis = Math.max(totalTelahDibayar - grandTotal, 0);
+
+  // 👈 OVERRIDE HEADER: Paksa Vue Template membaca angka DP & Bayar yang asli dari DB!
+  header.inv_dp = dpDipakai;
+  header.inv_bayar = totalTelahDibayar;
 
   header.summary = {
     subTotal: grossSubTotal,
     diskon: totalDiskonKeseluruhan,
-    diskonPembulatan: diskonPembulatan,
+    diskonPembulatan: diskonPembulatan, // 👈 Masuk Summary
     netto,
     ppn,
     biayaKirim: header.inv_bkrm || 0,
-    returJual: returJual, // Masukkan retur
+    returJual: returJual,
     dp: dpDipakai,
     grandTotal,
-    bayar: totalTelahDibayar,
+    bayar: totalTelahDibayar, // 👈 Pakai data asli
     pundiAmal: pundiAmal,
-    kembali: kembaliOtomatis, // Otomatis nangkep sisa setoran (25.000)
-    telahDibayar: totalTelahDibayar, // Total uang customer (1.310.500)
+    kembali: kembaliOtomatis,
+    telahDibayar: totalTelahDibayar,
+    sisaBayar: sisaPiutang, // 👈 Sisa bayar pasti 0 karena data aslinya lunas
     sisaPiutang: sisaPiutang,
   };
 
