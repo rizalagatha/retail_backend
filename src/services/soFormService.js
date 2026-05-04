@@ -237,11 +237,28 @@ const save = async (data, user) => {
       }
     }
     // ========================================================================
-
     // --- 3. PROSES DETAIL (DELETE & INSERT) ---
+    // ========================================================================
     await connection.query("DELETE FROM tso_dtl WHERE sod_so_nomor = ?", [
       soNomor,
     ]);
+
+    // AMBIL SEMUA TOTAL MUTASI IN DI AWAL (Biar cepat dan adil)
+    const miTracker = {};
+    const [miRowsTotal] = await connection.query(
+      `
+      SELECT md.mid_kode, md.mid_ukuran, SUM(md.mid_jumlah) AS mi_qty 
+      FROM tmutasiin_dtl md 
+      JOIN tmutasiin_hdr mh ON mh.mi_nomor = md.mid_nomor 
+      WHERE mh.mi_so_nomor = ?
+      GROUP BY md.mid_kode, md.mid_ukuran
+    `,
+      [soNomor],
+    );
+
+    miRowsTotal.forEach((r) => {
+      miTracker[`${r.mid_kode}_${r.mid_ukuran}`] = Number(r.mi_qty);
+    });
 
     for (const [index, item] of details.entries()) {
       const kodeBarang = item.kode || (item.isCustomOrder ? "CUSTOM" : "");
@@ -263,26 +280,22 @@ const save = async (data, user) => {
         }
       }
 
-      // ===================================================================
-      // [FIX MUTASI IN]: Ambil qty dari Mutasi In untuk Mencegah Double Count
-      // Karena dari frontend kita menipu mengirim nilai gabungan (Scan + Mutasi In)
-      // ===================================================================
+      // 👈 PENYUSUTAN MUTASI IN DARI SCANNED SECARA BERGILIRAN
+      const miKey = `${kodeBarang}_${item.ukuran || ""}`;
+      let scannedFromFrontend = Number(item.sod_scanned || 0);
+      let pureScanned = 0;
 
-      const [miRows] = await connection.query(
-        `
-        SELECT SUM(md.mid_jumlah) AS mi_qty 
-        FROM tmutasiin_dtl md 
-        JOIN tmutasiin_hdr mh ON mh.mi_nomor = md.mid_nomor 
-        WHERE mh.mi_so_nomor = ? AND md.mid_kode = ? AND md.mid_ukuran = ?`,
-        [soNomor, kodeBarang, item.ukuran || ""],
-      );
-      const miQty = Number(miRows[0]?.mi_qty || 0);
-
-      // Kurangi total scanned dari frontend dengan miQty agar yang
-      // tersimpan di DB murni hasil scan kasir.
-      let pureScanned = Number(item.sod_scanned || 0) - miQty;
-      if (pureScanned < 0) pureScanned = 0;
-      // ===================================================================
+      if (miTracker[miKey] && miTracker[miKey] > 0) {
+        if (miTracker[miKey] >= scannedFromFrontend) {
+          miTracker[miKey] -= scannedFromFrontend;
+          pureScanned = 0;
+        } else {
+          pureScanned = scannedFromFrontend - miTracker[miKey];
+          miTracker[miKey] = 0;
+        }
+      } else {
+        pureScanned = scannedFromFrontend;
+      }
 
       const sodIdrec = `${idrec}${String(index + 1).padStart(3, "0")}`;
 
@@ -298,7 +311,7 @@ const save = async (data, user) => {
           item.noSoDtf || "",
           item.ukuran || "",
           item.jumlah || 0,
-          pureScanned, // <--- GUNAKAN PURE SCANNED DI SINI
+          pureScanned, // 👈 GUNAKAN PURE SCANNED YANG SUDAH DISTRIBUSI
           item.harga || 0,
           item.diskonPersen || 0,
           item.diskonRp || 0,
@@ -452,17 +465,7 @@ const getSoForEdit = async (nomor) => {
     const mainQuery = `
   SELECT 
       h.*, d.*, 
-      (
-        d.sod_scanned + 
-        IFNULL((
-          SELECT SUM(md.mid_jumlah)
-          FROM tmutasiin_dtl md
-          JOIN tmutasiin_hdr mh ON mh.mi_nomor = md.mid_nomor
-          WHERE mh.mi_so_nomor = h.so_nomor 
-            AND md.mid_kode = d.sod_kode 
-            AND md.mid_ukuran = d.sod_ukuran
-        ), 0)
-      ) AS scannedQty,
+      d.sod_scanned AS scannedQty,
       IFNULL((
         SELECT SUM(m.mst_stok_in - m.mst_stok_out)
         FROM tmasterstokso m 
@@ -520,6 +523,27 @@ const getSoForEdit = async (nomor) => {
       console.error(`❌ SO ${nomor} not found`);
       throw new Error(`Surat Pesanan dengan nomor ${nomor} tidak ditemukan.`);
     }
+
+    // =========================================================================
+    // [LOGIKA BARU MUTASI IN]: Kumpulkan Total Mutasi In lalu distribusikan
+    // secara adil ke baris yang cocok (untuk mencegah double-count baris duplikat)
+    // =========================================================================
+    const [miRows] = await connection.query(
+      `
+      SELECT md.mid_kode, md.mid_ukuran, SUM(md.mid_jumlah) AS mi_qty 
+      FROM tmutasiin_dtl md 
+      JOIN tmutasiin_hdr mh ON mh.mi_nomor = md.mid_nomor 
+      WHERE mh.mi_so_nomor = ?
+      GROUP BY md.mid_kode, md.mid_ukuran
+    `,
+      [nomor],
+    );
+
+    const miTracker = {};
+    miRows.forEach((r) => {
+      miTracker[`${r.mid_kode}_${r.mid_ukuran}`] = Number(r.mi_qty);
+    });
+    // =========================================================================
 
     const dpQuery = `
             SELECT 
@@ -591,15 +615,29 @@ const getSoForEdit = async (nomor) => {
     };
 
     const itemsData = mainRows.map((row, index) => {
+      // 👈 LOGIKA DISTRIBUSI READY (SCAN + MUTASI IN)
+      const key = `${row.sod_kode}_${row.sod_ukuran}`;
+      let finalScanned = Number(row.scannedQty || 0);
+
+      // Jika ada titipan Mutasi In, isikan ke baris ini sampai penuh
+      if (miTracker[key] && miTracker[key] > 0) {
+        const kapasitasBaris = Number(row.sod_jumlah || 0) - finalScanned;
+        if (kapasitasBaris > 0) {
+          const added = Math.min(kapasitasBaris, miTracker[key]);
+          finalScanned += added;
+          miTracker[key] -= added; // Kurangi sisa untuk baris kembar berikutnya
+        }
+      }
+
       const item = {
         kode: row.sod_kode || "",
         nama: row.NamaBarang || "",
         ukuran: row.sod_ukuran || "",
         stok: Number(row.Stok || 0),
         jumlah: Number(row.sod_jumlah || 0),
-        sod_scanned: Number(row.scannedQty || 0),
-        mutatedQty: Number(row.mutatedQty || 0), // 👈 Tambahkan ini
-        isMutated: Number(row.mutatedQty || 0) > 0, // 👈 Flag pengunci
+        sod_scanned: finalScanned, // 👈 HASIL DISTRIBUSI
+        mutatedQty: Number(row.mutatedQty || 0),
+        isMutated: Number(row.mutatedQty || 0) > 0,
         harga: Number(row.sod_harga || 0),
         diskonPersen: Number(row.sod_disc || 0),
         diskonRp: Number(row.sod_diskon || 0),
