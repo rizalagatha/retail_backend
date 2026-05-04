@@ -369,6 +369,44 @@ const saveBordirSchedule = async (req, res) => {
   }
 };
 
+const getLowStockSales = async (req, res) => {
+  try {
+    const isExport = req.query.export === "true";
+    const cabang = req.query.cabang || "ALL";
+    const period = req.query.period || "3m"; // Default 3 bulan
+
+    const data = await dashboardService.getLowStockSales(req.user, {
+      isExport,
+      cabang,
+      period,
+    });
+    res.json(data);
+  } catch (error) {
+    console.error("Error getLowStockSales:", error);
+    res
+      .status(500)
+      .json({ message: "Gagal memuat data penjualan stok tipis." });
+  }
+};
+
+const getSeasonalSales = async (req, res) => {
+  try {
+    const isExport = req.query.export === "true";
+    const cabang = req.query.cabang || "ALL";
+    const period = req.query.period || "1m"; // Default 1 bulan
+
+    const data = await dashboardService.getSeasonalSales(req.user, {
+      isExport,
+      cabang,
+      period,
+    });
+    res.json(data);
+  } catch (error) {
+    console.error("Error getSeasonalSales:", error);
+    res.status(500).json({ message: "Gagal memuat data penjualan sesional." });
+  }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -398,4 +436,6 @@ module.exports = {
   getBranchInfo,
   getBordirSchedules,
   saveBordirSchedule,
+  getLowStockSales,
+  getSeasonalSales,
 };

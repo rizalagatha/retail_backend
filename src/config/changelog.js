@@ -1,4 +1,23 @@
 const changelogs = {
+  "1.4.2": {
+    date: "2026-05-04",
+    changes: [
+      {
+        title: "Pembaruan:",
+        items: [
+          "(BARU) Panduan Alur Penjualan untuk membantu memperjelas SOP Penjualan di Kaosan (versi BETA).",
+          "Penambahan 2 Card baru pada Dashboard Penjualan > Low Selling Products (<20 item per 3 bulan) dan Stats Penjualan Item Sesional/New Arrival.",
+        ],
+      },
+      {
+        title: "Perbaikan:",
+        items: [
+          "Perbaikan Bugs.",
+          "Simpan Surat Jalan untuk barang Pesanan tidak perlu menginputkan harga pada Master Barang",
+        ],
+      },
+    ],
+  },
   "1.4.1": {
     date: "2026-05-01",
     changes: [

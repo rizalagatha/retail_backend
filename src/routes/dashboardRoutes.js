@@ -147,5 +147,18 @@ router.post(
   verifyToken,
   dashboardController.saveBordirSchedule,
 );
+// Rute untuk analitik stok < 20 pcs
+router.get(
+  "/low-stock-sales",
+  verifyToken,
+  dashboardController.getLowStockSales,
+);
+
+// Rute untuk analitik barang sesional
+router.get(
+  "/seasonal-sales",
+  verifyToken,
+  dashboardController.getSeasonalSales,
+);
 
 module.exports = router;

@@ -1,5 +1,13 @@
 const pool = require("../config/database");
-const { startOfMonth, endOfMonth, format, subDays } = require("date-fns");
+const {
+  startOfMonth,
+  endOfMonth,
+  format,
+  subDays,
+  subMonths,
+  subYears,
+  subWeeks,
+} = require("date-fns");
 
 // Fungsi untuk mengambil statistik penjualan & transaksi hari ini
 const getTodayStats = async (user) => {
@@ -1545,6 +1553,148 @@ const updateBordirSchedule = async (payload, user) => {
   return { message: "Status antrian bordir berhasil diperbarui." };
 };
 
+// =========================================================================
+// FITUR 1: Analitik Penjualan Rendah (< 20 pcs) PER STORE
+// =========================================================================
+const getLowStockSales = async (user, filters = {}) => {
+  const { period = "3m", cabang = "ALL", isExport = false } = filters;
+
+  let startDate;
+  const endDate = format(new Date(), "yyyy-MM-dd");
+
+  switch (period) {
+    case "6m":
+      startDate = format(subMonths(new Date(), 6), "yyyy-MM-dd");
+      break;
+    case "1y":
+      startDate = format(subYears(new Date(), 1), "yyyy-MM-dd");
+      break;
+    case "3m":
+    default:
+      startDate = format(subMonths(new Date(), 3), "yyyy-MM-dd");
+      break;
+  }
+
+  let branchFilter = "";
+  let params = [startDate, endDate];
+
+  if (user.cabang !== "KDC") {
+    branchFilter = "AND h.inv_cab = ?";
+    params.push(user.cabang);
+  } else if (cabang !== "ALL") {
+    branchFilter = "AND h.inv_cab = ?";
+    params.push(cabang);
+  }
+
+  const limitClause = isExport ? "" : "LIMIT 50";
+
+  // LOGIKA BARU:
+  // 1. Hitung total terjual
+  // 2. Filter HAVING total_terjual < 20
+  // 3. ORDER ASC (dari yang paling kecil / ga laku)
+  // 4. Subquery stok untuk nampilin stok saat ini (tanpa jadi patokan filter)
+
+  const query = `
+    SELECT 
+        h.inv_cab AS cabang_kode,
+        IFNULL(g.gdg_nama, h.inv_cab) AS cabang_nama,
+        d.invd_kode AS kode,
+        TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), " ", IFNULL(a.brg_tipe,''), " ", IFNULL(a.brg_lengan,''), " ", IFNULL(a.brg_jeniskain,''), " ", IFNULL(a.brg_warna,''))) AS nama,
+        d.invd_ukuran AS ukuran,
+        IFNULL((
+            SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
+            FROM tmasterstok m 
+            WHERE m.mst_aktif = 'Y' 
+              AND m.mst_cab = h.inv_cab 
+              AND m.mst_brg_kode = d.invd_kode 
+              AND m.mst_ukuran = d.invd_ukuran
+        ), 0) AS stok_sekarang,
+        SUM(d.invd_jumlah) AS total_terjual
+    FROM tinv_hdr h
+    JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+    JOIN tbarangdc a ON a.brg_kode = d.invd_kode
+    LEFT JOIN tgudang g ON g.gdg_kode = h.inv_cab
+    WHERE h.inv_sts_pro = 0 
+      AND h.inv_tanggal BETWEEN ? AND ?
+      -- Filter agar murni barang jualan (Singkirkan Jasa & Stiker)
+      AND a.brg_ktgp NOT IN ('JASA', 'BONUS', 'TANPA KATEGORI')
+      AND d.invd_kode NOT LIKE 'JASA%'
+      AND a.brg_warna NOT LIKE '%STICKER%'
+      AND a.brg_jeniskaos NOT LIKE '%STIKER%'
+      ${branchFilter}
+    GROUP BY h.inv_cab, cabang_nama, d.invd_kode, nama, d.invd_ukuran
+    HAVING total_terjual < 20
+    ORDER BY total_terjual ASC, nama ASC
+    ${limitClause}
+  `;
+
+  const [rows] = await pool.query(query, params);
+  return rows;
+};
+
+// =========================================================================
+// FITUR BARU 2: Analitik Penjualan Barang Sesional (New Arrival) PER STORE
+// =========================================================================
+const getSeasonalSales = async (user, filters = {}) => {
+  const { period = "1m", cabang = "ALL", isExport = false } = filters;
+
+  let startDate;
+  const endDate = format(new Date(), "yyyy-MM-dd");
+
+  switch (period) {
+    case "1w":
+      startDate = format(subWeeks(new Date(), 1), "yyyy-MM-dd");
+      break;
+    case "2w":
+      startDate = format(subWeeks(new Date(), 2), "yyyy-MM-dd");
+      break;
+    case "2m":
+      startDate = format(subMonths(new Date(), 2), "yyyy-MM-dd");
+      break;
+    case "1m":
+    default:
+      startDate = format(subMonths(new Date(), 1), "yyyy-MM-dd");
+      break;
+  }
+
+  let branchFilter = "";
+  let params = [startDate, endDate];
+
+  if (user.cabang !== "KDC") {
+    branchFilter = "AND h.inv_cab = ?";
+    params.push(user.cabang);
+  } else if (cabang !== "ALL") {
+    branchFilter = "AND h.inv_cab = ?";
+    params.push(cabang);
+  }
+
+  const limitClause = isExport ? "" : "LIMIT 20";
+
+  const query = `
+    SELECT 
+        h.inv_cab AS cabang_kode,
+        IFNULL(g.gdg_nama, h.inv_cab) AS cabang_nama,
+        d.invd_kode AS kode,
+        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+        d.invd_ukuran AS ukuran,
+        SUM(d.invd_jumlah) AS total_terjual
+    FROM tinv_hdr h
+    JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+    JOIN tbarangdc a ON a.brg_kode = d.invd_kode
+    LEFT JOIN tgudang g ON g.gdg_kode = h.inv_cab
+    WHERE h.inv_sts_pro = 0 
+      AND h.inv_tanggal BETWEEN ? AND ?
+      AND a.brg_ktgp IN ('SESIONAL', 'SESSIONAL')
+      ${branchFilter}
+    GROUP BY h.inv_cab, cabang_nama, d.invd_kode, nama, d.invd_ukuran
+    ORDER BY total_terjual DESC
+    ${limitClause}
+  `;
+
+  const [rows] = await pool.query(query, params);
+  return rows;
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -1573,4 +1723,6 @@ module.exports = {
   getBranchInfo,
   getBordirSchedules,
   updateBordirSchedule,
+  getLowStockSales,
+  getSeasonalSales,
 };

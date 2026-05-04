@@ -429,7 +429,7 @@ const loadItemsFromPackingList = async (nomorPL) => {
   const query = `
     SELECT 
       d.pld_kode AS kode,
-      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+      TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), " ", IFNULL(a.brg_tipe,''), " ", IFNULL(a.brg_lengan,''), " ", IFNULL(a.brg_jeniskain,''), " ", IFNULL(a.brg_warna,''))) AS nama,
       d.pld_ukuran AS ukuran,
       d.pld_jumlah AS jumlah, 
       d.pld_jumlah AS minta,
@@ -445,6 +445,9 @@ const loadItemsFromPackingList = async (nomorPL) => {
            AND m.mst_brg_kode=d.pld_kode AND m.mst_ukuran=d.pld_ukuran
       ), 0) AS stok,
 
+      -- [PERBAIKAN] Ambil Kategori untuk filter validasi di Frontend
+      IFNULL(a.brg_ktgp, '') AS kategori,
+
       IFNULL(b.brgd_harga, 0) AS harga,
       IFNULL(b.brgd_hpp, 0) AS hpp
 
@@ -458,6 +461,7 @@ const loadItemsFromPackingList = async (nomorPL) => {
   const [rows] = await pool.query(query, [nomorPL]);
   return rows;
 };
+
 /**
  * Mencari SO Lintas Cabang Khusus yang memiliki SO DTF Bordir (.BR.)
  */
