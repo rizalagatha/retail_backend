@@ -107,6 +107,7 @@ const loadInitialData = async (tanggal, user) => {
   ]);
 
   // 2. Query untuk grid kedua (summary per jenis)
+  // [PERBAIKAN] Baris SELISIH FISIK KASIR Dihapus
   const detail2Query = `
         SELECT 'SETORAN KASIR TUNAI' AS jenis, IFNULL(SUM(h.inv_rptunai), 0) AS nominal FROM tinv_hdr h WHERE LEFT(h.inv_nomor,3)=? AND h.inv_sts_pro=0 AND h.inv_rptunai<>0 AND h.inv_tanggal=?
         UNION ALL
@@ -116,22 +117,21 @@ const loadInitialData = async (tanggal, user) => {
         UNION ALL
         SELECT "PEMBAYARAN QRIS" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=1 AND s.sh_ket LIKE '%QRIS%' AND s.sh_tanggal=?
         UNION ALL
-        SELECT "PEMBAYARAN GIRO" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=2 AND s.sh_tanggal=?
-        UNION ALL
-        SELECT "SELISIH FISIK KASIR" AS jenis, IFNULL(SUM(selisih),0) AS nominal FROM tkasir_sesi WHERE cabang=? AND DATE(waktu_tutup)=?;
+        SELECT "PEMBAYARAN GIRO" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=2 AND s.sh_tanggal=?;
     `;
 
+  // [PERBAIKAN] Parameter array disesuaikan jumlahnya menjadi 5 pasang
   const [details2] = await pool.query(detail2Query, [
     ...params,
     ...params,
     ...params,
     ...params,
     ...params,
-    ...params, // Params untuk Selisih Kasir
   ]);
 
   return { details1, details2 };
 };
+
 const loadForEdit = async (nomor, user) => {
   const isKDC = user.cabang === "KDC";
   // 1. Ambil data header
