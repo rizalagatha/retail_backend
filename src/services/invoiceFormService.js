@@ -2160,30 +2160,8 @@ const getPrintData = async (nomor) => {
     return rankA - rankB;
   });
 
-  // =============== FIX PEMBAYARAN (AMBIL SEMUA SETORAN & SISA TERKAIT) ===============
-  // 1. Ambil SEMUA jenis setoran yang TERPAKAI (DP + Transfer + QRIS + Cicilan)
-  const [setorRows] = await pool.query(
-    `SELECT SUM(sd_bayar) AS totalSetoran 
-     FROM tsetor_dtl 
-     WHERE sd_inv = ? AND sd_ket NOT LIKE '%PEMBAYARAN TUNAI KASIR%'`,
-    [nomor],
-  );
-  const totalSetoran = applyRoundingPolicy(setorRows?.[0]?.totalSetoran || 0);
-
-  // 2. [PERBAIKAN KUNCI]: Ambil SISA SETORAN yang nyangkut (belum terpakai) dari setoran terkait invoice ini
-  // Ini mencari Total Asli Setoran (sh_nominal) dikurangi semua yang sudah dipakai di detail
-  const [sisaRows] = await pool.query(
-    `SELECT SUM(h.sh_nominal - COALESCE((SELECT SUM(d2.sd_bayar) FROM tsetor_dtl d2 WHERE d2.sd_sh_nomor = h.sh_nomor), 0)) AS sisaSetoran
-     FROM tsetor_hdr h
-     WHERE h.sh_jenis != 0 -- Abaikan Tunai
-       AND h.sh_nomor IN (
-         SELECT DISTINCT sd_sh_nomor FROM tsetor_dtl WHERE sd_inv = ?
-     )`,
-    [nomor],
-  );
-  const sisaSetoran = applyRoundingPolicy(sisaRows?.[0]?.sisaSetoran || 0);
-
-  // 3. Ambil khusus DP (Hanya untuk ditampilkan sebagai baris DP di struk)
+  // =============== FIX PEMBAYARAN ===============
+  // Ambil khusus DP (Hanya untuk ditampilkan sebagai baris DP di struk)
   const [dpRows] = await pool.query(
     `SELECT SUM(sd_bayar) AS dpDipakai FROM tsetor_dtl WHERE sd_inv = ? AND sd_ket = 'DP LINK DARI INV'`,
     [nomor],
@@ -2213,42 +2191,51 @@ const getPrintData = async (nomor) => {
     ((Number(header.inv_ppn) || 0) / 100) * netto,
   );
   const returJual = Number(header.inv_rj_rp || 0);
-  const diskonPembulatan = Number(header.inv_diskon_pembulatan || 0); // 👈 AMBIL DISKON PEMBULATAN
+  const diskonPembulatan = Number(header.inv_diskon_pembulatan || 0);
 
   // Grand Total dipotong Retur Jual & Diskon Pembulatan
   const grandTotal = applyRoundingPolicy(
     netto + ppn + (header.inv_bkrm || 0) - returJual - diskonPembulatan,
   );
 
-  const bayarTunai = Number(header.inv_rptunai || 0);
-  const bayarVoucher = Number(header.inv_rpvoucher || 0);
   const pundiAmal = Number(header.inv_pundiamal || 0);
 
-  // Mengambil total bayar MURNI DARI DATABASE (TSetor & Tunai), mengabaikan inputan kasir yg salah
-  const totalTelahDibayar =
-    bayarTunai + bayarVoucher + totalSetoran + sisaSetoran;
-  const sisaPiutang = Math.max(grandTotal - totalTelahDibayar, 0);
-  const kembaliOtomatis = Math.max(totalTelahDibayar - grandTotal, 0);
+  // [PERBAIKAN KUNCI]
+  // Gunakan data inv_bayar dan inv_kembali yang asli dari tabel tinv_hdr
+  let totalTelahDibayar = Number(header.inv_bayar || 0);
+  let kembaliOtomatis = Number(header.inv_kembali || 0);
 
-  // 👈 OVERRIDE HEADER: Paksa Vue Template membaca angka DP & Bayar yang asli dari DB!
+  // Fallback untuk data invoice lama (Delphi) yang inv_bayarnya mungkin 0
+  if (totalTelahDibayar === 0 && grandTotal > 0) {
+    const bayarTunai = Number(header.inv_rptunai || 0);
+    const bayarVoucher = Number(header.inv_rpvoucher || 0);
+    const bayarCard = Number(header.inv_rpcard || 0);
+    totalTelahDibayar = bayarTunai + bayarVoucher + bayarCard + dpDipakai;
+    kembaliOtomatis = Math.max(totalTelahDibayar - grandTotal - pundiAmal, 0);
+  }
+
+  // Hitung sisa tagihan/piutang jika uang yang masuk (setelah dikurangi kembali) masih kurang dari Grand Total
+  const uangMasukBersih = totalTelahDibayar - kembaliOtomatis - pundiAmal;
+  const sisaPiutang = Math.max(grandTotal - uangMasukBersih, 0);
+
   header.inv_dp = dpDipakai;
   header.inv_bayar = totalTelahDibayar;
 
   header.summary = {
     subTotal: grossSubTotal,
     diskon: totalDiskonKeseluruhan,
-    diskonPembulatan: diskonPembulatan, // 👈 Masuk Summary
+    diskonPembulatan: diskonPembulatan,
     netto,
     ppn,
     biayaKirim: header.inv_bkrm || 0,
     returJual: returJual,
     dp: dpDipakai,
     grandTotal,
-    bayar: totalTelahDibayar, // 👈 Pakai data asli
+    bayar: totalTelahDibayar,
     pundiAmal: pundiAmal,
     kembali: kembaliOtomatis,
     telahDibayar: totalTelahDibayar,
-    sisaBayar: sisaPiutang, // 👈 Sisa bayar pasti 0 karena data aslinya lunas
+    sisaBayar: sisaPiutang,
     sisaPiutang: sisaPiutang,
   };
 
