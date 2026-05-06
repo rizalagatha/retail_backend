@@ -2096,8 +2096,9 @@ const getPrintData = async (nomor) => {
       h.inv_nomor, h.inv_tanggal, h.inv_nomor_so, h.inv_top, h.inv_ket, h.inv_sc,
       h.inv_disc, h.inv_ppn, h.inv_bkrm, h.inv_dp, h.inv_pundiamal,
       h.inv_rptunai, h.inv_rpcard, h.inv_rpvoucher, h.inv_kembali,
-      h.inv_rj_rp, -- [AMBIL NOMINAL RETUR JUAL]
-      h.inv_diskon_pembulatan, -- 👈 [TAMBAHKAN INI]
+      h.inv_rj_rp, 
+      h.inv_rj_nomor,
+      h.inv_diskon_pembulatan, 
       DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY) AS tempo,
       c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
       d.invd_kode, d.invd_ukuran, d.invd_jumlah, d.invd_harga, d.invd_diskon,
