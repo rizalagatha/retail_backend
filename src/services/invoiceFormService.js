@@ -2095,7 +2095,7 @@ const getPrintData = async (nomor) => {
     SELECT 
       h.inv_nomor, h.inv_tanggal, h.inv_nomor_so, h.inv_top, h.inv_ket, h.inv_sc,
       h.inv_disc, h.inv_ppn, h.inv_bkrm, h.inv_dp, h.inv_pundiamal,
-      h.inv_rptunai, h.inv_rpcard, h.inv_rpvoucher, h.inv_kembali,
+      h.inv_rptunai, h.inv_rpcard, h.inv_rpvoucher, h.inv_kembali, h.inv_bayar,
       h.inv_rj_rp, 
       h.inv_rj_nomor,
       h.inv_diskon_pembulatan, 
@@ -2103,7 +2103,7 @@ const getPrintData = async (nomor) => {
       c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
       d.invd_kode, d.invd_ukuran, d.invd_jumlah, d.invd_harga, d.invd_diskon,
       COALESCE(
-        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)),
+        TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), " ", IFNULL(a.brg_tipe,''), " ", IFNULL(a.brg_lengan,''), " ", IFNULL(a.brg_jeniskain,''), " ", IFNULL(a.brg_warna,''))),
         f.sd_nama,
         cso.so_namadtf,
         d.invd_kode
@@ -2154,19 +2154,31 @@ const getPrintData = async (nomor) => {
     if (nameA < nameB) return -1;
     if (nameA > nameB) return 1;
 
-    // Asumsi fungsi getSizeRank ada di atas (bawaan kode Mas Rizal)
     const rankA = getSizeRank(a.invd_ukuran);
     const rankB = getSizeRank(b.invd_ukuran);
     return rankA - rankB;
   });
 
   // =============== FIX PEMBAYARAN ===============
-  // Ambil khusus DP (Hanya untuk ditampilkan sebagai baris DP di struk)
+
+  // 1. Ambil SEMUA setoran yang BENAR-BENAR TERPAKAI untuk invoice ini
+  const [setorRows] = await pool.query(
+    `SELECT SUM(sd_bayar) AS totalSetoran 
+     FROM tsetor_dtl 
+     WHERE sd_inv = ? AND sd_ket NOT LIKE '%PEMBAYARAN TUNAI KASIR%'`,
+    [nomor],
+  );
+  const totalSetoran = applyRoundingPolicy(setorRows?.[0]?.totalSetoran || 0);
+
+  // 2. Ambil khusus DP (Hanya untuk ditampilkan sebagai baris DP di struk)
   const [dpRows] = await pool.query(
     `SELECT SUM(sd_bayar) AS dpDipakai FROM tsetor_dtl WHERE sd_inv = ? AND sd_ket = 'DP LINK DARI INV'`,
     [nomor],
   );
   const dpDipakai = applyRoundingPolicy(dpRows?.[0]?.dpDipakai || 0);
+
+  // === MENGHAPUS SISA SETORAN (sisaRows) ===
+  // (Bagian sisaSetoran dihapus total agar tidak mendobelkan kembalian)
 
   // =============== SUMMARY CALC ===============
   const totalDiskonItem = details.reduce(
@@ -2185,7 +2197,6 @@ const getPrintData = async (nomor) => {
     totalDiskonItem + diskonFaktur,
   );
 
-  // =============== SUMMARY CALC REVISED ===============
   const netto = applyRoundingPolicy(grossSubTotal - totalDiskonKeseluruhan);
   const ppn = applyRoundingPolicy(
     ((Number(header.inv_ppn) || 0) / 100) * netto,
@@ -2198,25 +2209,20 @@ const getPrintData = async (nomor) => {
     netto + ppn + (header.inv_bkrm || 0) - returJual - diskonPembulatan,
   );
 
+  const bayarTunai = Number(header.inv_rptunai || 0);
+  const bayarVoucher = Number(header.inv_rpvoucher || 0);
   const pundiAmal = Number(header.inv_pundiamal || 0);
 
   // [PERBAIKAN KUNCI]
-  // Gunakan data inv_bayar dan inv_kembali yang asli dari tabel tinv_hdr
-  let totalTelahDibayar = Number(header.inv_bayar || 0);
-  let kembaliOtomatis = Number(header.inv_kembali || 0);
+  // Telah Dibayar HANYA dihitung dari uang yang benar-benar terserap/diaplikasikan ke struk ini.
+  // Tidak ada lagi penjumlahan "sisaSetoran".
+  const totalTelahDibayar = bayarTunai + bayarVoucher + totalSetoran;
 
-  // Fallback untuk data invoice lama (Delphi) yang inv_bayarnya mungkin 0
-  if (totalTelahDibayar === 0 && grandTotal > 0) {
-    const bayarTunai = Number(header.inv_rptunai || 0);
-    const bayarVoucher = Number(header.inv_rpvoucher || 0);
-    const bayarCard = Number(header.inv_rpcard || 0);
-    totalTelahDibayar = bayarTunai + bayarVoucher + bayarCard + dpDipakai;
-    kembaliOtomatis = Math.max(totalTelahDibayar - grandTotal - pundiAmal, 0);
-  }
-
-  // Hitung sisa tagihan/piutang jika uang yang masuk (setelah dikurangi kembali) masih kurang dari Grand Total
-  const uangMasukBersih = totalTelahDibayar - kembaliOtomatis - pundiAmal;
-  const sisaPiutang = Math.max(grandTotal - uangMasukBersih, 0);
+  const kembaliOtomatis = Math.max(
+    totalTelahDibayar - grandTotal - pundiAmal,
+    0,
+  );
+  const sisaPiutang = Math.max(grandTotal - totalTelahDibayar, 0);
 
   header.inv_dp = dpDipakai;
   header.inv_bayar = totalTelahDibayar;
