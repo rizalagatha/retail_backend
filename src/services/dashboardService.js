@@ -695,79 +695,77 @@ const getTotalStock = async (user) => {
   let branchFilter = "AND m.mst_cab = ?";
   let params = [];
 
+  // Filter cabang untuk K03
   if (user.cabang && user.cabang !== "KDC") {
     params.push(user.cabang);
   } else {
-    branchFilter = ""; // KDC melihat semua
+    branchFilter = "";
   }
 
-  // Pola REGEX untuk mengecualikan Custom Order (SO DTF)
-  // Mencocokkan: K + 2 angka + titik + (Kode Jenis) + titik
-  // Contoh: K01.SD.2023..., K11.BR.2023...
   const excludePattern = "^K[0-9]{2}\\.(SD|BR|PM|DP|TG|PL|SB)\\.";
 
-  // --- 1. Query Total Stok (Semua Waktu) ---
+  // [KUNCI PERBAIKAN]: Pisahkan SUM antara RAK dan BOOKING
   const totalQuery = `
     SELECT
-      SUM(IFNULL(s.stok,0)) AS totalStock
+      -- 1. STOK RAK (Murni fisik hasil opname & koreksi SOK)
+      SUM(IFNULL(s.stok_rak, 0)) AS totalStock,
+      
+      -- 2. STOK PESANAN (Uang muka/booking yang menggantung di SO)
+      SUM(IFNULL(s.stok_booking, 0)) AS totalReserved
     FROM (
-      SELECT m.mst_brg_kode, m.mst_ukuran, SUM(m.mst_stok_in - m.mst_stok_out) AS stok
+      SELECT 
+        m.mst_brg_kode, 
+        m.mst_ukuran, 
+        SUM(CASE WHEN m.sumber = 'RAK' THEN (m.mst_stok_in - m.mst_stok_out) ELSE 0 END) AS stok_rak,
+        SUM(CASE WHEN m.sumber = 'SO' THEN (m.mst_stok_in - m.mst_stok_out) ELSE 0 END) AS stok_booking
       FROM (
-        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_aktif FROM tmasterstok
+        -- Tabel Fisik (Yang kita koreksi pakai SOK kemarin)
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_aktif, 'RAK' as sumber 
+        FROM tmasterstok
         UNION ALL
-        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_aktif FROM tmasterstokso
+        -- Tabel Pesanan (Penyebab angka jadi gendut kalau SO-nya gak beres)
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_aktif, 'SO' as sumber 
+        FROM tmasterstokso
       ) m
       WHERE m.mst_aktif = 'Y' 
         ${branchFilter}
-        AND m.mst_brg_kode NOT LIKE 'JASA%' -- Exclude Jasa
-        AND m.mst_brg_kode NOT REGEXP ?     -- Exclude Custom Order (SO DTF)
+        AND m.mst_brg_kode NOT LIKE 'JASA%'
+        AND m.mst_brg_kode NOT REGEXP ?     
       GROUP BY m.mst_brg_kode, m.mst_ukuran, m.mst_cab
     ) s;
   `;
 
-  // --- 2. Query Stok In/Out HARI INI (Khusus Store) ---
+  // Query In/Out harian (Tetap sama)
   let todayIn = 0;
   let todayOut = 0;
-
   if (user.cabang !== "KDC") {
     const today = format(new Date(), "yyyy-MM-dd");
-
     const dailyQuery = `
-        SELECT 
-            SUM(m.mst_stok_in) as stokIn,
-            SUM(m.mst_stok_out) as stokOut
-        FROM tmasterstok m
-        WHERE m.mst_aktif = 'Y' 
-          AND m.mst_cab = ? 
-          AND m.mst_tanggal = ?
-          AND m.mst_brg_kode NOT LIKE 'JASA%' 
-          AND m.mst_brg_kode NOT REGEXP ?
+        SELECT SUM(mst_stok_in) as stokIn, SUM(mst_stok_out) as stokOut
+        FROM tmasterstok WHERE mst_aktif = 'Y' AND mst_cab = ? AND mst_tanggal = ?
+        AND mst_brg_kode NOT LIKE 'JASA%' AND mst_brg_kode NOT REGEXP ?
     `;
-
-    // Params: Cabang, Tanggal, Regex Pattern
     const [dailyRows] = await pool.query(dailyQuery, [
       user.cabang,
       today,
       excludePattern,
     ]);
-
     if (dailyRows.length > 0) {
       todayIn = Number(dailyRows[0].stokIn || 0);
       todayOut = Number(dailyRows[0].stokOut || 0);
     }
   }
 
-  // Params untuk Total Query: [Cabang (jika ada), Regex Pattern]
-  const totalQueryParams = [...params, excludePattern];
-  const [rows] = await pool.query(totalQuery, totalQueryParams);
+  const [rows] = await pool.query(totalQuery, [...params, excludePattern]);
 
   return {
+    // Balikkan totalStock HANYA yang ada di RAK (Fisik) agar angka Dashboard K03 normal kembali
     totalStock: Number(rows[0]?.totalStock || 0),
+    reservedStock: Number(rows[0]?.totalReserved || 0),
     todayStokIn: todayIn,
     todayStokOut: todayOut,
   };
 };
-
 const getStockPerCabang = async () => {
   // Breakdown stok per cabang (untuk KDC hover)
   const query = `
