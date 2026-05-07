@@ -766,6 +766,7 @@ const getTotalStock = async (user) => {
     todayStokOut: todayOut,
   };
 };
+
 const getStockPerCabang = async () => {
   // Breakdown stok per cabang (untuk KDC hover)
   const query = `
