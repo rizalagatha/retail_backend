@@ -311,9 +311,12 @@ const getKartuDetails = async (filters) => {
       COALESCE(SUM(m.mst_stok_in), 0) AS \`In\`,
       COALESCE(SUM(m.mst_stok_out), 0) AS \`Out\`,
       CASE
+          -- [BARU]: Tangkap baris Stok Awal hasil injeksi
+          WHEN m.mst_ket = 'STOK AWAL (CUT-OFF SOP)' THEN 'Stok Awal Sistem (SOP)'
+          
           -- [PERBAIKAN]: Keterangan Dinamis untuk SOP (Koreksi Plus / Minus)
-          WHEN m.mst_noreferensi LIKE '%SOP%' AND SUM(m.mst_stok_in) > 0 THEN 'Koreksi Stok Opname Plus'
-          WHEN m.mst_noreferensi LIKE '%SOP%' AND SUM(m.mst_stok_out) > 0 THEN 'Koreksi Stok Opname Minus'
+          WHEN m.mst_noreferensi LIKE '%SOP%' AND m.mst_ket = 'KOREKSI STOK OPNAME' AND SUM(m.mst_stok_in) > 0 THEN 'Koreksi Stok Opname Plus'
+          WHEN m.mst_noreferensi LIKE '%SOP%' AND m.mst_ket = 'KOREKSI STOK OPNAME' AND SUM(m.mst_stok_out) > 0 THEN 'Koreksi Stok Opname Minus'
           
           WHEN m.mst_noreferensi LIKE '%KOR%' THEN 'Koreksi'
           WHEN m.mst_noreferensi LIKE '%RJ%'  THEN 'Retur Jual'
