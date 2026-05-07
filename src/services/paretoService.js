@@ -51,7 +51,7 @@ const getList = async (filters) => {
   // 6. Parameter untuk Limit
   params.push(parseInt(limit, 10) || 20);
 
-  const selectCab = cabang === "ALL" ? "'ALL'" : "LEFT(h.inv_nomor, 3)";
+  const selectCab = cabang === "ALL" ? "'ALL'" : `'${cabang}'`;
 
   const query = `
     SELECT
