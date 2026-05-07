@@ -317,7 +317,8 @@ const getKartuDetails = async (filters) => {
           -- [PERBAIKAN]: Keterangan Dinamis untuk SOP (Koreksi Plus / Minus)
           WHEN m.mst_noreferensi LIKE '%SOP%' AND m.mst_ket = 'KOREKSI STOK OPNAME' AND SUM(m.mst_stok_in) > 0 THEN 'Koreksi Stok Opname Plus'
           WHEN m.mst_noreferensi LIKE '%SOP%' AND m.mst_ket = 'KOREKSI STOK OPNAME' AND SUM(m.mst_stok_out) > 0 THEN 'Koreksi Stok Opname Minus'
-          
+          WHEN m.mst_noreferensi LIKE '%SOP%' AND m.mst_ket = 'KOREKSI STOK OPNAME (KLOP)' THEN 'Opname (Stok Sesuai/Klop)'
+
           WHEN m.mst_noreferensi LIKE '%KOR%' THEN 'Koreksi'
           WHEN m.mst_noreferensi LIKE '%RJ%'  THEN 'Retur Jual'
           WHEN m.mst_noreferensi LIKE '%TJ%' OR m.mst_noreferensi LIKE '%SJ%' THEN 'Surat Jalan / STBJ'

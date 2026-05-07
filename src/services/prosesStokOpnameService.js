@@ -72,7 +72,6 @@ const transferSop = async (nomor, pin, user) => {
   try {
     await connection.beginTransaction();
 
-    // 1. Ambil data header untuk validasi
     const [headers] = await connection.query(
       "SELECT sop_nomor, DATE_FORMAT(sop_tanggal, '%Y-%m-%d') AS tanggal_str, sop_transfer, sop_cab as cabang FROM tsop_hdr WHERE sop_nomor = ?",
       [nomor],
@@ -82,28 +81,23 @@ const transferSop = async (nomor, pin, user) => {
     if (doc.sop_transfer === "Y")
       throw new Error("Dokumen ini sudah pernah ditransfer.");
 
-    const tanggalSop = doc.tanggal_str; // e.g. 2026-04-21
+    const tanggalSop = doc.tanggal_str;
     const cabang = doc.cabang;
 
-    // 2. Ambil data detail dari tabel temporary
     const [details] = await connection.query(
       "SELECT * FROM tsop_dtl2 WHERE sopd_nomor = ?",
       [nomor],
     );
 
     // =================================================================================
-    // 3. RECALCULATE & INJEKSI
+    // 3. RECALCULATE & INJEKSI MARKER / KOREKSI
     // =================================================================================
     for (const [index, item] of details.entries()) {
       // A. Hitung ulang stok sistem murni HANYA sampai dengan tanggal SOP
       const [stokRows] = await connection.query(
         `SELECT SUM(mst_stok_in - mst_stok_out) as system_stok 
          FROM tmasterstok 
-         WHERE mst_aktif = 'Y' 
-           AND mst_cab = ? 
-           AND mst_brg_kode = ? 
-           AND mst_ukuran = ? 
-           AND DATE(mst_tanggal) <= ?`,
+         WHERE mst_aktif = 'Y' AND mst_cab = ? AND mst_brg_kode = ? AND mst_ukuran = ? AND DATE(mst_tanggal) <= ?`,
         [cabang, item.sopd_kode, item.sopd_ukuran, tanggalSop],
       );
 
@@ -113,67 +107,39 @@ const transferSop = async (nomor, pin, user) => {
 
       // B. Update nilai di tabel tsop_dtl2
       await connection.query(
-        `UPDATE tsop_dtl2 
-         SET sopd_stok = ?, sopd_selisih = ? 
-         WHERE sopd_nomor = ? AND sopd_kode = ? AND sopd_ukuran = ?`,
+        `UPDATE tsop_dtl2 SET sopd_stok = ?, sopd_selisih = ? WHERE sopd_nomor = ? AND sopd_kode = ? AND sopd_ukuran = ?`,
         [trueSystemStock, trueSelisih, nomor, item.sopd_kode, item.sopd_ukuran],
       );
 
+      // C. SELALU INJEKSI MARKER KE TMASTERSTOK (Biar muncul di Kartu Stok)
       const now = new Date();
-      const baseTime = now.getTime() + index * 2;
+      const uniqueTime = new Date(now.getTime() + index);
+      const timestampKoreksi = format(uniqueTime, "yyyyMMddHHmmss.SSS");
+      const mstIdrecKoreksi = `${cabang}SOK${timestampKoreksi}`;
 
-      // C. INJEKSI STOK AWAL SOP (Untuk Kartu Stok)
-      // Selalu disuntikkan terlepas ada selisih atau tidak,
-      // agar Laporan Kartu Stok tahu berapa "titik berangkat" nya
-      const timestampAwal = format(new Date(baseTime), "yyyyMMddHHmmss.SSS");
-      const idrecAwal = `${cabang}SOP${timestampAwal}`;
+      const qtyIn = trueSelisih > 0 ? trueSelisih : 0;
+      const qtyOut = trueSelisih < 0 ? Math.abs(trueSelisih) : 0;
+      const keterangan =
+        trueSelisih === 0
+          ? "KOREKSI STOK OPNAME (KLOP)"
+          : "KOREKSI STOK OPNAME";
 
       await connection.query(
-        `
-        INSERT INTO tmasterstok 
+        `INSERT INTO tmasterstok 
         (mst_idrec, mst_cab, mst_brg_kode, mst_ukuran, mst_noreferensi, mst_tanggal, mst_stok_in, mst_stok_out, mst_ket, mst_aktif, date_create)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'STOK AWAL (CUT-OFF SOP)', 'Y', NOW())
-      `,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Y', NOW())`,
         [
-          idrecAwal,
+          mstIdrecKoreksi,
           cabang,
           item.sopd_kode,
           item.sopd_ukuran,
-          nomor, // Gunakan nomor SOP agar terhubung
+          nomor,
           tanggalSop,
-          trueSystemStock, // Record jumlah stok sistem
+          qtyIn,
+          qtyOut,
+          keterangan,
         ],
       );
-
-      // D. INJEKSI JURNAL KOREKSI (Hanya jika ada selisih)
-      if (trueSelisih !== 0) {
-        const timestampKoreksi = format(
-          new Date(baseTime + 1),
-          "yyyyMMddHHmmss.SSS",
-        );
-        const mstIdrecKoreksi = `${cabang}SOK${timestampKoreksi}`;
-
-        const qtyIn = trueSelisih > 0 ? trueSelisih : 0;
-        const qtyOut = trueSelisih < 0 ? Math.abs(trueSelisih) : 0;
-
-        await connection.query(
-          `
-          INSERT INTO tmasterstok 
-          (mst_idrec, mst_cab, mst_brg_kode, mst_ukuran, mst_noreferensi, mst_tanggal, mst_stok_in, mst_stok_out, mst_ket, mst_aktif, date_create)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'KOREKSI STOK OPNAME', 'Y', NOW())
-        `,
-          [
-            mstIdrecKoreksi,
-            cabang,
-            item.sopd_kode,
-            item.sopd_ukuran,
-            nomor,
-            tanggalSop,
-            qtyIn,
-            qtyOut,
-          ],
-        );
-      }
     }
     // =================================================================================
 
@@ -205,9 +171,7 @@ const transferSop = async (nomor, pin, user) => {
     );
 
     await connection.commit();
-    return {
-      message: `Transfer Stok Opname untuk nomor ${nomor} berhasil. Stok telah dikoreksi secara presisi.`,
-    };
+    return { message: `Transfer Stok Opname berhasil. Data telah dikoreksi.` };
   } catch (error) {
     await connection.rollback();
     throw error;
