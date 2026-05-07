@@ -432,8 +432,6 @@ const getMutationDetails = async (filters) => {
         COALESCE(mso.mutOutPesan, 0) AS mutOutPesan,
         COALESCE(mso.mutInProduksi, 0) AS mutInProduksi,
 
-        -- [KUNCI KEAKURATAN]: Saldo Akhir dihitung murni dari Total IN - OUT 
-        -- Tidak peduli prefixnya apa, pasti terhitung semua!
         (COALESCE(awal.stok, 0) + COALESCE(sop.selisihSop, 0) + COALESCE(mut.totalMutasi, 0) + COALESCE(mso.totalMutasiSo, 0)) AS saldoAkhir
         
       FROM tbarangdc_dtl b
@@ -451,25 +449,27 @@ const getMutationDetails = async (filters) => {
       LEFT JOIN (
           SELECT mst_ukuran, SUM(mst_stok_in - mst_stok_out) AS selisihSop
           FROM tmasterstok
-          WHERE mst_cab = ? AND mst_brg_kode = ? AND MID(mst_noreferensi,5,3) = 'SOP' AND mst_tanggal BETWEEN ? AND ? AND mst_aktif = 'Y'
+          WHERE mst_cab = ? AND mst_brg_kode = ? 
+            -- [FIX] Gunakan LIKE agar lebih fleksibel dari MID()
+            AND mst_noreferensi LIKE '%SOP%' 
+            AND mst_tanggal BETWEEN ? AND ? AND mst_aktif = 'Y'
           GROUP BY mst_ukuran
       ) sop ON sop.mst_ukuran = b.brgd_ukuran
       
-      -- 3. MUTASI UMUM (Tarik semua prefix sekaligus)
+      -- 3. MUTASI UMUM
       LEFT JOIN (
           SELECT 
               mst_ukuran,
-              SUM(CASE WHEN MID(mst_noreferensi,5,3) = 'KOR' THEN mst_stok_in - mst_stok_out ELSE 0 END) AS koreksi,
-              SUM(CASE WHEN MID(mst_noreferensi,5,2) = 'RJ' THEN mst_stok_in ELSE 0 END) AS returJual,
-              -- [FIX BUGS]: SJ dan TS sekarang ditangkap dengan benar!
-              SUM(CASE WHEN MID(mst_noreferensi,5,2) IN ('SJ', 'TJ') THEN mst_stok_in ELSE 0 END) AS terimaSJ,
-              SUM(CASE WHEN MID(mst_noreferensi,5,3) IN ('MST', 'MTS') OR MID(mst_noreferensi,5,2) = 'TS' THEN mst_stok_in ELSE 0 END) AS mutStoreTerima,
-              SUM(CASE WHEN MID(mst_noreferensi,5,3) IN ('MSK', 'MTS') THEN mst_stok_out ELSE 0 END) AS mutStoreKirim,
-              SUM(CASE WHEN MID(mst_noreferensi,5,3) = 'INV' THEN mst_stok_out ELSE 0 END) AS invoice,
-              SUM(CASE WHEN MID(mst_noreferensi,5,2) = 'RB' THEN mst_stok_out ELSE 0 END) AS returKeDC,
-              SUM(CASE WHEN MID(mst_noreferensi,4,2) = 'MO' THEN mst_stok_out ELSE 0 END) AS mutOutProduksi,
-              -- Total Mutasi Murni (Selain SOP karena SOP sudah dihitung di atas)
-              SUM(CASE WHEN MID(mst_noreferensi,5,3) != 'SOP' THEN mst_stok_in - mst_stok_out ELSE 0 END) AS totalMutasi
+              SUM(CASE WHEN mst_noreferensi LIKE '%KOR%' THEN mst_stok_in - mst_stok_out ELSE 0 END) AS koreksi,
+              SUM(CASE WHEN mst_noreferensi LIKE '%RJ%' THEN mst_stok_in ELSE 0 END) AS returJual,
+              -- [FIX BUGS]: Menangkap referensi SJ & TJ (Terima STBJ) dengan LIKE
+              SUM(CASE WHEN mst_noreferensi LIKE '%SJ%' OR mst_noreferensi LIKE '%TJ%' THEN mst_stok_in ELSE 0 END) AS terimaSJ,
+              SUM(CASE WHEN mst_noreferensi LIKE '%MST%' OR mst_noreferensi LIKE '%TS%' THEN mst_stok_in ELSE 0 END) AS mutStoreTerima,
+              SUM(CASE WHEN mst_noreferensi LIKE '%MSK%' OR (mst_noreferensi LIKE '%MTS%' AND mst_stok_out > 0) THEN mst_stok_out ELSE 0 END) AS mutStoreKirim,
+              SUM(CASE WHEN mst_noreferensi LIKE '%INV%' THEN mst_stok_out ELSE 0 END) AS invoice,
+              SUM(CASE WHEN mst_noreferensi LIKE '%RB%' THEN mst_stok_out ELSE 0 END) AS returKeDC,
+              SUM(CASE WHEN mst_noreferensi LIKE '%MO%' THEN mst_stok_out ELSE 0 END) AS mutOutProduksi,
+              SUM(CASE WHEN mst_noreferensi NOT LIKE '%SOP%' THEN mst_stok_in - mst_stok_out ELSE 0 END) AS totalMutasi
           FROM tmasterstok
           WHERE mst_cab = ? AND mst_brg_kode = ? AND mst_tanggal BETWEEN ? AND ? AND mst_aktif = 'Y'
           GROUP BY mst_ukuran
@@ -479,10 +479,10 @@ const getMutationDetails = async (filters) => {
       LEFT JOIN (
           SELECT
               mst_ukuran,
-              SUM(CASE WHEN MID(mst_noreferensi,4,3) = 'MSI' THEN mst_stok_in ELSE 0 END) AS mutInPesan,
-              SUM(CASE WHEN MID(mst_noreferensi,4,3) = 'MSO' THEN mst_stok_out ELSE 0 END) AS mutOutPesan,
-              SUM(CASE WHEN MID(mst_noreferensi,4,2) = 'MI' THEN mst_stok_in ELSE 0 END) AS mutInProduksi,
-              SUM(CASE WHEN MID(mst_noreferensi,5,3) = 'INV' THEN mst_stok_out ELSE 0 END) AS invoiceSo,
+              SUM(CASE WHEN mst_noreferensi LIKE '%MSI%' THEN mst_stok_in ELSE 0 END) AS mutInPesan,
+              SUM(CASE WHEN mst_noreferensi LIKE '%MSO%' THEN mst_stok_out ELSE 0 END) AS mutOutPesan,
+              SUM(CASE WHEN mst_noreferensi LIKE '%MI%' THEN mst_stok_in ELSE 0 END) AS mutInProduksi,
+              SUM(CASE WHEN mst_noreferensi LIKE '%INV%' THEN mst_stok_out ELSE 0 END) AS invoiceSo,
               SUM(mst_stok_in - mst_stok_out) AS totalMutasiSo
           FROM tmasterstokso
           WHERE mst_cab = ? AND mst_brg_kode = ? AND mst_tanggal BETWEEN ? AND ? AND mst_aktif = 'Y'
