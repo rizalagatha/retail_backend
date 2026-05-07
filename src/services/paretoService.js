@@ -13,27 +13,30 @@ const getList = async (filters) => {
   let categoryFilter = "";
   let searchFilter = "";
 
-  // 1. Parameter Subquery Stok
+  // 1. Parameter untuk Subquery Stok Pareto & Stok Real
   params.push(endDate);
   if (cabang !== "ALL") {
     subqueryCabFilter = "AND m.mst_cab = ?";
-    params.push(cabang);
-    params.push(cabang);
+    params.push(cabang); // Untuk Stok Pareto
+    params.push(cabang); // Untuk Stok Real
   }
 
-  // 2. Parameter Main Query
+  // 2. Parameter untuk Tanggal Main Query
   params.push(startDate, endDate);
 
+  // 3. Parameter untuk Filter Cabang Main Query
   if (cabang !== "ALL") {
     branchFilter = "AND LEFT(h.inv_nomor, 3) = ?";
     params.push(cabang);
   }
 
+  // 4. Parameter untuk Kategori
   if (kategori !== "ALL") {
     categoryFilter = "AND a.brg_ktgp = ?";
     params.push(kategori);
   }
 
+  // 5. Parameter untuk Pencarian
   if (search) {
     const searchTerm = `%${search}%`;
     searchFilter = `
@@ -45,6 +48,7 @@ const getList = async (filters) => {
     params.push(searchTerm, searchTerm);
   }
 
+  // 6. Parameter untuk Limit
   params.push(parseInt(limit, 10) || 20);
 
   const selectCab = cabang === "ALL" ? "'ALL'" : "LEFT(h.inv_nomor, 3)";
@@ -52,33 +56,33 @@ const getList = async (filters) => {
   const query = `
     SELECT
         ${selectCab} AS Cab,
-        a.brg_kode AS KODE,
-        a.brg_ktgp AS KTGPRODUK,
-        a.brg_ktg AS KTGBRG,
-        TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), " ", IFNULL(a.brg_tipe,''), " ", IFNULL(a.brg_lengan,''), " ", IFNULL(a.brg_jeniskain,''), " ", IFNULL(a.brg_warna,''))) AS NAMA,
+        x.KODE,
+        x.KTGPRODUK,
+        x.KTGBRG,
+        x.NAMA,
         
-        SUM(CASE WHEN d.invd_ukuran = 'XS' THEN d.invd_jumlah ELSE 0 END) AS XS,
-        SUM(CASE WHEN d.invd_ukuran = 'S' THEN d.invd_jumlah ELSE 0 END) AS S,
-        SUM(CASE WHEN d.invd_ukuran = 'M' THEN d.invd_jumlah ELSE 0 END) AS M,
-        SUM(CASE WHEN d.invd_ukuran = 'L' THEN d.invd_jumlah ELSE 0 END) AS L,
-        SUM(CASE WHEN d.invd_ukuran = 'XL' THEN d.invd_jumlah ELSE 0 END) AS XL,
-        SUM(CASE WHEN d.invd_ukuran = '2XL' THEN d.invd_jumlah ELSE 0 END) AS \`2XL\`,
-        SUM(CASE WHEN d.invd_ukuran = '3XL' THEN d.invd_jumlah ELSE 0 END) AS \`3XL\`,
-        SUM(CASE WHEN d.invd_ukuran = '4XL' THEN d.invd_jumlah ELSE 0 END) AS \`4XL\`,
-        SUM(CASE WHEN d.invd_ukuran = '5XL' THEN d.invd_jumlah ELSE 0 END) AS \`5XL\`,
-        SUM(CASE WHEN d.invd_ukuran = 'ALLSIZE' THEN d.invd_jumlah ELSE 0 END) AS ALLSIZE,
-        SUM(CASE WHEN d.invd_ukuran = 'OVERSIZE' THEN d.invd_jumlah ELSE 0 END) AS OVERSIZE,
-        SUM(CASE WHEN d.invd_ukuran = 'JUMBO' THEN d.invd_jumlah ELSE 0 END) AS JUMBO,
+        SUM(CASE WHEN x.UKURAN = 'XS' THEN x.qty ELSE 0 END) AS XS,
+        SUM(CASE WHEN x.UKURAN = 'S' THEN x.qty ELSE 0 END) AS S,
+        SUM(CASE WHEN x.UKURAN = 'M' THEN x.qty ELSE 0 END) AS M,
+        SUM(CASE WHEN x.UKURAN = 'L' THEN x.qty ELSE 0 END) AS L,
+        SUM(CASE WHEN x.UKURAN = 'XL' THEN x.qty ELSE 0 END) AS XL,
+        SUM(CASE WHEN x.UKURAN = '2XL' THEN x.qty ELSE 0 END) AS \`2XL\`,
+        SUM(CASE WHEN x.UKURAN = '3XL' THEN x.qty ELSE 0 END) AS \`3XL\`,
+        SUM(CASE WHEN x.UKURAN = '4XL' THEN x.qty ELSE 0 END) AS \`4XL\`,
+        SUM(CASE WHEN x.UKURAN = '5XL' THEN x.qty ELSE 0 END) AS \`5XL\`,
+        SUM(CASE WHEN x.UKURAN = 'ALLSIZE' THEN x.qty ELSE 0 END) AS ALLSIZE,
+        SUM(CASE WHEN x.UKURAN = 'OVERSIZE' THEN x.qty ELSE 0 END) AS OVERSIZE,
+        SUM(CASE WHEN x.UKURAN = 'JUMBO' THEN x.qty ELSE 0 END) AS JUMBO,
         
-        SUM(d.invd_jumlah) AS TOTAL,
+        SUM(x.qty) AS TOTAL,
         
-        -- [KUNCI 1] Pakai IFNULL agar transaksi tanpa diskon tidak amblas jadi 0
-        SUM((IFNULL(d.invd_harga, 0) - IFNULL(d.invd_diskon, 0)) * IFNULL(d.invd_jumlah, 0)) AS NOMINAL_SALES,
+        -- Kita jumlahkan field yang sudah digodok matang di Subquery bawah
+        SUM(x.netto_baris) AS NOMINAL_SALES,
 
         IFNULL((
             SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
             FROM tmasterstok m 
-            WHERE m.mst_aktif="Y" AND m.mst_brg_kode = a.brg_kode 
+            WHERE m.mst_aktif="Y" AND m.mst_brg_kode = x.KODE 
               AND m.mst_tanggal <= ? 
               ${subqueryCabFilter}
         ), 0) AS StokPareto,
@@ -86,21 +90,32 @@ const getList = async (filters) => {
         IFNULL((
             SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
             FROM tmasterstok m 
-            WHERE m.mst_aktif="Y" AND m.mst_brg_kode = a.brg_kode 
+            WHERE m.mst_aktif="Y" AND m.mst_brg_kode = x.KODE 
               ${subqueryCabFilter}
         ), 0) AS StokReal
         
-    FROM tinv_hdr h
-    INNER JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
-    INNER JOIN tbarangdc a ON a.brg_kode = d.invd_kode
-    WHERE h.inv_sts_pro = 0 
-      AND h.inv_tanggal BETWEEN ? AND ?
-      AND a.brg_logstok = "Y"
-      ${branchFilter}
-      ${categoryFilter}
-      ${searchFilter}
-    -- [KUNCI 2] Hapus Cabang dari GROUP BY, agar semua melebur jadi 1 baris
-    GROUP BY a.brg_kode, NAMA, KTGPRODUK, KTGBRG
+    FROM (
+        -- [SUBQUERY] Menghitung angka secara akurat per baris transaksi
+        SELECT 
+            a.brg_kode AS KODE,
+            a.brg_ktgp AS KTGPRODUK,
+            a.brg_ktg AS KTGBRG,
+            TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), " ", IFNULL(a.brg_tipe,''), " ", IFNULL(a.brg_lengan,''), " ", IFNULL(a.brg_jeniskain,''), " ", IFNULL(a.brg_warna,''))) AS NAMA,
+            d.invd_ukuran AS UKURAN,
+            d.invd_jumlah AS qty,
+            -- Eksekusi perkaian Harga & Qty di sini secara absolut
+            ((IFNULL(d.invd_harga, 0) - IFNULL(d.invd_diskon, 0)) * IFNULL(d.invd_jumlah, 0)) AS netto_baris
+        FROM tinv_hdr h
+        INNER JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+        INNER JOIN tbarangdc a ON a.brg_kode = d.invd_kode
+        WHERE h.inv_sts_pro = 0 
+          AND h.inv_tanggal BETWEEN ? AND ?
+          AND a.brg_logstok = "Y"
+          ${branchFilter}
+          ${categoryFilter}
+          ${searchFilter}
+    ) AS x
+    GROUP BY x.KODE, x.NAMA, x.KTGPRODUK, x.KTGBRG
     ORDER BY TOTAL DESC
     LIMIT ?
   `;
