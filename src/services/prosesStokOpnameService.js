@@ -63,10 +63,6 @@ const validateTransferPin = async (code, pin) => {
   return { success: true };
 };
 
-/**
- * [REVISI V3] Proses Transfer Stok Opname.
- * Sistem BARU: Jurnal Penyesuaian + Recalculate Cut-Off Date + Injeksi Stok Awal SOP
- */
 const transferSop = async (nomor, pin, user) => {
   const connection = await pool.getConnection();
   try {
@@ -84,52 +80,56 @@ const transferSop = async (nomor, pin, user) => {
     const tanggalSop = doc.tanggal_str;
     const cabang = doc.cabang;
 
+    // Ambil data detail dari tabel temporary (Ini sudah bawa stok snapshot 9.842 & selisih asli dari Delphi!)
     const [details] = await connection.query(
       "SELECT * FROM tsop_dtl2 WHERE sopd_nomor = ?",
       [nomor],
     );
 
     // =================================================================================
-    // 3. RECALCULATE & INJEKSI MARKER / KOREKSI
+    // 3. INJEKSI HYBRID MENGGUNAKAN SNAPSHOT ASLI (TANPA HITUNG ULANG)
     // =================================================================================
     for (const [index, item] of details.entries()) {
-      // A. Hitung ulang stok sistem murni HANYA sampai dengan tanggal SOP
-      const [stokRows] = await connection.query(
-        `SELECT SUM(mst_stok_in - mst_stok_out) as system_stok 
-         FROM tmasterstok 
-         WHERE mst_aktif = 'Y' AND mst_cab = ? AND mst_brg_kode = ? AND mst_ukuran = ? AND DATE(mst_tanggal) <= ?`,
-        [cabang, item.sopd_kode, item.sopd_ukuran, tanggalSop],
-      );
+      // KUNCI: Jangan hitung ulang! Gunakan snapshot asli dari Delphi
+      const trueSystemStock = Number(item.sopd_stok || 0);
+      const physicalStock = Number(item.sopd_jumlah || 0);
+      const trueSelisih = Number(item.sopd_selisih || 0);
 
-      const trueSystemStock = Number(stokRows[0].system_stok || 0);
-      const physicalStock = Number(item.sopd_jumlah);
-      const trueSelisih = physicalStock - trueSystemStock;
-
-      // B. Update nilai di tabel tsop_dtl2
-      await connection.query(
-        `UPDATE tsop_dtl2 SET sopd_stok = ?, sopd_selisih = ? WHERE sopd_nomor = ? AND sopd_kode = ? AND sopd_ukuran = ?`,
-        [trueSystemStock, trueSelisih, nomor, item.sopd_kode, item.sopd_ukuran],
-      );
-
-      // C. SELALU INJEKSI MARKER KE TMASTERSTOK (Biar muncul di Kartu Stok)
       const now = new Date();
-      const uniqueTime = new Date(now.getTime() + index);
-      const timestampKoreksi = format(uniqueTime, "yyyyMMddHHmmss.SSS");
-      const mstIdrecKoreksi = `${cabang}SOK${timestampKoreksi}`;
+      const timestampKoreksi = format(
+        new Date(now.getTime() + index),
+        "yyyyMMddHHmmss.SSS",
+      );
+      const mstIdrec = `${cabang}SOK${timestampKoreksi}`;
 
-      const qtyIn = trueSelisih > 0 ? trueSelisih : 0;
-      const qtyOut = trueSelisih < 0 ? Math.abs(trueSelisih) : 0;
-      const keterangan =
-        trueSelisih === 0
-          ? "KOREKSI STOK OPNAME (KLOP)"
-          : "KOREKSI STOK OPNAME";
+      let qtyIn = 0,
+        qtyOut = 0,
+        keterangan = "";
+
+      if (trueSystemStock === 0 && physicalStock > 0) {
+        // SKENARIO 1: Delphi sudah Sapu Jagat (Stok Awal 0). Fisik jadi Stok Awal.
+        qtyIn = physicalStock;
+        qtyOut = 0;
+        keterangan = "STOK AWAL (HASIL OPNAME)";
+      } else {
+        // SKENARIO 2: Riwayat masih ada, kita suntikkan Koreksi (Berdasarkan selisih beku Delphi)
+        if (trueSelisih !== 0) {
+          qtyIn = trueSelisih > 0 ? trueSelisih : 0;
+          qtyOut = trueSelisih < 0 ? Math.abs(trueSelisih) : 0;
+          keterangan = "KOREKSI STOK OPNAME";
+        } else {
+          qtyIn = 0;
+          qtyOut = 0;
+          keterangan = "KOREKSI STOK OPNAME (KLOP)";
+        }
+      }
 
       await connection.query(
         `INSERT INTO tmasterstok 
         (mst_idrec, mst_cab, mst_brg_kode, mst_ukuran, mst_noreferensi, mst_tanggal, mst_stok_in, mst_stok_out, mst_ket, mst_aktif, date_create)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Y', NOW())`,
         [
-          mstIdrecKoreksi,
+          mstIdrec,
           cabang,
           item.sopd_kode,
           item.sopd_ukuran,
@@ -171,7 +171,9 @@ const transferSop = async (nomor, pin, user) => {
     );
 
     await connection.commit();
-    return { message: `Transfer Stok Opname berhasil. Data telah dikoreksi.` };
+    return {
+      message: `Transfer Stok Opname berhasil. Stok sistem disesuaikan dengan nilai awal 9842.`,
+    };
   } catch (error) {
     await connection.rollback();
     throw error;
