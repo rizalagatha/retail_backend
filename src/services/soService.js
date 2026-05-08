@@ -1,6 +1,45 @@
 const pool = require("../config/database");
 const { format } = require("date-fns");
 
+// Helper untuk generate Resi
+const encodeResi = (nomorSo) => {
+  try {
+    const parts = nomorSo.split(".SO.");
+    if (parts.length !== 2) return nomorSo;
+    const cabang = parts[0];
+    const numPart = parts[1].replace(".", "");
+    const num = Number(numPart);
+    if (isNaN(num)) return nomorSo;
+    const secretVal = num * 7 + 456789;
+    const encodedNum = secretVal.toString(36).toUpperCase();
+    return `KSN${cabang}${encodedNum}`;
+  } catch {
+    return nomorSo;
+  }
+};
+
+// Helper tambah hari kerja (Skip Sabtu & Minggu)
+const addWorkingDays = (startDate, days) => {
+  if (!startDate) return null;
+  let date = new Date(startDate);
+  let addedDays = 0;
+  while (addedDays < days) {
+    date.setDate(date.getDate() + 1);
+    if (date.getDay() !== 0 && date.getDay() !== 6) {
+      // 0 = Minggu, 6 = Sabtu
+      addedDays++;
+    }
+  }
+  return date;
+};
+
+const addRegularDays = (startDate, days) => {
+  if (!startDate) return null;
+  let date = new Date(startDate);
+  date.setDate(date.getDate() + days);
+  return date;
+};
+
 // Mengambil daftar data (SQLMaster)
 const getList = async (filters) => {
   const { startDate, endDate, cabang, status } = filters;
@@ -31,12 +70,10 @@ const getList = async (filters) => {
         y.QtySO, y.QtyInv, y.Belum, y.AlasanClose, y.StatusKirim,
         y.kdcus, y.Nama, y.Alamat, y.Kota, y.Level, y.Keterangan, y.Aktif, y.SC,
         y.DipakaiDTF,
-
         y.MpPesanan, y.MpResi,
-
         y.Disc1, y.Disc2, y.Promo, y.Ppn, y.Bkrm,
-
         y.NoSPK,
+        y.TglJadi,
 
         (CASE
             WHEN y.DipakaiDTF = 'Y' AND y.Belum = 0 THEN 'CLOSE'
@@ -46,7 +83,6 @@ const getList = async (filters) => {
             WHEN y.StatusKirim = "BELUM" AND y.QtySO = y.pesan THEN "JADI"
             ELSE "PROSES"
         END) AS Status
-
     FROM (
         SELECT 
             x.*,
@@ -73,7 +109,6 @@ const getList = async (filters) => {
                 FROM tmasterstokso m
                 WHERE m.mst_aktif = "Y" AND m.mst_nomor_so = x.Nomor
             ), 0) AS pesan
-
         FROM (
             SELECT 
                 h.so_nomor AS Nomor,
@@ -93,6 +128,8 @@ const getList = async (filters) => {
                 h.so_mp_nomor_pesanan AS MpPesanan,
                 h.so_mp_resi AS MpResi,
 
+                (SELECT MAX(date_create) FROM tmutasistok_hdr WHERE mso_so_nomor = h.so_nomor) AS TglJadi,
+
                 IFNULL((
                     SELECT GROUP_CONCAT(spk_nomor SEPARATOR ', ')
                     FROM kencanaprint.tspk 
@@ -109,25 +146,11 @@ const getList = async (filters) => {
                 JOIN tso_hdr hh ON hh.so_nomor = dd.sod_so_nomor 
                 WHERE hh.so_nomor = h.so_nomor) AS Nominal,
 
-                IFNULL((SELECT SUM(dd.sod_jumlah)
-                        FROM tso_dtl dd
-                        WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
+                IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
+                IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0) AS QtyInv,
 
-                IFNULL((SELECT SUM(dd.invd_jumlah)
-                        FROM tinv_hdr hh 
-                        JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor 
-                        WHERE hh.inv_sts_pro = 0 
-                        AND hh.inv_nomor_so = h.so_nomor), 0) AS QtyInv,
-
-                (IFNULL((SELECT SUM(dd.sod_jumlah)
-                         FROM tso_dtl dd 
-                         WHERE dd.sod_so_nomor = h.so_nomor), 0)
-                 -
-                 IFNULL((SELECT SUM(dd.invd_jumlah)
-                         FROM tinv_hdr hh 
-                         JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor 
-                         WHERE hh.inv_sts_pro = 0 
-                         AND hh.inv_nomor_so = h.so_nomor), 0)
+                (IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0)
+                 - IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0)
                 ) AS Belum,
 
                 h.so_cus_kode AS kdcus,
@@ -136,21 +159,16 @@ const getList = async (filters) => {
                 s.cus_kota AS Kota,
                 CONCAT(h.so_cus_level, " - ", l.level_nama) AS Level,
                 h.so_ket AS Keterangan,
-
                 h.so_close AS sts,
                 h.so_aktif AS Aktif,
                 h.so_alasan AS AlasanClose,
                 h.so_sc AS SC,
                 (
-  SELECT 'Y'
-  FROM tsodtf_hdr d
-  WHERE d.sd_nomor IN (
-      SELECT DISTINCT sod_sd_nomor
-      FROM tso_dtl dd
-      WHERE dd.sod_so_nomor = h.so_nomor
-  )
-  LIMIT 1
-) AS DipakaiDTF
+                  SELECT 'Y' FROM tsodtf_hdr d
+                  WHERE d.sd_nomor IN (
+                      SELECT DISTINCT sod_sd_nomor FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor
+                  ) LIMIT 1
+                ) AS DipakaiDTF
 
             FROM tso_hdr h
             LEFT JOIN tcustomer s ON s.cus_kode = h.so_cus_kode
@@ -159,14 +177,31 @@ const getList = async (filters) => {
             ${branchFilter}
         ) x
     ) y
-
     ${statusFilter}
-
     ORDER BY y.Tanggal, y.Nomor;
   `;
 
   const [rows] = await pool.query(query, params);
-  return rows;
+
+  return rows.map((row) => {
+    row.ResiTracking = encodeResi(row.Nomor);
+
+    const cab = row.Nomor.substring(0, 3);
+    let datelineObj = null;
+
+    if (cab === "K01" || cab === "K03") {
+      datelineObj = addWorkingDays(row.Tanggal, 14);
+    } else {
+      datelineObj = addRegularDays(row.Tanggal, 14);
+    }
+
+    // Format menjadi string agar aman dibaca Vue
+    row.DatelinePelayanan = datelineObj
+      ? format(datelineObj, "yyyy-MM-dd")
+      : null;
+
+    return row;
+  });
 };
 
 const getCabangList = async (user) => {

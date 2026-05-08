@@ -37,17 +37,15 @@ const loadInitialData = async (tanggal, user) => {
 
   // 1. Query untuk grid pertama (detail setoran)
   const detail1Query = `
-        -- A. SETORAN KASIR TUNAI (DARI INVOICE) -> Backward Compatible
+        -- A. SETORAN KASIR TUNAI (MURNI BACA DARI TSETOR_HDR)
         SELECT 
-            'SETORAN KASIR TUNAI' AS jenis, h.inv_tanggal AS tgltrf, h.inv_cus_kode AS kdcus, 
-            c.cus_nama AS nmcus, c.cus_alamat AS alamat, h.inv_nomor AS inv, 
-            IFNULL(sh.sh_nomor, '') AS nomor, 
-            IFNULL(h.inv_rptunai, 0) AS nominal
-        FROM tinv_hdr h
-        LEFT JOIN tcustomer c ON c.cus_kode=h.inv_cus_kode
-        LEFT JOIN tsetor_dtl sd ON sd.sd_inv = h.inv_nomor AND sd.sd_ket = 'PEMBAYARAN TUNAI KASIR'
-        LEFT JOIN tsetor_hdr sh ON sh.sh_nomor = sd.sd_sh_nomor AND sh.sh_jenis = 0
-        WHERE LEFT(h.inv_nomor,3)=? AND h.inv_sts_pro=0 AND h.inv_rptunai<>0 AND h.inv_tanggal=?
+            'SETORAN KASIR TUNAI' AS jenis, h.sh_tanggal AS tgltrf, h.sh_cus_kode AS kdcus, 
+            c.cus_nama AS nmcus, c.cus_alamat AS alamat, 
+            (SELECT d.sd_inv FROM tsetor_dtl d WHERE d.sd_sh_nomor=h.sh_nomor ORDER BY d.sd_tanggal DESC LIMIT 1) AS inv,
+            h.sh_nomor AS nomor, h.sh_nominal AS nominal
+        FROM tsetor_hdr h
+        LEFT JOIN tcustomer c ON c.cus_kode=h.sh_cus_kode
+        WHERE LEFT(h.sh_nomor,3)=? AND h.sh_jenis=0 AND h.sh_ket LIKE '%PEMBAYARAN TUNAI KASIR%' AND h.sh_tanggal=?
         
         UNION ALL
         
