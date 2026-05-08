@@ -1,6 +1,14 @@
 const pool = require("../config/database");
 
-const getBrowseData = async (startDate, endDate, filterCabang, user) => {
+const getBrowseData = async (
+  startDate,
+  endDate,
+  filterCabang,
+  user,
+  page = 1,
+  limit = 10,
+  search = "",
+) => {
   let branchConditions = "";
 
   // Logika Filter Cabang
@@ -13,12 +21,24 @@ const getBrowseData = async (startDate, endDate, filterCabang, user) => {
     branchConditions = `AND k.bk_cab = ${pool.escape(user.cabang)}`;
   }
 
-  const query = `
-    SELECT 
-      x.Nomor, x.Tanggal, x.Invoice, x.BiayaKirim, x.Bayar, 
-      (x.BiayaKirim - x.Bayar) AS SisaPiutang,
-      x.KdCus, x.Customer, x.Alamat, x.Kota, x.Keterangan, x.Created, x.Closing
-    FROM (
+  // --- LOGIKA PENCARIAN (SEARCH) ---
+  let searchCondition = "";
+  let searchParams = [];
+
+  if (search) {
+    const term = `%${search}%`;
+    searchCondition = `AND (
+      k.bk_nomor LIKE ? OR 
+      k.bk_inv_nomor LIKE ? OR 
+      c.cus_nama LIKE ?
+    )`;
+    searchParams = [term, term, term];
+  }
+
+  // Parameter Dasar + Parameter Pencarian
+  const queryParams = [startDate, endDate, ...searchParams];
+
+  const baseQuery = `
       SELECT 
         k.bk_nomor AS Nomor, k.bk_tanggal AS Tanggal,
         k.bk_inv_nomor AS Invoice, k.bk_nominal AS BiayaKirim,
@@ -29,14 +49,34 @@ const getBrowseData = async (startDate, endDate, filterCabang, user) => {
       FROM tbiayakirim k
       LEFT JOIN tinv_hdr h ON h.inv_nomor = k.bk_inv_nomor
       LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
-      -- FIX: Gunakan DATE() agar pencarian akurat meskipun data disimpan dengan jam
       WHERE DATE(k.bk_tanggal) BETWEEN ? AND ?
       ${branchConditions}
-    ) x 
-    ORDER BY x.Nomor ASC
+      ${searchCondition}
   `;
-  const [rows] = await pool.query(query, [startDate, endDate]);
-  return rows;
+
+  // 1. Query untuk menghitung TOTAL BARI (Untuk Pagination)
+  const countQuery = `SELECT COUNT(*) AS total FROM (${baseQuery}) AS count_table`;
+  const [countResult] = await pool.query(countQuery, queryParams);
+  const total = countResult[0].total;
+
+  // 2. Query Utama dengan LIMIT dan OFFSET
+  const offset = (page - 1) * limit;
+  const dataQuery = `
+    SELECT 
+      x.Nomor, x.Tanggal, x.Invoice, x.BiayaKirim, x.Bayar, 
+      (x.BiayaKirim - x.Bayar) AS SisaPiutang,
+      x.KdCus, x.Customer, x.Alamat, x.Kota, x.Keterangan, x.Created, x.Closing
+    FROM (${baseQuery}) x 
+    ORDER BY x.Nomor ASC
+    LIMIT ? OFFSET ?
+  `;
+
+  // Tambahkan limit dan offset ke parameter query akhir
+  const finalParams = [...queryParams, Number(limit), Number(offset)];
+  const [rows] = await pool.query(dataQuery, finalParams);
+
+  // Return Format { items, total }
+  return { items: rows, total };
 };
 
 const getDetailPayments = async (nomorMaster) => {
@@ -64,7 +104,7 @@ const deleteBiayaKirim = async (nomor, user) => {
 
   const [check] = await pool.query(
     "SELECT bk_closing FROM tbiayakirim WHERE bk_nomor = ?",
-    [nomor]
+    [nomor],
   );
   if (check.length > 0 && check[0].bk_closing === "Y") {
     throw new Error("Data sudah Closing, tidak bisa dihapus.");

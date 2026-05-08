@@ -3,15 +3,18 @@ const auditService = require("../services/auditService");
 
 const getBrowse = async (req, res) => {
   try {
-    // FIX: Ambil startDate dan endDate sesuai parameter URL di browser Anda
-    const { startDate, endDate, cabang } = req.query;
+    // FIX: Ambil startDate, endDate, cabang, ditambah parameter pagination & search
+    const { startDate, endDate, cabang, page, limit, search } = req.query;
 
-    // FIX: Pastikan req.user dilempar sebagai argumen KE-4 agar tidak error undefined 'cabang'
+    // Lempar parameter secara berurutan sesuai dengan yang didefinisikan di Service
     const data = await service.getBrowseData(
       startDate,
       endDate,
       cabang,
-      req.user
+      req.user,
+      page, // Argumen ke-5: halaman saat ini
+      limit, // Argumen ke-6: jumlah data per halaman
+      search, // Argumen ke-7: kata kunci pencarian
     );
 
     res.json(data);
@@ -42,7 +45,7 @@ const deleteData = async (req, res) => {
       nomor,
       null,
       null,
-      `Hapus data biaya kirim nomor: ${nomor}`
+      `Hapus data biaya kirim nomor: ${nomor}`,
     );
 
     res.json({ message: "Data berhasil dihapus" });
