@@ -107,7 +107,7 @@ const loadInitialData = async (tanggal, user) => {
   // 2. Query untuk grid kedua (summary per jenis)
   // [PERBAIKAN] Baris SELISIH FISIK KASIR Dihapus
   const detail2Query = `
-        SELECT 'SETORAN KASIR TUNAI' AS jenis, IFNULL(SUM(h.inv_rptunai), 0) AS nominal FROM tinv_hdr h WHERE LEFT(h.inv_nomor,3)=? AND h.inv_sts_pro=0 AND h.inv_rptunai<>0 AND h.inv_tanggal=?
+        SELECT 'SETORAN KASIR TUNAI' AS jenis, IFNULL(SUM(s.sh_nominal), 0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=0 AND s.sh_ket LIKE '%PEMBAYARAN TUNAI KASIR%' AND s.sh_tanggal=?
         UNION ALL
         SELECT "PEMBAYARAN TUNAI" AS jenis, IFNULL(SUM(s.sh_nominal),0) AS nominal FROM tsetor_hdr s WHERE LEFT(s.sh_nomor,3)=? AND s.sh_jenis=0 AND s.sh_ket NOT LIKE '%PEMBAYARAN TUNAI KASIR%' AND s.sh_tanggal=?
         UNION ALL
