@@ -21,6 +21,26 @@ const getInvoiceDetails = async (req, res) => {
   }
 };
 
+const lookupUnpaid = async (req, res) => {
+  try {
+    const { customerKode, gudangKode, q } = req.query;
+
+    if (!customerKode) {
+      return res.status(400).json({ message: "Kode Customer harus dikirim." });
+    }
+
+    // Panggil service
+    const data = await service.lookupUnpaidBiayaKirim(
+      customerKode,
+      gudangKode || req.user.cabang,
+      q,
+    );
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const loadForEdit = async (req, res) => {
   try {
     const data = await service.loadForEdit(req.params.nomor);
@@ -44,7 +64,7 @@ const save = async (req, res) => {
       try {
         const [rows] = await pool.query(
           "SELECT * FROM tbiayakirim WHERE bk_nomor = ?",
-          [nomorDokumen]
+          [nomorDokumen],
         );
         if (rows.length > 0) oldData = rows[0];
       } catch (e) {
@@ -68,7 +88,7 @@ const save = async (req, res) => {
       targetId,
       oldData,
       payload,
-      note
+      note,
     );
 
     res.json(result);
@@ -86,7 +106,7 @@ const remove = async (req, res) => {
     try {
       const [rows] = await pool.query(
         "SELECT * FROM tbiayakirim WHERE bk_nomor = ?",
-        [nomor]
+        [nomor],
       );
       if (rows.length > 0) oldData = rows[0];
     } catch (e) {
@@ -103,7 +123,7 @@ const remove = async (req, res) => {
         nomor,
         oldData,
         null,
-        `Menghapus Biaya Kirim Nomor: ${nomor}`
+        `Menghapus Biaya Kirim Nomor: ${nomor}`,
       );
     }
 
@@ -137,4 +157,5 @@ module.exports = {
   save,
   remove,
   getPrintData,
+  lookupUnpaid,
 };

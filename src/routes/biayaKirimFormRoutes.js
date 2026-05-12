@@ -18,15 +18,17 @@ router.get("/lookup/invoice", verifyToken, controller.lookupInvoice);
 router.get(
   "/invoice-details/:nomorInv",
   verifyToken,
-  controller.getInvoiceDetails
+  controller.getInvoiceDetails,
 );
+
+router.get("/lookup/unpaid", verifyToken, controller.lookupUnpaid);
 
 // Mode Ubah: Load data BK yang sudah ada
 router.get(
   "/:nomor",
   verifyToken,
   checkPermission(MENU_ID, "edit"),
-  controller.loadForEdit
+  controller.loadForEdit,
 );
 
 // Simpan & Hapus
@@ -35,10 +37,15 @@ router.delete(
   "/:nomor",
   verifyToken,
   checkPermission(MENU_ID, "delete"),
-  controller.remove
+  controller.remove,
 );
 
 // GET: Data khusus untuk tampilan cetak
-router.get('/print/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), controller.getPrintData);
+router.get(
+  "/print/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getPrintData,
+);
 
 module.exports = router;

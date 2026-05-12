@@ -244,19 +244,34 @@ const saveData = async (data, user) => {
           [ptNomor, item.tglBayar, item.invoice, item.bayar, item.angsuranId],
         );
 
-        // 2. Insert ke tpiutang_dtl (Wajib pakai pd_idrec karena tabel ini biasanya punya idrec)
-        // Jika nanti muncul error 'Unknown column pd_idrec', silakan hapus bagian pd_idrec-nya saja.
-        const pd_idrec = `${header.gudang.kode}PIU${timestamp}${index}`;
+        // 2. [PERBAIKAN] Insert ke tpiutang_dtl (Pisahkan logika INV dan BK)
+        let pd_ph_nomor = "";
+        let pd_bk = "";
+        let uraian = "Potongan";
+
+        if (item.invoice.includes(".BK")) {
+          // --- Logika untuk Biaya Kirim ---
+          pd_ph_nomor = item.invoice; // Tanpa kode customer
+          pd_bk = "Y";
+          uraian = "Potongan Biaya Kirim";
+        } else {
+          // --- Logika untuk Invoice Biasa ---
+          pd_ph_nomor = `${header.customer.kode}${item.invoice}`; // Pakai kode customer
+          pd_bk = "N"; // atau "" sesuai standar sistem Mas Rizal
+          uraian = "Potongan Penjualan";
+        }
 
         await connection.query(
           `INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur, pd_bk) 
-           VALUES (?, ?, "Potongan", ?, ?, ?, "")`,
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
           [
-            `${header.customer.kode}${item.invoice}`, // pd_ph_nomor (biasanya gabungan kode cus + no inv)
-            item.tglBayar, // pd_tanggal
-            item.bayar, // pd_kredit
-            ptNomor, // pd_ket (nomor PT)
-            item.angsuranId, // pd_sd_angsur (PRIMARY KEY)
+            pd_ph_nomor,
+            item.tglBayar,
+            uraian,
+            item.bayar,
+            ptNomor,
+            item.angsuranId,
+            pd_bk,
           ],
         );
       }

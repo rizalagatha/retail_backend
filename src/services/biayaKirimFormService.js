@@ -212,10 +212,37 @@ const loadForEdit = async (nomor) => {
   return rows[0];
 };
 
+const lookupUnpaidBiayaKirim = async (customerKode, gudangKode, term) => {
+  const searchTerm = `%${term || ""}%`;
+
+  const query = `
+      SELECT 
+        k.bk_nomor AS Nomor, 
+        k.bk_tanggal AS Tanggal, 
+        k.bk_nominal AS Nominal,
+        IFNULL((SELECT SUM(p.pd_kredit) FROM tpiutang_dtl p WHERE p.pd_ph_nomor = k.bk_nomor), 0) AS Bayar,
+        (k.bk_nominal - IFNULL((SELECT SUM(p.pd_kredit) FROM tpiutang_dtl p WHERE p.pd_ph_nomor = k.bk_nomor), 0)) AS Sisa
+      FROM tbiayakirim k
+      LEFT JOIN tinv_hdr h ON h.inv_nomor = k.bk_inv_nomor
+      WHERE h.inv_cus_kode = ? 
+        AND k.bk_cab = ? 
+        AND k.bk_nomor LIKE ?
+      HAVING Sisa > 0
+      ORDER BY k.bk_tanggal DESC
+  `;
+  const [rows] = await pool.query(query, [
+    customerKode,
+    gudangKode,
+    searchTerm,
+  ]);
+  return rows;
+};
+
 module.exports = {
   lookupInvoice,
   getInvoiceDetails,
   saveData,
   getPrintData,
   loadForEdit,
+  lookupUnpaidBiayaKirim,
 };
