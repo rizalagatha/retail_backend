@@ -407,6 +407,15 @@ const getSeasonalSales = async (req, res) => {
   }
 };
 
+const getAgenda = async (req, res) => {
+  try {
+    const data = await dashboardService.getAgendaDateline(req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -438,4 +447,5 @@ module.exports = {
   saveBordirSchedule,
   getLowStockSales,
   getSeasonalSales,
+  getAgenda,
 };

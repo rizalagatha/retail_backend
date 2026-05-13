@@ -1,5 +1,6 @@
 const pool = require("../config/database");
 const { format } = require("date-fns");
+const { get } = require("../routes/soRoutes");
 
 // Helper untuk generate Resi
 const encodeResi = (nomorSo) => {
@@ -1585,9 +1586,10 @@ const searchTrackingItems = async (nomorSO) => {
   try {
     // 1. Cek Header SO
     const [soRows] = await connection.query(
-      `SELECT h.so_nomor, h.so_tanggal, c.cus_nama 
+      `SELECT h.so_nomor, h.so_tanggal, c.cus_nama, g.gdg_inv_komplain
        FROM tso_hdr h 
        LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode 
+       LEFT JOIN tgudang g ON g.gdg_kode = h.so_cab
        WHERE h.so_nomor = ? LIMIT 1`,
       [nomorSO],
     );
@@ -1636,6 +1638,7 @@ const searchTrackingItems = async (nomorSO) => {
       nomorSo: soRows[0].so_nomor,
       tanggal: soRows[0].so_tanggal,
       penerima: soRows[0].cus_nama || "Umum",
+      kontakKomplain: soRows[0].gdg_inv_komplain,
       items: formattedItems,
     };
   } finally {
@@ -1688,6 +1691,121 @@ const getActivePromos = async (filters) => {
   }
 };
 
+/**
+ * @description Mengambil daftar Store (Gudang Cabang) untuk Publik
+ */
+const getPublicStores = async () => {
+  const query = `
+      SELECT gdg_kode AS kode, gdg_nama AS nama 
+      FROM tgudang 
+      WHERE gdg_dc = 0 AND gdg_kode != 'K04' 
+      ORDER BY gdg_nama
+  `;
+  const [rows] = await pool.query(query);
+  return rows;
+};
+
+/**
+ * @description Pencarian stok publik berdasarkan cabang (Telah dikurangi Booking/SO)
+ */
+const getPublicStock = async (cabang, keyword) => {
+  if (!cabang) return [];
+  const term = keyword ? `%${keyword}%` : "%";
+
+  const query = `
+      SELECT 
+          b.brg_kode AS kode,
+          b.brg_jeniskain AS jenis_kain,
+          TRIM(CONCAT(IFNULL(b.brg_jeniskaos,''), " ", IFNULL(b.brg_tipe,''), " ", IFNULL(b.brg_lengan,''), " ", IFNULL(b.brg_jeniskain,''), " ", IFNULL(b.brg_warna,''))) AS nama,
+          m.mst_ukuran AS ukuran,
+          MAX(dtl.brgd_harga) AS harga,
+          
+          -- [OPTIMASI] Ambil gambar utama dari hasil LEFT JOIN di bawah
+          COALESCE(img_group.img_utama, b.brg_gambar_url) AS gambar_url,
+          IFNULL(b.brg_urutan_tampil, 9999) AS urutan,
+          
+          -- [OPTIMASI] Ambil galeri JSON langsung dari LEFT JOIN
+          img_group.galeri AS galeri,
+
+          (
+              SUM(m.mst_stok_in - m.mst_stok_out) +
+              IFNULL((
+                  SELECT SUM(so.mst_stok_in - so.mst_stok_out) 
+                  FROM tmasterstokso so 
+                  WHERE so.mst_aktif='Y' AND so.mst_cab=m.mst_cab AND so.mst_brg_kode=m.mst_brg_kode AND so.mst_ukuran=m.mst_ukuran
+              ), 0)
+          ) AS stok,
+          
+          IFNULL((
+              SELECT SUM(d.invd_jumlah)
+              FROM tinv_dtl d
+              JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+              WHERE h.inv_sts_pro = 0 
+                AND h.inv_cab = m.mst_cab
+                AND d.invd_kode = m.mst_brg_kode
+                AND d.invd_ukuran = m.mst_ukuran
+          ), 0) AS total_terjual
+
+      FROM tmasterstok m
+      JOIN tbarangdc b ON b.brg_kode = m.mst_brg_kode
+      LEFT JOIN tbarangdc_dtl dtl ON dtl.brgd_kode = m.mst_brg_kode AND dtl.brgd_ukuran = m.mst_ukuran
+      
+      -- [KUNCI OPTIMASI PENTING] 
+      -- Join galeri diolah di sini agar MySQL hanya memproses 1 kali per produk!
+      LEFT JOIN (
+          SELECT 
+              img_brg_kode,
+              -- Ambil URL urutan pertama (paling kecil) sebagai thumbnail utama
+              (SELECT sub_img.img_url FROM tbarangdc_images sub_img WHERE sub_img.img_brg_kode = t.img_brg_kode ORDER BY sub_img.img_index ASC LIMIT 1) AS img_utama,
+              CONCAT('[', GROUP_CONCAT(JSON_OBJECT('url', img_url, 'index', img_index) ORDER BY img_index ASC), ']') AS galeri
+          FROM tbarangdc_images t
+          GROUP BY img_brg_kode
+      ) img_group ON img_group.img_brg_kode = b.brg_kode
+
+      WHERE m.mst_aktif = 'Y' 
+        AND m.mst_cab = ?
+        AND (
+            b.brg_kode LIKE ? 
+            OR TRIM(CONCAT(IFNULL(b.brg_jeniskaos,''), " ", IFNULL(b.brg_tipe,''), " ", IFNULL(b.brg_lengan,''), " ", IFNULL(b.brg_jeniskain,''), " ", IFNULL(b.brg_warna,''))) LIKE ?
+        )
+      GROUP BY m.mst_cab, m.mst_brg_kode, m.mst_ukuran
+      ORDER BY urutan ASC, total_terjual DESC, nama ASC, ukuran ASC
+  `;
+
+  const [rows] = await pool.query(query, [cabang, term, term]);
+  return rows;
+};
+
+/**
+ * @description Mengambil kontak (WhatsApp) masing-masing cabang untuk pusat bantuan
+ */
+const getPublicContacts = async () => {
+  const query = `
+      SELECT 
+          gdg_kode AS kode, 
+          gdg_nama AS nama, 
+          gdg_inv_telp AS telepon,
+          gdg_inv_alamat AS alamat
+      FROM tgudang 
+      WHERE gdg_dc = 0 AND gdg_kode != 'K04' 
+      ORDER BY gdg_nama
+  `;
+  const [rows] = await pool.query(query);
+
+  // Bersihkan format nomor HP agar valid untuk link wa.me
+  return rows.map((row) => {
+    let cleanPhone = row.telepon ? row.telepon.replace(/\D/g, "") : "";
+    if (cleanPhone.startsWith("0")) {
+      cleanPhone = "62" + cleanPhone.substring(1);
+    }
+
+    return {
+      ...row,
+      wa_link: cleanPhone ? `https://wa.me/${cleanPhone}` : null,
+    };
+  });
+};
+
 module.exports = {
   getList,
   getCabangList,
@@ -1699,4 +1817,7 @@ module.exports = {
   trackOrderTimeline,
   searchTrackingItems,
   getActivePromos,
+  getPublicStores,
+  getPublicStock,
+  getPublicContacts,
 };

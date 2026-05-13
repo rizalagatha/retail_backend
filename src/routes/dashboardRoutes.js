@@ -161,4 +161,6 @@ router.get(
   dashboardController.getSeasonalSales,
 );
 
+router.get("/agenda", verifyToken, dashboardController.getAgenda);
+
 module.exports = router;

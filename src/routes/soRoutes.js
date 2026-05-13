@@ -8,6 +8,14 @@ const {
 
 const MENU_ID = "26"; // Sesuai permintaan Anda
 
+router.get("/public/active-promos", soController.getPublicActivePromos);
+
+router.get("/public/stores", soController.getPublicStores);
+
+router.get("/public/cek-stok", soController.getPublicStock);
+
+router.get("/public/contacts", soController.getPublicContacts);
+
 // GET: Mengambil daftar Surat Pesanan berdasarkan filter
 router.get(
   "/",
@@ -28,8 +36,6 @@ router.get(
 router.get("/track/:nomor", soController.trackOrder);
 
 router.get("/search-track/:nomor", soController.searchTrackingItems);
-
-router.get("/public/active-promos", soController.getPublicActivePromos);
 
 // GET: Mengambil detail untuk satu SO
 router.get(

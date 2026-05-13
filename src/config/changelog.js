@@ -1,4 +1,24 @@
 const changelogs = {
+  "1.4.3": {
+    date: "2026-05-13",
+    changes: [
+      {
+        title: "Pembaruan:",
+        items: [
+          "Fitur Baru: Kalender Agenda untuk melihat dateline Surat Pesanan pada masing-masing cabang, agar mengetahui pada hari tersebut ada berapa banyak Surat Pesanan yang harus diselesaikan. Termasuk pengingat ketika SC pertama kali login.",
+          "Penyesuaian harga Bordir mengikuti ketentuan terbaru, efektif mulai 15 Mei 2026",
+          "Update Tampilan Website Tracking Pesanan: Fitur Cek Stok, Kalkulator Harga Custom, dan Pusat Bantuan (versi Beta)",
+          "Penambahan halaman Admin Panel untuk upload gambar produk di Cek Stok web tracking pesanan",
+          "TOP untuk cabang Kaosan Online (KON) diubah menjadi 7 hari",
+          "Penambahan layout printer Postek untuk Cetak Barcode",
+          "Pilihan untuk Export Vertikal atau Horizontal pada Export Laporan Stok Real Time",
+          "Penyesuaian cetak SO agar customer tidak salah kirim pesan WA ke Customer Center",
+          "Penambahan tombol Export Detail Kartu Piutang",
+          "Penambahan invoice jatuh tempo pada lonceng notifikasi",
+        ],
+      },
+    ],
+  },
   "1.4.2": {
     date: "2026-05-04",
     changes: [

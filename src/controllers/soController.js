@@ -161,6 +161,37 @@ const getPublicActivePromos = async (req, res) => {
   }
 };
 
+const getPublicStores = async (req, res) => {
+  try {
+    const data = await soService.getPublicStores();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getPublicStock = async (req, res) => {
+  try {
+    const { cabang, q } = req.query;
+    // Wajib ada cabang
+    if (!cabang) return res.json([]);
+
+    const data = await soService.getPublicStock(cabang, q || "");
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getPublicContacts = async (req, res) => {
+  try {
+    const data = await soService.getPublicContacts();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getAll,
   getDetails,
@@ -172,4 +203,7 @@ module.exports = {
   trackOrder,
   searchTrackingItems,
   getPublicActivePromos,
+  getPublicStores,
+  getPublicStock,
+  getPublicContacts,
 };

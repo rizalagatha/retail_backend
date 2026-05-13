@@ -988,8 +988,14 @@ const saveData = async (payload, user) => {
       // Safety check: pastikan tidak negatif
       if (finalTop < 0) finalTop = 0;
     } else if (isPiutang) {
-      // Jika Piutang Umum, paksa TOP sesuai aturan cabang
-      finalTop = user.cabang === "KPR" ? 30 : 14;
+      // --- [PERBAIKAN] Jika Piutang Umum, paksa TOP sesuai aturan cabang ---
+      if (user.cabang === "KPR") {
+        finalTop = 30;
+      } else if (user.cabang === "KON") {
+        finalTop = 7; // TOP Cabang Online (KON) = 7 Hari
+      } else {
+        finalTop = 14; // Default Piutang Cabang Lainnya = 14 Hari
+      }
     } else {
       finalTop = 0;
     }

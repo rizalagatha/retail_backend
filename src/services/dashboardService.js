@@ -602,7 +602,8 @@ const getTotalSisaPiutang = async (user) => {
   let params = [user.cabang];
 
   if (user.cabang === "KDC") {
-    branchFilter = "";
+    // [PERBAIKAN] Kecualikan invoice KDC agar angka total sinkron
+    branchFilter = "AND u.ph_inv_nomor NOT LIKE 'KDC.INV.%'";
     params = [];
   }
 
@@ -645,6 +646,7 @@ const getPiutangPerCabang = async (user) => {
     ) v ON v.pd_ph_nomor = u.ph_nomor
     LEFT JOIN tgudang g ON g.gdg_kode = u.ph_cab
     WHERE (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) >= 500
+      AND u.ph_inv_nomor NOT LIKE 'KDC.INV.%'
     GROUP BY u.ph_cab, g.gdg_nama
     ORDER BY sisa_piutang DESC;
   `;
@@ -657,13 +659,23 @@ const getPiutangPerCabang = async (user) => {
  * @description Invoice yang masih punya sisa piutang untuk store tertentu (Sisa >= 500 + Nama Customer).
  */
 const getPiutangPerInvoice = async (user, targetCabang) => {
-  let filterCabang =
-    user.cabang === "KDC" && targetCabang ? targetCabang : user.cabang;
+  let invoiceFilter = "";
+  let params = [];
 
-  if (!filterCabang) return [];
-
-  // [PERBAIKAN KUNCI]: Gunakan LIKE pada nomor invoice untuk menjamin akurasi
-  const prefix = `${filterCabang}.INV.%`;
+  if (user.cabang === "KDC") {
+    if (targetCabang && targetCabang !== "ALL") {
+      // Jika KDC melihat rincian cabang spesifik
+      invoiceFilter = "AND u.ph_inv_nomor LIKE ?";
+      params.push(`${targetCabang}.INV.%`);
+    } else {
+      // Jika KDC melihat semua, KECUALIKAN invoice KDC
+      invoiceFilter = "AND u.ph_inv_nomor NOT LIKE 'KDC.INV.%'";
+    }
+  } else {
+    // Toko hanya melihat miliknya sendiri
+    invoiceFilter = "AND u.ph_inv_nomor LIKE ?";
+    params.push(`${user.cabang}.INV.%`);
+  }
 
   const query = `
         SELECT 
@@ -681,13 +693,12 @@ const getPiutangPerInvoice = async (user, targetCabang) => {
         ) v ON v.pd_ph_nomor = u.ph_nomor
         LEFT JOIN tinv_hdr h ON h.inv_nomor = u.ph_inv_nomor
         LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
-        -- [PERBAIKAN KUNCI]: Filter by awalan nomor invoice, BUKAN u.ph_cab
-        WHERE u.ph_inv_nomor LIKE ?
-          AND (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) >= 500 
+        WHERE (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) >= 500 
+          ${invoiceFilter}
         ORDER BY sisa_piutang DESC;
     `;
 
-  const [rows] = await pool.query(query, [prefix]);
+  const [rows] = await pool.query(query, params);
   return rows;
 };
 
@@ -936,23 +947,55 @@ const getStockAlerts = async (user) => {
   FROM tmemo_internal
 `;
 
+  // 6. [BARU] Cek Invoice Jatuh Tempo (Lewat TOP)
+  let queryPiutangOverdue = "";
+  let paramsPiutangOverdue = [];
+
+  if (cabang === "KDC") {
+    queryPiutangOverdue = `
+      SELECT COUNT(*) AS total
+      FROM tpiutang_hdr u
+      LEFT JOIN (
+          SELECT pd_ph_nomor, SUM(pd_debet) AS debet, SUM(pd_kredit) AS kredit
+          FROM tpiutang_dtl GROUP BY pd_ph_nomor
+      ) v ON v.pd_ph_nomor = u.ph_nomor
+      WHERE (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) > 100
+        AND DATE_ADD(u.ph_tanggal, INTERVAL u.ph_top DAY) < CURDATE()
+    `;
+  } else {
+    queryPiutangOverdue = `
+      SELECT COUNT(*) AS total
+      FROM tpiutang_hdr u
+      LEFT JOIN (
+          SELECT pd_ph_nomor, SUM(pd_debet) AS debet, SUM(pd_kredit) AS kredit
+          FROM tpiutang_dtl GROUP BY pd_ph_nomor
+      ) v ON v.pd_ph_nomor = u.ph_nomor
+      WHERE u.ph_cab = ?
+        AND (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) > 100
+        AND DATE_ADD(u.ph_tanggal, INTERVAL u.ph_top DAY) < CURDATE()
+    `;
+    paramsPiutangOverdue.push(cabang);
+  }
+
   // Jalankan Query secara paralel
-  const [rowsSj, rowsMutasi, rowsRetur, rowsPinjam, rowsMemo] =
+  const [rowsSj, rowsMutasi, rowsRetur, rowsPinjam, rowsMemo, rowsPiutang] =
     await Promise.all([
       pool.query(querySj, [cabang]),
       pool.query(queryMutasi, [cabang]),
       pool.query(queryRetur, paramsRetur),
       pool.query(queryPinjam, paramsPinjam),
       pool.query(queryMemo),
+      pool.query(queryPiutangOverdue, paramsPiutangOverdue), // <--- INI TAMBAHANNYA
     ]);
 
   return {
     sj_pending: rowsSj[0][0].total || 0,
     mutasi_pending: rowsMutasi[0][0].total || 0,
-    retur_pending: rowsRetur[0][0].total || 0, // Ambil dari trbdc_hdr yang rb_noterima kosong
+    retur_pending: rowsRetur[0][0].total || 0,
     pinjam_overdue: rowsPinjam[0][0].total || 0,
     new_memo_count: rowsMemo[0][0].total || 0,
     latest_memo_date: rowsMemo[0][0].latest_date || null,
+    piutang_overdue: rowsPiutang[0][0].total || 0, // <--- INI TAMBAHANNYA
   };
 };
 
@@ -1694,6 +1737,52 @@ const getSeasonalSales = async (user, filters = {}) => {
   return rows;
 };
 
+/**
+ * @description Mengambil agenda dateline SO dan rincian item custom (DTF)
+ */
+const getAgendaDateline = async (user) => {
+  let filterSo = "AND h.so_cab = ?";
+  let params = [user.cabang];
+
+  if (user.cabang === "KDC") {
+    filterSo = "";
+    params = [];
+  }
+
+  // Tambahkan pengecekan apakah SO sudah ada di tabel Invoice (tinv_hdr) -> is_completed
+  const query = `
+    SELECT 
+        'SO' as tipe, 
+        h.so_nomor as nomor, 
+        DATE_FORMAT(h.so_dateline, '%Y-%m-%d') as dateline, 
+        c.cus_nama as customer,
+        IF((SELECT COUNT(inv_nomor) FROM tinv_hdr WHERE inv_nomor_so = h.so_nomor AND inv_sts_pro = 0) > 0, 1, 0) AS is_completed,
+        (
+            SELECT GROUP_CONCAT(
+                DISTINCT CASE 
+                    WHEN d.sod_custom_nama IS NOT NULL AND d.sod_custom_nama != '' THEN d.sod_custom_nama
+                    WHEN d.sod_sd_nomor IS NOT NULL AND d.sod_sd_nomor != '' THEN f.sd_nama
+                    ELSE NULL
+                END 
+                SEPARATOR ', '
+            )
+            FROM tso_dtl d
+            LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_sd_nomor
+            WHERE d.sod_so_nomor = h.so_nomor AND d.sod_custom = 'Y'
+        ) AS rincian_dtf
+    FROM tso_hdr h 
+    LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
+    WHERE h.so_close = 0 
+      AND h.so_dateline IS NOT NULL 
+      AND h.so_dateline >= DATE_SUB(CURDATE(), INTERVAL 14 DAY) 
+      ${filterSo}
+    ORDER BY dateline ASC;
+  `;
+
+  const [rows] = await pool.query(query, params);
+  return rows;
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -1724,4 +1813,5 @@ module.exports = {
   updateBordirSchedule,
   getLowStockSales,
   getSeasonalSales,
+  getAgendaDateline,
 };
