@@ -41,4 +41,11 @@ router.delete(
   katalogController.deleteGambarProduk,
 );
 
+router.put(
+  "/gallery/swap/:kodeBarang/:indexA/:indexB",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  katalogController.swapGambarProduk,
+);
+
 module.exports = router;

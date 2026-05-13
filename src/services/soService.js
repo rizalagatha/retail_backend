@@ -1716,6 +1716,8 @@ const getPublicStock = async (cabang, keyword) => {
       SELECT 
           b.brg_kode AS kode,
           b.brg_jeniskain AS jenis_kain,
+          IFNULL(b.brg_jeniskaos, '') AS jenis_kaos,
+          IFNULL(b.brg_lengan, '') AS lengan,
           TRIM(CONCAT(IFNULL(b.brg_jeniskaos,''), " ", IFNULL(b.brg_tipe,''), " ", IFNULL(b.brg_lengan,''), " ", IFNULL(b.brg_jeniskain,''), " ", IFNULL(b.brg_warna,''))) AS nama,
           m.mst_ukuran AS ukuran,
           MAX(dtl.brgd_harga) AS harga,

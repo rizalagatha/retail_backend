@@ -7,9 +7,11 @@ const getKatalogList = async (req, res) => {
     const query = `
       SELECT 
         b.brg_kode AS kode,
+        IFNULL(b.brg_jeniskain, 'LAIN-LAIN') AS jenis_kain,
+        IFNULL(b.brg_lengan, 'LAIN-LAIN') AS lengan, -- [BARU] Tambahan lengan
         TRIM(CONCAT(IFNULL(b.brg_jeniskaos,''), ' ', IFNULL(b.brg_tipe,''), ' ', IFNULL(b.brg_lengan,''), ' ', IFNULL(b.brg_jeniskain,''), ' ', IFNULL(b.brg_warna,''))) AS nama,
         
-        -- [PERBAIKAN] Ambil gambar dari tbarangdc_images (Slot 1) sebagai prioritas utama
+        -- Ambil gambar dari tbarangdc_images (Slot 1) sebagai prioritas utama
         COALESCE(
           (SELECT img_url FROM tbarangdc_images WHERE img_brg_kode = b.brg_kode ORDER BY img_index ASC LIMIT 1),
           b.brg_gambar_url
@@ -86,10 +88,25 @@ const deleteGambarProduk = async (req, res) => {
   }
 };
 
+const swapGambarProduk = async (req, res) => {
+  try {
+    const { kodeBarang, indexA, indexB } = req.params;
+    await katalogService.swapGambarProduk(
+      kodeBarang,
+      Number(indexA),
+      Number(indexB),
+    );
+    res.json({ success: true, message: "Urutan gambar berhasil ditukar." });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getKatalogList,
   uploadGambarProduk,
   updateUrutanMassal,
   getGalleryByKode,
   deleteGambarProduk,
+  swapGambarProduk,
 };

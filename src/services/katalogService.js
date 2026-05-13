@@ -128,9 +128,52 @@ const deleteGambarProduk = async (kodeBarang, index) => {
   }
 };
 
+const swapGambarProduk = async (kodeBarang, indexA, indexB) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    // 1. Pindahkan A ke tempat penampungan sementara (index 999)
+    await connection.query(
+      "UPDATE tbarangdc_images SET img_index = 999 WHERE img_brg_kode = ? AND img_index = ?",
+      [kodeBarang, indexA],
+    );
+    // 2. Pindahkan B ke posisi A
+    await connection.query(
+      "UPDATE tbarangdc_images SET img_index = ? WHERE img_brg_kode = ? AND img_index = ?",
+      [indexA, kodeBarang, indexB],
+    );
+    // 3. Pindahkan A (dari 999) ke posisi B
+    await connection.query(
+      "UPDATE tbarangdc_images SET img_index = ? WHERE img_brg_kode = ? AND img_index = 999",
+      [indexB, kodeBarang],
+    );
+
+    // Perbarui thumbnail utama jika gambar slot 1 ikut tergeser
+    if (indexA === 1 || indexB === 1) {
+      const [nextRows] = await connection.query(
+        "SELECT img_url FROM tbarangdc_images WHERE img_brg_kode = ? ORDER BY img_index ASC LIMIT 1",
+        [kodeBarang],
+      );
+      const nextUrl = nextRows.length > 0 ? nextRows[0].img_url : null;
+      await connection.query(
+        "UPDATE tbarangdc SET brg_gambar_url = ? WHERE brg_kode = ?",
+        [nextUrl, kodeBarang],
+      );
+    }
+
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   getGalleryByKode,
   processGambarProduk,
   updateUrutanKatalog,
   deleteGambarProduk,
+  swapGambarProduk,
 };
