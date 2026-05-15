@@ -1749,7 +1749,6 @@ const getAgendaDateline = async (user) => {
     params = [];
   }
 
-  // Tambahkan pengecekan apakah SO sudah ada di tabel Invoice (tinv_hdr) -> is_completed
   const query = `
     SELECT 
         'SO' as tipe, 
@@ -1758,9 +1757,9 @@ const getAgendaDateline = async (user) => {
         c.cus_nama as customer,
         IF((SELECT COUNT(inv_nomor) FROM tinv_hdr WHERE inv_nomor_so = h.so_nomor AND inv_sts_pro = 0) > 0, 1, 0) AS is_completed,
         
-        -- [BARU] Mengecek apakah SEMUA barang di dalam SO tersebut sudah di-scan
+        -- [PERBAIKAN] Cek apakah total qty yang di-scan (sod_scanned) >= total qty pesanan (sod_jumlah)
         IFNULL((
-            SELECT IF(COUNT(*) > 0 AND SUM(IF(sod_scanned = 'Y' OR sod_scanned = 1, 1, 0)) = COUNT(*), 1, 0)
+            SELECT IF(SUM(sod_jumlah) > 0 AND SUM(sod_scanned) >= SUM(sod_jumlah), 1, 0)
             FROM tso_dtl
             WHERE sod_so_nomor = h.so_nomor
         ), 0) AS is_scan_ready,
