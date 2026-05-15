@@ -1045,6 +1045,24 @@ const saveData = async (payload, user) => {
       ? Number(header.mpBiayaPlatform) || 0
       : 0;
 
+    // =========================================================================
+    // [BARU] CEK DUPLIKASI NO PESANAN MARKETPLACE
+    // =========================================================================
+    if (isNew && isMp === "Y" && mpNoPesanan) {
+      const [mpCheck] = await connection.query(
+        "SELECT inv_nomor FROM tinv_hdr WHERE inv_mp_nomor_pesanan = ? LIMIT 1",
+        [mpNoPesanan]
+      );
+      
+      if (mpCheck.length > 0) {
+        connection.release();
+        throw new Error(
+          `Gagal: Nomor Pesanan Marketplace (${mpNoPesanan}) sudah pernah diinput pada Invoice ${mpCheck[0].inv_nomor}.`
+        );
+      }
+    }
+    // =========================================================================
+
     const totalNonTunai =
       Number(payment.transfer?.nominal || 0) +
       Number(payment.qris?.nominal || 0);

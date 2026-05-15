@@ -1757,6 +1757,14 @@ const getAgendaDateline = async (user) => {
         DATE_FORMAT(h.so_dateline, '%Y-%m-%d') as dateline, 
         c.cus_nama as customer,
         IF((SELECT COUNT(inv_nomor) FROM tinv_hdr WHERE inv_nomor_so = h.so_nomor AND inv_sts_pro = 0) > 0, 1, 0) AS is_completed,
+        
+        -- [BARU] Mengecek apakah SEMUA barang di dalam SO tersebut sudah di-scan
+        IFNULL((
+            SELECT IF(COUNT(*) > 0 AND SUM(IF(sod_scanned = 'Y' OR sod_scanned = 1, 1, 0)) = COUNT(*), 1, 0)
+            FROM tso_dtl
+            WHERE sod_so_nomor = h.so_nomor
+        ), 0) AS is_scan_ready,
+
         (
             SELECT GROUP_CONCAT(
                 DISTINCT CASE 
