@@ -61,11 +61,35 @@ const authorizationController = {
   // [MANAGER] Melakukan Approve / Reject
   processRequest: async (req, res) => {
     try {
-      const { authNomor, action } = req.body; // action: 'APPROVE' atau 'REJECT'
+      const { authNomor, action } = req.body;
       const managerUser = req.user.kode;
 
       if (!authNomor || !["APPROVE", "REJECT"].includes(action)) {
         return res.status(400).json({ message: "Data proses tidak valid." });
+      }
+
+      // [REVISI] Ambil jenis transaksi dulu untuk divalidasi keamanannya
+      const [authRows] = await pool.query(
+        "SELECT o_jenis FROM totorisasi WHERE o_nomor = ? LIMIT 1",
+        [authNomor],
+      );
+
+      if (authRows.length > 0) {
+        const o_jenis = authRows[0].o_jenis;
+        const managerTypes = [
+          "PEMINJAMAN_BARANG",
+          "KLAIM_PETTYCASH",
+          "SUBMIT_BAP",
+          "TRANSFER_SOP",
+        ];
+
+        // JIKA transaksi termasuk level Manager, tapi yang approve beralamat selain KDC -> BLOKIR!
+        if (managerTypes.includes(o_jenis) && req.user.cabang !== "KDC") {
+          return res.status(403).json({
+            message:
+              "Akses Ditolak. Transaksi level Manager tidak boleh diproses oleh user Store.",
+          });
+        }
       }
 
       const result = await service.processRequest(
