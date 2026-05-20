@@ -185,21 +185,39 @@ const authPinService = {
     let query = "SELECT * FROM totorisasi WHERE o_status = 'P' ";
     const params = [];
 
+    const managerTypes = [
+      "PEMINJAMAN_BARANG",
+      "KLAIM_PETTYCASH",
+      "SUBMIT_BAP",
+      "TRANSFER_SOP",
+      "DISKON_FAKTUR",
+      "SO_TANPA_DP",
+      "BELUM_LUNAS",
+      "DISKON_ITEM",
+      "PIUTANG",
+    ];
+
     if (userCabang === "KDC") {
       if (userKodeUpper === "ESTU") {
         if (isEstuManagerPeriod) {
           query +=
-            " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '' OR o_jenis IN ('PEMINJAMAN_BARANG', 'KLAIM_PETTYCASH', 'SUBMIT_BAP')) ";
+            " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '' OR o_jenis IN (?)) ";
         } else {
-          query +=
-            " AND o_jenis IN ('PEMINJAMAN_BARANG', 'KLAIM_PETTYCASH', 'SUBMIT_BAP') ";
+          query += " AND o_jenis IN (?) ";
         }
+        params.push(["PEMINJAMAN_BARANG", "KLAIM_PETTYCASH", "SUBMIT_BAP"]);
       } else if (userKodeUpper === "HARIS") {
         if (isEstuManagerPeriod) {
-          query += " AND 1=0 "; // Kosongkan list
+          query += " AND 1=0 ";
         } else {
           query +=
-            " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '') AND o_jenis NOT IN ('PEMINJAMAN_BARANG', 'KLAIM_PETTYCASH', 'SUBMIT_BAP') ";
+            " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '') AND o_jenis NOT IN (?) ";
+          params.push([
+            "PEMINJAMAN_BARANG",
+            "KLAIM_PETTYCASH",
+            "SUBMIT_BAP",
+            "TRANSFER_SOP",
+          ]);
         }
       } else if (userKodeUpper === "RIO") {
         query += " AND o_jenis = 'TRANSFER_SOP' ";
@@ -214,10 +232,9 @@ const authPinService = {
       // ================================================================================
       // [PERBAIKAN KUNCI]: BLOKIR JENIS TRANSAKSI LEVEL MANAGER AGAR TIDAK TAMPIL DI TOKO!
       // ================================================================================
-      query +=
-        " AND o_jenis NOT IN ('PEMINJAMAN_BARANG', 'KLAIM_PETTYCASH', 'SUBMIT_BAP', 'TRANSFER_SOP') ";
+      query += " AND o_jenis NOT IN (?) ";
 
-      params.push(userCabang, userCabang);
+      params.push(userCabang, userCabang, managerTypes);
     }
 
     query += " ORDER BY o_created DESC";
@@ -227,6 +244,27 @@ const authPinService = {
 
   async processRequest(authNomor, managerUser, action) {
     const newStatus = action === "APPROVE" ? "Y" : "N";
+
+    const [authDataCheck] = await pool.query(
+      "SELECT o_jenis, o_cab FROM totorisasi WHERE o_nomor = ?",
+      [authNomor],
+    );
+    if (authDataCheck.length === 0) {
+      throw new Error("Data otorisasi tidak ditemukan.");
+    }
+
+    const { o_jenis, o_cab } = authDataCheck[0];
+    const managerTypes = [
+      "PEMINJAMAN_BARANG",
+      "KLAIM_PETTYCASH",
+      "SUBMIT_BAP",
+      "TRANSFER_SOP",
+      "DISKON_FAKTUR",
+      "SO_TANPA_DP",
+      "BELUM_LUNAS",
+      "DISKON_ITEM",
+      "PIUTANG",
+    ];
 
     const query = `
             UPDATE totorisasi 
