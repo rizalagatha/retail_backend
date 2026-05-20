@@ -2,7 +2,8 @@ const service = require("../services/paretoService");
 
 const getList = async (req, res) => {
   try {
-    const data = await service.getList(req.query);
+    const isExport = req.query.export === "true";
+    const data = await service.getList({ ...req.query, isExport });
     res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });

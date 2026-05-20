@@ -5,7 +5,13 @@ const pool = require("../config/database");
  * Query ini adalah optimasi dari alur multi-langkah di Delphi.
  */
 const getList = async (filters) => {
-  const { startDate, endDate, cabang, kategori, limit, search } = filters;
+  const { startDate, endDate, cabang, kategori, limit, search, isExport } =
+    filters;
+
+  // Jika export dan ALL cabang, jalankan query per cabang
+  if (isExport && cabang === "ALL") {
+    return await getListPerCabang(filters);
+  }
 
   let params = [];
   let subqueryCabFilter = "";
@@ -124,6 +130,36 @@ const getList = async (filters) => {
   return rows;
 };
 
+const getListPerCabang = async (filters) => {
+  const { startDate, endDate, kategori, limit, search } = filters;
+
+  // Ambil semua cabang aktif
+  const [cabangRows] = await pool.query(
+    "SELECT gdg_kode FROM tgudang WHERE gdg_dc = 0 ORDER BY gdg_kode",
+  );
+
+  const results = [];
+
+  for (const { gdg_kode } of cabangRows) {
+    const rows = await getList({
+      startDate,
+      endDate,
+      cabang: gdg_kode,
+      kategori,
+      limit: limit || 9999,
+      search,
+      isExport: false,
+    });
+
+    // Tambahkan kolom cabang ke setiap row
+    rows.forEach((r) => {
+      results.push({ ...r, Cab: gdg_kode });
+    });
+  }
+
+  return results;
+};
+
 /**
  * Mengambil opsi cabang untuk filter Pareto.
  * Sesuai Delphi: Menampilkan semua cabang non-DC dan opsi "ALL".
@@ -159,6 +195,7 @@ const getKategoriOptions = async () => {
 
 module.exports = {
   getList,
+  getListPerCabang,
   getCabangOptions,
   getKategoriOptions,
 };

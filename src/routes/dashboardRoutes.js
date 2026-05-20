@@ -163,4 +163,34 @@ router.get(
 
 router.get("/agenda", verifyToken, dashboardController.getAgenda);
 
+router.get(
+  "/dead-stock-summary",
+  verifyToken,
+  dashboardController.getDeadStockSummary,
+);
+
+router.get(
+  "/dead-stock-chart",
+  verifyToken,
+  dashboardController.getDeadStockChart,
+);
+
+router.get(
+  "/dead-stock-sales-pie",
+  verifyToken,
+  dashboardController.getDeadStockSalesPie,
+);
+
+router.get(
+  "/dead-stock-sales-detail",
+  verifyToken,
+  dashboardController.getDeadStockSalesDetail,
+);
+
+router.get(
+  "/spk-pending-approval",
+  verifyToken,
+  dashboardController.getSpkPendingApproval,
+);
+
 module.exports = router;

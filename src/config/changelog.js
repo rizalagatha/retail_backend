@@ -1,4 +1,18 @@
 const changelogs = {
+  "1.4.4": {
+    date: "2026-05-20",
+    changes: [
+      {
+        title: "Pembaruan:",
+        items: [
+          "Modul Baru : Dasbor SPK Kaosan, digunakan untuk monitoring dan penjadwalan Dateline SPK untuk Kaosan",
+          "Card baru pada Dashboard Penjualan : Analisis Dead Stock",
+          "Card baru pada Dashboard Operasional : Monitoring Jadwal SPK",
+          "Pembaruan Export Data, kini dengan garis border dan sudah diupgrade hasil exportnya",
+        ],
+      },
+    ],
+  },
   "1.4.3": {
     date: "2026-05-13",
     changes: [

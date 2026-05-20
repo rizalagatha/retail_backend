@@ -582,60 +582,60 @@ const getExportDetails = async (filters) => {
   }
 
   const query = `
-        SELECT 
-            h.so_nomor AS 'Nomor SO',
-            DATE_FORMAT(h.so_tanggal, '%Y-%m-%d') AS 'Tanggal', -- Format ISO agar mudah diparsing frontend
-            c.cus_nama AS 'Customer',
-            d.sod_kode AS 'Kode Barang',
-            
-            -- Nama Barang (Gabungan DC / DTF / Custom)
-            COALESCE(
-              TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), " ", IFNULL(a.brg_tipe,''), " ", IFNULL(a.brg_lengan,''), " ", IFNULL(a.brg_jeniskain,''), " ", IFNULL(a.brg_warna,''))),
-              f.sd_nama,
-              d.sod_custom_nama
-            ) AS Nama,
-            
-            d.sod_ukuran AS 'Ukuran',
-            d.sod_jumlah AS 'Qty SO',
-            
-            -- [TAMBAHAN] Qty Terkirim & Sisa (Penting untuk laporan Open SO)
-            IFNULL((
-                SELECT SUM(id.invd_jumlah) 
-                FROM tinv_dtl id 
-                JOIN tinv_hdr ih ON ih.inv_nomor = id.invd_inv_nomor 
-                WHERE ih.inv_sts_pro = 0 
-                  AND ih.inv_nomor_so = h.so_nomor 
-                  AND id.invd_kode = d.sod_kode 
-                  AND id.invd_ukuran = d.sod_ukuran
-            ), 0) AS 'Qty Kirim',
-            
-            (d.sod_jumlah - IFNULL((
-                SELECT SUM(id.invd_jumlah) 
-                FROM tinv_dtl id 
-                JOIN tinv_hdr ih ON ih.inv_nomor = id.invd_inv_nomor 
-                WHERE ih.inv_sts_pro = 0 
-                  AND ih.inv_nomor_so = h.so_nomor 
-                  AND id.invd_kode = d.sod_kode 
-                  AND id.invd_ukuran = d.sod_ukuran
-            ), 0)) AS 'Sisa Qty',
-
-            d.sod_harga AS 'Harga',
-            d.sod_diskon AS 'Diskon',
-            (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS 'Total Nilai SO'
-
-        FROM tso_hdr h
-        JOIN tso_dtl d ON h.so_nomor = d.sod_so_nomor
-        LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
-        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_kode
-        
-        WHERE DATE(h.so_tanggal) BETWEEN ? AND ? 
-        ${branchFilter}
-        ${searchFilter}
-        ${statusClause} -- Filter status "Open" masuk sini
-        
-        ORDER BY h.so_nomor, d.sod_nourut;
-    `;
+      SELECT 
+          h.so_nomor AS 'Nomor SO',
+          DATE_FORMAT(h.so_tanggal, '%Y-%m-%d') AS 'Tanggal',
+          c.cus_nama AS 'Customer',
+          d.sod_kode AS 'Kode Barang',
+          CASE
+              WHEN d.sod_custom = 'Y' AND NULLIF(TRIM(d.sod_custom_nama), '') IS NOT NULL
+                  THEN d.sod_custom_nama
+              WHEN d.sod_sd_nomor IS NOT NULL AND d.sod_sd_nomor != ''
+                  THEN f.sd_nama
+              ELSE NULLIF(
+                  TRIM(CONCAT(
+                      IFNULL(a.brg_jeniskaos,''), ' ',
+                      IFNULL(a.brg_tipe,''), ' ',
+                      IFNULL(a.brg_lengan,''), ' ',
+                      IFNULL(a.brg_jeniskain,''), ' ',
+                      IFNULL(a.brg_warna,'')
+                  )), ''
+              )
+          END AS 'Nama',
+          d.sod_ukuran AS 'Ukuran',
+          d.sod_jumlah AS 'Qty SO',
+          IFNULL((
+              SELECT SUM(id.invd_jumlah) 
+              FROM tinv_dtl id 
+              JOIN tinv_hdr ih ON ih.inv_nomor = id.invd_inv_nomor 
+              WHERE ih.inv_sts_pro = 0 
+                AND ih.inv_nomor_so = h.so_nomor 
+                AND id.invd_kode = d.sod_kode 
+                AND id.invd_ukuran = d.sod_ukuran
+          ), 0) AS 'Qty Kirim',
+          (d.sod_jumlah - IFNULL((
+              SELECT SUM(id.invd_jumlah) 
+              FROM tinv_dtl id 
+              JOIN tinv_hdr ih ON ih.inv_nomor = id.invd_inv_nomor 
+              WHERE ih.inv_sts_pro = 0 
+                AND ih.inv_nomor_so = h.so_nomor 
+                AND id.invd_kode = d.sod_kode 
+                AND id.invd_ukuran = d.sod_ukuran
+          ), 0)) AS 'Sisa Qty',
+          d.sod_harga AS 'Harga',
+          d.sod_diskon AS 'Diskon',
+          (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS 'Total Nilai SO'
+      FROM tso_hdr h
+      JOIN tso_dtl d ON h.so_nomor = d.sod_so_nomor
+      LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
+      LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
+      LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_sd_nomor
+      WHERE DATE(h.so_tanggal) BETWEEN ? AND ? 
+      ${branchFilter}
+      ${searchFilter}
+      ${statusClause}
+      ORDER BY h.so_nomor, d.sod_nourut;
+  `;
 
   const [rows] = await pool.query(query, params);
   return rows;

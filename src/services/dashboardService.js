@@ -804,8 +804,6 @@ const getStockPerCabang = async () => {
   return rows;
 };
 
-// dashboardService.js
-
 const getItemSalesTrend = async (user, filters = {}) => {
   const { isExport = false, cabang = "ALL" } = filters;
 
@@ -1749,7 +1747,7 @@ const getAgendaDateline = async (user) => {
     params = [];
   }
 
-  const query = `
+  let query = `
     SELECT 
         'SO' as tipe, 
         h.so_nomor as nomor, 
@@ -1757,7 +1755,6 @@ const getAgendaDateline = async (user) => {
         c.cus_nama as customer,
         IF((SELECT COUNT(inv_nomor) FROM tinv_hdr WHERE inv_nomor_so = h.so_nomor AND inv_sts_pro = 0) > 0, 1, 0) AS is_completed,
         
-        -- [PERBAIKAN] Cek apakah total qty yang di-scan (sod_scanned) >= total qty pesanan (sod_jumlah)
         IFNULL((
             SELECT IF(SUM(sod_jumlah) > 0 AND SUM(sod_scanned) >= SUM(sod_jumlah), 1, 0)
             FROM tso_dtl
@@ -1783,10 +1780,454 @@ const getAgendaDateline = async (user) => {
       AND h.so_dateline IS NOT NULL 
       AND h.so_dateline >= DATE_SUB(CURDATE(), INTERVAL 14 DAY) 
       ${filterSo}
+  `;
+
+  // [BARU] Sisipkan SPK untuk user KDC
+  if (user.cabang === "KDC") {
+    query += `
+      UNION ALL
+      SELECT 
+        'SPK' as tipe,
+        spk_nomor as nomor,
+        DATE_FORMAT(spk_dateline, '%Y-%m-%d') as dateline,
+        CONCAT('[', IFNULL(spk_cabkaos, 'UMUM'), '] ', spk_nama) as customer,
+        
+        -- [BARU] SPK dianggap "Jadi/Selesai" jika sudah masuk ke tabel penerimaan DC
+        IF((SELECT COUNT(*) FROM tdc_stbj_dtl WHERE tsd_spk_nomor = spk_nomor) > 0, 1, 0) AS is_completed,
+        
+        0 AS is_scan_ready,
+        
+        -- [BARU] Ambil status pengerjaan riil sebagai rincian (Dari bawah ke atas)
+        CASE
+            WHEN (SELECT COUNT(*) FROM tdc_stbj_dtl WHERE tsd_spk_nomor = spk_nomor) > 0 THEN 'Selesai (Diterima DC)'
+            WHEN (SELECT COUNT(*) FROM kencanaprint.tstbj_dtl WHERE stbjd_spk_nomor = spk_nomor) > 0 THEN 'Dikirim ke DC (STBJ)'
+            WHEN (SELECT COUNT(*) FROM kencanaprint.tmutasiproduksi_hdr WHERE mph_spk_nomor = spk_nomor AND mph_gdgasal = 'GP013') > 0 THEN 'Barang Jadi (Koli)'
+            WHEN (SELECT COUNT(*) FROM kencanaprint.tmutasiproduksi_hdr WHERE mph_spk_nomor = spk_nomor AND mph_gdgasal = 'GP004') > 0 THEN 'Proses Lipat'
+            WHEN (SELECT COUNT(*) FROM kencanaprint.tmutasiproduksi_hdr WHERE mph_spk_nomor = spk_nomor AND mph_gdgasal = 'GP003') > 0 THEN 'Proses Jahit'
+            WHEN (SELECT COUNT(*) FROM kencanaprint.tmutasiproduksi_hdr WHERE mph_spk_nomor = spk_nomor AND mph_gdgasal = 'GP002') > 0 THEN 'Proses Cetak'
+            WHEN (SELECT COUNT(*) FROM kencanaprint.tmutasiproduksi_hdr WHERE mph_spk_nomor = spk_nomor AND mph_gdgasal = 'GP001') > 0 THEN 'Proses Potong'
+            WHEN (SELECT COUNT(*) FROM kencanaprint.tproduksiminta_hdr WHERE promin_spk_nomor = spk_nomor) > 0 THEN 'Bahan Dikeluarkan'
+            WHEN (SELECT COUNT(*) FROM kencanaprint.tmintabahan_hdr WHERE min_spk_nomor = spk_nomor) > 0 THEN 'Permintaan Bahan'
+            ELSE 'Menunggu Produksi'
+        END AS rincian_dtf
+      FROM kencanaprint.tspk
+      WHERE spk_divisi = 3 
+        AND spk_close = 0 
+        AND spk_dateline IS NOT NULL 
+        AND spk_dateline >= DATE_SUB(CURDATE(), INTERVAL 14 DAY)
+    `;
+  }
+
+  const finalQuery = `
+    SELECT * FROM (${query}) AS combined_agenda
     ORDER BY dateline ASC;
   `;
 
+  const [rows] = await pool.query(finalQuery, params);
+  return rows;
+};
+
+const getDeadStockSummary = async (user, filters = {}) => {
+  const { cabang = "ALL" } = filters;
+
+  let branchFilter = "";
+  let params = [];
+
+  if (user.cabang !== "KDC") {
+    branchFilter = "AND m.mst_cab = ?";
+    params.push(user.cabang);
+  } else if (cabang !== "ALL") {
+    branchFilter = "AND m.mst_cab = ?";
+    params.push(cabang);
+  }
+
+  // Ambil data stok dengan usia (dari last terima STBJ)
+  const query = `
+    SELECT 
+      IFNULL(
+        FLOOR(DATEDIFF(CURDATE(), b.last_tstbj) / 30),
+        IFNULL(FLOOR(DATEDIFF(CURDATE(), a.date_create) / 30), 999)
+      ) AS umur_bulan,
+      SUM(x.stok) AS stok,
+      SUM(x.stok * IFNULL(dtl.brgd_hpp, 0)) AS nilai
+    FROM (
+      SELECT mst_brg_kode, mst_ukuran, mst_cab,
+        SUM(mst_stok_in - mst_stok_out) AS stok
+      FROM (
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_aktif 
+        FROM tmasterstok
+        UNION ALL
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_aktif 
+        FROM tmasterstokso
+      ) m
+      WHERE m.mst_aktif = 'Y' ${branchFilter}
+      GROUP BY mst_brg_kode, mst_ukuran, mst_cab
+      HAVING stok > 0
+    ) x
+    LEFT JOIN tbarangdc a ON a.brg_kode = x.mst_brg_kode
+    LEFT JOIN tbarangdc_dtl dtl ON dtl.brgd_kode = x.mst_brg_kode 
+      AND dtl.brgd_ukuran = x.mst_ukuran
+    LEFT JOIN (
+      SELECT LEFT(tjd_nomor, 3) AS cab, 
+            tjd_kode AS kode, 
+            tjd_ukuran AS ukuran,
+            MAX(tj_tanggal) AS last_tstbj
+      FROM ttrm_sj_hdr
+      INNER JOIN ttrm_sj_dtl ON tjd_nomor = tj_nomor
+      GROUP BY 1, 2, 3
+
+      UNION ALL
+
+      SELECT 'KDC' AS cab,
+            tsd_kode AS kode,
+            tsd_ukuran AS ukuran,
+            MAX(ts_tanggal) AS last_tstbj
+      FROM tdc_stbj_hdr
+      INNER JOIN tdc_stbj_dtl ON tsd_nomor = ts_nomor
+      GROUP BY 1, 2, 3
+    ) b ON b.cab = x.mst_cab
+      AND b.kode = x.mst_brg_kode
+      AND b.ukuran = x.mst_ukuran
+    WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
+      AND a.brg_warna NOT LIKE '%STICKER%'
+      AND a.brg_warna NOT LIKE '%STIKER%'
+      AND a.brg_warna NOT LIKE '%DTF%'
+      AND a.brg_kode NOT LIKE 'JASA%'
+    GROUP BY umur_bulan
+  `;
+
   const [rows] = await pool.query(query, params);
+
+  // Klasifikasi ke 4 tier
+  const result = {
+    fm: 0,
+    std: 0,
+    sm: 0,
+    ds: 0,
+    nilaiFm: 0,
+    nilaiStd: 0,
+    nilaySm: 0,
+    nilaiDs: 0,
+    total: 0,
+    nilaiTotal: 0,
+  };
+
+  rows.forEach((r) => {
+    const bln = Number(r.umur_bulan);
+    const stok = Number(r.stok);
+    const nilai = Number(r.nilai);
+    result.total += stok;
+    result.nilaiTotal += nilai;
+    if (bln <= 6) {
+      result.fm += stok;
+      result.nilaiFm += nilai;
+    } else if (bln <= 12) {
+      result.std += stok;
+      result.nilaiStd += nilai;
+    } else if (bln <= 24) {
+      result.sm += stok;
+      result.nilaySm += nilai;
+    } else {
+      result.ds += stok;
+      result.nilaiDs += nilai;
+    }
+  });
+
+  return result;
+};
+
+const getDeadStockChart = async (user, filters = {}) => {
+  const { cabang = "ALL" } = filters;
+
+  let branchFilter = "";
+  let params = [];
+
+  if (user.cabang !== "KDC") {
+    branchFilter = "AND m.mst_cab = ?";
+    params.push(user.cabang);
+  } else if (cabang !== "ALL") {
+    branchFilter = "AND m.mst_cab = ?";
+    params.push(cabang);
+  }
+
+  const query = `
+    SELECT 
+      kategori,
+      SUM(CASE WHEN umur_bulan <= 6  THEN stok ELSE 0 END) AS fm,
+      SUM(CASE WHEN umur_bulan > 6  AND umur_bulan <= 12 THEN stok ELSE 0 END) AS std,
+      SUM(CASE WHEN umur_bulan > 12 AND umur_bulan <= 24 THEN stok ELSE 0 END) AS sm,
+      SUM(CASE WHEN umur_bulan > 24 THEN stok ELSE 0 END) AS ds
+    FROM (
+      SELECT
+        IFNULL(NULLIF(TRIM(a.brg_jeniskain), ''), 'LAIN-LAIN') AS kategori,
+        IFNULL(
+          FLOOR(DATEDIFF(CURDATE(), b.last_tstbj) / 30),
+          IFNULL(FLOOR(DATEDIFF(CURDATE(), a.date_create) / 30), 999)
+        ) AS umur_bulan,
+        x.stok
+      FROM (
+        SELECT mst_brg_kode, mst_ukuran, mst_cab,
+          SUM(mst_stok_in - mst_stok_out) AS stok
+        FROM (
+          SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_aktif 
+          FROM tmasterstok
+          UNION ALL
+          SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_aktif 
+          FROM tmasterstokso
+        ) m
+        WHERE m.mst_aktif = 'Y' ${branchFilter}
+        GROUP BY mst_brg_kode, mst_ukuran, mst_cab
+        HAVING SUM(mst_stok_in - mst_stok_out) > 0
+      ) x
+      LEFT JOIN tbarangdc a ON a.brg_kode = x.mst_brg_kode
+      LEFT JOIN (
+        SELECT LEFT(tjd_nomor, 3) AS cab, 
+              tjd_kode AS kode, 
+              tjd_ukuran AS ukuran,
+              MAX(tj_tanggal) AS last_tstbj
+        FROM ttrm_sj_hdr
+        INNER JOIN ttrm_sj_dtl ON tjd_nomor = tj_nomor
+        GROUP BY 1, 2, 3
+
+        UNION ALL
+
+        SELECT 'KDC' AS cab,
+              tsd_kode AS kode,
+              tsd_ukuran AS ukuran,
+              MAX(ts_tanggal) AS last_tstbj
+        FROM tdc_stbj_hdr
+        INNER JOIN tdc_stbj_dtl ON tsd_nomor = ts_nomor
+        GROUP BY 1, 2, 3
+      ) b ON b.cab = x.mst_cab
+        AND b.kode = x.mst_brg_kode
+        AND b.ukuran = x.mst_ukuran
+      WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
+        AND a.brg_warna NOT LIKE '%STICKER%'
+        AND a.brg_warna NOT LIKE '%STIKER%'
+        AND a.brg_warna NOT LIKE '%DTF%'
+        AND a.brg_kode NOT LIKE 'JASA%'
+    ) base
+    GROUP BY kategori
+    ORDER BY SUM(stok) DESC
+    LIMIT 10
+  `;
+
+  const [rows] = await pool.query(query, params);
+  return rows;
+};
+
+const getDeadStockSalesPie = async (user, filters = {}) => {
+  const { cabang = "ALL" } = filters;
+
+  let branchFilter = "";
+  let salesBranchFilter = "";
+  let params = [];
+  let salesParams = [];
+
+  if (user.cabang !== "KDC") {
+    branchFilter = "AND m.mst_cab = ?";
+    salesBranchFilter = "AND h.inv_cab = ?";
+    params.push(user.cabang);
+    salesParams.push(user.cabang);
+  } else if (cabang !== "ALL") {
+    branchFilter = "AND m.mst_cab = ?";
+    salesBranchFilter = "AND h.inv_cab = ?";
+    params.push(cabang);
+    salesParams.push(cabang);
+  }
+
+  // Ambil SKU dead stock (umur > 24 bulan) lalu cek apakah terjual 12 bln terakhir
+  const query = `
+    SELECT
+      SUM(CASE WHEN sls.total_terjual > 0 THEN x.stok ELSE 0 END) AS stok_terjual,
+      SUM(CASE WHEN sls.total_terjual IS NULL OR sls.total_terjual = 0 THEN x.stok ELSE 0 END) AS stok_tidak_terjual,
+      SUM(CASE WHEN sls.total_terjual > 0 THEN sls.total_terjual ELSE 0 END) AS qty_terjual,
+      COUNT(DISTINCT CASE WHEN sls.total_terjual > 0 THEN CONCAT(x.mst_brg_kode, '-', x.mst_ukuran) END) AS sku_bergerak,
+      COUNT(DISTINCT CONCAT(x.mst_brg_kode, '-', x.mst_ukuran)) AS sku_total
+    FROM (
+      SELECT mst_brg_kode, mst_ukuran, mst_cab,
+        SUM(mst_stok_in - mst_stok_out) AS stok
+      FROM (
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_aktif
+        FROM tmasterstok
+        UNION ALL
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_aktif
+        FROM tmasterstokso
+      ) m
+      WHERE m.mst_aktif = 'Y' ${branchFilter}
+      GROUP BY mst_brg_kode, mst_ukuran, mst_cab
+      HAVING SUM(mst_stok_in - mst_stok_out) > 0
+    ) x
+    LEFT JOIN tbarangdc a ON a.brg_kode = x.mst_brg_kode
+    LEFT JOIN (
+      SELECT LEFT(tjd_nomor, 3) AS cab, tjd_kode AS kode, tjd_ukuran AS ukuran,
+        MAX(tj_tanggal) AS last_tstbj
+      FROM ttrm_sj_hdr
+      INNER JOIN ttrm_sj_dtl ON tjd_nomor = tj_nomor
+      GROUP BY 1, 2, 3
+      UNION ALL
+      SELECT 'KDC' AS cab, tsd_kode AS kode, tsd_ukuran AS ukuran,
+        MAX(ts_tanggal) AS last_tstbj
+      FROM tdc_stbj_hdr
+      INNER JOIN tdc_stbj_dtl ON tsd_nomor = ts_nomor
+      GROUP BY 1, 2, 3
+    ) b ON b.cab = x.mst_cab
+      AND b.kode = x.mst_brg_kode
+      AND b.ukuran = x.mst_ukuran
+    LEFT JOIN (
+      SELECT d.invd_kode, d.invd_ukuran,
+        SUM(d.invd_jumlah) AS total_terjual
+      FROM tinv_dtl d
+      JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+      WHERE h.inv_sts_pro = 0
+        AND h.inv_tanggal >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+        ${salesBranchFilter}
+      GROUP BY d.invd_kode, d.invd_ukuran
+    ) sls ON sls.invd_kode = x.mst_brg_kode
+      AND sls.invd_ukuran = x.mst_ukuran
+    WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
+      AND a.brg_warna NOT LIKE '%STICKER%'
+      AND a.brg_warna NOT LIKE '%STIKER%'
+      AND a.brg_warna NOT LIKE '%DTF%'
+      AND IFNULL(FLOOR(DATEDIFF(CURDATE(), b.last_tstbj) / 30), 999) > 24
+  `;
+
+  const allParams = [...params, ...salesParams];
+  const [rows] = await pool.query(query, allParams);
+  return rows[0] || {};
+};
+
+const getDeadStockSalesDetail = async (user, filters = {}) => {
+  const { cabang = "ALL", tipe = "bergerak" } = filters; // tipe: bergerak | stagnan
+
+  let branchFilter = "";
+  let salesBranchFilter = "";
+  let params = [];
+  let salesParams = [];
+
+  if (user.cabang !== "KDC") {
+    branchFilter = "AND m.mst_cab = ?";
+    salesBranchFilter = "AND h.inv_cab = ?";
+    params.push(user.cabang);
+    salesParams.push(user.cabang);
+  } else if (cabang !== "ALL") {
+    branchFilter = "AND m.mst_cab = ?";
+    salesBranchFilter = "AND h.inv_cab = ?";
+    params.push(cabang);
+    salesParams.push(cabang);
+  }
+
+  const havingClause =
+    tipe === "bergerak" ? "WHERE total_terjual > 0" : "WHERE total_terjual = 0";
+
+  const query = `
+  SELECT * FROM (
+    SELECT
+      x.mst_brg_kode AS kode,
+      TRIM(CONCAT(a.brg_jeniskaos,' ',a.brg_tipe,' ',a.brg_lengan,' ',a.brg_jeniskain,' ',a.brg_warna)) AS nama,
+      x.mst_ukuran AS ukuran,
+      a.brg_jeniskain AS jenis_kain,
+      x.mst_cab AS cabang,
+      x.stok,
+      IFNULL(
+        FLOOR(DATEDIFF(CURDATE(), b.last_tstbj) / 30),
+        IFNULL(FLOOR(DATEDIFF(CURDATE(), a.date_create) / 30), 999)
+      ) AS umur_bulan,
+      b.last_tstbj,
+      IFNULL(sls.total_terjual, 0) AS total_terjual,
+      IFNULL(dtl.brgd_hpp, 0) AS hpp,
+      x.stok * IFNULL(dtl.brgd_hpp, 0) AS nilai_stok
+    FROM (
+      SELECT mst_brg_kode, mst_ukuran, mst_cab,
+        SUM(mst_stok_in - mst_stok_out) AS stok
+      FROM (
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_aktif
+        FROM tmasterstok
+        UNION ALL
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_aktif
+        FROM tmasterstokso
+      ) m
+      WHERE m.mst_aktif = 'Y' ${branchFilter}
+      GROUP BY mst_brg_kode, mst_ukuran, mst_cab
+      HAVING SUM(mst_stok_in - mst_stok_out) > 0
+    ) x
+    LEFT JOIN tbarangdc a ON a.brg_kode = x.mst_brg_kode
+    LEFT JOIN tbarangdc_dtl dtl ON dtl.brgd_kode = x.mst_brg_kode
+      AND dtl.brgd_ukuran = x.mst_ukuran
+    LEFT JOIN (
+      SELECT LEFT(tjd_nomor, 3) AS cab, tjd_kode AS kode, tjd_ukuran AS ukuran,
+        MAX(tj_tanggal) AS last_tstbj
+      FROM ttrm_sj_hdr
+      INNER JOIN ttrm_sj_dtl ON tjd_nomor = tj_nomor
+      GROUP BY 1, 2, 3
+      UNION ALL
+      SELECT 'KDC' AS cab, tsd_kode AS kode, tsd_ukuran AS ukuran,
+        MAX(ts_tanggal) AS last_tstbj
+      FROM tdc_stbj_hdr
+      INNER JOIN tdc_stbj_dtl ON tsd_nomor = ts_nomor
+      GROUP BY 1, 2, 3
+    ) b ON b.cab = x.mst_cab
+      AND b.kode = x.mst_brg_kode
+      AND b.ukuran = x.mst_ukuran
+    LEFT JOIN (
+      SELECT d.invd_kode, d.invd_ukuran,
+        SUM(d.invd_jumlah) AS total_terjual
+      FROM tinv_dtl d
+      JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+      WHERE h.inv_sts_pro = 0
+        AND h.inv_tanggal >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+        ${salesBranchFilter}
+      GROUP BY d.invd_kode, d.invd_ukuran
+    ) sls ON sls.invd_kode = x.mst_brg_kode
+      AND sls.invd_ukuran = x.mst_ukuran
+    WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
+      AND a.brg_warna NOT LIKE '%STICKER%'
+      AND a.brg_warna NOT LIKE '%STIKER%'
+      AND a.brg_warna NOT LIKE '%DTF%'
+      AND a.brg_kode NOT LIKE 'JASA%'
+      AND IFNULL(FLOOR(DATEDIFF(CURDATE(), b.last_tstbj) / 30), 999) > 24
+  ) hasil
+  ${havingClause}
+  ORDER BY nilai_stok DESC
+`;
+
+  const allParams = [...params, ...salesParams];
+  const [rows] = await pool.query(query, allParams);
+  return rows;
+};
+
+const getSpkPendingApproval = async (filters = {}) => {
+  const { startDate, endDate } = filters;
+
+  const start = startDate || format(subDays(new Date(), 7), "yyyy-MM-dd");
+  const end = endDate || format(new Date(), "yyyy-MM-dd");
+
+  const query = `
+    SELECT 
+      h.spk_nomor,
+      DATE_FORMAT(h.spk_tanggal, '%Y-%m-%d') AS spk_tanggal,
+      h.spk_nama AS nama_desain,
+      h.spk_jumlah AS jumlah,
+      IFNULL(g.gdg_nama, IFNULL(u.user_cab, h.spk_cabkaos)) AS cabang,
+      h.spk_statuskerja AS status_kerja, 
+      h.spk_ketpending AS ket_pending,
+      h.user_create,
+      DATE_FORMAT(h.spk_dateline, '%Y-%m-%d') AS spk_dateline,
+      h.spk_keterangan,
+      h.spk_cmo
+    FROM kencanaprint.tspk h
+    LEFT JOIN tuser u ON u.user_kode = h.user_create
+    LEFT JOIN tgudang g ON g.gdg_kode = IFNULL(u.user_cab, h.spk_cabkaos)
+    WHERE h.spk_divisi = 3
+      AND h.spk_close = 0
+      AND h.spk_alokasi <> 'Y'
+      AND h.user_create NOT IN ('ADIN', 'LUTFI')
+      AND TRIM(IFNULL(h.spk_cmo, '')) = ''
+      AND DATE(h.spk_tanggal) BETWEEN ? AND ?
+    ORDER BY h.spk_tanggal DESC, h.spk_nomor DESC
+  `;
+
+  const [rows] = await pool.query(query, [start, end]);
   return rows;
 };
 
@@ -1821,4 +2262,9 @@ module.exports = {
   getLowStockSales,
   getSeasonalSales,
   getAgendaDateline,
+  getDeadStockSummary,
+  getDeadStockChart,
+  getDeadStockSalesPie,
+  getDeadStockSalesDetail,
+  getSpkPendingApproval,
 };

@@ -267,7 +267,8 @@ const getRealTimeStockExport = async (filters) => {
     }
 
     const isKDC = gudang === "KDC" ? 1 : 0;
-    const bufferColumn = isKDC ? "brgd_mindc" : "brgd_min";
+    const bufferMinColumn = isKDC ? "brgd_mindc" : "brgd_min";
+    const bufferMaxColumn = isKDC ? "brgd_maxdc" : "brgd_max";
 
     const query = `
         SELECT
@@ -296,7 +297,10 @@ const getRealTimeStockExport = async (filters) => {
                 ), 0),
             0)) AS TOTAL2,
         
-            COALESCE(b.${bufferColumn}, 0) AS BUFFER
+            -- [BARU] Ambil Buffer Min dan Max
+            COALESCE(b.${bufferMinColumn}, 0) AS BUFFER_MIN,
+            COALESCE(b.${bufferMaxColumn}, 0) AS BUFFER_MAX
+            
         FROM tbarangdc a
         JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
         LEFT JOIN (

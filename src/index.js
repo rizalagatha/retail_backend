@@ -23,6 +23,7 @@ const historyUpdateRoutes = require("./routes/historyUpdateRoutes");
 const memoInternalRoutes = require("./routes/memoInternalRoutes");
 const versionRoutes = require("./routes/versionRoutes");
 const bufferStockRoutes = require("./routes/bufferStockRoutes");
+const bufferPanelRoutes = require("./routes/bufferPanelRoutes");
 const dataProcessRoutes = require("./routes/dataProcessRoutes");
 const userRoutes = require("./routes/userRoutes");
 const authRoutes = require("./routes/authRoutes");
@@ -163,6 +164,7 @@ const komplainRoute = require("./routes/komplainRoutes");
 const komplainFormRoute = require("./routes/komplainFormRoutes");
 const mintaAccesoriesRoutes = require("./routes/mintaAccesoriesRoutes");
 const mintaAccesoriesFormRoutes = require("./routes/mintaAccesoriesFormRoutes");
+const dasborSpkRoutes = require("./routes/dasborSpkRoutes");
 const mutasiWorkshopRoutes = require("./routes/mutasiWorkshopRoutes");
 const mutasiWorkshipFormRoutes = require("./routes/mutasiWorkshopFormRoutes");
 const terimaWorkshopRoutes = require("./routes/terimaWorkshopRoutes");
@@ -365,6 +367,7 @@ app.use("/api/history-updates", clientCertAuth, historyUpdateRoutes);
 app.use("/api/memo-internal", clientCertAuth, memoInternalRoutes);
 app.use("/api/version", clientCertAuth, versionRoutes);
 app.use("/api/buffer-stock", clientCertAuth, bufferStockRoutes);
+app.use("/api/buffer-panel", clientCertAuth, bufferPanelRoutes);
 app.use("/api/data-process", clientCertAuth, dataProcessRoutes);
 app.use("/api/users", clientCertAuth, userRoutes);
 app.use("/api/customers", clientCertAuth, customerRoutes);
@@ -549,6 +552,7 @@ app.use(
   clientCertAuth,
   mintaAccesoriesFormRoutes,
 );
+app.use("/api/dasbor-spk", clientCertAuth, dasborSpkRoutes);
 app.use("/api/mutasi-workshop", clientCertAuth, mutasiWorkshopRoutes);
 app.use("/api/mutasi-workshop-form", clientCertAuth, mutasiWorkshipFormRoutes);
 app.use("/api/terima-workshop", clientCertAuth, terimaWorkshopRoutes);

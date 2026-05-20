@@ -124,7 +124,7 @@ const exportHeader = async (req, res) => {
 
 const exportDetail = async (req, res) => {
   try {
-    const data = await soDtfService.exportDetail(req.query);
+    const data = await soDtfService.exportDetail(req.body); // ← pakai req.body bukan req.query
     res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });

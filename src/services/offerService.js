@@ -243,6 +243,16 @@ const getDataForPrinting = async (nomor) => {
 };
 
 const getExportDetails = async (startDate, endDate, cabang) => {
+  let branchFilter = "";
+  let params = [startDate, endDate];
+
+  if (cabang === "ALL" || cabang === "KDC") {
+    branchFilter = "";
+  } else {
+    branchFilter = "AND h.pen_cab = ?";
+    params.push(cabang);
+  }
+
   const query = `
         SELECT 
             h.pen_nomor AS 'Nomor Penawaran',
@@ -250,30 +260,43 @@ const getExportDetails = async (startDate, endDate, cabang) => {
             h.pen_cus_kode AS 'Kode Customer',
             c.cus_nama AS 'Nama Customer',
             d.pend_kode AS 'Kode Barang',
-            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) AS Nama,
+            CASE 
+                WHEN d.pend_custom = 'Y' AND NULLIF(d.pend_custom_nama, '') IS NOT NULL 
+                    THEN d.pend_custom_nama
+                WHEN f.sd_nama IS NOT NULL 
+                    THEN f.sd_nama
+                ELSE IFNULL(
+                    NULLIF(TRIM(CONCAT(
+                        IFNULL(a.brg_jeniskaos,''), ' ',
+                        IFNULL(a.brg_tipe,''), ' ',
+                        IFNULL(a.brg_lengan,''), ' ',
+                        IFNULL(a.brg_jeniskain,''), ' ',
+                        IFNULL(a.brg_warna,'')
+                    )), ''),
+                    'Barang Umum'
+                )
+            END AS 'Nama',
             d.pend_ukuran AS 'Ukuran',
             d.pend_jumlah AS 'Qty',
             d.pend_harga AS 'Harga',
             d.pend_diskon AS 'Diskon',
             (d.pend_jumlah * (d.pend_harga - d.pend_diskon)) AS 'Total',
-            
-            -- [BARU] Tambahkan Logika Status di sini
             CASE 
                 WHEN EXISTS(SELECT 1 FROM tso_hdr so WHERE so.so_pen_nomor = h.pen_nomor) THEN 'Sudah Jadi SO'
                 WHEN h.pen_alasan IS NOT NULL AND h.pen_alasan != '' THEN 'Closed'
                 ELSE 'Open'
             END AS 'Status'
-            
         FROM tpenawaran_hdr h
         JOIN tpenawaran_dtl d ON h.pen_nomor = d.pend_nomor
         LEFT JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
         LEFT JOIN tbarangdc a ON a.brg_kode = d.pend_kode
-        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.pend_kode
+        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.pend_sd_nomor
         WHERE h.pen_tanggal BETWEEN ? AND ?
-        AND h.pen_cab = ?
+        ${branchFilter}
         ORDER BY h.pen_nomor, d.pend_nourut;
     `;
-  const [rows] = await pool.query(query, [startDate, endDate, cabang]);
+
+  const [rows] = await pool.query(query, params);
   return rows;
 };
 

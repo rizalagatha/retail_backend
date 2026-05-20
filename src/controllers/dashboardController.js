@@ -416,6 +416,64 @@ const getAgenda = async (req, res) => {
   }
 };
 
+const getDeadStockSummary = async (req, res, next) => {
+  try {
+    const cabang = req.query.cabang || "ALL";
+    const data = await dashboardService.getDeadStockSummary(req.user, {
+      cabang,
+    });
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getDeadStockChart = async (req, res, next) => {
+  try {
+    const data = await dashboardService.getDeadStockChart(req.user, {
+      cabang: req.query.cabang || "ALL",
+    });
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getDeadStockSalesPie = async (req, res, next) => {
+  try {
+    const data = await dashboardService.getDeadStockSalesPie(req.user, {
+      cabang: req.query.cabang || "ALL",
+    });
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getDeadStockSalesDetail = async (req, res, next) => {
+  try {
+    const data = await dashboardService.getDeadStockSalesDetail(req.user, {
+      cabang: req.query.cabang || "ALL",
+      tipe: req.query.tipe || "bergerak",
+    });
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getSpkPendingApproval = async (req, res, next) => {
+  try {
+    const data = await dashboardService.getSpkPendingApproval({
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+    });
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -448,4 +506,9 @@ module.exports = {
   getLowStockSales,
   getSeasonalSales,
   getAgenda,
+  getDeadStockSummary,
+  getDeadStockChart,
+  getDeadStockSalesPie,
+  getDeadStockSalesDetail,
+  getSpkPendingApproval,
 };
