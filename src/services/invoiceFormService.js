@@ -317,6 +317,8 @@ const getSoDetailsForGrid = async (soNomor, user) => {
                 h.so_top AS top, DATE_ADD(h.so_tanggal, INTERVAL h.so_top DAY) AS tanggalTempo,
                 h.so_sc AS salesCounter,
                 h.so_disc AS diskonRp, h.so_disc1 AS diskonPersen1, h.so_disc2 AS diskonPersen2,
+                h.so_pro_nomor,
+                h.so_pro_nama,
                 h.so_ppn AS ppnPersen, h.so_bkrm AS biayaKirim,
                 CONCAT(h.so_cus_level, " - ", l.level_nama) AS level,
                 h.so_jenisorder AS jenisOrderKode,
@@ -428,6 +430,9 @@ FROM tso_dtl d
   headerData.jenisOrderNama = headerRows[0].jenisOrderNama || null;
   headerData.namaDtf = headerRows[0].namaDtf || null;
 
+  headerData.so_pro_nomor = headerRows[0].so_pro_nomor || "";
+  headerData.so_pro_nama = headerRows[0].so_pro_nama || "";
+
   const [items] = await pool.query(itemsQuery, itemsParams);
 
   // =======================================================================
@@ -439,23 +444,19 @@ FROM tso_dtl d
   // 1. Hitung ulang total Bruto dari items yang didapat
   let totalBrutoSo = 0;
   items.forEach((item) => {
-    // qtyso adalah alias dari sod_jumlah (atau sjd_jumlah) di query
     const qty = Number(item.qtyso || 0);
     const hrg = Number(item.harga || 0);
-    totalBrutoSo += qty * hrg;
+
+    const isJasaMurni = (item.kode || "").toUpperCase().startsWith("JASA");
+    const isPengajuan = !!item.noPengajuanHarga;
+    // DTF/SODTF tidak masuk basis diskon faktur di invoice
+    // (noSoDtf ada di field item tapi di getSoDetailsForGrid field-nya berbeda)
+
+    // Hanya item yang boleh kena diskon faktur
+    if (!isJasaMurni && !isPengajuan) {
+      totalBrutoSo += qty * hrg;
+    }
   });
-
-  const combinedDisc = Number(headerData.diskonRp || 0);
-  const p2 = Number(headerData.diskonPersen2 || 0);
-
-  // 2. Gunakan rumus Aljabar pembalik jika Maps (P2) aktif
-  if (p2 > 0 && p2 < 100 && combinedDisc > 0) {
-    headerData.diskonRp = Math.max(
-      0,
-      Math.round((combinedDisc - (p2 / 100) * totalBrutoSo) / (1 - p2 / 100)),
-    );
-  }
-  // =======================================================================
 
   const dpQuery = `
         SELECT 
@@ -1051,13 +1052,13 @@ const saveData = async (payload, user) => {
     if (isNew && isMp === "Y" && mpNoPesanan) {
       const [mpCheck] = await connection.query(
         "SELECT inv_nomor FROM tinv_hdr WHERE inv_mp_nomor_pesanan = ? LIMIT 1",
-        [mpNoPesanan]
+        [mpNoPesanan],
       );
-      
+
       if (mpCheck.length > 0) {
         connection.release();
         throw new Error(
-          `Gagal: Nomor Pesanan Marketplace (${mpNoPesanan}) sudah pernah diinput pada Invoice ${mpCheck[0].inv_nomor}.`
+          `Gagal: Nomor Pesanan Marketplace (${mpNoPesanan}) sudah pernah diinput pada Invoice ${mpCheck[0].inv_nomor}.`,
         );
       }
     }
