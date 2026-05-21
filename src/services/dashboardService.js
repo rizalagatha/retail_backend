@@ -1814,7 +1814,7 @@ const getAgendaDateline = async (user) => {
       WHERE spk_divisi = 3 
         AND spk_close = 0 
         AND spk_dateline IS NOT NULL 
-        AND h.so_dateline >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+        AND h.spk_dateline >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
     `;
   }
 
