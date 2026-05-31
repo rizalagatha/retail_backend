@@ -1656,9 +1656,10 @@ const getActivePromos = async (filters) => {
   const connection = await pool.getConnection();
   try {
     const { cabang } = filters;
-    // [FIX] Jika tanggal tidak dikirim, pakai hari ini
     const tanggal = filters.tanggal || new Date().toISOString().split("T")[0];
 
+    // [FIX] Gunakan DATE() agar MySQL strip timezone dan compare date saja
+    // Atau gunakan CONVERT_TZ untuk normalize ke WIB sebelum compare
     const promoQuery = `
       SELECT 
         p.pro_nomor,
@@ -1683,7 +1684,10 @@ const getActivePromos = async (filters) => {
         ON c.pc_nomor = p.pro_nomor 
         AND c.pc_cab = ?
       WHERE p.pro_nomor <> 'PRO-2025-009' 
-        AND ? BETWEEN p.pro_tanggal1 AND p.pro_tanggal2
+        AND ? BETWEEN 
+          DATE(CONVERT_TZ(p.pro_tanggal1, '+00:00', '+07:00'))
+          AND 
+          DATE(CONVERT_TZ(p.pro_tanggal2, '+00:00', '+07:00'))
       ORDER BY p.pro_tanggal1 DESC;
     `;
 
