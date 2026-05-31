@@ -324,7 +324,8 @@ const save = async (payload, user) => {
 const lookupProducts = async (filters) => {
   const { term, page, itemsPerPage, gudang } = filters;
   const pageNum = parseInt(page, 10) || 1;
-  const limit = parseInt(itemsPerPage, 10) || 10;
+  const limit = parseInt(itemsPerPage, 10);
+  const safeLimit = limit <= 0 ? 10 : limit; // fallback jika -1
   const offset = (pageNum - 1) * limit;
   const searchTerm = term ? `%${term}%` : null;
 
@@ -378,12 +379,15 @@ const getApplicableItemsPaginated = async (
   page = 1,
   itemsPerPage = 10,
 ) => {
-  const offset = (page - 1) * itemsPerPage;
-
   const [countResult] = await pool.query(
     "SELECT COUNT(*) as total FROM tpromo_barang WHERE pb_nomor = ?",
     [nomor],
   );
+  const total = countResult[0].total;
+
+  // [FIX] -1 = tampilkan semua (Vuetify "All")
+  const limit = itemsPerPage === -1 ? total : parseInt(itemsPerPage, 10);
+  const offset = itemsPerPage === -1 ? 0 : (parseInt(page, 10) - 1) * limit;
 
   const [items] = await pool.query(
     `SELECT
@@ -401,10 +405,10 @@ const getApplicableItemsPaginated = async (
      LEFT JOIN tbarangdc a ON a.brg_kode = p.pb_brg_kode
      WHERE p.pb_nomor = ?
      LIMIT ? OFFSET ?`,
-    [nomor, itemsPerPage, offset],
+    [nomor, limit, offset],
   );
 
-  return { items, total: countResult[0].total, page, itemsPerPage };
+  return { items, total, page, itemsPerPage };
 };
 
 module.exports = {
