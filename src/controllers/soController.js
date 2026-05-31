@@ -143,18 +143,19 @@ const searchTrackingItems = async (req, res) => {
 
 const getPublicActivePromos = async (req, res) => {
   try {
-    // Ambil tanggal hari ini dengan format YYYY-MM-DD
-    const today = new Date().toISOString().split("T")[0];
+    // [FIX] Gunakan tanggal dari query jika ada, fallback ke tanggal WIB
+    let tanggal = req.query.tanggal;
 
-    // Default cari promo untuk cabang pusat (K01) jika tidak ada param cabang
+    if (!tanggal) {
+      // Hitung tanggal lokal WIB (UTC+7) di sisi server
+      const now = new Date();
+      const wib = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+      tanggal = wib.toISOString().split("T")[0];
+    }
+
     const cabang = req.query.cabang || "K01";
 
-    // Kita panggil fungsi service yang sama persis seperti aslinya
-    const data = await soService.getActivePromos({
-      tanggal: today,
-      cabang: cabang,
-    });
-
+    const data = await soService.getActivePromos({ tanggal, cabang });
     res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });
