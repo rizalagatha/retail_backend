@@ -1655,7 +1655,9 @@ const searchTrackingItems = async (nomorSO) => {
 const getActivePromos = async (filters) => {
   const connection = await pool.getConnection();
   try {
-    const { tanggal, cabang } = filters;
+    const { cabang } = filters;
+    // [FIX] Jika tanggal tidak dikirim, pakai hari ini
+    const tanggal = filters.tanggal || new Date().toISOString().split("T")[0];
 
     const promoQuery = `
       SELECT 
@@ -1681,7 +1683,8 @@ const getActivePromos = async (filters) => {
         ON c.pc_nomor = p.pro_nomor 
         AND c.pc_cab = ?
       WHERE p.pro_nomor <> 'PRO-2025-009' 
-        AND ? BETWEEN p.pro_tanggal1 AND p.pro_tanggal2;
+        AND ? BETWEEN p.pro_tanggal1 AND p.pro_tanggal2
+      ORDER BY p.pro_tanggal1 DESC;
     `;
 
     const [activePromos] = await connection.query(promoQuery, [
