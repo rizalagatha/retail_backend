@@ -232,11 +232,14 @@ const getDetails = async (nomor) => {
         x.Harga, 
         x.TotalSO, 
         x.QtyInvoice,
+        x.Nomor,
         (IF(x.QtyInvoice >= x.QtySO, 0, x.QtySO - x.QtyInvoice)) AS BlmJadiInvoice 
     FROM (
         SELECT 
             d.sod_kode AS Kode,
             IFNULL(b.brgd_barcode, "") AS Barcode,
+            h.so_nomor AS Nomor,
+            
             -- Urutan prioritas nama: Barang DC → DTF → Custom
             COALESCE(
               TRIM(CONCAT(

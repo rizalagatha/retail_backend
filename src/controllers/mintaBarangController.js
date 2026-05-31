@@ -41,7 +41,7 @@ const remove = async (req, res) => {
       // A. Ambil Header
       const [headerRows] = await pool.query(
         "SELECT * FROM tmintabarang_hdr WHERE mt_nomor = ?",
-        [nomor]
+        [nomor],
       );
 
       if (headerRows.length > 0) {
@@ -50,13 +50,13 @@ const remove = async (req, res) => {
         // B. Ambil Detail (PENTING: Gunakan mtd_nomor)
         const [detailRows] = await pool.query(
           "SELECT * FROM tmintabarang_dtl WHERE mtd_nomor = ? ORDER BY mtd_nourut", // Asumsi ada mtd_nourut/kode
-          [nomor]
+          [nomor],
         );
 
         // C. Gabungkan
         oldData = {
           ...header,
-          items: detailRows
+          items: detailRows,
         };
       }
     } catch (e) {
@@ -70,12 +70,12 @@ const remove = async (req, res) => {
     if (oldData) {
       auditService.logActivity(
         req,
-        "DELETE",            // Action
-        "MINTA_BARANG",      // Module
-        nomor,               // Target ID
-        oldData,             // Data Lama (Header + Items)
-        null,                // Data Baru (Null)
-        `Menghapus Dokumen Permintaan Barang (Tujuan: ${oldData.mt_cabang_tujuan || "Unknown"})` // Sesuaikan nama kolom tujuan
+        "DELETE", // Action
+        "MINTA_BARANG", // Module
+        nomor, // Target ID
+        oldData, // Data Lama (Header + Items)
+        null, // Data Baru (Null)
+        `Menghapus Dokumen Permintaan Barang (Tujuan: ${oldData.mt_cabang_tujuan || "Unknown"})`, // Sesuaikan nama kolom tujuan
       );
     }
 
@@ -94,10 +94,31 @@ const getExportDetails = async (req, res) => {
   }
 };
 
+const getPendingAlokasi = async (req, res) => {
+  try {
+    const data = await mintaBarangService.getPendingAlokasi(req.user.cabang);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const convertAlokasi = async (req, res) => {
+  try {
+    const { ids } = req.body;
+    const data = await mintaBarangService.getAlokasiDetailByIds(ids, req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getAll,
   getDetails,
   getCabangList,
   remove,
   getExportDetails,
+  getPendingAlokasi,
+  convertAlokasi,
 };

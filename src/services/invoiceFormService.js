@@ -458,6 +458,32 @@ FROM tso_dtl d
     }
   });
 
+  const soDiskonTotal = Number(headerRows[0].diskonRp || 0); // so_disc (gabungan)
+  const soDiskonP1 = Number(headerRows[0].diskonPersen1 || 0); // so_disc1
+  const soDiskonP2 = Number(headerRows[0].diskonPersen2 || 0); // so_disc2
+  const soNomorPromo = headerRows[0].so_pro_nomor || "";
+  const mapsAktif = soNomorPromo.includes("PRO-2026-003") && soDiskonP2 > 0;
+
+  let diskonBaseRp = soDiskonTotal; // default: anggap semua adalah base
+  let diskonMapsRp = 0;
+
+  if (mapsAktif && totalBrutoSo > 0) {
+    // Rumus balik dari calculateTotals SO:
+    // soDiskonTotal = diskonBase + (p2/100) * (totalBruto - diskonBase)
+    // soDiskonTotal = diskonBase * (1 - p2/100) + (p2/100) * totalBruto
+    // diskonBase    = (soDiskonTotal - (p2/100) * totalBruto) / (1 - p2/100)
+    const p2 = soDiskonP2 / 100;
+    diskonBaseRp = Math.round((soDiskonTotal - p2 * totalBrutoSo) / (1 - p2));
+    diskonMapsRp = Math.round(soDiskonTotal - diskonBaseRp);
+
+    // Safety: pastikan tidak negatif
+    if (diskonBaseRp < 0) diskonBaseRp = 0;
+    if (diskonMapsRp < 0) diskonMapsRp = 0;
+  }
+
+  headerData.diskonBaseRp = diskonBaseRp;
+  headerData.diskonMapsRp = diskonMapsRp;
+
   const dpQuery = `
         SELECT 
             h.sh_nomor AS nomor, 
@@ -3130,47 +3156,65 @@ const getDataForSjPrint = async (nomorInvoice) => {
 const getActivePromos = async (filters, user) => {
   const { tanggal, cabang } = filters;
 
-  const promoQuery = `
+  const [promos] = await pool.query(
+    `
     SELECT 
       p.pro_nomor,
       p.pro_judul,
       p.pro_totalrp,
       p.pro_totalqty,
       p.pro_disrp,
-      p.pro_dispersen AS pro_diskon, 
-      p.pro_rpvoucher,
+      p.pro_dispersen,
       p.pro_lipat,
       p.pro_generate,
       p.pro_jenis,
+      p.pro_f1,
       p.pro_tanggal1,
       p.pro_tanggal2,
-      p.pro_f1,
-      p.pro_jenis_kupon,
-      p.pro_cetak_kupon,
-      p.pro_keterangan,
-      p.pro_note
+      -- [BARU]
+      p.pro_basis,
+      p.pro_exclude_kode,
+      p.pro_include_kata,
+      p.pro_mode_barang,
+      p.pro_no_maps,
+      p.pro_no_disc_member,
+      -- Level exclude sebagai JSON array
+      (
+        SELECT JSON_ARRAYAGG(ple_level)
+        FROM tpromo_level_exclude
+        WHERE ple_nomor = p.pro_nomor
+      ) AS level_exclude
     FROM tpromo p
     INNER JOIN tpromo_cabang c 
-      ON c.pc_nomor = p.pro_nomor 
-     AND c.pc_cab = ?
+      ON c.pc_nomor = p.pro_nomor AND c.pc_cab = ?
     WHERE p.pro_f1 = "N"
-      AND p.pro_nomor <> 'PRO-2025-009' 
-      AND ? BETWEEN p.pro_tanggal1 AND p.pro_tanggal2;
-  `;
+      AND ? BETWEEN p.pro_tanggal1 AND p.pro_tanggal2
+  `,
+    [cabang, tanggal],
+  );
 
-  const [activePromos] = await pool.query(promoQuery, [cabang, tanggal]);
-  return activePromos;
+  return promos.map((p) => ({
+    ...p,
+    level_exclude: p.level_exclude ? JSON.parse(p.level_exclude) : [],
+    pro_no_maps: p.pro_no_maps === 1,
+    pro_no_disc_member: p.pro_no_disc_member === 1,
+  }));
 };
 
 const getPromoItems = async (nomorPromo) => {
   const query = `
     SELECT 
-      pb_brg_kode AS kode,
-      pb_ukuran AS ukuran,
-      pb_disc AS discPersen,
-      pb_diskon AS discRp
-    FROM tpromo_barang
-    WHERE pb_nomor = ?
+      p.pb_brg_kode AS kode,
+      p.pb_ukuran AS ukuran,
+      p.pb_disc AS discPersen,
+      p.pb_diskon AS discRp,
+      TRIM(CONCAT(
+        a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ",
+        a.brg_jeniskain, " ", a.brg_warna
+      )) AS nama
+    FROM tpromo_barang p
+    LEFT JOIN tbarangdc a ON p.pb_brg_kode = a.brg_kode
+    WHERE p.pb_nomor = ?
   `;
   const [rows] = await pool.query(query, [nomorPromo]);
   return rows;

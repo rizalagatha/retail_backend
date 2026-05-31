@@ -68,28 +68,28 @@ const updateBufferStock = async (updateDc, updateStore) => {
         "MIN",
         warna,
         lengan,
-        product.brgd_ukuran
+        product.brgd_ukuran,
       );
       const maxStore = await getBufferValue(
         "STORE",
         "MAX",
         warna,
         lengan,
-        product.brgd_ukuran
+        product.brgd_ukuran,
       );
       const minDc = await getBufferValue(
         "DC",
         "MIN",
         warna,
         lengan,
-        product.brgd_ukuran
+        product.brgd_ukuran,
       );
       const maxDc = await getBufferValue(
         "DC",
         "MAX",
         warna,
         lengan,
-        product.brgd_ukuran
+        product.brgd_ukuran,
       );
 
       let updateQuery = "UPDATE tbarangdc_dtl SET ";
@@ -122,16 +122,12 @@ const updateBufferStock = async (updateDc, updateStore) => {
   }
 };
 
-// Di file: src/services/bufferStokService.js
-
 const getList = async (filters) => {
   const { cabang, tampilkanBufferNol, kaosan, reszo } = filters;
-  let params = [cabang, cabang, cabang];
 
   let bufferFilter = "";
   if (tampilkanBufferNol === "false") {
-    bufferFilter =
-      cabang === "KDC" ? "AND b.brgd_mindc <> 0" : "AND b.brgd_min <> 0";
+    bufferFilter = "AND IFNULL(b2.brgd_min, 0) <> 0";
   }
 
   let brandFilter = "";
@@ -154,34 +150,72 @@ const getList = async (filters) => {
             a.brg_ktgp AS KtgProduk, a.brg_kode AS Kode, 
             TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS Nama,
             b.brgd_ukuran AS Ukuran, b.brgd_barcode AS Barcode,
-            IFNULL(b.brgd_min, 0) AS MinBuffer, IFNULL(b.brgd_max, 0) AS MaxBuffer,
+            
+            IFNULL(b2.brgd_min, 0) AS MinBuffer, 
+            IFNULL(b2.brgd_max, 0) AS MaxBuffer,
+            
             IFNULL((
                 SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m
                 WHERE m.mst_aktif = "Y" AND m.mst_cab = ? AND m.mst_brg_kode = a.brg_kode AND m.mst_ukuran = b.brgd_ukuran
             ), 0) AS Stok,
+
             (IF(
-                IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif = "Y" AND m.mst_cab = ? AND m.mst_brg_kode = a.brg_kode AND m.mst_ukuran = b.brgd_ukuran), 0) < IFNULL(b.brgd_min, 0) AND IFNULL(b.brgd_min, 0) > 0, 
-                IFNULL(b.brgd_max, 0) - IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif = "Y" AND m.mst_cab = ? AND m.mst_brg_kode = a.brg_kode AND m.mst_ukuran = b.brgd_ukuran), 0), 
+                IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif = "Y" AND m.mst_cab = ? AND m.mst_brg_kode = a.brg_kode AND m.mst_ukuran = b.brgd_ukuran), 0) < IFNULL(b2.brgd_min, 0) AND IFNULL(b2.brgd_min, 0) > 0, 
+                IFNULL(b2.brgd_max, 0) - IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif = "Y" AND m.mst_cab = ? AND m.mst_brg_kode = a.brg_kode AND m.mst_ukuran = b.brgd_ukuran), 0), 
                 0
             )) AS Harus_Minta,
-            IFNULL((
-                SELECT SUM(d.mtd_jumlah) FROM tmintabarang_dtl d 
-                WHERE LEFT(d.mtd_nomor, 3) = ?
-                    AND d.mtd_kode = a.brg_kode AND d.mtd_ukuran = b.brgd_ukuran 
-                    AND d.mtd_nomor NOT IN (
-                        SELECT j.sj_mt_nomor FROM tdc_sj_hdr j 
-                        WHERE j.sj_noterima = "" AND j.sj_kecab = ? AND j.sj_mt_nomor <> ""
-                    )
-            ), 0) AS Sudah_Minta
+
+            -- =========================================================
+            -- [PERBAIKAN] GABUNGAN 3 FASE BARANG GANTUNG
+            -- =========================================================
+            (
+                -- 1. Fase Minta Barang (Belum masuk PL)
+                IFNULL((
+                    SELECT SUM(mtd.mtd_jumlah) FROM tmintabarang_hdr mth 
+                    JOIN tmintabarang_dtl mtd ON mtd.mtd_nomor = mth.mt_nomor 
+                    WHERE (mth.mt_closing = 'N' AND mth.mt_close = 'N') 
+                      AND mth.mt_cab = ? AND mtd.mtd_kode = a.brg_kode AND mtd.mtd_ukuran = b.brgd_ukuran
+                ), 0) 
+                +
+                -- 2. Fase Packing List (Sudah PL, Belum SJ)
+                IFNULL((
+                    SELECT SUM(pld.pld_jumlah) FROM tpacking_list_hdr plh 
+                    JOIN tpacking_list_dtl pld ON pld.pld_nomor = plh.pl_nomor 
+                    WHERE plh.pl_status = 'O' 
+                      AND plh.pl_cab_tujuan = ? AND pld.pld_kode = a.brg_kode AND pld.pld_ukuran = b.brgd_ukuran
+                ), 0) 
+                +
+                -- 3. Fase Surat Jalan (Sudah SJ, Belum Terima)
+                IFNULL((
+                    SELECT SUM(sjd.sjd_jumlah) FROM tdc_sj_hdr sjh 
+                    JOIN tdc_sj_dtl sjd ON sjd.sjd_nomor = sjh.sj_nomor 
+                    WHERE sjh.sj_noterima = '' 
+                      AND sjh.sj_kecab = ? AND sjd.sjd_kode = a.brg_kode AND sjd.sjd_ukuran = b.brgd_ukuran
+                ), 0)
+            ) AS Sudah_Minta
+
         FROM tbarangdc a
         JOIN tbarangdc_dtl b ON b.brgd_kode = a.brg_kode
+        LEFT JOIN tbarangdc_dtl2 b2 ON b2.brgd_kode = b.brgd_kode AND b2.brgd_ukuran = b.brgd_ukuran AND b2.brgd_cab = ?
+        
         WHERE a.brg_aktif = 0 AND a.brg_logstok = "Y" AND a.brg_ktgp = "REGULER"
         ${bufferFilter}
         ${brandFilter}
         ) y 
         ORDER BY y.Nama, y.Ukuran
     `;
-  params.push(cabang, cabang);
+
+  // SEKARANG BUTUH 8 PARAMETER CABANG!
+  const params = [
+    cabang,
+    cabang,
+    cabang,
+    cabang,
+    cabang,
+    cabang,
+    cabang,
+    cabang,
+  ];
 
   const [rows] = await pool.query(query, params);
   return rows;

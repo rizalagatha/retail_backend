@@ -1,4 +1,18 @@
 const changelogs = {
+  "1.4.5": {
+    date: "2026-05-31",
+    changes: [
+      {
+        title: "Pembaruan:",
+        items: [
+          "Setting Promo Kaosan Bulan Juni 2026",
+          "Pembaruan pada Dialog pilih Promo Member atau Bulanan",
+          "Perbaikan pada Ubah Pembayaran Invoice, dan penambahan Ubah Biaya Marketplace untuk Store Online (KON dan K05)",
+          "Perbaikan pada Laporan Pivot (Penjualan dan Stok)",
+        ],
+      },
+    ],
+  },
   "1.4.4": {
     date: "2026-05-20",
     changes: [

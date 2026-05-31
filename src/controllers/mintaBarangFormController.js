@@ -93,6 +93,44 @@ const lookupProducts = async (req, res) => {
   }
 };
 
+const generateAutomasi = async (req, res) => {
+  try {
+    const data = await mintaBarangFormService.generateAutomasiMintaBarang(
+      req.user,
+    );
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getPendingAlokasi = async (req, res) => {
+  try {
+    const data = await mintaBarangFormService.getPendingAlokasi(
+      req.user.cabang,
+    );
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const convertAlokasi = async (req, res) => {
+  try {
+    const { ids } = req.body;
+
+    // [PERBAIKAN] Cek apakah ids sudah berupa Array atau masih String
+    const idArray = Array.isArray(ids)
+      ? ids.map((id) => Number(id))
+      : ids.split(",").map((id) => Number(id));
+
+    const data = await mintaBarangFormService.getAlokasiDetailByIds(idArray);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   loadForEdit,
   searchSo,
@@ -102,4 +140,7 @@ module.exports = {
   getProductDetails,
   getByBarcode,
   lookupProducts,
+  generateAutomasi,
+  getPendingAlokasi,
+  convertAlokasi,
 };

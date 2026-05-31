@@ -1,13 +1,30 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const controller = require('../controllers/laporanPenjualanPivotController');
-const { verifyToken, checkPermission } = require('../middleware/authMiddleware');
+const controller = require("../controllers/laporanPenjualanPivotController");
+const {
+  verifyToken,
+  checkPermission,
+} = require("../middleware/authMiddleware");
 
-const MENU_ID = '506';
+const MENU_ID = "506";
 
-// This single route handles fetching all raw data for the report
-router.get('/', verifyToken, checkPermission(MENU_ID, 'view'), controller.getSalesData);
-
-router.get('/chart-data', verifyToken, checkPermission(MENU_ID, 'view'), controller.getChartData);
+router.get(
+  "/",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getSalesData,
+);
+router.get(
+  "/aggregated",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getAggregated,
+);
+router.get(
+  "/chart-data",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getChartData,
+);
 
 module.exports = router;

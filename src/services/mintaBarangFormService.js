@@ -411,10 +411,19 @@ const save = async (data, user) => {
       (item) => item.kode && (item.jumlah || 0) > 0,
     );
     for (const item of validItems) {
+      // 1. Insert ke tabel detail minta barang
       await connection.query(
         "INSERT INTO tmintabarang_dtl (mtd_idrec, mtd_nomor, mtd_kode, mtd_ukuran, mtd_jumlah) VALUES (?, ?, ?, ?, ?)",
         [idrec, mtNomor, item.kode, item.ukuran, item.jumlah],
       );
+
+      // 2. [KODE BARU] Update status alokasi jika item ini berasal dari hasil convert modal
+      if (item.alokasi_id) {
+        await connection.query(
+          "UPDATE tminta_alokasi SET status = 'PROCESSED' WHERE id = ?",
+          [item.alokasi_id],
+        );
+      }
     }
 
     await connection.commit();
@@ -699,6 +708,278 @@ const lookupProducts = async (filters) => {
   return { items, total };
 };
 
+const generateAutomasiMintaBarang = async (user) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const today = format(new Date(), "yyyy-MM-dd");
+
+    // =========================================================================
+    // 1. CEK DUPLIKASI HARIAN
+    // =========================================================================
+    const [cekGenerate] = await connection.query(
+      `SELECT 1 FROM tminta_alokasi WHERE tanggal = ? LIMIT 1`,
+      [today],
+    );
+    if (cekGenerate.length > 0) {
+      throw new Error(
+        "Automasi Minta Barang untuk hari ini sudah pernah dijalankan.",
+      );
+    }
+
+    // =========================================================================
+    // 2. FETCH DATA MENTAH (MENGGUNAKAN tbarangdc_dtl2 PER CABANG)
+    // =========================================================================
+
+    // A. Ambil Config Buffer PER CABANG dari tbarangdc_dtl2
+    const [storeBuffers] = await connection.query(`
+      SELECT 
+        b2.brgd_cab AS cabang, 
+        b2.brgd_kode AS kode, 
+        b2.brgd_ukuran AS ukuran, 
+        b2.brgd_min AS stokmin, 
+        b2.brgd_max AS stokmax
+      FROM tbarangdc_dtl2 b2
+      JOIN tbarangdc a ON a.brg_kode = b2.brgd_kode
+      JOIN tgudang g ON g.gdg_kode = b2.brgd_cab
+      WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y' 
+        AND b2.brgd_min > 0 
+        AND g.gdg_kode REGEXP '^K[0-9]+' 
+        AND g.gdg_kode NOT IN ('KDC', 'KPR', 'KON', 'K04', 'K05')
+        -- AND g.gdg_kode = 'K10'  <-- Pakai ini jika ingin test K10 saja
+    `);
+
+    // B. Ambil Stok Fisik Seluruh Toko
+    const [stokToko] = await connection.query(`
+      SELECT mst_cab AS cabang, mst_brg_kode AS kode, mst_ukuran AS ukuran, SUM(mst_stok_in - mst_stok_out) AS stok
+      FROM tmasterstok 
+      WHERE mst_aktif = 'Y' AND mst_cab <> 'KDC'
+      GROUP BY mst_cab, mst_brg_kode, mst_ukuran
+    `);
+
+    // C. Ambil Permintaan Gantung (Sudah Minta)
+    const [sudahMinta] = await connection.query(`
+      SELECT mth.mt_cab AS cabang, mtd.mtd_kode AS kode, mtd.mtd_ukuran AS ukuran, SUM(mtd.mtd_jumlah) AS qty
+      FROM tmintabarang_hdr mth
+      JOIN tmintabarang_dtl mtd ON mtd.mtd_nomor = mth.mt_nomor
+      WHERE mth.mt_closing = 'N' AND mth.mt_nomor NOT IN (SELECT sj_mt_nomor FROM tdc_sj_hdr WHERE sj_mt_nomor <> '')
+      GROUP BY mth.mt_cab, mtd.mtd_kode, mtd.mtd_ukuran
+    `);
+
+    // D. Ambil Packing List (Belum SJ)
+    const [plGantung] = await connection.query(`
+      SELECT plh.pl_cab_tujuan AS cabang, pld.pld_kode AS kode, pld.pld_ukuran AS ukuran, SUM(pld.pld_jumlah) AS qty
+      FROM tpacking_list_hdr plh
+      JOIN tpacking_list_dtl pld ON pld.pld_nomor = plh.pl_nomor
+      WHERE plh.pl_status = 'O'
+      GROUP BY plh.pl_cab_tujuan, pld.pld_kode, pld.pld_ukuran
+    `);
+
+    // E. Ambil Surat Jalan yang Belum Diterima Toko
+    const [sjGantung] = await connection.query(`
+      SELECT sjh.sj_kecab AS cabang, sjd.sjd_kode AS kode, sjd.sjd_ukuran AS ukuran, SUM(sjd.sjd_jumlah) AS qty
+      FROM tdc_sj_hdr sjh
+      JOIN tdc_sj_dtl sjd ON sjd.sjd_nomor = sjh.sj_nomor
+      WHERE sjh.sj_noterima = '' AND sjh.sj_mt_nomor = ''
+      GROUP BY sjh.sj_kecab, sjd.sjd_kode, sjd.sjd_ukuran
+    `);
+
+    // (STOK DC DIHAPUS - TIDAK DIPERLUKAN LAGI)
+
+    // =========================================================================
+    // 3. MAPPING HASH MAP
+    // =========================================================================
+    const makeKey = (c, k, u) => `${c}|${k}|${u}`;
+
+    const mapStokToko = new Map(
+      stokToko.map((r) => [
+        makeKey(r.cabang, r.kode, r.ukuran),
+        Number(r.stok),
+      ]),
+    );
+    const mapMinta = new Map(
+      sudahMinta.map((r) => [
+        makeKey(r.cabang, r.kode, r.ukuran),
+        Number(r.qty),
+      ]),
+    );
+    const mapPl = new Map(
+      plGantung.map((r) => [
+        makeKey(r.cabang, r.kode, r.ukuran),
+        Number(r.qty),
+      ]),
+    );
+    const mapSj = new Map(
+      sjGantung.map((r) => [
+        makeKey(r.cabang, r.kode, r.ukuran),
+        Number(r.qty),
+      ]),
+    );
+
+    // =========================================================================
+    // 4. HITUNG DEMAND DAN LANGSUNG MASUKKAN KE JALUR HIJAU (AUTO)
+    // =========================================================================
+    const autoMinta = {};
+
+    for (const buf of storeBuffers) {
+      const k = makeKey(buf.cabang, buf.kode, buf.ukuran);
+      const stokFisik = mapStokToko.get(k) || 0;
+      const minta = mapMinta.get(k) || 0;
+      const pl = mapPl.get(k) || 0;
+      const sj = mapSj.get(k) || 0;
+
+      const stokEfektif = stokFisik + minta + pl + sj;
+
+      // SYARAT RESTOCK: Stok efektif di bawah MIN
+      if (stokEfektif < buf.stokmin && buf.stokmin > 0) {
+        const mino = buf.stokmax - stokEfektif; // Kebutuhan sampai MAX
+
+        if (mino > 0) {
+          if (!autoMinta[buf.cabang]) autoMinta[buf.cabang] = [];
+
+          autoMinta[buf.cabang].push({
+            kode: buf.kode,
+            ukuran: buf.ukuran,
+            mino: mino,
+          });
+        }
+      }
+    }
+
+    // =========================================================================
+    // 5. INSERT DATABASE (LANGSUNG DOKUMEN MT DENGAN LIMIT 120 PCS)
+    // =========================================================================
+    const maxNumberMap = {};
+    const timestampRec = format(new Date(), "yyyyMMddHHmmssSSS");
+    let autoDocsCount = 0;
+
+    for (const [cabang, items] of Object.entries(autoMinta)) {
+      const prefix = `${cabang}MT${format(new Date(), "yyMM")}`;
+
+      if (maxNumberMap[prefix] === undefined) {
+        const [maxRows] = await connection.query(
+          `SELECT IFNULL(MAX(RIGHT(mt_nomor, 4)), 0) as maxNum FROM tmintabarang_hdr WHERE LEFT(mt_nomor, 9) = ?`,
+          [prefix],
+        );
+        maxNumberMap[prefix] = parseInt(maxRows[0].maxNum, 10);
+      }
+
+      // --- ALGORITMA PEMECAH KERANJANG (MAX 120 PCS) ---
+      const chunks = [];
+      let currentChunk = [];
+      let currentSum = 0;
+      const MAX_QTY_PER_DOC = 120;
+
+      for (const item of items) {
+        let remainingQty = item.mino;
+
+        while (remainingQty > 0) {
+          let spaceLeft = MAX_QTY_PER_DOC - currentSum;
+
+          // Jika penuh (120), siapkan dokumen baru
+          if (spaceLeft === 0) {
+            chunks.push(currentChunk);
+            currentChunk = [];
+            currentSum = 0;
+            spaceLeft = MAX_QTY_PER_DOC;
+          }
+
+          let qtyToTake = Math.min(remainingQty, spaceLeft);
+
+          currentChunk.push({
+            kode: item.kode,
+            ukuran: item.ukuran,
+            mino: qtyToTake,
+          });
+
+          currentSum += qtyToTake;
+          remainingQty -= qtyToTake;
+        }
+      }
+
+      if (currentChunk.length > 0) {
+        chunks.push(currentChunk);
+      }
+
+      // --- EKSEKUSI INSERT PER KERANJANG ---
+      for (const chunk of chunks) {
+        maxNumberMap[prefix]++;
+        const mtNomor = `${prefix}${String(10000 + maxNumberMap[prefix]).slice(1)}`;
+        const idrec = `${cabang}MT${timestampRec}${String(maxNumberMap[prefix]).slice(-3)}`;
+
+        // INSERT HEADER
+        await connection.query(
+          `INSERT INTO tmintabarang_hdr 
+           (mt_idrec, mt_nomor, mt_tanggal, mt_so, mt_cus, mt_cab, mt_ket, mt_otomatis, user_create, date_create) 
+           VALUES (?, ?, NOW(), '', '', ?, 'AUTO REPLENISHMENT', 'Y', ?, NOW())`,
+          [idrec, mtNomor, cabang, user.kode],
+        );
+
+        // INSERT DETAIL
+        const dtlValues = chunk.map((cItem) => [
+          idrec,
+          mtNomor,
+          cItem.kode,
+          cItem.ukuran,
+          cItem.mino,
+        ]);
+
+        await connection.query(
+          `INSERT INTO tmintabarang_dtl (mtd_idrec, mtd_nomor, mtd_kode, mtd_ukuran, mtd_jumlah) VALUES ?`,
+          [dtlValues],
+        );
+
+        autoDocsCount++;
+      }
+    }
+
+    await connection.commit();
+
+    return {
+      message: `Berhasil! ${autoDocsCount} Dokumen Minta Barang berhasil di-generate.`,
+      jalur_hijau_docs: autoDocsCount,
+      jalur_kuning_items: 0, // Selalu 0 karena tidak ada Modal Review
+    };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
+// A. Ambil data dengan JOIN ke tbarangdc agar nama barang muncul
+const getPendingAlokasi = async (cabang) => {
+  const query = `
+    SELECT 
+        a.id, a.tanggal, a.cabang, a.kode, a.ukuran, a.urgensi, a.qty_kebutuhan, a.qty_alokasi,
+        TRIM(CONCAT(b.brg_jeniskaos, ' ', b.brg_tipe, ' ', b.brg_lengan, ' ', b.brg_jeniskain, ' ', b.brg_warna)) as nama
+    FROM tminta_alokasi a
+    JOIN tbarangdc b ON a.kode = b.brg_kode
+    WHERE a.cabang = ? AND a.status = 'PENDING'
+  `;
+  const [rows] = await pool.query(query, [cabang]);
+  return rows;
+};
+
+// ====================================================================
+// FUNGSI BARU UNTUK CONVERT ALOKASI DI FORM CREATE
+// ====================================================================
+const getAlokasiDetailByIds = async (ids) => {
+  const query = `
+    SELECT 
+        a.id as alokasi_id, a.kode, a.ukuran, a.qty_alokasi,
+        TRIM(CONCAT(IFNULL(b.brg_jeniskaos, ''), ' ', IFNULL(b.brg_tipe, ''), ' ', IFNULL(b.brg_lengan, ''), ' ', IFNULL(b.brg_jeniskain, ''), ' ', IFNULL(b.brg_warna, ''))) as nama,
+        (SELECT brgd_harga FROM tbarangdc_dtl WHERE brgd_kode = a.kode AND brgd_ukuran = a.ukuran LIMIT 1) as harga
+    FROM tminta_alokasi a
+    JOIN tbarangdc b ON a.kode = b.brg_kode
+    WHERE a.id IN (?)
+  `;
+  const [rows] = await pool.query(query, [ids]);
+  return rows;
+};
+
 module.exports = {
   getSoDetailsForGrid,
   getBufferStokItems,
@@ -707,4 +988,7 @@ module.exports = {
   getProductDetailsForGrid,
   findByBarcode,
   lookupProducts,
+  generateAutomasiMintaBarang,
+  getPendingAlokasi,
+  getAlokasiDetailByIds,
 };

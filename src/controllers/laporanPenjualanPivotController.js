@@ -5,7 +5,15 @@ const getSalesData = async (req, res) => {
     const data = await service.getSalesData(req.query, req.user);
     res.json(data);
   } catch (error) {
-    console.error("Error in getSalesData controller:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getAggregated = async (req, res) => {
+  try {
+    const data = await service.getAggregated(req.query, req.user);
+    res.json(data);
+  } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
@@ -21,5 +29,6 @@ const getChartData = async (req, res) => {
 
 module.exports = {
   getSalesData,
+  getAggregated,
   getChartData,
 };

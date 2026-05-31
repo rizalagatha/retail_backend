@@ -1,26 +1,84 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const mintaBarangFormController = require('../controllers/mintaBarangFormController');
-const { verifyToken, checkPermission } = require('../middleware/authMiddleware');
+const mintaBarangFormController = require("../controllers/mintaBarangFormController");
+const {
+  verifyToken,
+  checkPermission,
+} = require("../middleware/authMiddleware");
 
-const MENU_ID = '37'; // ID Menu untuk Minta Barang
+const MENU_ID = "37"; // ID Menu untuk Minta Barang
 
 const checkSavePermission = (req, res, next) => {
-    const action = req.body.isNew ? 'insert' : 'edit';
-    return checkPermission(MENU_ID, action)(req, res, next);
+  const action = req.body.isNew ? "insert" : "edit";
+  return checkPermission(MENU_ID, action)(req, res, next);
 };
 
 // POST: Menyimpan data Minta Barang (baru atau ubah)
-router.post('/save', verifyToken, checkSavePermission, mintaBarangFormController.save);
+router.post(
+  "/save",
+  verifyToken,
+  checkSavePermission,
+  mintaBarangFormController.save,
+);
 
 // GET: Memuat data Minta Barang yang sudah ada untuk mode "Ubah"
-router.get('/:nomor', verifyToken, checkPermission(MENU_ID, 'edit'), mintaBarangFormController.loadForEdit);
+router.get(
+  "/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  mintaBarangFormController.loadForEdit,
+);
 
 // GET: Mengambil data dari Buffer Stok untuk di-load ke grid
-router.get('/lookup/buffer-stok', verifyToken, checkPermission(MENU_ID, 'view'), mintaBarangFormController.getBufferStokItems);
-router.get('/lookup/so-details/:soNomor', verifyToken, checkPermission(MENU_ID, 'view'), mintaBarangFormController.getSoDetailsForGrid);
-router.get('/lookup/product-details', verifyToken, checkPermission(MENU_ID, 'view'), mintaBarangFormController.getProductDetails);
-router.get('/lookup/products', verifyToken, checkPermission(MENU_ID, 'view'), mintaBarangFormController.lookupProducts);
-router.get('/by-barcode/:barcode', verifyToken, mintaBarangFormController.getByBarcode);
+router.get(
+  "/lookup/buffer-stok",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  mintaBarangFormController.getBufferStokItems,
+);
+router.get(
+  "/lookup/so-details/:soNomor",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  mintaBarangFormController.getSoDetailsForGrid,
+);
+router.get(
+  "/lookup/product-details",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  mintaBarangFormController.getProductDetails,
+);
+router.get(
+  "/lookup/products",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  mintaBarangFormController.lookupProducts,
+);
+router.get(
+  "/by-barcode/:barcode",
+  verifyToken,
+  mintaBarangFormController.getByBarcode,
+);
+
+router.post(
+  "/generate-automasi",
+  verifyToken,
+  checkPermission(MENU_ID, "insert"),
+  mintaBarangFormController.generateAutomasi,
+);
+
+router.get(
+  "/pending-alokasi",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  mintaBarangFormController.getPendingAlokasi,
+);
+
+router.post(
+  "/convert-alokasi",
+  verifyToken,
+  checkPermission(MENU_ID, "insert"),
+  mintaBarangFormController.convertAlokasi,
+);
 
 module.exports = router;

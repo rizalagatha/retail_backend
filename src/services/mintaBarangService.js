@@ -197,10 +197,60 @@ const getExportDetails = async (filters) => {
   return rows;
 };
 
+// A. Cek apakah ada alokasi tertunda untuk cabang ini
+const getPendingAlokasi = async (cabang) => {
+  const query = `
+    SELECT 
+        a.id, 
+        a.tanggal, 
+        a.cabang, 
+        a.kode, 
+        a.ukuran, 
+        a.urgensi, 
+        a.qty_kebutuhan, 
+        a.qty_alokasi,
+        TRIM(CONCAT(
+            IFNULL(b.brg_jeniskaos, ''), ' ', 
+            IFNULL(b.brg_tipe, ''), ' ', 
+            IFNULL(b.brg_lengan, ''), ' ', 
+            IFNULL(b.brg_jeniskain, ''), ' ', 
+            IFNULL(b.brg_warna, '')
+        )) AS nama
+    FROM tminta_alokasi a
+    JOIN tbarangdc b ON a.kode = b.brg_kode
+    WHERE a.cabang = ? AND a.status = 'PENDING'
+  `;
+  const [rows] = await pool.query(query, [cabang]);
+  return rows;
+};
+
+// B. Ambil data spesifik untuk dipopulate ke form
+const getAlokasiDetail = async (cabang) => {
+  const [rows] = await pool.query(
+    `SELECT a.*, TRIM(CONCAT(b.brg_jeniskaos, ' ', b.brg_tipe, ' ', b.brg_lengan, ' ', b.brg_jeniskain, ' ', b.brg_warna)) as nama 
+     FROM tminta_alokasi a
+     JOIN tbarangdc b ON a.kode = b.brg_kode
+     WHERE a.cabang = ? AND a.status = 'PENDING'`,
+    [cabang],
+  );
+  return rows;
+};
+
+// C. Update status setelah user submit dokumen
+const updateAlokasiStatus = async (nomorAlokasi, status) => {
+  await pool.query("UPDATE tminta_alokasi SET status = ? WHERE id IN (?)", [
+    status,
+    nomorAlokasi,
+  ]);
+};
+
 module.exports = {
   getList,
   getDetails,
   getCabangList,
   remove,
   getExportDetails,
+  getPendingAlokasi,
+  getAlokasiDetail,
+  updateAlokasiStatus,
 };

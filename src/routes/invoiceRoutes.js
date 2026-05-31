@@ -13,14 +13,14 @@ router.get(
   "/",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getList
+  controller.getList,
 );
 
 router.get(
   "/export-header",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getExportHeader
+  controller.getExportHeader,
 );
 
 // Endpoint untuk export detail
@@ -28,21 +28,21 @@ router.get(
   "/export-details",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.exportDetails
+  controller.exportDetails,
 );
 
 router.get(
   "/check-fsk/:nomor",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.checkIfInvoiceInFsk
+  controller.checkIfInvoiceInFsk,
 );
 
 router.post(
   "/change-payment",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.changePayment
+  controller.changePayment,
 );
 
 // Endpoint untuk mendapatkan detail invoice (expanded row)
@@ -50,7 +50,7 @@ router.get(
   "/details/:nomor",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getDetails
+  controller.getDetails,
 );
 
 // Endpoint untuk mendapatkan daftar cabang untuk filter
@@ -58,7 +58,7 @@ router.get(
   "/lookup/cabang",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getCabangList
+  controller.getCabangList,
 );
 
 // Endpoint untuk menghapus invoice
@@ -66,7 +66,14 @@ router.delete(
   "/:nomor",
   verifyToken,
   checkPermission(MENU_ID, "delete"),
-  controller.remove
+  controller.remove,
+);
+
+router.post(
+  "/change-mp-fee",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"), // Karena mengubah data, menggunakan permission 'edit'
+  controller.changeMpFee,
 );
 
 module.exports = router;

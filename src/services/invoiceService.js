@@ -1012,28 +1012,25 @@ const changePaymentMethod = async (payload, user) => {
     // =========================================================
 
     // 1. Hapus Setoran Lama (Non-DP)
-    // Karena QRIS juga masuk sebagai PEMBAYARAN QRIS KASIR, kita harus pastikan semua jenis setoran pembayaran kasir terhapus.
+    // [PERBAIKAN KUNCI] Masukkan juga 'PEMBAYARAN TUNAI KASIR' agar bersih
     const [oldSetor] = await connection.query(
       `SELECT sd_sh_nomor FROM tsetor_dtl 
-       WHERE sd_inv = ? AND sd_ket IN ('PEMBAYARAN DARI KASIR', 'PEMBAYARAN QRIS KASIR')`,
+       WHERE sd_inv = ? AND sd_ket IN ('PEMBAYARAN DARI KASIR', 'PEMBAYARAN QRIS KASIR', 'PEMBAYARAN TUNAI KASIR')`,
       [nomor],
     );
 
     if (oldSetor.length > 0) {
       const listSetor = oldSetor.map((r) => r.sd_sh_nomor);
-      // Hapus Detail Setoran
       await connection.query(
         "DELETE FROM tsetor_dtl WHERE sd_sh_nomor IN (?)",
         [listSetor],
       );
-      // Hapus Header Setoran
       await connection.query("DELETE FROM tsetor_hdr WHERE sh_nomor IN (?)", [
         listSetor,
       ]);
     }
 
     // 2. Hapus History Piutang (Kredit/Pelunasan)
-    // Hapus juga riwayat pembayaran QRIS yang mungkin sudah ada sebelumnya.
     const piutangNomor = `${inv.inv_cus_kode}${nomor}`;
     await connection.query(
       `DELETE FROM tpiutang_dtl 
@@ -1070,9 +1067,51 @@ const changePaymentMethod = async (payload, user) => {
 
     if (metodeBaru === "TUNAI") {
       // --- KASUS TUNAI ---
-      updateHdrSql += ", inv_rptunai = ? ";
-      updateParams.push(nominalBayar);
+      updateHdrSql += ", inv_rptunai = ?, inv_nosetor = ? ";
       const idrec = `${user.cabang}CHG${timestampID}`;
+
+      // Generate nomor setoran tunai
+      nomorSetoranBaru = await generateNewSetorNumber(
+        connection,
+        user.cabang,
+        inv.inv_tanggal,
+      );
+
+      // [PERBAIKAN] Push nominalBayar dan nomorSetoranBaru ke dalam parameter update header
+      updateParams.push(nominalBayar, nomorSetoranBaru);
+
+      const idrecTunai = `${user.cabang}SH${timestampID}T`;
+
+      await connection.query(
+        `INSERT INTO tsetor_hdr (
+           sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal,
+           sh_otomatis, sh_ket, sh_cab, user_create, date_create
+         ) VALUES (?, ?, ?, ?, 0, ?, 'Y', 'PEMBAYARAN TUNAI KASIR', ?, ?, NOW())`,
+        [
+          idrecTunai,
+          nomorSetoranBaru,
+          inv.inv_cus_kode,
+          tglSql,
+          nominalBayar,
+          user.cabang,
+          user.kode,
+        ],
+      );
+
+      const angsurIdTunai = `${user.cabang}CT${timestampID}`;
+      await connection.query(
+        `INSERT INTO tsetor_dtl (
+           sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut
+         ) VALUES (?, ?, ?, ?, ?, 'PEMBAYARAN TUNAI KASIR', ?, 1)`,
+        [
+          idrecTunai,
+          nomorSetoranBaru,
+          tglSql,
+          nomor,
+          nominalBayar,
+          angsurIdTunai,
+        ],
+      );
 
       // Catat di Kartu Piutang (Lunas Tunai)
       await connection.query(
@@ -1088,7 +1127,7 @@ const changePaymentMethod = async (payload, user) => {
       );
     } else {
       // --- KASUS TRANSFER / QRIS ---
-      updateHdrSql += ", inv_rpcard = ?, inv_nosetor = ? "; // Transfer dan QRIS sama-sama masuk ke inv_rpcard
+      updateHdrSql += ", inv_rpcard = ?, inv_nosetor = ? ";
 
       // Generate No Setoran Baru
       nomorSetoranBaru = await generateNewSetorNumber(
@@ -1098,14 +1137,13 @@ const changePaymentMethod = async (payload, user) => {
       );
       updateParams.push(nominalBayar, nomorSetoranBaru);
 
-      // Konfigurasi Spesifik berdasarkan jenis
       if (metodeBaru === "TRANSFER") {
         jenisSetor = 1;
         uraianPiutang = "Pembayaran Card";
         keteranganSetoran = "PEMBAYARAN DARI KASIR";
         idPrefix = "SH";
       } else if (metodeBaru === "QRIS") {
-        jenisSetor = 1; // Backend lama Anda memakai sh_jenis = 1 (Transfer) untuk QRIS di tabel setoran (lihat referensi saveData)
+        jenisSetor = 1;
         uraianPiutang = "Pembayaran QRIS";
         keteranganSetoran = "PEMBAYARAN QRIS KASIR";
         idPrefix = "QR";
@@ -1135,7 +1173,7 @@ const changePaymentMethod = async (payload, user) => {
         ],
       );
 
-      // 2. Insert tsetor_dtl (Link Invoice ke Setoran)
+      // 2. Insert tsetor_dtl
       await connection.query(
         `INSERT INTO tsetor_dtl (
            sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut
@@ -1151,7 +1189,7 @@ const changePaymentMethod = async (payload, user) => {
         ],
       );
 
-      // 3. Insert tpiutang_dtl (Pelunasan via Transfer/QRIS)
+      // 3. Insert tpiutang_dtl
       await connection.query(
         `INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur)
          VALUES (?, ?, ?, ?, ?, ?)`,
@@ -1181,6 +1219,39 @@ const changePaymentMethod = async (payload, user) => {
   }
 };
 
+const changeMarketplaceFee = async (payload, user) => {
+  const { nomor, biayaPlatform } = payload;
+  const connection = await pool.getConnection();
+
+  try {
+    const [invRows] = await connection.query(
+      "SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor = ?",
+      [nomor],
+    );
+
+    if (invRows.length === 0) throw new Error("Invoice tidak ditemukan.");
+
+    await connection.beginTransaction();
+
+    await connection.query(
+      `UPDATE tinv_hdr SET 
+        inv_mp_biaya_platform = ?, 
+        user_modified = ?, 
+        date_modified = NOW() 
+       WHERE inv_nomor = ?`,
+      [biayaPlatform, user.kode, nomor],
+    );
+
+    await connection.commit();
+    return { message: "Biaya platform marketplace berhasil diupdate." };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   getCabangList,
   getList,
@@ -1190,4 +1261,5 @@ module.exports = {
   getExportDetails,
   checkIfInvoiceInFsk,
   changePaymentMethod,
+  changeMarketplaceFee,
 };

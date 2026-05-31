@@ -40,13 +40,13 @@ const remove = async (req, res) => {
     try {
       const [rows] = await pool.query(
         "SELECT * FROM tinv_hdr WHERE inv_nomor = ?",
-        [nomor]
+        [nomor],
       );
       if (rows.length > 0) oldData = rows[0];
     } catch (err) {
       console.warn(
         "Gagal ambil snapshot oldData untuk audit remove:",
-        err.message
+        err.message,
       );
     }
 
@@ -64,8 +64,8 @@ const remove = async (req, res) => {
         oldData, // Old Value (Data invoice yg dihapus)
         null, // New Value (Null karena dihapus)
         `Membatalkan/Menghapus Invoice Rp ${Number(
-          oldData.inv_grand_total
-        ).toLocaleString()}` // Note
+          oldData.inv_grand_total,
+        ).toLocaleString()}`, // Note
       );
     }
 
@@ -135,27 +135,27 @@ const changePayment = async (req, res) => {
       try {
         // Ambil nominal tunai dan card untuk menentukan metode lama
         const [rows] = await pool.query(
-          "SELECT inv_nomor, inv_rptunai, inv_rpcard, inv_nosetor, inv_ket FROM tinv_hdr WHERE inv_nomor = ?", 
-          [nomorInvoice]
+          "SELECT inv_nomor, inv_rptunai, inv_rpcard, inv_nosetor, inv_ket FROM tinv_hdr WHERE inv_nomor = ?",
+          [nomorInvoice],
         );
-        
-        if (rows.length > 0) {
-           const row = rows[0];
-           // Deteksi Metode Lama
-           // Jika rptunai > 0, berarti TUNAI. Jika rpcard > 0, berarti TRANSFER/EDC.
-           if (Number(row.inv_rptunai) > 0) {
-              oldMethod = "TUNAI";
-           } else if (Number(row.inv_rpcard) > 0) {
-              oldMethod = "TRANSFER/EDC";
-           } else {
-              oldMethod = "KREDIT/LAINNYA";
-           }
 
-           // Simpan data lama yang sudah 'dirapikan'
-           oldData = {
-              ...row,
-              cara_bayar_lama: oldMethod // Field buatan sendiri untuk audit
-           };
+        if (rows.length > 0) {
+          const row = rows[0];
+          // Deteksi Metode Lama
+          // Jika rptunai > 0, berarti TUNAI. Jika rpcard > 0, berarti TRANSFER/EDC.
+          if (Number(row.inv_rptunai) > 0) {
+            oldMethod = "TUNAI";
+          } else if (Number(row.inv_rpcard) > 0) {
+            oldMethod = "TRANSFER/EDC";
+          } else {
+            oldMethod = "KREDIT/LAINNYA";
+          }
+
+          // Simpan data lama yang sudah 'dirapikan'
+          oldData = {
+            ...row,
+            cara_bayar_lama: oldMethod, // Field buatan sendiri untuk audit
+          };
         }
       } catch (err) {
         console.warn("Gagal snapshot oldData changePayment:", err.message);
@@ -168,16 +168,16 @@ const changePayment = async (req, res) => {
     // 3. AUDIT: Catat perubahan
     if (oldData) {
       // Tentukan Metode Baru dari Payload
-      const newMethod = payload.metodeBaru || payload.cara_bayar || 'BARU';
-      
+      const newMethod = payload.metodeBaru || payload.cara_bayar || "BARU";
+
       auditService.logActivity(
         req,
-        'UPDATE',             
-        'INVOICE',            
-        nomorInvoice,         
-        oldData,              // Old Value (berisi cara_bayar_lama)
-        payload,              // New Value (berisi metodeBaru)
-        `Ubah Cara Bayar dari ${oldMethod} ke ${newMethod} (Alasan: ${payload.alasan || '-'})` 
+        "UPDATE",
+        "INVOICE",
+        nomorInvoice,
+        oldData, // Old Value (berisi cara_bayar_lama)
+        payload, // New Value (berisi metodeBaru)
+        `Ubah Cara Bayar dari ${oldMethod} ke ${newMethod} (Alasan: ${payload.alasan || "-"})`,
       );
     }
 
@@ -194,6 +194,63 @@ const changePayment = async (req, res) => {
   }
 };
 
+// [AUDIT TRAIL DITERAPKAN DI SINI]
+const changeMpFee = async (req, res) => {
+  try {
+    const user = req.user;
+    const payload = req.body; // Isinya: nomor, biayaPlatform
+
+    // 1. SNAPSHOT: Ambil data Invoice Lama untuk mengetahui biaya platform sebelumnya
+    const nomorInvoice = payload.nomor;
+    let oldData = null;
+
+    if (nomorInvoice) {
+      try {
+        const [rows] = await pool.query(
+          "SELECT inv_nomor, inv_mp_biaya_platform FROM tinv_hdr WHERE inv_nomor = ?",
+          [nomorInvoice],
+        );
+
+        if (rows.length > 0) {
+          oldData = rows[0];
+        }
+      } catch (err) {
+        console.warn("Gagal snapshot oldData changeMpFee:", err.message);
+      }
+    }
+
+    // 2. PROSES: Jalankan service update
+    const result = await service.changeMarketplaceFee(payload, user);
+
+    // 3. AUDIT: Catat perubahan
+    if (oldData) {
+      const oldFee = Number(oldData.inv_mp_biaya_platform || 0);
+      const newFee = Number(payload.biayaPlatform || 0);
+
+      auditService.logActivity(
+        req,
+        "UPDATE",
+        "INVOICE",
+        nomorInvoice,
+        oldData, // Old Value (berisi inv_mp_biaya_platform lama)
+        payload, // New Value (berisi biayaPlatform baru)
+        `Ubah Biaya Platform Marketplace dari Rp ${oldFee.toLocaleString()} ke Rp ${newFee.toLocaleString()}`,
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      message: result.message,
+    });
+  } catch (error) {
+    console.error("Error changeMpFee:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Terjadi kesalahan internal server.",
+    });
+  }
+};
+
 module.exports = {
   getCabangList,
   getList,
@@ -203,4 +260,5 @@ module.exports = {
   exportDetails,
   checkIfInvoiceInFsk,
   changePayment,
+  changeMpFee,
 };

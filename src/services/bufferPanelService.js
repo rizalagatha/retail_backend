@@ -227,6 +227,7 @@ const getPreviewData = async (cabang) => {
     ) stok ON stok.mst_brg_kode = b.brgd_kode AND stok.mst_ukuran = b.brgd_ukuran
     WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
       AND a.brg_ktgp = 'REGULER' 
+      AND b.brgd_ukuran NOT IN ('4XL', '5XL', '6XL', '7XL', '8XL', '9XL', '10XL', 'JUMBO')
     GROUP BY b.brgd_kode, b.brgd_ukuran
     ORDER BY nama, b.brgd_ukuran
   `,
@@ -394,7 +395,8 @@ const getPreviewDataKDC = async () => {
     FROM tbarangdc a
     JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
     WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
-      AND a.brg_ktgp = 'REGULER' 
+      AND a.brg_ktgp = 'REGULER'
+      AND b.brgd_ukuran NOT IN ('4XL', '5XL', '6XL', '7XL', '8XL', '9XL', '10XL', 'JUMBO') 
     GROUP BY b.brgd_kode, b.brgd_ukuran
     ORDER BY nama, b.brgd_ukuran
   `);
@@ -485,24 +487,47 @@ const saveConfig = async (cabang, cfg, user) => {
   return { message: "Parameter cabang berhasil disimpan." };
 };
 
-const saveCalculatedBuffer = async (cabang, itemsArray) => {
+const saveCalculatedBuffer = async (cabang, itemsArray, userKode) => {
+  if (!itemsArray || itemsArray.length === 0)
+    return { message: "Tidak ada data untuk disimpan." };
+
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
-    for (const item of itemsArray) {
-      const query =
-        cabang === "KDC"
-          ? `UPDATE tbarangdc_dtl SET brgd_mindc=?, brgd_maxdc=? WHERE brgd_kode=? AND brgd_ukuran=?`
-          : `UPDATE tbarangdc_dtl SET brgd_min=?, brgd_max=? WHERE brgd_kode=? AND brgd_ukuran=?`;
-      await connection.query(query, [
-        item.min,
-        item.max,
+
+    // Pecah jadi batch agar ringan (1000 item per eksekusi)
+    const batchSize = 1000;
+    for (let i = 0; i < itemsArray.length; i += batchSize) {
+      const batch = itemsArray.slice(i, i + batchSize);
+
+      // Siapkan array data: [cabang, kode, ukuran, min, max, user, date]
+      const values = batch.map((item) => [
+        cabang,
         item.kode,
         item.ukuran,
+        item.min,
+        item.max,
+        userKode || "SYS", // User update
+        new Date(), // Date update
       ]);
+
+      const query = `
+        INSERT INTO tbarangdc_dtl2 
+          (brgd_cab, brgd_kode, brgd_ukuran, brgd_min, brgd_max, user_update, date_update) 
+        VALUES ?
+        ON DUPLICATE KEY UPDATE 
+          brgd_min = VALUES(brgd_min),
+          brgd_max = VALUES(brgd_max),
+          user_update = VALUES(user_update),
+          date_update = VALUES(date_update)
+      `;
+
+      // Eksekusi Bulk
+      await connection.query(query, [values]);
     }
+
     await connection.commit();
-    return { message: "Buffer Stok berhasil diperbarui." };
+    return { message: "Buffer Stok per cabang berhasil diperbarui!" };
   } catch (error) {
     await connection.rollback();
     throw error;
@@ -510,7 +535,6 @@ const saveCalculatedBuffer = async (cabang, itemsArray) => {
     connection.release();
   }
 };
-
 const getStokPerCabang = async (kode, ukuran) => {
   const [rows] = await pool.query(
     `

@@ -1,28 +1,63 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const mintaBarangController = require('../controllers/mintaBarangController');
-const { verifyToken, checkPermission } = require('../middleware/authMiddleware');
+const mintaBarangController = require("../controllers/mintaBarangController");
+const {
+  verifyToken,
+  checkPermission,
+} = require("../middleware/authMiddleware");
 
-const MENU_ID = '37';
+const MENU_ID = "37";
 
 // GET: Mengambil daftar Minta Barang berdasarkan filter
-router.get('/', verifyToken, checkPermission(MENU_ID, 'view'), mintaBarangController.getAll);
-
+router.get(
+  "/",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  mintaBarangController.getAll,
+);
 
 router.get(
   "/export-details",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  mintaBarangController.getExportDetails
+  mintaBarangController.getExportDetails,
+);
+
+router.get(
+  "/pending-alokasi",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  mintaBarangController.getPendingAlokasi,
+);
+router.post(
+  "/convert-alokasi",
+  verifyToken,
+  checkPermission(MENU_ID, "insert"),
+  mintaBarangController.convertAlokasi,
 );
 
 // GET: Mengambil detail untuk satu Minta Barang
-router.get('/:nomor', verifyToken, checkPermission(MENU_ID, 'view'), mintaBarangController.getDetails);
+router.get(
+  "/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  mintaBarangController.getDetails,
+);
 
 // GET: Mengambil daftar cabang untuk filter
-router.get('/lookup/cabang', verifyToken, checkPermission(MENU_ID, 'view'), mintaBarangController.getCabangList);
+router.get(
+  "/lookup/cabang",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  mintaBarangController.getCabangList,
+);
 
 // DELETE: Menghapus satu entri Minta Barang
-router.delete('/:nomor', verifyToken, checkPermission(MENU_ID, 'delete'), mintaBarangController.remove);
+router.delete(
+  "/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "delete"),
+  mintaBarangController.remove,
+);
 
 module.exports = router;

@@ -19,6 +19,7 @@ const saveSettings = async (req, res, next) => {
   try {
     const cabang = req.query.cabang || req.body.cabang || req.user.cabang;
     const itemsArray = req.body.items;
+    const userKode = req.user.kode;
 
     if (!itemsArray || itemsArray.length === 0) {
       return res
@@ -29,6 +30,7 @@ const saveSettings = async (req, res, next) => {
     const result = await bufferPanelService.saveCalculatedBuffer(
       cabang,
       itemsArray,
+      userKode,
     );
     res.json(result);
   } catch (error) {
