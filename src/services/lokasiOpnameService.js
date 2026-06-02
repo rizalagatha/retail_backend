@@ -20,14 +20,14 @@ const getList = async (filters) => {
 
   let query = `
     SELECT 
-      lo.lo_idrec, 
-      lo.lo_cab, 
-      lo.lo_lokasi, 
-      lo.lo_jenis_nama, 
-      lo.user_create, 
-      lo.date_create,
+      lo.lo_idrec, lo.lo_cab, lo.lo_lokasi, lo.lo_jenis_nama,
+      lo.user_create, lo.date_create,
       g.gdg_nama as cab_nama,
-      -- Tambahkan subquery untuk menghitung stok yang sudah diinput
+      -- [TAMBAH] info invoice gudang
+      g.gdg_inv_nama,
+      g.gdg_inv_alamat,
+      g.gdg_inv_kota,
+      g.gdg_inv_telp,
       IFNULL((
         SELECT SUM(h.hs_qty) 
         FROM thitungstok h 
@@ -44,10 +44,16 @@ const getList = async (filters) => {
       ), '-') as operator_hitung
     FROM tlokasi_opname lo
     LEFT JOIN tgudang g ON lo.lo_cab = g.gdg_kode
-    WHERE lo.lo_cab = ?
+    WHERE 1=1
   `;
 
-  const params = [cabang];
+  const params = [];
+
+  // [FIX] Skip filter cabang jika ALL
+  if (cabang && cabang !== "ALL") {
+    query += ` AND lo.lo_cab = ?`;
+    params.push(cabang);
+  }
 
   if (jenis && jenis !== "ALL" && jenis !== "SEMUA JENIS") {
     query += ` AND lo.lo_jenis_nama = ?`;
@@ -57,6 +63,41 @@ const getList = async (filters) => {
   query += ` ORDER BY LENGTH(lo.lo_lokasi) ASC, lo.lo_lokasi ASC`;
 
   const [rows] = await pool.query(query, params);
+  return rows;
+};
+
+const getDetailBarang = async (cabang, lokasi) => {
+  const query = `
+    SELECT 
+      CONCAT(h.hs_cab, '-', h.hs_lokasi, '-', h.hs_kode, '-', h.hs_ukuran) AS hs_idrec,
+      h.hs_kode,
+      IFNULL(b.brgd_barcode, h.hs_barcode) AS barcode,
+      IFNULL(
+        TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)), 
+        h.hs_nama
+      ) AS nama_barang,
+      h.hs_ukuran,
+      h.hs_qty,
+      h.hs_operator,
+      h.date_create,
+      h.hs_nopl AS no_packing_list,
+      h.hs_noprod AS no_packing_produksi,
+      -- [BARU] Info gudang
+      g.gdg_inv_nama,
+      g.gdg_inv_alamat,
+      g.gdg_inv_kota,
+      g.gdg_inv_telp
+    FROM thitungstok h
+    LEFT JOIN tbarangdc a ON a.brg_kode = h.hs_kode
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = h.hs_kode AND b.brgd_ukuran = h.hs_ukuran
+    LEFT JOIN tgudang g ON g.gdg_kode = h.hs_cab
+    WHERE h.hs_cab = ? 
+      AND h.hs_lokasi = ? 
+      AND h.hs_proses = 'N'
+    ORDER BY h.date_create DESC
+  `;
+
+  const [rows] = await pool.query(query, [cabang, lokasi]);
   return rows;
 };
 
@@ -110,6 +151,7 @@ const deleteLocation = async (idrec) => {
 module.exports = {
   getSoDates,
   getList,
+  getDetailBarang,
   getMasterOptions,
   bulkGenerate,
   deleteLocation,

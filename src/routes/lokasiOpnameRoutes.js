@@ -9,6 +9,13 @@ const {
 const MENU_ID = "18";
 
 router.get(
+  "/detail-barang",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getDetailBarang,
+);
+
+router.get(
   "/",
   verifyToken,
   checkPermission(MENU_ID, "view"),

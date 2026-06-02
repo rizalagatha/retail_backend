@@ -19,6 +19,21 @@ const getList = async (req, res) => {
   }
 };
 
+const getDetailBarang = async (req, res) => {
+  try {
+    const { cabang, lokasi } = req.query;
+    if (!cabang || !lokasi) {
+      return res
+        .status(400)
+        .json({ message: "Cabang dan Lokasi wajib diisi." });
+    }
+    const data = await service.getDetailBarang(cabang, lokasi);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const getMasterOptions = async (req, res) => {
   try {
     const data = await service.getMasterOptions();
@@ -68,6 +83,7 @@ const remove = async (req, res) => {
 module.exports = {
   getSoDates,
   getList,
+  getDetailBarang,
   getMasterOptions,
   bulkGenerate,
   remove,
