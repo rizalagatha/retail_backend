@@ -733,6 +733,7 @@ const generateAutomasiMintaBarang = async (user) => {
       WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y' 
         AND b2.brgd_min > 0 
         AND g.gdg_kode IN ('K03', 'K11')
+        AND a.brg_warna NOT LIKE '%STICKER%'   -- [TAMBAH]
     `);
 
     // B. Ambil Stok Fisik Seluruh Toko
@@ -955,7 +956,7 @@ const generateAutomasiMintaBarang = async (user) => {
       }
     }
 
-    // --- INSERT JALUR KOSONG ---
+    // --- INSERT JALUR KOSONG --- tidak ada chunking, langsung insert semua
     for (const [groupKey, items] of Object.entries(autoMintaKosong)) {
       const [cabang, jenisKain] = groupKey.split("|");
       const keterangan = `AUTO REPLENISHMENT - ${jenisKain} - STOK DC KOSONG`;
