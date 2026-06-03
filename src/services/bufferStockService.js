@@ -232,9 +232,12 @@ const getList = async (filters) => {
   // parameternya sekarang susut dari 8 menjadi 5.
   const params = [
     cabang, // Untuk Stok Fisik
-    cabang, // Untuk Minta (Fase 1)
-    cabang, // Untuk PL (Fase 2)
-    cabang, // Untuk SJ (Fase 3)
+    cabang, // Untuk Minta (Fase 1) - Sudah_Minta
+    cabang, // Untuk PL (Fase 2) - Sudah_Minta
+    cabang, // Untuk SJ (Fase 3) - Sudah_Minta
+    cabang, // Untuk OTW_Minta
+    cabang, // Untuk OTW_PL
+    cabang, // Untuk OTW_SJ
     cabang, // Untuk Master Buffer b2
   ];
 
