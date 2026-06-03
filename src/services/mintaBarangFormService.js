@@ -866,13 +866,13 @@ const generateAutomasiMintaBarang = async (user) => {
           };
 
           if (currentDcStock > 10) {
-            // Masuk Jalur Normal
+            // Jalur Normal — tetap per cabang+jeniskain
             if (!autoMintaNormal[groupKey]) autoMintaNormal[groupKey] = [];
             autoMintaNormal[groupKey].push(payload);
           } else {
-            // Masuk Jalur Kosong
-            if (!autoMintaKosong[groupKey]) autoMintaKosong[groupKey] = [];
-            autoMintaKosong[groupKey].push(payload);
+            // Jalur Kosong — cukup per cabang saja, tidak perlu jenis kain
+            if (!autoMintaKosong[buf.cabang]) autoMintaKosong[buf.cabang] = [];
+            autoMintaKosong[buf.cabang].push(payload);
           }
         }
       }
@@ -957,9 +957,9 @@ const generateAutomasiMintaBarang = async (user) => {
     }
 
     // --- INSERT JALUR KOSONG --- tidak ada chunking, langsung insert semua
-    for (const [groupKey, items] of Object.entries(autoMintaKosong)) {
-      const [cabang, jenisKain] = groupKey.split("|");
-      const keterangan = `AUTO REPLENISHMENT - ${jenisKain} - STOK DC KOSONG`;
+    for (const [cabang, items] of Object.entries(autoMintaKosong)) {
+      // [FIX] key sekarang hanya cabang, tidak perlu split
+      const keterangan = `AUTO REPLENISHMENT - STOK DC KOSONG`;
 
       if (items.length === 0) continue;
       const { mtNomor, idrec } = await getNextNomor(cabang);
