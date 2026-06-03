@@ -2246,7 +2246,7 @@ const getAutoMintaAnalytics = async (user, filters = {}) => {
     branchFilter = "AND h.mt_cab = ?";
     params.push(user.cabang);
   } else if (cabang !== "ALL") {
-    branchFilter = "AND h.inv_cab = ?"; // Filter dropdown jika KDC yang melihat
+    branchFilter = "AND h.mt_cab = ?";
     params.push(cabang);
   }
 
