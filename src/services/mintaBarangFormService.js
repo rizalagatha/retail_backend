@@ -866,12 +866,12 @@ const generateAutomasiMintaBarang = async (user) => {
 
           if (currentDcStock > 10) {
             // Masuk Jalur Normal
-            if (!autoMintaNormal[buf.cabang]) autoMintaNormal[buf.cabang] = [];
-            autoMintaNormal[buf.cabang].push(payload);
+            if (!autoMintaNormal[groupKey]) autoMintaNormal[groupKey] = [];
+            autoMintaNormal[groupKey].push(payload);
           } else {
             // Masuk Jalur Kosong
-            if (!autoMintaKosong[buf.cabang]) autoMintaKosong[buf.cabang] = [];
-            autoMintaKosong[buf.cabang].push(payload);
+            if (!autoMintaKosong[groupKey]) autoMintaKosong[groupKey] = [];
+            autoMintaKosong[groupKey].push(payload);
           }
         }
       }
