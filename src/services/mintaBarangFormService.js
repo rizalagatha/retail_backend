@@ -972,9 +972,10 @@ const generateAutomasiMintaBarang = async (user) => {
     }
 
     // Insert log ke tminta_alokasi (Optional, agar besok jalan lagi)
-    await connection.query(`INSERT INTO tminta_alokasi (tanggal) VALUES (?)`, [
-      today,
-    ]);
+    await connection.query(
+      `INSERT INTO tminta_alokasi (tanggal, cabang) VALUES (?, ?)`,
+      [today, user.cabang],
+    );
 
     await connection.commit();
 
