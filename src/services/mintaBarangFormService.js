@@ -778,6 +778,13 @@ const generateAutomasiMintaBarang = async (user) => {
       GROUP BY mst_brg_kode, mst_ukuran
     `);
 
+    // G. Ambil Jenis Kain per Kode Barang
+    const [jenisKainData] = await connection.query(`
+  SELECT brg_kode AS kode, brg_jeniskain AS jeniskain
+  FROM tbarangdc
+  WHERE brg_aktif = 0 AND brg_logstok = 'Y'
+`);
+
     // =========================================================================
     // 2. MAPPING HASH MAP
     // =========================================================================
@@ -811,6 +818,12 @@ const generateAutomasiMintaBarang = async (user) => {
     const mapStokDc = new Map(
       stokDc.map((r) => [makeKeyDc(r.kode, r.ukuran), Number(r.stok)]),
     );
+    const mapJenisKain = new Map(
+      jenisKainData.map((r) => [
+        r.kode,
+        (r.jeniskain || "LAINNYA").trim().toUpperCase(),
+      ]),
+    );
 
     // =========================================================================
     // 3. HITUNG DEMAND DAN PISAHKAN JALUR NORMAL VS JALUR KOSONG
@@ -839,7 +852,17 @@ const generateAutomasiMintaBarang = async (user) => {
           const dcKey = makeKeyDc(buf.kode, buf.ukuran);
           const currentDcStock = mapStokDc.get(dcKey) || 0;
 
-          const payload = { kode: buf.kode, ukuran: buf.ukuran, mino: mino };
+          // [BARU] Ambil jenis kain
+          const jenisKain = mapJenisKain.get(buf.kode) || "LAINNYA";
+          const groupKey = `${buf.cabang}|${jenisKain}`; // ← key baru
+
+          const payload = {
+            kode: buf.kode,
+            ukuran: buf.ukuran,
+            mino,
+            cabang: buf.cabang,
+            jenisKain,
+          };
 
           if (currentDcStock > 10) {
             // Masuk Jalur Normal
@@ -877,14 +900,16 @@ const generateAutomasiMintaBarang = async (user) => {
       return { mtNomor, idrec };
     };
 
-    // --- 5A. INSERT JALUR NORMAL (Limit 120 Pcs per Dokumen) ---
-    for (const [cabang, items] of Object.entries(autoMintaNormal)) {
+    // --- INSERT JALUR NORMAL ---
+    for (const [groupKey, items] of Object.entries(autoMintaNormal)) {
+      const [cabang, jenisKain] = groupKey.split("|"); // ← split key
+      const keterangan = `AUTO REPLENISHMENT - ${jenisKain}`;
+
       const chunks = [];
       let currentChunk = [];
       let currentSum = 0;
       const MAX_QTY_PER_DOC = 120;
 
-      // Algoritma Pemecah Keranjang
       for (const item of items) {
         let remainingQty = item.mino;
         while (remainingQty > 0) {
@@ -895,7 +920,7 @@ const generateAutomasiMintaBarang = async (user) => {
             currentSum = 0;
             spaceLeft = MAX_QTY_PER_DOC;
           }
-          let qtyToTake = Math.min(remainingQty, spaceLeft);
+          const qtyToTake = Math.min(remainingQty, spaceLeft);
           currentChunk.push({
             kode: item.kode,
             ukuran: item.ukuran,
@@ -907,17 +932,14 @@ const generateAutomasiMintaBarang = async (user) => {
       }
       if (currentChunk.length > 0) chunks.push(currentChunk);
 
-      // Eksekusi Insert Normal
       for (const chunk of chunks) {
         const { mtNomor, idrec } = await getNextNomor(cabang);
-
         await connection.query(
           `INSERT INTO tmintabarang_hdr 
-           (mt_idrec, mt_nomor, mt_tanggal, mt_so, mt_cus, mt_cab, mt_ket, mt_otomatis, user_create, date_create) 
-           VALUES (?, ?, NOW(), '', '', ?, 'AUTO REPLENISHMENT', 'Y', ?, NOW())`,
-          [idrec, mtNomor, cabang, user.kode],
+       (mt_idrec, mt_nomor, mt_tanggal, mt_so, mt_cus, mt_cab, mt_ket, mt_otomatis, user_create, date_create) 
+       VALUES (?, ?, NOW(), '', '', ?, ?, 'Y', ?, NOW())`,
+          [idrec, mtNomor, cabang, keterangan, user.kode], // ← keterangan dinamis
         );
-
         const dtlValues = chunk.map((c) => [
           idrec,
           mtNomor,
@@ -933,20 +955,19 @@ const generateAutomasiMintaBarang = async (user) => {
       }
     }
 
-    // --- 4B. INSERT JALUR KOSONG (1 Dokumen Utuh per Cabang tanpa Limit) ---
-    for (const [cabang, items] of Object.entries(autoMintaKosong)) {
+    // --- INSERT JALUR KOSONG ---
+    for (const [groupKey, items] of Object.entries(autoMintaKosong)) {
+      const [cabang, jenisKain] = groupKey.split("|");
+      const keterangan = `AUTO REPLENISHMENT - ${jenisKain} - STOK DC KOSONG`;
+
       if (items.length === 0) continue;
-
       const { mtNomor, idrec } = await getNextNomor(cabang);
-
-      // Keterangan khusus untuk dokumen ini
       await connection.query(
         `INSERT INTO tmintabarang_hdr 
-         (mt_idrec, mt_nomor, mt_tanggal, mt_so, mt_cus, mt_cab, mt_ket, mt_otomatis, user_create, date_create) 
-         VALUES (?, ?, NOW(), '', '', ?, 'AUTO REPLENISHMENT - STOK DC KOSONG', 'Y', ?, NOW())`,
-        [idrec, mtNomor, cabang, user.kode],
+     (mt_idrec, mt_nomor, mt_tanggal, mt_so, mt_cus, mt_cab, mt_ket, mt_otomatis, user_create, date_create) 
+     VALUES (?, ?, NOW(), '', '', ?, ?, 'Y', ?, NOW())`,
+        [idrec, mtNomor, cabang, keterangan, user.kode],
       );
-
       const dtlValues = items.map((c) => [
         idrec,
         mtNomor,

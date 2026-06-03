@@ -193,7 +193,29 @@ const getList = async (filters) => {
                     WHERE sjh.sj_noterima = '' 
                       AND sjh.sj_kecab = ? AND sjd.sjd_kode = a.brg_kode AND sjd.sjd_ukuran = b.brgd_ukuran
                 ), 0)
-            ) AS Sudah_Minta
+            ) AS Sudah_Minta,
+
+            -- Di dalam SELECT inner (subquery z), tambahkan setelah Sudah_Minta:
+            IFNULL((
+                SELECT SUM(mtd.mtd_jumlah) FROM tmintabarang_hdr mth 
+                JOIN tmintabarang_dtl mtd ON mtd.mtd_nomor = mth.mt_nomor 
+                WHERE (mth.mt_closing = 'N' AND mth.mt_close = 'N') 
+                  AND mth.mt_cab = ? AND mtd.mtd_kode = a.brg_kode AND mtd.mtd_ukuran = b.brgd_ukuran
+            ), 0) AS OTW_Minta,
+
+            IFNULL((
+                SELECT SUM(pld.pld_jumlah) FROM tpacking_list_hdr plh 
+                JOIN tpacking_list_dtl pld ON pld.pld_nomor = plh.pl_nomor 
+                WHERE plh.pl_status = 'O' 
+                  AND plh.pl_cab_tujuan = ? AND pld.pld_kode = a.brg_kode AND pld.pld_ukuran = b.brgd_ukuran
+            ), 0) AS OTW_PL,
+
+            IFNULL((
+                SELECT SUM(sjd.sjd_jumlah) FROM tdc_sj_hdr sjh 
+                JOIN tdc_sj_dtl sjd ON sjd.sjd_nomor = sjh.sj_nomor 
+                WHERE sjh.sj_noterima = '' 
+                  AND sjh.sj_kecab = ? AND sjd.sjd_kode = a.brg_kode AND sjd.sjd_ukuran = b.brgd_ukuran
+            ), 0) AS OTW_SJ
 
         FROM tbarangdc a
         JOIN tbarangdc_dtl b ON b.brgd_kode = a.brg_kode
