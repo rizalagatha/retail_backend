@@ -3,7 +3,8 @@ const pool = require("../config/database");
 const getCustomerReceivables = async (filters, user) => {
   const { cabang, customerKode } = filters;
 
-  // Query ini adalah optimasi dari query SQLMaster di Delphi
+  // PERBAIKAN: Join tpiutang_dtl menggunakan ph_nomor secara langsung
+  // agar perhitungannya 100% identik dengan hasil Export/Detail.
   const query = `
         SELECT 
             c.cus_kode AS kode,
@@ -12,34 +13,29 @@ const getCustomerReceivables = async (filters, user) => {
             c.cus_kota AS kota,
             IF(c.cus_aktif = 0, 'Aktif', 'Pasif') AS status,
             IFNULL(SUM(ph.ph_nominal), 0) AS nominalNota,
-            IFNULL(pd.total_kredit, 0) AS terbayar,
-            IFNULL(pd.total_debet - pd.total_kredit, 0) AS sisaPiutang
+            IFNULL(SUM(pd.terbayar), 0) AS terbayar,
+            IFNULL(SUM(pd.sisa), 0) AS sisaPiutang
         FROM tcustomer c
         LEFT JOIN tpiutang_hdr ph ON c.cus_kode = ph.ph_cus_kode 
             ${cabang !== "ALL" ? "AND LEFT(ph.ph_inv_nomor, 3) = ?" : ""}
         LEFT JOIN (
             SELECT 
-                LEFT(pd_ph_nomor, LENGTH(pd_ph_nomor) - 17) AS cus_kode,
-                ${
-                  cabang !== "ALL"
-                    ? "RIGHT(LEFT(pd_ph_nomor, LENGTH(pd_ph_nomor) - 14), 3) AS cabang,"
-                    : ""
-                }
-                SUM(pd_debet) AS total_debet,
-                SUM(pd_kredit) AS total_kredit
+                pd_ph_nomor,
+                SUM(pd_kredit) AS terbayar,
+                SUM(pd_debet - pd_kredit) AS sisa
             FROM tpiutang_dtl
-            GROUP BY cus_kode ${cabang !== "ALL" ? ", cabang" : ""}
-        ) pd ON c.cus_kode = pd.cus_kode ${
-          cabang !== "ALL" ? "AND pd.cabang = ?" : ""
-        }
+            GROUP BY pd_ph_nomor
+        ) pd ON ph.ph_nomor = pd.pd_ph_nomor
         ${customerKode ? "WHERE c.cus_kode = ?" : ""}
         GROUP BY c.cus_kode
         ORDER BY c.cus_nama;
     `;
 
   let params = [];
+  // Karena filter cabang sekarang hanya terjadi di tpiutang_hdr,
+  // parameter cabang cukup kita push 1 kali saja.
   if (cabang !== "ALL") {
-    params.push(cabang, cabang);
+    params.push(cabang);
   }
   if (customerKode) {
     params.push(customerKode);
@@ -57,7 +53,7 @@ const getCabangOptions = async (user) => {
   }
   const [rows] = await pool.query(
     query,
-    user.cabang !== "KDC" ? [user.cabang] : []
+    user.cabang !== "KDC" ? [user.cabang] : [],
   );
 
   if (user.cabang === "KDC") {
@@ -67,7 +63,7 @@ const getCabangOptions = async (user) => {
 };
 
 const getInvoiceList = async (customerKode, cabang) => {
-    let query = `
+  let query = `
         SELECT 
             h.ph_nomor AS nomor,
             h.ph_tanggal AS tanggal,
@@ -80,21 +76,21 @@ const getInvoiceList = async (customerKode, cabang) => {
         FROM tpiutang_hdr h 
         WHERE h.ph_cus_kode = ?
     `;
-    const params = [customerKode];
+  const params = [customerKode];
 
-    if (cabang !== 'ALL') {
-        query += ' AND LEFT(h.ph_inv_nomor, 3) = ?';
-        params.push(cabang);
-    }
-    query += ' ORDER BY h.ph_tanggal DESC, h.ph_inv_nomor';
-    
-    const [rows] = await pool.query(query, params);
-    return rows;
+  if (cabang !== "ALL") {
+    query += " AND LEFT(h.ph_inv_nomor, 3) = ?";
+    params.push(cabang);
+  }
+  query += " ORDER BY h.ph_tanggal DESC, h.ph_inv_nomor";
+
+  const [rows] = await pool.query(query, params);
+  return rows;
 };
 
 // Meniru 'loadpd' untuk mendapatkan detail pembayaran per invoice
 const getPaymentDetails = async (piutangHeaderNomor) => {
-    const query = `
+  const query = `
         SELECT 
             pd_tanggal AS tanggal,
             pd_uraian AS uraian,
@@ -105,8 +101,13 @@ const getPaymentDetails = async (piutangHeaderNomor) => {
         WHERE pd_ph_nomor = ? 
         ORDER BY pd_tanggal;
     `;
-    const [rows] = await pool.query(query, [piutangHeaderNomor]);
-    return rows;
+  const [rows] = await pool.query(query, [piutangHeaderNomor]);
+  return rows;
 };
 
-module.exports = { getCustomerReceivables, getCabangOptions, getInvoiceList, getPaymentDetails, };
+module.exports = {
+  getCustomerReceivables,
+  getCabangOptions,
+  getInvoiceList,
+  getPaymentDetails,
+};
