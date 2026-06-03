@@ -193,4 +193,10 @@ router.get(
   dashboardController.getSpkPendingApproval,
 );
 
+router.get(
+  "/auto-minta-analytics",
+  verifyToken,
+  dashboardController.getAutoMintaAnalytics,
+);
+
 module.exports = router;

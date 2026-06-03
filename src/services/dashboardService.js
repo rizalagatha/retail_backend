@@ -2232,6 +2232,79 @@ const getSpkPendingApproval = async (filters = {}) => {
   return rows;
 };
 
+const getAutoMintaAnalytics = async (user, filters = {}) => {
+  const { cabang = "ALL", startDate, endDate } = filters;
+
+  // Default filter 1 bulan terakhir jika tidak dikirim dari frontend
+  const start = startDate || format(startOfMonth(new Date()), "yyyy-MM-dd");
+  const end = endDate || format(endOfMonth(new Date()), "yyyy-MM-dd");
+
+  let branchFilter = "";
+  let params = [start, end];
+
+  if (user.cabang !== "KDC") {
+    branchFilter = "AND h.mt_cab = ?";
+    params.push(user.cabang);
+  } else if (cabang !== "ALL") {
+    branchFilter = "AND h.inv_cab = ?"; // Filter dropdown jika KDC yang melihat
+    params.push(cabang);
+  }
+
+  const query = `
+    SELECT 
+        h.mt_nomor AS nomor_mt,
+        DATE_FORMAT(h.mt_tanggal, '%Y-%m-%d') AS tanggal_mt,
+        h.mt_cab AS kode_cabang,
+        g.gdg_nama AS nama_cabang,
+        h.mt_ket AS keterangan,
+        
+        -- 1. Total Qty Yang Diminta Sistem
+        IFNULL((SELECT SUM(mtd_jumlah) FROM tmintabarang_dtl WHERE mtd_nomor = h.mt_nomor), 0) AS qty_minta,
+        
+        -- 2. Total Qty Yang Berhasil Masuk Packing List DC
+        IFNULL((
+            SELECT SUM(pld.pld_jumlah) 
+            FROM tpacking_list_hdr plh
+            JOIN tpacking_list_dtl pld ON pld.pld_nomor = plh.pl_nomor
+            WHERE plh.pl_mt_nomor = h.mt_nomor
+        ), 0) AS qty_packed,
+        
+        -- 3. Total Qty Yang Berhasil Menjadi Surat Jalan Final
+        IFNULL((
+            SELECT SUM(sjd.sjd_jumlah)
+            FROM tdc_sj_hdr sjh
+            JOIN tdc_sj_dtl sjd ON sjd.sjd_nomor = sjh.sj_nomor
+            WHERE sjh.sj_mt_nomor = h.mt_nomor
+        ), 0) AS qty_sent
+        
+    FROM tmintabarang_hdr h
+    LEFT JOIN tgudang g ON g.gdg_kode = h.mt_cab
+    WHERE h.mt_otomatis = 'Y' 
+      AND DATE(h.mt_tanggal) BETWEEN ? AND ?
+      ${branchFilter}
+    ORDER BY h.mt_tanggal ASC, h.mt_nomor ASC;
+  `;
+
+  const [rows] = await pool.query(query, params);
+
+  // Kalkulasi Rasio Efisiensi Pemenuhan di Sisi Node.js
+  const processedData = rows.map((row) => {
+    const qtyMinta = Number(row.qty_minta) || 0;
+    const qtyPacked = Number(row.qty_packed) || 0;
+    const qtySent = Number(row.qty_sent) || 0;
+
+    return {
+      ...row,
+      ratio_packing:
+        qtyMinta > 0 ? Number(((qtyPacked / qtyMinta) * 100).toFixed(1)) : 0,
+      ratio_sj:
+        qtyMinta > 0 ? Number(((qtySent / qtyMinta) * 100).toFixed(1)) : 0,
+    };
+  });
+
+  return processedData;
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -2268,4 +2341,5 @@ module.exports = {
   getDeadStockSalesPie,
   getDeadStockSalesDetail,
   getSpkPendingApproval,
+  getAutoMintaAnalytics,
 };

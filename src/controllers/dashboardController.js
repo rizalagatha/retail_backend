@@ -474,6 +474,21 @@ const getSpkPendingApproval = async (req, res, next) => {
   }
 };
 
+const getAutoMintaAnalytics = async (req, res) => {
+  try {
+    const data = await dashboardService.getAutoMintaAnalytics(
+      req.user,
+      req.query,
+    );
+    res.json(data);
+  } catch (error) {
+    console.error("Error in getAutoMintaAnalytics controller:", error);
+    res
+      .status(500)
+      .json({ message: "Gagal memuat analitik permintaan otomatis." });
+  }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -511,4 +526,5 @@ module.exports = {
   getDeadStockSalesPie,
   getDeadStockSalesDetail,
   getSpkPendingApproval,
+  getAutoMintaAnalytics,
 };
