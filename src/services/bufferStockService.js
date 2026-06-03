@@ -137,12 +137,22 @@ const getList = async (filters) => {
     brandFilter = 'AND a.brg_ktg <> ""';
   }
 
+  // --- [PERBAIKAN LOGIKA] ---
+  // Kita bungkus subquery lagi (menjadi z) agar nilai `Stok`, `MinBuffer`, dan `Sudah_Minta`
+  // bisa dipanggil langsung untuk menghitung `Harus_Minta`, bukan mengulang syntax-nya panjang lebar.
   const query = `
     SELECT 
-        y.*,
+        z.*,
+        -- Harus_Minta hanya mengejar MinBuffer, dan dikurangi barang yang sedang di jalan
+        GREATEST(0, IF(
+            (z.Stok + z.Sudah_Minta) < z.MinBuffer AND z.MinBuffer > 0, 
+            z.MinBuffer - (z.Stok + z.Sudah_Minta), 
+            0
+        )) AS Harus_Minta,
+        
         CASE
-            WHEN y.Harus_Minta > 0 THEN 'Harus Minta'
-            WHEN y.Sudah_Minta > 0 THEN 'Sudah Minta'
+            WHEN GREATEST(0, IF((z.Stok + z.Sudah_Minta) < z.MinBuffer AND z.MinBuffer > 0, z.MinBuffer - (z.Stok + z.Sudah_Minta), 0)) > 0 THEN 'Harus Minta'
+            WHEN z.Sudah_Minta > 0 THEN 'Sudah Minta'
             ELSE 'Cukup'
         END AS Status
     FROM (
@@ -159,17 +169,10 @@ const getList = async (filters) => {
                 WHERE m.mst_aktif = "Y" AND m.mst_cab = ? AND m.mst_brg_kode = a.brg_kode AND m.mst_ukuran = b.brgd_ukuran
             ), 0) AS Stok,
 
-            (IF(
-                IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif = "Y" AND m.mst_cab = ? AND m.mst_brg_kode = a.brg_kode AND m.mst_ukuran = b.brgd_ukuran), 0) < IFNULL(b2.brgd_min, 0) AND IFNULL(b2.brgd_min, 0) > 0, 
-                IFNULL(b2.brgd_max, 0) - IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif = "Y" AND m.mst_cab = ? AND m.mst_brg_kode = a.brg_kode AND m.mst_ukuran = b.brgd_ukuran), 0), 
-                0
-            )) AS Harus_Minta,
-
             -- =========================================================
-            -- [PERBAIKAN] GABUNGAN 3 FASE BARANG GANTUNG
+            -- GABUNGAN 3 FASE BARANG GANTUNG (Sudah_Minta)
             -- =========================================================
             (
-                -- 1. Fase Minta Barang (Belum masuk PL)
                 IFNULL((
                     SELECT SUM(mtd.mtd_jumlah) FROM tmintabarang_hdr mth 
                     JOIN tmintabarang_dtl mtd ON mtd.mtd_nomor = mth.mt_nomor 
@@ -177,7 +180,6 @@ const getList = async (filters) => {
                       AND mth.mt_cab = ? AND mtd.mtd_kode = a.brg_kode AND mtd.mtd_ukuran = b.brgd_ukuran
                 ), 0) 
                 +
-                -- 2. Fase Packing List (Sudah PL, Belum SJ)
                 IFNULL((
                     SELECT SUM(pld.pld_jumlah) FROM tpacking_list_hdr plh 
                     JOIN tpacking_list_dtl pld ON pld.pld_nomor = plh.pl_nomor 
@@ -185,7 +187,6 @@ const getList = async (filters) => {
                       AND plh.pl_cab_tujuan = ? AND pld.pld_kode = a.brg_kode AND pld.pld_ukuran = b.brgd_ukuran
                 ), 0) 
                 +
-                -- 3. Fase Surat Jalan (Sudah SJ, Belum Terima)
                 IFNULL((
                     SELECT SUM(sjd.sjd_jumlah) FROM tdc_sj_hdr sjh 
                     JOIN tdc_sj_dtl sjd ON sjd.sjd_nomor = sjh.sj_nomor 
@@ -201,20 +202,18 @@ const getList = async (filters) => {
         WHERE a.brg_aktif = 0 AND a.brg_logstok = "Y" AND a.brg_ktgp = "REGULER"
         ${bufferFilter}
         ${brandFilter}
-        ) y 
-        ORDER BY y.Nama, y.Ukuran
-    `;
+    ) z 
+    ORDER BY z.Nama, z.Ukuran
+  `;
 
-  // SEKARANG BUTUH 8 PARAMETER CABANG!
+  // Karena 3 parameter dihilangkan dari IF statement sebelumnya,
+  // parameternya sekarang susut dari 8 menjadi 5.
   const params = [
-    cabang,
-    cabang,
-    cabang,
-    cabang,
-    cabang,
-    cabang,
-    cabang,
-    cabang,
+    cabang, // Untuk Stok Fisik
+    cabang, // Untuk Minta (Fase 1)
+    cabang, // Untuk PL (Fase 2)
+    cabang, // Untuk SJ (Fase 3)
+    cabang, // Untuk Master Buffer b2
   ];
 
   const [rows] = await pool.query(query, params);

@@ -829,7 +829,10 @@ const generateAutomasiMintaBarang = async (user) => {
 
       // SYARAT RESTOCK: Stok efektif di bawah MIN
       if (stokEfektif < buf.stokmin && buf.stokmin > 0) {
-        const mino = buf.stokmax - stokEfektif; // Kebutuhan sampai MAX
+        // --- [PERBAIKAN LOGIKA] ---
+        // Kebutuhan hanya sampai menyentuh batas MINIMAL (bukan Maximal)
+        // Dan pastikan nilai mino dikurangi dengan barang yang sedang OTW (minta+pl+sj)
+        const mino = buf.stokmin - stokEfektif;
 
         if (mino > 0) {
           // CEK STOK DC
