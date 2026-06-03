@@ -61,14 +61,23 @@ const getList = async (filters) => {
 };
 
 const getDetails = async (nomor) => {
+  // [PERBAIKAN] Query diubah untuk join ke tmintabarang_hdr agar tahu cabang peminta
+  // Lalu join ke tbarangdc_dtl2 berdasarkan kode, ukuran, DAN cabang
   const query = `
     SELECT 
         d.mtd_kode AS Kode,
         IFNULL(b.brgd_barcode, '') AS Barcode,
-        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS Nama,
+        TRIM(CONCAT(
+            IFNULL(a.brg_jeniskaos, ''), ' ', 
+            IFNULL(a.brg_tipe, ''), ' ', 
+            IFNULL(a.brg_lengan, ''), ' ', 
+            IFNULL(a.brg_jeniskain, ''), ' ', 
+            IFNULL(a.brg_warna, '')
+        )) AS Nama,
         d.mtd_ukuran AS Ukuran,
-        IFNULL(b.brgd_min, 0) AS StokMinimal,
-        IFNULL(b.brgd_max, 0) AS StokMaximal,
+        -- Ambil buffer dari tbarangdc_dtl2 (Tabel yang menyimpan setting buffer per store)
+        IFNULL(b2.brgd_min, 0) AS StokMinimal,
+        IFNULL(b2.brgd_max, 0) AS StokMaximal,
         d.mtd_jumlah AS Jumlah,
         IFNULL((
             SELECT SUM(i.sjd_jumlah) FROM tdc_sj_hdr j
@@ -78,8 +87,13 @@ const getDetails = async (nomor) => {
                 AND i.sjd_ukuran = d.mtd_ukuran
         ), 0) AS SJ
     FROM tmintabarang_dtl d
+    JOIN tmintabarang_hdr h ON h.mt_nomor = d.mtd_nomor
     LEFT JOIN tbarangdc a ON a.brg_kode = d.mtd_kode
     LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mtd_kode AND b.brgd_ukuran = d.mtd_ukuran
+    -- JOIN ke tbarangdc_dtl2 dengan mencocokkan cabang (mt_cab)
+    LEFT JOIN tbarangdc_dtl2 b2 ON b2.brgd_kode = d.mtd_kode 
+                               AND b2.brgd_ukuran = d.mtd_ukuran 
+                               AND b2.brgd_cab = h.mt_cab
     WHERE d.mtd_nomor = ?
     ORDER BY d.mtd_kode, d.mtd_ukuran
     `;
