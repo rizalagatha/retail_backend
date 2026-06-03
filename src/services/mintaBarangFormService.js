@@ -716,11 +716,86 @@ const generateAutomasiMintaBarang = async (user) => {
     const today = format(new Date(), "yyyy-MM-dd");
 
     // =========================================================================
-    // 1. FETCH DATA MENTAH
+    // 1. CEK DUPLIKASI HARIAN
+    // =========================================================================
+    const [cekGenerate] = await connection.query(
+      `SELECT 1 FROM tmintabarang_hdr WHERE DATE(date_create) = ? AND mt_otomatis = 'Y' LIMIT 1`,
+      [today],
+    );
+    if (cekGenerate.length > 0) {
+      throw new Error(
+        "Automasi Minta Barang untuk hari ini sudah pernah dijalankan.",
+      );
+    }
+
+    // =========================================================================
+    // 2. DETEKSI JADWAL KIRIM H-1 (UNTUK BESOK)
+    // =========================================================================
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    // Ambil nama hari esok dalam format Indonesia & Huruf Besar
+    const indonesianDays = [
+      "MINGGU",
+      "SENIN",
+      "SELASA",
+      "RABU",
+      "KAMIS",
+      "JUMAT",
+      "SABTU",
+    ];
+    const tomorrowDayName = indonesianDays[tomorrow.getDay()];
+
+    // Ambil cabang dari jadwal rutin (Sementara dikunci K03 & K11 sesuai request)
+    const [scheduledStores] = await connection.query(
+      `
+      SELECT cabang_kode 
+      FROM tmaster_jadwal_rutin 
+      WHERE cabang_kode IN ('K03', 'K11')
+        AND (kiriman_1 = ? OR kiriman_2 = ?)
+    `,
+      [tomorrowDayName, tomorrowDayName],
+    );
+
+    // Jika besok tidak ada jadwal kirim untuk K03 maupun K11, stop proses disini
+    if (scheduledStores.length === 0) {
+      await connection.rollback();
+      return {
+        message: `Hari ini tidak ada antrean. Besok (${tomorrowDayName}) tidak ada jadwal pengiriman untuk K03 maupun K11.`,
+        jalur_hijau_docs: 0,
+        jalur_kuning_items: 0,
+      };
+    }
+
+    // Tampung list cabang yang aktif besok ke dalam array, contoh: ['K03', 'K11']
+    const activeCabangs = scheduledStores.map((row) => row.cabang_kode);
+
+    // =========================================================================
+    // 2.5 [BARU] AUTO-CLOSE PERMINTAAN OTOMATIS LAMA YANG BELUM DIPROSES DC
+    // =========================================================================
+    const [closeResult] = await connection.query(
+      `
+      UPDATE tmintabarang_hdr 
+      SET mt_closing = 'Y', mt_close = 'Y', mt_ket = CONCAT(mt_ket, ' [AUTO-CLOSED]'), user_modified = 'SYSTEM', date_modified = NOW()
+      WHERE mt_otomatis = 'Y' 
+        AND mt_closing = 'N' 
+        AND mt_cab IN (?)
+        AND mt_nomor NOT IN (SELECT pl_mt_nomor FROM tpacking_list_hdr WHERE pl_mt_nomor <> '')
+    `,
+      [activeCabangs],
+    );
+    console.log(
+      `[CRON] Menutup ${closeResult.affectedRows} dokumen Minta Barang otomatis sebelumnya untuk cabang:`,
+      activeCabangs,
+    );
+
+    // =========================================================================
+    // 3. FETCH DATA MENTAH BERDASARKAN CABANG AKTIF
     // =========================================================================
 
-    // A. Ambil Config Buffer PER CABANG dari tbarangdc_dtl2 (Khusus K03 & K11)
-    const [storeBuffers] = await connection.query(`
+    // A. Ambil Config Buffer Dtl2 hanya untuk cabang yang terjadwal besok
+    const [storeBuffers] = await connection.query(
+      `
       SELECT 
         b2.brgd_cab AS cabang, 
         b2.brgd_kode AS kode, 
@@ -729,12 +804,13 @@ const generateAutomasiMintaBarang = async (user) => {
         b2.brgd_max AS stokmax
       FROM tbarangdc_dtl2 b2
       JOIN tbarangdc a ON a.brg_kode = b2.brgd_kode
-      JOIN tgudang g ON g.gdg_kode = b2.brgd_cab
       WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y' 
         AND b2.brgd_min > 0 
-        AND g.gdg_kode IN ('K03', 'K11')
-        AND a.brg_warna NOT LIKE '%STICKER%'   -- [TAMBAH]
-    `);
+        AND b2.brgd_cab IN (?)
+        AND a.brg_warna NOT LIKE '%STICKER%'
+    `,
+      [activeCabangs],
+    );
 
     // B. Ambil Stok Fisik Seluruh Toko
     const [stokToko] = await connection.query(`
@@ -771,7 +847,7 @@ const generateAutomasiMintaBarang = async (user) => {
       GROUP BY sjh.sj_kecab, sjd.sjd_kode, sjd.sjd_ukuran
     `);
 
-    // F. [BARU] Ambil Stok DC (Pusat)
+    // F. Ambil Stok DC (Pusat)
     const [stokDc] = await connection.query(`
       SELECT mst_brg_kode AS kode, mst_ukuran AS ukuran, SUM(mst_stok_in - mst_stok_out) AS stok
       FROM tmasterstok 
@@ -781,16 +857,16 @@ const generateAutomasiMintaBarang = async (user) => {
 
     // G. Ambil Jenis Kain per Kode Barang
     const [jenisKainData] = await connection.query(`
-  SELECT brg_kode AS kode, brg_jeniskain AS jeniskain
-  FROM tbarangdc
-  WHERE brg_aktif = 0 AND brg_logstok = 'Y'
-`);
+      SELECT brg_kode AS kode, brg_jeniskain AS jeniskain
+      FROM tbarangdc
+      WHERE brg_aktif = 0 AND brg_logstok = 'Y'
+    `);
 
     // =========================================================================
-    // 2. MAPPING HASH MAP
+    // 4. MAPPING HASH MAP
     // =========================================================================
     const makeKey = (c, k, u) => `${c}|${k}|${u}`;
-    const makeKeyDc = (k, u) => `${k}|${u}`; // Key khusus DC tanpa cabang
+    const makeKeyDc = (k, u) => `${k}|${u}`;
 
     const mapStokToko = new Map(
       stokToko.map((r) => [
@@ -827,10 +903,10 @@ const generateAutomasiMintaBarang = async (user) => {
     );
 
     // =========================================================================
-    // 3. HITUNG DEMAND DAN PISAHKAN JALUR NORMAL VS JALUR KOSONG
+    // 5. HITUNG DEMAND DAN PISAHKAN JALUR NORMAL VS JALUR KOSONG
     // =========================================================================
-    const autoMintaNormal = {}; // Untuk Stok DC > 10
-    const autoMintaKosong = {}; // Untuk Stok DC <= 10
+    const autoMintaNormal = {};
+    const autoMintaKosong = {};
 
     for (const buf of storeBuffers) {
       const k = makeKey(buf.cabang, buf.kode, buf.ukuran);
@@ -841,21 +917,15 @@ const generateAutomasiMintaBarang = async (user) => {
 
       const stokEfektif = stokFisik + minta + pl + sj;
 
-      // SYARAT RESTOCK: Stok efektif di bawah MIN
       if (stokEfektif < buf.stokmin && buf.stokmin > 0) {
-        // --- [PERBAIKAN LOGIKA] ---
-        // Kebutuhan hanya sampai menyentuh batas MINIMAL (bukan Maximal)
-        // Dan pastikan nilai mino dikurangi dengan barang yang sedang OTW (minta+pl+sj)
+        // [FIX] Memenuhi batas MIN BUFFER saja sesuai request terbaru
         const mino = buf.stokmin - stokFisik;
 
         if (mino > 0) {
-          // CEK STOK DC
           const dcKey = makeKeyDc(buf.kode, buf.ukuran);
           const currentDcStock = mapStokDc.get(dcKey) || 0;
-
-          // [BARU] Ambil jenis kain
           const jenisKain = mapJenisKain.get(buf.kode) || "LAINNYA";
-          const groupKey = `${buf.cabang}|${jenisKain}`; // ← key baru
+          const groupKey = `${buf.cabang}|${jenisKain}`;
 
           const payload = {
             kode: buf.kode,
@@ -866,11 +936,9 @@ const generateAutomasiMintaBarang = async (user) => {
           };
 
           if (currentDcStock > 10) {
-            // Jalur Normal — tetap per cabang+jeniskain
             if (!autoMintaNormal[groupKey]) autoMintaNormal[groupKey] = [];
             autoMintaNormal[groupKey].push(payload);
           } else {
-            // Jalur Kosong — cukup per cabang saja, tidak perlu jenis kain
             if (!autoMintaKosong[buf.cabang]) autoMintaKosong[buf.cabang] = [];
             autoMintaKosong[buf.cabang].push(payload);
           }
@@ -879,13 +947,12 @@ const generateAutomasiMintaBarang = async (user) => {
     }
 
     // =========================================================================
-    // 4. INSERT DATABASE
+    // 6. INSERT DATABASE
     // =========================================================================
     const maxNumberMap = {};
     const timestampRec = format(new Date(), "yyyyMMddHHmmssSSS");
     let autoDocsCount = 0;
 
-    // Helper untuk generate nomor dokumen
     const getNextNomor = async (cabangTarget) => {
       const prefix = `${cabangTarget}MT${format(new Date(), "yyMM")}`;
       if (maxNumberMap[prefix] === undefined) {
@@ -901,9 +968,9 @@ const generateAutomasiMintaBarang = async (user) => {
       return { mtNomor, idrec };
     };
 
-    // --- INSERT JALUR NORMAL ---
+    // --- INSERT JALUR NORMAL (CHUNKING 120) ---
     for (const [groupKey, items] of Object.entries(autoMintaNormal)) {
-      const [cabang, jenisKain] = groupKey.split("|"); // ← split key
+      const [cabang, jenisKain] = groupKey.split("|");
       const keterangan = `AUTO REPLENISHMENT - ${jenisKain}`;
 
       const chunks = [];
@@ -937,9 +1004,9 @@ const generateAutomasiMintaBarang = async (user) => {
         const { mtNomor, idrec } = await getNextNomor(cabang);
         await connection.query(
           `INSERT INTO tmintabarang_hdr 
-       (mt_idrec, mt_nomor, mt_tanggal, mt_so, mt_cus, mt_cab, mt_ket, mt_otomatis, user_create, date_create) 
-       VALUES (?, ?, NOW(), '', '', ?, ?, 'Y', ?, NOW())`,
-          [idrec, mtNomor, cabang, keterangan, user.kode], // ← keterangan dinamis
+           (mt_idrec, mt_nomor, mt_tanggal, mt_so, mt_cus, mt_cab, mt_ket, mt_otomatis, user_create, date_create) 
+           VALUES (?, ?, NOW(), '', '', ?, ?, 'Y', ?, NOW())`,
+          [idrec, mtNomor, cabang, keterangan, user.kode],
         );
         const dtlValues = chunk.map((c) => [
           idrec,
@@ -956,17 +1023,16 @@ const generateAutomasiMintaBarang = async (user) => {
       }
     }
 
-    // --- INSERT JALUR KOSONG --- tidak ada chunking, langsung insert semua
+    // --- INSERT JALUR KOSONG (TANPA LIMIT) ---
     for (const [cabang, items] of Object.entries(autoMintaKosong)) {
-      // [FIX] key sekarang hanya cabang, tidak perlu split
-      const keterangan = `AUTO REPLENISHMENT - STOK DC KOSONG`;
-
       if (items.length === 0) continue;
+      const keterangan = `AUTO REPLENISHMENT - STOK DC KOSONG`;
       const { mtNomor, idrec } = await getNextNomor(cabang);
+
       await connection.query(
         `INSERT INTO tmintabarang_hdr 
-     (mt_idrec, mt_nomor, mt_tanggal, mt_so, mt_cus, mt_cab, mt_ket, mt_otomatis, user_create, date_create) 
-     VALUES (?, ?, NOW(), '', '', ?, ?, 'Y', ?, NOW())`,
+         (mt_idrec, mt_nomor, mt_tanggal, mt_so, mt_cus, mt_cab, mt_ket, mt_otomatis, user_create, date_create) 
+         VALUES (?, ?, NOW(), '', '', ?, ?, 'Y', ?, NOW())`,
         [idrec, mtNomor, cabang, keterangan, user.kode],
       );
       const dtlValues = items.map((c) => [
@@ -986,7 +1052,7 @@ const generateAutomasiMintaBarang = async (user) => {
     await connection.commit();
 
     return {
-      message: `Berhasil! ${autoDocsCount} Dokumen Minta Barang berhasil di-generate.`,
+      message: `Berhasil! ${autoDocsCount} Dokumen Minta Barang berhasil di-generate otomatis untuk jadwal besok (${tomorrowDayName}).`,
       jalur_hijau_docs: autoDocsCount,
       jalur_kuning_items: 0,
     };

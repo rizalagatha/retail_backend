@@ -7,6 +7,7 @@ const path = require("path");
 const cron = require("node-cron");
 const terimaSjService = require("./services/terimaSjService");
 const terimaReturService = require("./services/terimaReturService");
+const mintaBarangFormService = require("./services/mintaBarangFormService");
 require("dotenv/config"); // Memuat variabel dari .env
 // === Global Rounding Policy ===
 global.ROUNDING_POLICY = process.env.ROUNDING_POLICY || "ROUND_1";
@@ -354,6 +355,27 @@ app.get("/api/memos/stream/:filename", (req, res) => {
 //     timezone: "Asia/Jakarta", // Memastikan berjalan jam 00:05 WIB
 //   },
 // );
+
+cron.schedule(
+  "30 23 * * *",
+  async () => {
+    console.log("--- [CRON] Memulai Automasi Minta Barang ---");
+    try {
+      // Karena ini dijalankan sistem, kita buat user "Palsu"
+      const systemUser = { kode: "SYSTEM", cabang: "KDC" };
+
+      const result =
+        await mintaBarangFormService.generateAutomasiMintaBarang(systemUser);
+      console.log(`✅ [CRON] Automasi Minta Barang Selesai: ${result.message}`);
+    } catch (error) {
+      console.error(`❌ [CRON] Error Automasi Minta Barang: ${error.message}`);
+    }
+  },
+  {
+    scheduled: true,
+    timezone: "Asia/Jakarta",
+  },
+);
 
 // Menggunakan Rute
 app.use("/api/auth", clientCertAuth, authRoutes);
