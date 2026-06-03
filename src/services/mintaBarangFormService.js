@@ -716,20 +716,7 @@ const generateAutomasiMintaBarang = async (user) => {
     const today = format(new Date(), "yyyy-MM-dd");
 
     // =========================================================================
-    // 1. CEK DUPLIKASI HARIAN
-    // =========================================================================
-    const [cekGenerate] = await connection.query(
-      `SELECT 1 FROM tminta_alokasi WHERE tanggal = ? LIMIT 1`,
-      [today],
-    );
-    if (cekGenerate.length > 0) {
-      throw new Error(
-        "Automasi Minta Barang untuk hari ini sudah pernah dijalankan.",
-      );
-    }
-
-    // =========================================================================
-    // 2. FETCH DATA MENTAH
+    // 1. FETCH DATA MENTAH
     // =========================================================================
 
     // A. Ambil Config Buffer PER CABANG dari tbarangdc_dtl2 (Khusus K03 & K11)
@@ -792,7 +779,7 @@ const generateAutomasiMintaBarang = async (user) => {
     `);
 
     // =========================================================================
-    // 3. MAPPING HASH MAP
+    // 2. MAPPING HASH MAP
     // =========================================================================
     const makeKey = (c, k, u) => `${c}|${k}|${u}`;
     const makeKeyDc = (k, u) => `${k}|${u}`; // Key khusus DC tanpa cabang
@@ -826,7 +813,7 @@ const generateAutomasiMintaBarang = async (user) => {
     );
 
     // =========================================================================
-    // 4. HITUNG DEMAND DAN PISAHKAN JALUR NORMAL VS JALUR KOSONG
+    // 3. HITUNG DEMAND DAN PISAHKAN JALUR NORMAL VS JALUR KOSONG
     // =========================================================================
     const autoMintaNormal = {}; // Untuk Stok DC > 10
     const autoMintaKosong = {}; // Untuk Stok DC <= 10
@@ -865,7 +852,7 @@ const generateAutomasiMintaBarang = async (user) => {
     }
 
     // =========================================================================
-    // 5. INSERT DATABASE
+    // 4. INSERT DATABASE
     // =========================================================================
     const maxNumberMap = {};
     const timestampRec = format(new Date(), "yyyyMMddHHmmssSSS");
@@ -943,7 +930,7 @@ const generateAutomasiMintaBarang = async (user) => {
       }
     }
 
-    // --- 5B. INSERT JALUR KOSONG (1 Dokumen Utuh per Cabang tanpa Limit) ---
+    // --- 4B. INSERT JALUR KOSONG (1 Dokumen Utuh per Cabang tanpa Limit) ---
     for (const [cabang, items] of Object.entries(autoMintaKosong)) {
       if (items.length === 0) continue;
 
@@ -970,12 +957,6 @@ const generateAutomasiMintaBarang = async (user) => {
       );
       autoDocsCount++;
     }
-
-    // Insert log ke tminta_alokasi (Optional, agar besok jalan lagi)
-    await connection.query(
-      `INSERT INTO tminta_alokasi (tanggal, cabang) VALUES (?, ?)`,
-      [today, user.cabang],
-    );
 
     await connection.commit();
 
