@@ -745,9 +745,7 @@ const generateAutomasiMintaBarang = async (user) => {
       JOIN tgudang g ON g.gdg_kode = b2.brgd_cab
       WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y' 
         AND b2.brgd_min > 0 
-        AND g.gdg_kode REGEXP '^K[0-9]+' 
-        AND g.gdg_kode NOT IN ('KDC', 'KPR', 'KON', 'K04', 'K05')
-        -- AND g.gdg_kode = 'K10'  <-- Pakai ini jika ingin test K10 saja
+        AND g.gdg_kode IN ('K03', 'K11') -- <--- HANYA AMBIL K03 DAN K11
     `);
 
     // B. Ambil Stok Fisik Seluruh Toko
