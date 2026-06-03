@@ -846,7 +846,7 @@ const generateAutomasiMintaBarang = async (user) => {
         // --- [PERBAIKAN LOGIKA] ---
         // Kebutuhan hanya sampai menyentuh batas MINIMAL (bukan Maximal)
         // Dan pastikan nilai mino dikurangi dengan barang yang sedang OTW (minta+pl+sj)
-        const mino = buf.stokmin - stokEfektif;
+        const mino = buf.stokmin - stokFisik;
 
         if (mino > 0) {
           // CEK STOK DC
