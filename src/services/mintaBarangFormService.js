@@ -729,10 +729,10 @@ const generateAutomasiMintaBarang = async (user) => {
     }
 
     // =========================================================================
-    // 2. FETCH DATA MENTAH (MENGGUNAKAN tbarangdc_dtl2 PER CABANG)
+    // 2. FETCH DATA MENTAH
     // =========================================================================
 
-    // A. Ambil Config Buffer PER CABANG dari tbarangdc_dtl2
+    // A. Ambil Config Buffer PER CABANG dari tbarangdc_dtl2 (Khusus K03 & K11)
     const [storeBuffers] = await connection.query(`
       SELECT 
         b2.brgd_cab AS cabang, 
@@ -745,7 +745,7 @@ const generateAutomasiMintaBarang = async (user) => {
       JOIN tgudang g ON g.gdg_kode = b2.brgd_cab
       WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y' 
         AND b2.brgd_min > 0 
-        AND g.gdg_kode IN ('K03', 'K11') -- <--- HANYA AMBIL K03 DAN K11
+        AND g.gdg_kode IN ('K03', 'K11')
     `);
 
     // B. Ambil Stok Fisik Seluruh Toko
@@ -756,7 +756,7 @@ const generateAutomasiMintaBarang = async (user) => {
       GROUP BY mst_cab, mst_brg_kode, mst_ukuran
     `);
 
-    // C. Ambil Permintaan Gantung (Sudah Minta)
+    // C. Ambil Permintaan Gantung
     const [sudahMinta] = await connection.query(`
       SELECT mth.mt_cab AS cabang, mtd.mtd_kode AS kode, mtd.mtd_ukuran AS ukuran, SUM(mtd.mtd_jumlah) AS qty
       FROM tmintabarang_hdr mth
@@ -765,7 +765,7 @@ const generateAutomasiMintaBarang = async (user) => {
       GROUP BY mth.mt_cab, mtd.mtd_kode, mtd.mtd_ukuran
     `);
 
-    // D. Ambil Packing List (Belum SJ)
+    // D. Ambil Packing List Gantung
     const [plGantung] = await connection.query(`
       SELECT plh.pl_cab_tujuan AS cabang, pld.pld_kode AS kode, pld.pld_ukuran AS ukuran, SUM(pld.pld_jumlah) AS qty
       FROM tpacking_list_hdr plh
@@ -774,7 +774,7 @@ const generateAutomasiMintaBarang = async (user) => {
       GROUP BY plh.pl_cab_tujuan, pld.pld_kode, pld.pld_ukuran
     `);
 
-    // E. Ambil Surat Jalan yang Belum Diterima Toko
+    // E. Ambil Surat Jalan Gantung
     const [sjGantung] = await connection.query(`
       SELECT sjh.sj_kecab AS cabang, sjd.sjd_kode AS kode, sjd.sjd_ukuran AS ukuran, SUM(sjd.sjd_jumlah) AS qty
       FROM tdc_sj_hdr sjh
@@ -783,12 +783,19 @@ const generateAutomasiMintaBarang = async (user) => {
       GROUP BY sjh.sj_kecab, sjd.sjd_kode, sjd.sjd_ukuran
     `);
 
-    // (STOK DC DIHAPUS - TIDAK DIPERLUKAN LAGI)
+    // F. [BARU] Ambil Stok DC (Pusat)
+    const [stokDc] = await connection.query(`
+      SELECT mst_brg_kode AS kode, mst_ukuran AS ukuran, SUM(mst_stok_in - mst_stok_out) AS stok
+      FROM tmasterstok 
+      WHERE mst_aktif = 'Y' AND mst_cab = 'KDC'
+      GROUP BY mst_brg_kode, mst_ukuran
+    `);
 
     // =========================================================================
     // 3. MAPPING HASH MAP
     // =========================================================================
     const makeKey = (c, k, u) => `${c}|${k}|${u}`;
+    const makeKeyDc = (k, u) => `${k}|${u}`; // Key khusus DC tanpa cabang
 
     const mapStokToko = new Map(
       stokToko.map((r) => [
@@ -814,11 +821,15 @@ const generateAutomasiMintaBarang = async (user) => {
         Number(r.qty),
       ]),
     );
+    const mapStokDc = new Map(
+      stokDc.map((r) => [makeKeyDc(r.kode, r.ukuran), Number(r.stok)]),
+    );
 
     // =========================================================================
-    // 4. HITUNG DEMAND DAN LANGSUNG MASUKKAN KE JALUR HIJAU (AUTO)
+    // 4. HITUNG DEMAND DAN PISAHKAN JALUR NORMAL VS JALUR KOSONG
     // =========================================================================
-    const autoMinta = {};
+    const autoMintaNormal = {}; // Untuk Stok DC > 10
+    const autoMintaKosong = {}; // Untuk Stok DC <= 10
 
     for (const buf of storeBuffers) {
       const k = makeKey(buf.cabang, buf.kode, buf.ukuran);
@@ -834,27 +845,35 @@ const generateAutomasiMintaBarang = async (user) => {
         const mino = buf.stokmax - stokEfektif; // Kebutuhan sampai MAX
 
         if (mino > 0) {
-          if (!autoMinta[buf.cabang]) autoMinta[buf.cabang] = [];
+          // CEK STOK DC
+          const dcKey = makeKeyDc(buf.kode, buf.ukuran);
+          const currentDcStock = mapStokDc.get(dcKey) || 0;
 
-          autoMinta[buf.cabang].push({
-            kode: buf.kode,
-            ukuran: buf.ukuran,
-            mino: mino,
-          });
+          const payload = { kode: buf.kode, ukuran: buf.ukuran, mino: mino };
+
+          if (currentDcStock > 10) {
+            // Masuk Jalur Normal
+            if (!autoMintaNormal[buf.cabang]) autoMintaNormal[buf.cabang] = [];
+            autoMintaNormal[buf.cabang].push(payload);
+          } else {
+            // Masuk Jalur Kosong
+            if (!autoMintaKosong[buf.cabang]) autoMintaKosong[buf.cabang] = [];
+            autoMintaKosong[buf.cabang].push(payload);
+          }
         }
       }
     }
 
     // =========================================================================
-    // 5. INSERT DATABASE (LANGSUNG DOKUMEN MT DENGAN LIMIT 120 PCS)
+    // 5. INSERT DATABASE
     // =========================================================================
     const maxNumberMap = {};
     const timestampRec = format(new Date(), "yyyyMMddHHmmssSSS");
     let autoDocsCount = 0;
 
-    for (const [cabang, items] of Object.entries(autoMinta)) {
-      const prefix = `${cabang}MT${format(new Date(), "yyMM")}`;
-
+    // Helper untuk generate nomor dokumen
+    const getNextNomor = async (cabangTarget) => {
+      const prefix = `${cabangTarget}MT${format(new Date(), "yyMM")}`;
       if (maxNumberMap[prefix] === undefined) {
         const [maxRows] = await connection.query(
           `SELECT IFNULL(MAX(RIGHT(mt_nomor, 4)), 0) as maxNum FROM tmintabarang_hdr WHERE LEFT(mt_nomor, 9) = ?`,
@@ -862,51 +881,46 @@ const generateAutomasiMintaBarang = async (user) => {
         );
         maxNumberMap[prefix] = parseInt(maxRows[0].maxNum, 10);
       }
+      maxNumberMap[prefix]++;
+      const mtNomor = `${prefix}${String(10000 + maxNumberMap[prefix]).slice(1)}`;
+      const idrec = `${cabangTarget}MT${timestampRec}${String(maxNumberMap[prefix]).slice(-3)}`;
+      return { mtNomor, idrec };
+    };
 
-      // --- ALGORITMA PEMECAH KERANJANG (MAX 120 PCS) ---
+    // --- 5A. INSERT JALUR NORMAL (Limit 120 Pcs per Dokumen) ---
+    for (const [cabang, items] of Object.entries(autoMintaNormal)) {
       const chunks = [];
       let currentChunk = [];
       let currentSum = 0;
       const MAX_QTY_PER_DOC = 120;
 
+      // Algoritma Pemecah Keranjang
       for (const item of items) {
         let remainingQty = item.mino;
-
         while (remainingQty > 0) {
           let spaceLeft = MAX_QTY_PER_DOC - currentSum;
-
-          // Jika penuh (120), siapkan dokumen baru
           if (spaceLeft === 0) {
             chunks.push(currentChunk);
             currentChunk = [];
             currentSum = 0;
             spaceLeft = MAX_QTY_PER_DOC;
           }
-
           let qtyToTake = Math.min(remainingQty, spaceLeft);
-
           currentChunk.push({
             kode: item.kode,
             ukuran: item.ukuran,
             mino: qtyToTake,
           });
-
           currentSum += qtyToTake;
           remainingQty -= qtyToTake;
         }
       }
+      if (currentChunk.length > 0) chunks.push(currentChunk);
 
-      if (currentChunk.length > 0) {
-        chunks.push(currentChunk);
-      }
-
-      // --- EKSEKUSI INSERT PER KERANJANG ---
+      // Eksekusi Insert Normal
       for (const chunk of chunks) {
-        maxNumberMap[prefix]++;
-        const mtNomor = `${prefix}${String(10000 + maxNumberMap[prefix]).slice(1)}`;
-        const idrec = `${cabang}MT${timestampRec}${String(maxNumberMap[prefix]).slice(-3)}`;
+        const { mtNomor, idrec } = await getNextNomor(cabang);
 
-        // INSERT HEADER
         await connection.query(
           `INSERT INTO tmintabarang_hdr 
            (mt_idrec, mt_nomor, mt_tanggal, mt_so, mt_cus, mt_cab, mt_ket, mt_otomatis, user_create, date_create) 
@@ -914,30 +928,60 @@ const generateAutomasiMintaBarang = async (user) => {
           [idrec, mtNomor, cabang, user.kode],
         );
 
-        // INSERT DETAIL
-        const dtlValues = chunk.map((cItem) => [
+        const dtlValues = chunk.map((c) => [
           idrec,
           mtNomor,
-          cItem.kode,
-          cItem.ukuran,
-          cItem.mino,
+          c.kode,
+          c.ukuran,
+          c.mino,
         ]);
-
         await connection.query(
           `INSERT INTO tmintabarang_dtl (mtd_idrec, mtd_nomor, mtd_kode, mtd_ukuran, mtd_jumlah) VALUES ?`,
           [dtlValues],
         );
-
         autoDocsCount++;
       }
     }
+
+    // --- 5B. INSERT JALUR KOSONG (1 Dokumen Utuh per Cabang tanpa Limit) ---
+    for (const [cabang, items] of Object.entries(autoMintaKosong)) {
+      if (items.length === 0) continue;
+
+      const { mtNomor, idrec } = await getNextNomor(cabang);
+
+      // Keterangan khusus untuk dokumen ini
+      await connection.query(
+        `INSERT INTO tmintabarang_hdr 
+         (mt_idrec, mt_nomor, mt_tanggal, mt_so, mt_cus, mt_cab, mt_ket, mt_otomatis, user_create, date_create) 
+         VALUES (?, ?, NOW(), '', '', ?, 'AUTO REPLENISHMENT - STOK DC KOSONG', 'Y', ?, NOW())`,
+        [idrec, mtNomor, cabang, user.kode],
+      );
+
+      const dtlValues = items.map((c) => [
+        idrec,
+        mtNomor,
+        c.kode,
+        c.ukuran,
+        c.mino,
+      ]);
+      await connection.query(
+        `INSERT INTO tmintabarang_dtl (mtd_idrec, mtd_nomor, mtd_kode, mtd_ukuran, mtd_jumlah) VALUES ?`,
+        [dtlValues],
+      );
+      autoDocsCount++;
+    }
+
+    // Insert log ke tminta_alokasi (Optional, agar besok jalan lagi)
+    await connection.query(`INSERT INTO tminta_alokasi (tanggal) VALUES (?)`, [
+      today,
+    ]);
 
     await connection.commit();
 
     return {
       message: `Berhasil! ${autoDocsCount} Dokumen Minta Barang berhasil di-generate.`,
       jalur_hijau_docs: autoDocsCount,
-      jalur_kuning_items: 0, // Selalu 0 karena tidak ada Modal Review
+      jalur_kuning_items: 0,
     };
   } catch (error) {
     await connection.rollback();
