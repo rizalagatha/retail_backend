@@ -357,7 +357,7 @@ app.get("/api/memos/stream/:filename", (req, res) => {
 // );
 
 cron.schedule(
-  "30 23 * * *",
+  "0 9 * * *",
   async () => {
     console.log("--- [CRON] Memulai Automasi Minta Barang ---");
     try {
@@ -373,7 +373,7 @@ cron.schedule(
   },
   {
     scheduled: true,
-    timezone: "Asia/Jakarta",
+    timezone: "Asia/Jakarta", // Memastikan berjalan jam 06:00 WIB
   },
 );
 
