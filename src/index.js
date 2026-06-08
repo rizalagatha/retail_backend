@@ -357,7 +357,7 @@ app.get("/api/memos/stream/:filename", (req, res) => {
 // );
 
 cron.schedule(
-  "0 9 * * *",
+  "0 6 * * *",
   async () => {
     console.log("--- [CRON] Memulai Automasi Minta Barang ---");
     try {
