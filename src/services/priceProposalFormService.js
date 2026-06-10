@@ -218,7 +218,8 @@ const getProposalForEdit = async (nomor) => {
     // imageUrl = `${process.env.BASE_URL || "http://192.168.1.73:8000"}/images/${cabang}/${nomor}.jpg`;
 
     // PERBAIKAN: Gunakan path relatif agar mengikuti protokol HTTPS halaman saat ini
-    imageUrl = `/images/${cabang}/${nomor}.jpg`;
+    const timeStamp = Date.now();
+    imageUrl = `/images/${cabang}/${nomor}.jpg?t=${timeStamp}`;
   }
 
   // 2. Ambil data detail ukuran/size
