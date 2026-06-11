@@ -189,7 +189,7 @@ const getCustomerDetails = async (kode, gudang) => {
  * @description Menyimpan data Penawaran (Baru & Ubah).
  */
 const saveOffer = async (data) => {
-  const { header, footer, details, dps, user, isNew } = data;
+  const { header, footer, details, dps, user, isNew, tipeKunjungan } = data;
   const connection = await pool.getConnection();
   await connection.beginTransaction();
 
@@ -272,6 +272,35 @@ const saveOffer = async (data) => {
         header.nomorPromo || null,
         nomorPenawaran,
       ]);
+    }
+
+    // [BARU] CATAT KUNJUNGAN CUSTOMER (Mencegah Duplikasi)
+    if (
+      tipeKunjungan &&
+      (tipeKunjungan === "STORE" || tipeKunjungan === "WA")
+    ) {
+      try {
+        // Gunakan INSERT IGNORE agar jika sudah ada di hari yang sama, dia tidak error tapi dilewati saja
+        await connection.query(
+          `INSERT IGNORE INTO tkunjungan_customer 
+           (tanggal, cabang, cus_kode, tipe_kunjungan, sumber_dokumen, nomor_dokumen, user_create) 
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            header.tanggal,
+            user.cabang,
+            header.customer.kode,
+            tipeKunjungan,
+            "PENAWARAN",
+            nomorPenawaran,
+            user.kode,
+          ],
+        );
+      } catch (visitError) {
+        console.warn(
+          "Gagal mencatat kunjungan (mungkin duplikat):",
+          visitError.message,
+        );
+      }
     }
 
     // 2. SIMPAN DETAIL (Dukungan Item Custom)

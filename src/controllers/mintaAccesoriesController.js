@@ -59,10 +59,19 @@ const checkUnapproved = async (req, res) => {
 const approveRealisasi = async (req, res) => {
   try {
     const { prominNomor } = req.params;
-    await service.approveRealisasi(prominNomor);
-    res.json({ message: "Realisasi berhasil di-approve." });
+    const result = await service.approveRealisasi(
+      prominNomor,
+      req.user.kode,
+      req.user.cabang, // ← tambah ini
+    );
+    res.json(result);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    const isValidationError = [
+      "sudah diapprove",
+      "tidak ditemukan",
+      "kosong",
+    ].some((msg) => error.message.toLowerCase().includes(msg));
+    res.status(isValidationError ? 400 : 500).json({ message: error.message });
   }
 };
 

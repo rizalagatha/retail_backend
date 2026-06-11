@@ -120,11 +120,31 @@ const loadItemsFromPackingList = async (req, res) => {
 
 const searchSoBordirGlobal = async (req, res) => {
   try {
-    const { term, page = 1, itemsPerPage = 10 } = req.query;
+    const { term, page = 1, itemsPerPage = 10, cabang } = req.query;
+
     const data = await sjFormService.searchSoBordirGlobal(
       term,
       page,
       itemsPerPage,
+      cabang,
+    );
+
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const searchBahanPenolong = async (req, res) => {
+  try {
+    const { term = "", page = 1, itemsPerPage = 10, cabang } = req.query;
+    if (!cabang)
+      return res.status(400).json({ message: "Parameter cabang diperlukan." });
+    const data = await sjFormService.searchBahanPenolong(
+      term,
+      page,
+      itemsPerPage,
+      cabang,
     );
     res.json(data);
   } catch (error) {
@@ -142,4 +162,5 @@ module.exports = {
   getByBarcode,
   loadItemsFromPackingList,
   searchSoBordirGlobal,
+  searchBahanPenolong,
 };

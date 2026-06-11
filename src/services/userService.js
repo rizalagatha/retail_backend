@@ -10,6 +10,7 @@ const getAllUsers = async (searchTerm = "") => {
       IFNULL(g.gdg_nama, u.user_cab) as nama_cabang -- [FIX] Ini untuk tampilan
     FROM tuser u
     LEFT JOIN tgudang g ON u.user_cab = g.gdg_kode
+    WHERE user_aktif = 0
   `;
   const params = [];
 
@@ -62,7 +63,7 @@ const getUserDetails = async (kode, cabang) => {
     const hak = hakRows.find((h) => h.hak_men_id === menu.men_id);
     return {
       id: menu.men_id,
-      nama: menu.men_nama,
+      nama: menu.men_keterangan || menu.men_nama,
       keterangan: menu.men_keterangan,
       view: hak ? hak.hak_men_view === "Y" : false,
       insert: hak ? hak.hak_men_insert === "Y" : false,
@@ -216,6 +217,139 @@ const getAvailableUsersForSalesCounter = async (cabang) => {
   return rows;
 };
 
+// [BARU] Ambil template hak akses dari user referensi per cabang
+const getTemplateFromUser = async (refKode, refCabang) => {
+  const [menuRows] = await pool.query(
+    "SELECT men_id, men_nama, men_keterangan FROM tmenu WHERE men_modul=1 ORDER BY men_id",
+  );
+  const [hakRows] = await pool.query(
+    "SELECT * FROM thakuser WHERE hak_user_kode = ? AND hak_cab = ?",
+    [refKode, refCabang],
+  );
+  return menuRows.map((menu) => {
+    const hak = hakRows.find((h) => h.hak_men_id === menu.men_id);
+    return {
+      id: menu.men_id,
+      nama: menu.men_keterangan || menu.men_nama, // [FIX] pakai keterangan
+      keterangan: menu.men_keterangan,
+      view: hak ? hak.hak_men_view === "Y" : false,
+      insert: hak ? hak.hak_men_insert === "Y" : false,
+      edit: hak ? hak.hak_men_edit === "Y" : false,
+      delete: hak ? hak.hak_men_delete === "Y" : false,
+    };
+  });
+};
+
+// [BARU] Deteksi menu baru yang belum pernah dikonfigurasi user ini
+const getNewMenusForUser = async (kode, cabang) => {
+  const [rows] = await pool.query(
+    `
+    SELECT m.men_id
+    FROM tmenu m
+    WHERE m.men_modul = 1
+    AND m.men_id NOT IN (
+      SELECT hak_men_id FROM thakuser
+      WHERE hak_user_kode = ? AND hak_cab = ?
+    )
+  `,
+    [kode, cabang],
+  );
+  return rows.map((r) => r.men_id);
+};
+
+// [BARU] Ambil daftar user per cabang (untuk copy permission)
+const getUsersByCabang = async (cabang, kasirOnly = false) => {
+  if (kasirOnly) {
+    const query = `
+      SELECT 
+        u.user_kode as kode, 
+        u.user_nama as nama, 
+        u.user_cab as cabang,
+        CONCAT(u.user_cab, '|', u.user_kode) as uid
+      FROM tuser u
+      WHERE u.user_cab REGEXP '^K[0-9]{2}$'
+      AND user_aktif = 0
+      ORDER BY u.user_cab, u.user_kode
+    `;
+    const [rows] = await pool.query(query);
+    return rows;
+  }
+
+  const [rows] = await pool.query(
+    `SELECT 
+      user_kode as kode, 
+      user_nama as nama, 
+      user_cab as cabang,
+      CONCAT(user_cab, '|', user_kode) as uid
+    FROM tuser WHERE user_cab = ? ORDER BY user_kode
+    WHERE user_aktif = 0
+    `,
+    [cabang],
+  );
+  return rows;
+};
+
+// Terapkan hak akses menu tertentu dari satu user ke beberapa user lain
+const applyNewMenusToUsers = async (
+  sourceKode,
+  sourceCabang,
+  targetUsers,
+  menuIds,
+) => {
+  // Ambil hak akses source untuk menu yang dimaksud saja
+  const placeholders = menuIds.map(() => "?").join(",");
+  const [sourceHak] = await pool.query(
+    `SELECT * FROM thakuser 
+     WHERE hak_user_kode = ? AND hak_cab = ? AND hak_men_id IN (${placeholders})`,
+    [sourceKode, sourceCabang, ...menuIds],
+  );
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    for (const target of targetUsers) {
+      const { kode: targetKode, cabang: targetCabang } = target;
+
+      // Hapus hak akses menu tersebut dulu (kalau ada)
+      await connection.query(
+        `DELETE FROM thakuser 
+         WHERE hak_user_kode = ? AND hak_cab = ? AND hak_men_id IN (${placeholders})`,
+        [targetKode, targetCabang, ...menuIds],
+      );
+
+      // Insert sesuai setting source
+      for (const hak of sourceHak) {
+        await connection.query(
+          `INSERT INTO thakuser 
+           (hak_user_kode, hak_cab, hak_men_id, hak_men_view, hak_men_insert, hak_men_edit, hak_men_delete)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            targetKode,
+            targetCabang,
+            hak.hak_men_id,
+            hak.hak_men_view,
+            hak.hak_men_insert,
+            hak.hak_men_edit,
+            hak.hak_men_delete,
+          ],
+        );
+      }
+    }
+
+    await connection.commit();
+    return {
+      success: true,
+      message: `Berhasil diterapkan ke ${targetUsers.length} user.`,
+    };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   getAllUsers,
   getAllBranches,
@@ -225,4 +359,8 @@ module.exports = {
   getAllMenus,
   changePassword,
   getAvailableUsersForSalesCounter,
+  getTemplateFromUser,
+  getNewMenusForUser,
+  getUsersByCabang,
+  applyNewMenusToUsers,
 };

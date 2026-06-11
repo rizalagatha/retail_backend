@@ -69,6 +69,17 @@ const lookupProducts = async (req, res) => {
   }
 };
 
+const getSoBordirDetails = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const { gudang } = req.query;
+    const result = await service.getSoBordirDetails(nomor, gudang);
+    res.json(result);
+  } catch (error) {
+    res.status(404).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getForEdit,
   save,
@@ -77,4 +88,5 @@ module.exports = {
   findByBarcode,
   getPrintData,
   lookupProducts,
+  getSoBordirDetails,
 };

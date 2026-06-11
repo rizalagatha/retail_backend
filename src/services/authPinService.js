@@ -101,10 +101,20 @@ const authPinService = {
         const isPeminjaman = String(jenis).trim() === "PEMINJAMAN_BARANG";
         const isKlaimPettyCash = String(jenis).trim() === "KLAIM_PETTYCASH";
         const isSubmitBap = String(jenis).trim() === "SUBMIT_BAP";
+        const isClosePenawaran = String(jenis).trim() === "CLOSE_PENAWARAN";
+        const isCloseSoDtf = String(jenis).trim() === "CLOSE_SO_DTF";
+        const isCloseSo = String(jenis).trim() === "CLOSE_SO";
 
         let managerCodes = ["DARUL"]; // Darul selalu dikirim
 
-        if (isPeminjaman || isKlaimPettyCash || isSubmitBap) {
+        if (
+          isPeminjaman ||
+          isKlaimPettyCash ||
+          isSubmitBap ||
+          isClosePenawaran ||
+          isCloseSoDtf ||
+          isCloseSo
+        ) {
           if (!managerCodes.includes("ESTU")) managerCodes.push("ESTU");
         }
 
@@ -114,7 +124,14 @@ const authPinService = {
         } else {
           // Periode Normal: Transaksi Manager lari ke HARIS
           // [PERBAIKAN] Haris TIDAK dikirimi notif jika jenisnya Peminjaman / Petty Cash (karena itu milik Estu)
-          if (!isPeminjaman && !isKlaimPettyCash && !isSubmitBap) {
+          if (
+            !isPeminjaman &&
+            !isKlaimPettyCash &&
+            !isSubmitBap &&
+            !isClosePenawaran &&
+            !isCloseSoDtf &&
+            !isCloseSo
+          ) {
             managerCodes.push("HARIS");
           }
         }
@@ -195,6 +212,9 @@ const authPinService = {
       "BELUM_LUNAS",
       "DISKON_ITEM",
       "PIUTANG",
+      "CLOSE_PENAWARAN",
+      "CLOSE_SO_DTF",
+      "CLOSE_SO",
     ];
 
     if (userCabang === "KDC") {
@@ -205,7 +225,14 @@ const authPinService = {
         } else {
           query += " AND o_jenis IN (?) ";
         }
-        params.push(["PEMINJAMAN_BARANG", "KLAIM_PETTYCASH", "SUBMIT_BAP"]);
+        params.push([
+          "PEMINJAMAN_BARANG",
+          "KLAIM_PETTYCASH",
+          "SUBMIT_BAP",
+          "CLOSE_PENAWARAN",
+          "CLOSE_SO_DTF",
+          "CLOSE_SO",
+        ]);
       } else if (userKodeUpper === "HARIS") {
         if (isEstuManagerPeriod) {
           query += " AND 1=0 ";
@@ -264,6 +291,9 @@ const authPinService = {
       "BELUM_LUNAS",
       "DISKON_ITEM",
       "PIUTANG",
+      "CLOSE_PENAWARAN",
+      "CLOSE_SO_DTF",
+      "CLOSE_SO",
     ];
 
     const query = `

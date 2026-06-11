@@ -2,8 +2,11 @@ const service = require("../services/mintaAccesoriesFormService");
 
 const searchBarang = async (req, res) => {
   try {
-    const { keyword } = req.query;
-    const data = await service.searchBarangKaosan(keyword);
+    const keyword = req.query.keyword || "";
+    const jenis = req.query.jenis || "ACCESORIES"; // Tangkap jenis dari frontend
+    const cabang = req.query.cabang || "P04"; // Tangkap cabang dari frontend (default P03)
+
+    const data = await service.searchBarangKaosan(keyword, jenis, cabang);
     res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });

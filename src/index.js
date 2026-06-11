@@ -157,6 +157,7 @@ const peminjamanRoutes = require("./routes/peminjamanRoutes");
 const peminjamanFormRoutes = require("./routes/peminjamanFormRoutes");
 const pengembalianFormRoutes = require("./routes/pengembalianFormRoutes");
 const laporanStokMinusRoutes = require("./routes/laporanStokMinusRoutes");
+const laporanStokBahanRoutes = require("./routes/laporanStokBahanRoutes");
 const whatsappRoutes = require("./routes/whatsappRoutes");
 const pettyCashRoutes = require("./routes/pettyCashRoutes");
 const pettyCashFormRoutes = require("./routes/pettyCashFormRoutes");
@@ -170,10 +171,15 @@ const mutasiWorkshopRoutes = require("./routes/mutasiWorkshopRoutes");
 const mutasiWorkshipFormRoutes = require("./routes/mutasiWorkshopFormRoutes");
 const terimaWorkshopRoutes = require("./routes/terimaWorkshopRoutes");
 const terimaWorkshopFormRoutes = require("./routes/terimaWorkshopFormRoutes");
+const sjWorkshopRoutes = require("./routes/sjWorkshopRoutes");
+const sjWorkshopFormRoutes = require("./routes/sjWorkshopFormRoutes");
 const soDtfTrialRoutes = require("./routes/soDtfTrialRoutes");
 const soDtfTrialFormRoutes = require("./routes/soDtfTrialFormRoutes");
 const dtfMachineLogRoutes = require("./routes/dtfMachineLogRoutes");
 const cashierSessionRoute = require("./routes/cashierSessionRoutes");
+const lostOrderRoutes = require("./routes/lostOrderRoutes");
+const laporanLostOrderRoutes = require("./routes/laporanLostOrderRoutes");
+const customerVisitRoutes = require("./routes/customerVisitRoutes");
 
 const app = express();
 const port = process.env.PORT || 8000;
@@ -484,6 +490,7 @@ app.use("/api/laporan-stok", clientCertAuth, laporanStokRoutes);
 app.use("/api/laporan-mutasi-stok", clientCertAuth, laporanMutasiStokRoutes);
 app.use("/api/laporan-invoice", clientCertAuth, laporanInvoiceRoutes);
 app.use("/api/laporan-kartu-stok", clientCertAuth, laporanKartuStokRoutes);
+app.use("/api/laporan-stok-bahan", clientCertAuth, laporanStokBahanRoutes);
 app.use(
   "/api/laporan-list-otorisasi",
   clientCertAuth,
@@ -579,10 +586,23 @@ app.use("/api/mutasi-workshop", clientCertAuth, mutasiWorkshopRoutes);
 app.use("/api/mutasi-workshop-form", clientCertAuth, mutasiWorkshipFormRoutes);
 app.use("/api/terima-workshop", clientCertAuth, terimaWorkshopRoutes);
 app.use("/api/terima-workshop-form", clientCertAuth, terimaWorkshopFormRoutes);
+app.use(
+  "/api/operasional/workshop/sj-workshop",
+  clientCertAuth,
+  sjWorkshopRoutes,
+);
+app.use(
+  "/api/operasional/workshop/sj-workshop-form",
+  clientCertAuth,
+  sjWorkshopFormRoutes,
+);
 app.use("/api/so-dtf-trial-form", clientCertAuth, soDtfTrialFormRoutes);
 app.use("/api/so-dtf-trial", clientCertAuth, soDtfTrialRoutes);
 app.use("/api/dtf-machine-log", clientCertAuth, dtfMachineLogRoutes);
 app.use("/api/cashier-session", clientCertAuth, cashierSessionRoute);
+app.use("/api/lost-order", clientCertAuth, lostOrderRoutes);
+app.use("/api/laporan/lost-order", clientCertAuth, laporanLostOrderRoutes);
+app.use("/api/customer-visit", clientCertAuth, customerVisitRoutes);
 
 // Menjalankan Server
 app.listen(port, () => {

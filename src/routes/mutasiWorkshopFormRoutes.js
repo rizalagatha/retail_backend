@@ -59,6 +59,13 @@ router.get(
 );
 
 router.get(
+  "/so-bordir-details/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "insert"),
+  controller.getSoBordirDetails,
+);
+
+router.get(
   "/:nomor",
   verifyToken,
   checkPermission(MENU_ID, "edit"),

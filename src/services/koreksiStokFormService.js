@@ -106,7 +106,7 @@ const save = async (payload, user) => {
           user.cabang,
           header.keterangan,
           user.kode,
-        ]
+        ],
       );
     } else {
       await connection.query(
@@ -119,7 +119,7 @@ const save = async (payload, user) => {
           header.keterangan,
           user.kode,
           nomorDokumen,
-        ]
+        ],
       );
     }
 
@@ -155,7 +155,7 @@ const save = async (payload, user) => {
         `INSERT INTO tkor_dtl 
          (kord_idrec, kord_kor_nomor, kord_kode, kord_ukuran, kord_stok, kord_jumlah, kord_selisih, kord_hpp, kord_ket) 
          VALUES ?`,
-        [itemValues]
+        [itemValues],
       );
     }
 
@@ -173,7 +173,64 @@ const save = async (payload, user) => {
 };
 
 // Fungsi untuk mendapatkan detail produk termasuk stok awal dan HPP (meniru loadbrg)
-const getProductDetails = async (kode, ukuran, gudang, tanggal) => {
+const getProductDetails = async (
+  kode,
+  ukuran,
+  gudang,
+  tanggal,
+  isBahan = false,
+) => {
+  if (isBahan === "true" || isBahan === true) {
+    const [brgRows] = await pool.query(
+      "SELECT brg_jenis, brg_nama, brg_satuan FROM kencanaprint.tgarmen_brg WHERE brg_kode = ?",
+      [kode],
+    );
+    if (brgRows.length === 0)
+      throw new Error("Detail bahan penolong tidak ditemukan");
+
+    const jenis = brgRows[0].brg_jenis;
+    let stockTable = "tmasterstok_atk";
+    if (jenis === "ACCESORIES") stockTable = "tmasterstok_acc";
+    else if (jenis === "OBAT") stockTable = "tmasterstok_obat";
+    else if (jenis === "SPAREPART") stockTable = "tmasterstok_sparepart";
+
+    const query = `
+        SELECT 
+          b.brg_kode AS kode, '' AS barcode, 0 AS hpp,
+          b.brg_nama AS nama, b.brg_satuan AS ukuran,
+          IFNULL((
+            SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
+            FROM kencanaprint.${stockTable} m 
+            WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_brg_kode=b.brg_kode AND m.mst_tanggal < ?
+          ), 0) AS stok
+        FROM kencanaprint.tgarmen_brg b
+        WHERE b.brg_aktif = 'Y' AND b.brg_kode = ?;
+    `;
+    const [rows] = await pool.query(query, [gudang, tanggal, kode]);
+    if (rows.length === 0)
+      throw new Error("Bahan penolong tidak aktif pada gudang ini.");
+
+    // Validasi cek duplikat dokumen koreksi pada tanggal yang sama
+    const duplicateCheckQuery = `
+        SELECT h.kor_nomor FROM tkor_hdr h
+        LEFT JOIN tkor_dtl d ON d.kord_kor_nomor = h.kor_nomor
+        WHERE h.kor_cab = ? AND h.kor_tanggal = ? AND d.kord_kode = ? AND d.kord_ukuran = ? LIMIT 1;
+    `;
+    const [duplicateRows] = await pool.query(duplicateCheckQuery, [
+      gudang,
+      tanggal,
+      kode,
+      rows[0].ukuran,
+    ]);
+    if (duplicateRows.length > 0) {
+      throw new Error(
+        `Bahan penolong ini sudah dikoreksi di No: ${duplicateRows[0].kor_nomor}`,
+      );
+    }
+
+    return rows[0];
+  }
+
   const query = `
         SELECT 
             b.brgd_kode AS kode, b.brgd_barcode AS barcode, b.brgd_hpp AS hpp,
@@ -211,7 +268,7 @@ const getProductDetails = async (kode, ukuran, gudang, tanggal) => {
 
   if (duplicateRows.length > 0) {
     throw new Error(
-      `Barang ini sudah dikoreksi di No: ${duplicateRows[0].kor_nomor}`
+      `Barang ini sudah dikoreksi di No: ${duplicateRows[0].kor_nomor}`,
     );
   }
   // --- AKHIR LOGIKA 'cekkor' ---
@@ -256,7 +313,7 @@ const findByBarcode = async (barcode, gudang, tanggal) => {
 
   if (duplicateRows.length > 0) {
     throw new Error(
-      `Barang ini sudah dikoreksi di No: ${duplicateRows[0].kor_nomor}`
+      `Barang ini sudah dikoreksi di No: ${duplicateRows[0].kor_nomor}`,
     );
   }
   // --- Akhir logika 'cekkor' ---
@@ -319,7 +376,11 @@ const getPrintData = async (nomor) => {
             DATE_FORMAT(h.date_create, '%d-%m-%Y %H:%i:%s') AS created,
             h.user_create,
             d.kord_kode,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama_barang,
+            COALESCE(
+                NULLIF(TRIM(CONCAT(IFNULL(a.brg_jeniskaos, ''), " ", IFNULL(a.brg_tipe, ''), " ", IFNULL(a.brg_lengan, ''), " ", IFNULL(a.brg_jeniskain, ''), " ", IFNULL(a.brg_warna, ''))), ''),
+                tb.brg_nama,
+                d.kord_kode
+            ) AS nama_barang,
             d.kord_ukuran,
             d.kord_stok,
             d.kord_jumlah,
@@ -330,6 +391,7 @@ const getPrintData = async (nomor) => {
         LEFT JOIN tkor_dtl d ON d.kord_kor_nomor = h.kor_nomor
         LEFT JOIN tgudang g ON g.gdg_kode = h.kor_cab
         LEFT JOIN tbarangdc a ON a.brg_kode = d.kord_kode
+        LEFT JOIN kencanaprint.tgarmen_brg tb ON tb.brg_kode = d.kord_kode
         WHERE h.kor_nomor = ?;
     `;
   const [rows] = await pool.query(query, [nomor]);
@@ -356,7 +418,7 @@ const getPrintData = async (nomor) => {
       nama: r.nama_barang,
       ukuran: r.kord_ukuran,
       stok: r.kord_stok,
-      koreksi: r.kord_jumlah, // 'jumlah' di delphi adalah stok fisik/koreksi
+      koreksi: r.kord_jumlah,
       selisih: r.selisih,
       keterangan: r.keterangan_item,
     }));

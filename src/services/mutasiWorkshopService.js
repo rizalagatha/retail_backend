@@ -47,7 +47,8 @@ const getList = async (filters) => {
         g.gdg_nama AS namaStoreTujuan,
         h.mw_ket AS keterangan,
         h.user_create AS usr,
-        h.mw_closing AS 'closing'
+        h.mw_closing AS 'closing',
+        h.mw_rute AS rute
     FROM tmutasi_workshop_hdr h
     INNER JOIN tmutasi_workshop_dtl d ON d.mwd_nomor = h.mw_nomor
     LEFT JOIN tgudang f ON f.gdg_kode = h.mw_cab_asal
@@ -141,6 +142,7 @@ const getExportDetails = async (filters) => {
         DATE_FORMAT(h.mw_tanggal, '%Y-%m-%d') AS 'Tanggal',
         f.gdg_nama AS 'Dari Cabang',
         g.gdg_nama AS 'Ke Workshop',
+        h.mw_rute AS 'Rute Pengiriman',
         h.mw_ket AS 'Keterangan',
         d.mwd_kode AS 'Kode Barang',
         TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), ' ', IFNULL(a.brg_tipe,''), ' ', IFNULL(a.brg_lengan,''), ' ', IFNULL(a.brg_jeniskain,''), ' ', IFNULL(a.brg_warna,''))) AS 'Nama Barang',

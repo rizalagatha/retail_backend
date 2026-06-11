@@ -69,21 +69,28 @@ const save = async (payload, user) => {
 
   const connection = await pool.getConnection();
 
+  const nomorKirimAsli =
+    header.nomorKirim || header.nomor_kirim || header.nomor;
+
+  if (!nomorKirimAsli) {
+    throw new Error(
+      "Gagal menyimpan: Nomor dokumen kiriman (MWK) tidak terbaca oleh server.",
+    );
+  }
+
   try {
     await connection.beginTransaction();
 
     // Generate Nomor Transaksi (Contoh: W01.MWT.26.00001)
-    const year = new Date(header.tanggalTerima)
-      .getFullYear()
-      .toString()
-      .substring(2);
+    const today = new Date();
+    const year = today.getFullYear().toString().substring(2);
     const prefix = `${user.cabang}.MWT.${year}`;
 
     // Cari nomor terakhir di tmwt_hdr
     const nomorQuery = `SELECT IFNULL(MAX(RIGHT(mwt_nomor, 5)), 0) + 1 AS next_num FROM tmwt_hdr WHERE LEFT(mwt_nomor, 10) = ?;`;
     const [nomorRows] = await connection.query(nomorQuery, [prefix]);
     const nextNum = nomorRows[0].next_num.toString().padStart(5, "0");
-    const nomorTerima = `${prefix}.${nextNum}`;
+    const nomorTerima = `${prefix}${nextNum}`;
 
     // [PERBAIKAN] Insert Header tmwt_hdr sesuai kolom yang ada di database
     const headerInsertQuery = `
@@ -92,12 +99,11 @@ const save = async (payload, user) => {
             mwt_cab, mwt_ket, 
             user_create, date_create
         )
-        VALUES (?, ?, ?, ?, ?, ?, NOW());
+        VALUES (?, NOW(), ?, ?, ?, ?, NOW());
     `;
     await connection.query(headerInsertQuery, [
       nomorTerima,
-      header.tanggalTerima,
-      header.nomorKirim, // Wajib diisi sesuai DDL Mas Rizal
+      nomorKirimAsli,
       user.cabang,
       header.keterangan || "",
       user.kode,
@@ -106,10 +112,9 @@ const save = async (payload, user) => {
     // Update Status Dokumen Pengiriman (tmutasi_workshop_hdr)
     await connection.query(
       "UPDATE tmutasi_workshop_hdr SET mw_noterima = ? WHERE mw_nomor = ?",
-      [nomorTerima, header.nomorKirim],
+      [nomorTerima, nomorKirimAsli],
     );
 
-    // [PERBAIKAN] Insert Detail tmwt_dtl sesuai kolom yang ada
     if (items.length > 0) {
       const itemInsertQuery = `
         INSERT INTO tmwt_dtl (

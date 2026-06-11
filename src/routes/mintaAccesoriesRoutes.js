@@ -47,6 +47,7 @@ router.get("/check-unapproved", verifyToken, controller.checkUnapproved);
 router.put(
   "/realisasi/:prominNomor/approve",
   verifyToken,
+  checkPermission(MENU_ID, "edit"), // tambah ini
   controller.approveRealisasi,
 );
 

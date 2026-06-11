@@ -465,52 +465,140 @@ const loadItemsFromPackingList = async (nomorPL) => {
 /**
  * Mencari SO Lintas Cabang Khusus yang memiliki SO DTF Bordir (.BR.)
  */
-const searchSoBordirGlobal = async (term, page, itemsPerPage) => {
+const searchSoBordirGlobal = async (term, page, itemsPerPage, cabang) => {
   const limit = parseInt(itemsPerPage) || 10;
   const offset = (parseInt(page) - 1) * limit;
   const searchTerm = `%${term || ""}%`;
 
-  // Query untuk mengambil SO dari SEMUA cabang (tanpa filter h.so_cab)
-  // Syarat: Aktif, Belum Close, dan punya detail SO DTF berawalan/mengandung '.BR.'
-  const baseQuery = `
-    FROM tso_hdr h
-    LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
-    WHERE h.so_aktif = 'Y' 
-      AND h.so_close = 0
-      AND EXISTS (
-          SELECT 1 FROM tso_dtl d 
-          WHERE d.sod_so_nomor = h.so_nomor 
-            AND d.sod_sd_nomor LIKE '%.BR.%'
-      )
+  const searchFilter = term
+    ? `AND (h.so_nomor LIKE ? OR c.cus_nama LIKE ?)`
+    : ``;
+
+  const params = term ? [searchTerm, searchTerm] : [];
+
+  const coreQuery = `
+    SELECT 
+      y.Nomor, 
+      y.Tanggal, 
+      y.KdCus, 
+      y.Customer, 
+      y.NoBordir AS Keterangan,
+      (CASE
+        WHEN y.sts <> 0 THEN "DICLOSE"
+        WHEN y.StatusKirim = "TERKIRIM" THEN "CLOSE"
+        WHEN y.StatusKirim = "BELUM" AND y.keluar = 0 AND y.minta = "" AND y.pesan = 0 THEN "OPEN"
+        ELSE "PROSES"
+      END) AS StatusFinal
+    FROM (
+      SELECT 
+        x.*,
+        IF(x.QtyInv = 0, "BELUM", IF(x.QtyInv >= x.QtySO, "TERKIRIM", "SEBAGIAN")) AS StatusKirim,
+        IFNULL((SELECT SUM(m.mst_stok_out) FROM tmasterstok m WHERE m.mst_noreferensi IN (SELECT o.mo_nomor FROM tmutasiout_hdr o WHERE o.mo_so_nomor = x.Nomor)), 0) AS keluar,
+        IFNULL((SELECT m.mt_nomor FROM tmintabarang_hdr m WHERE m.mt_so = x.Nomor LIMIT 1), "") AS minta,
+        IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstokso m WHERE m.mst_aktif = "Y" AND m.mst_nomor_so = x.Nomor), 0) AS pesan
+      FROM (
+        SELECT 
+          h.so_nomor AS Nomor, 
+          h.so_tanggal AS Tanggal,
+          h.so_cus_kode AS KdCus,
+          c.cus_nama AS Customer,
+          h.so_close AS sts,
+          (SELECT d.sod_sd_nomor FROM tso_dtl d WHERE d.sod_so_nomor = h.so_nomor AND d.sod_sd_nomor LIKE '%.BR.%' LIMIT 1) AS NoBordir,
+          IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
+          IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0) AS QtyInv
+        FROM tso_hdr h
+        LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
+        WHERE h.so_aktif = 'Y' 
+          AND h.so_close = 0 
+          AND IFNULL((
+            SELECT SUM(md.mwd_jumlah)
+            FROM tmutasi_workshop_dtl md
+            INNER JOIN tmutasi_workshop_hdr mh ON mh.mw_nomor = md.mwd_nomor
+            WHERE mh.mw_so_nomor = h.so_nomor
+          ), 0) < IFNULL((
+            SELECT SUM(d.sod_jumlah)
+            FROM tso_dtl d
+            WHERE d.sod_so_nomor = h.so_nomor
+              AND d.sod_kode NOT LIKE 'JASA%'
+              AND d.sod_kode != 'CUSTOM'
+          ), 0)
+          AND h.so_nomor NOT IN (
+            SELECT DISTINCT inv_nomor_so 
+            FROM tinv_hdr 
+            WHERE inv_nomor_so IS NOT NULL AND inv_nomor_so <> ''
+          )
+          AND EXISTS (
+            SELECT 1 FROM tso_dtl d 
+            WHERE d.sod_so_nomor = h.so_nomor 
+              AND d.sod_sd_nomor LIKE '%.BR.%'
+          )
+          ${searchFilter}
+      ) x
+    ) y
   `;
 
-  const searchWhere = ` AND (h.so_nomor LIKE ? OR c.cus_nama LIKE ?)`;
-  const params = [];
+  const finalQuerySource = `FROM (${coreQuery}) z WHERE z.StatusFinal = 'OPEN'`;
 
-  let finalWhere = baseQuery;
-  if (term) {
-    finalWhere += searchWhere;
-    params.push(searchTerm, searchTerm);
-  }
-
-  // Hitung Total Data (Untuk Pagination)
-  const countQuery = `SELECT COUNT(*) AS total ${finalWhere}`;
+  const countQuery = `SELECT COUNT(*) AS total ${finalQuerySource}`;
   const [countRows] = await pool.query(countQuery, params);
 
-  // Tarik Data
   const dataQuery = `
-    SELECT 
-        h.so_nomor AS Nomor, 
-        h.so_tanggal AS Tanggal, 
-        h.so_cus_kode AS KdCus, 
-        c.cus_nama AS Customer
-    ${finalWhere}
-    ORDER BY h.so_tanggal DESC, h.so_nomor DESC
+    SELECT Nomor, Tanggal, KdCus, Customer, Keterangan
+    ${finalQuerySource}
+    ORDER BY Tanggal DESC, Nomor DESC
     LIMIT ? OFFSET ?
   `;
 
   const dataParams = [...params, limit, offset];
   const [items] = await pool.query(dataQuery, dataParams);
+
+  return { items, total: countRows[0].total };
+};
+
+// Cari bahan penolong (ACCESORIES + OBAT) dengan stok real time
+const searchBahanPenolong = async (term, page, itemsPerPage, cabang) => {
+  const limit = parseInt(itemsPerPage) || 10;
+  const offset = (parseInt(page) - 1) * limit;
+  const searchTerm = `%${term || ""}%`;
+
+  const params = [cabang, searchTerm, searchTerm];
+
+  const baseQuery = `
+    FROM kencanaprint.tgarmen_brg b
+    LEFT JOIN (
+      SELECT mst_brg_kode, SUM(mst_stok_in - mst_stok_out) AS stok
+      FROM tmasterstok_bahan
+      WHERE mst_aktif = 'Y' AND mst_cab = ?
+      GROUP BY mst_brg_kode
+    ) s ON s.mst_brg_kode = b.brg_kode
+    WHERE b.brg_aktif = 'Y'
+      AND (
+        (b.brg_jenis = 'ACCESORIES' AND b.brg_ktg = 'STORE')
+        OR
+        (b.brg_jenis = 'OBAT'       AND b.brg_ktg = 'DTF')
+      )
+      AND (b.brg_kode LIKE ? OR b.brg_nama LIKE ?)
+  `;
+
+  const [countRows] = await pool.query(
+    `SELECT COUNT(*) AS total ${baseQuery}`,
+    params,
+  );
+
+  const [items] = await pool.query(
+    `
+    SELECT 
+      b.brg_kode   AS kode,
+      b.brg_nama   AS nama,
+      b.brg_satuan AS satuan,
+      b.brg_jenis  AS jenis,
+      IFNULL(s.stok, 0) AS stok
+    ${baseQuery}
+    ORDER BY b.brg_jenis, b.brg_nama
+    LIMIT ? OFFSET ?
+  `,
+    [...params, limit, offset],
+  );
 
   return { items, total: countRows[0].total };
 };
@@ -526,4 +614,5 @@ module.exports = {
   getExportDetails,
   loadItemsFromPackingList,
   searchSoBordirGlobal,
+  searchBahanPenolong,
 };

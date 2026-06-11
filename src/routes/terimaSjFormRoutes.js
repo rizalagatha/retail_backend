@@ -1,13 +1,31 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const terimaSjFormController = require('../controllers/terimaSjFormController');
-const { verifyToken, checkPermission } = require('../middleware/authMiddleware');
+const terimaSjFormController = require("../controllers/terimaSjFormController");
+const {
+  verifyToken,
+  checkPermission,
+} = require("../middleware/authMiddleware");
 
-const MENU_ID = '31'; // Menu ID untuk Terima SJ
+const MENU_ID = "31"; // Menu ID untuk Terima SJ
 
 // Load data awal untuk form
-router.get('/:nomorSj', verifyToken, checkPermission(MENU_ID, 'insert'), terimaSjFormController.load);
+router.get(
+  "/:nomorSj",
+  verifyToken,
+  checkPermission(MENU_ID, "insert"),
+  terimaSjFormController.load,
+);
+router.get(
+  "/workshop/:nomor",
+  verifyToken,
+  terimaSjFormController.loadInitialDataWorkshop,
+);
 // Save data penerimaan
-router.post('/save', verifyToken, checkPermission(MENU_ID, 'insert'), terimaSjFormController.save);
+router.post(
+  "/save",
+  verifyToken,
+  checkPermission(MENU_ID, "insert"),
+  terimaSjFormController.save,
+);
 
 module.exports = router;

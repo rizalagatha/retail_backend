@@ -766,7 +766,8 @@ const saveData = async (payload, user) => {
     }
     // =========================================================
 
-    const { header, items, dps, payment, isNew, pins, totals } = payload;
+    const { header, items, dps, payment, isNew, pins, totals, tipeKunjungan } =
+      payload;
     const nomorInv = header.nomor;
 
     // [BARU] Logika Penggabungan ID Promo
@@ -1233,6 +1234,55 @@ const saveData = async (payload, user) => {
         user.kode,
         invNomor,
       ]);
+    }
+
+    // ========================================================================
+    // [PERBAIKAN LOGIKA] CATAT KUNJUNGAN CUSTOMER (Mencegah Duplikasi)
+    // ========================================================================
+    if (
+      tipeKunjungan &&
+      (tipeKunjungan === "STORE" || tipeKunjungan === "WA")
+    ) {
+      try {
+        const custKode = (header.customer.kode || "").toUpperCase();
+        const custNama = (header.customer.nama || "").toUpperCase();
+        const isRetail =
+          custKode.includes("RETAIL") ||
+          custNama.includes("RETAIL") ||
+          custKode === "K-00395";
+
+        let shouldInsert = true;
+
+        // Jika BUKAN retail, lakukan validasi duplikat agar member reguler tidak terhitung double
+        if (!isRetail) {
+          const [existingVisit] = await connection.query(
+            "SELECT 1 FROM tkunjungan_customer WHERE tanggal = ? AND cabang = ? AND cus_kode = ? LIMIT 1",
+            [toSqlDate(header.tanggal), user.cabang, header.customer.kode],
+          );
+          if (existingVisit.length > 0) {
+            shouldInsert = false; // Skip jika member sudah berkunjung hari ini
+          }
+        }
+
+        if (shouldInsert) {
+          await connection.query(
+            `INSERT INTO tkunjungan_customer 
+             (tanggal, cabang, cus_kode, tipe_kunjungan, sumber_dokumen, nomor_dokumen, user_create) 
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [
+              toSqlDate(header.tanggal),
+              user.cabang,
+              header.customer.kode,
+              tipeKunjungan,
+              "INVOICE",
+              invNomor,
+              user.kode,
+            ],
+          );
+        }
+      } catch (visitError) {
+        console.warn("Gagal mencatat kunjungan Invoice:", visitError.message);
+      }
     }
 
     // =========================================
@@ -2154,9 +2204,20 @@ const getPrintData = async (nomor) => {
       c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
       d.invd_kode, d.invd_ukuran, d.invd_jumlah, d.invd_harga, d.invd_diskon,
       COALESCE(
-        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)),
+        NULLIF(TRIM(CONCAT(
+          IFNULL(a.brg_jeniskaos,''), ' ',
+          IFNULL(a.brg_tipe,''), ' ',
+          IFNULL(a.brg_lengan,''), ' ',
+          IFNULL(a.brg_jeniskain,''), ' ',
+          IFNULL(a.brg_warna,'')
+        )), ''),
         f.sd_nama,
         cso.so_namadtf,
+        CASE 
+          WHEN g.brg_jenis IN ('ACCESORIES','OBAT')
+          THEN SUBSTRING_INDEX(g.brg_nama, ' ', 3)
+          ELSE NULL
+        END,
         d.invd_kode
       ) AS nama_barang,
       (d.invd_jumlah * (d.invd_harga - d.invd_diskon)) AS total,
@@ -2177,6 +2238,7 @@ const getPrintData = async (nomor) => {
     LEFT JOIN tso_hdr cso
       ON cso.so_nomor = h.inv_nomor_so
       AND d.invd_kode = 'CUSTOM'
+    LEFT JOIN kencanaprint.tgarmen_brg g ON g.brg_kode = d.invd_kode
     LEFT JOIN tgudang src ON src.gdg_kode = h.inv_cab
     WHERE h.inv_nomor = ?
     ORDER BY d.invd_nourut;
@@ -2764,8 +2826,19 @@ END AS total,
 
         -- Nama barang
         COALESCE(
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)),
-            f.sd_nama
+          NULLIF(TRIM(CONCAT(
+            IFNULL(a.brg_jeniskaos,''), ' ',
+            IFNULL(a.brg_tipe,''), ' ',
+            IFNULL(a.brg_lengan,''), ' ',
+            IFNULL(a.brg_jeniskain,''), ' ',
+            IFNULL(a.brg_warna,'')
+          )), ''),
+          f.sd_nama,
+          CASE 
+            WHEN g.brg_jenis IN ('ACCESORIES','OBAT')
+            THEN SUBSTRING_INDEX(g.brg_nama, ' ', 3)
+            ELSE NULL
+          END
         ) AS nama_barang,
 
         h.user_create,
@@ -2784,6 +2857,7 @@ END AS total,
     LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
     LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
     LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
+    LEFT JOIN kencanaprint.tgarmen_brg g ON g.brg_kode = d.invd_kode 
     LEFT JOIN tgudang src ON src.gdg_kode = h.inv_cab
     WHERE h.inv_nomor = ?
     ORDER BY d.invd_nourut;
@@ -3539,6 +3613,34 @@ const getCustomerDebt = async (customerKode) => {
   return rows[0].totalDebt;
 };
 
+const getPackagingOptions = async (cabang) => {
+  const query = `
+    SELECT 
+      b.brg_kode    AS kode,
+      b.brg_nama    AS nama,
+      b.brg_jenis   AS jenis,
+      b.brg_harga   AS harga,
+      IFNULL((
+        SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+        FROM retailnew.tmasterstok_bahan m
+        WHERE m.mst_aktif = 'Y'
+          AND m.mst_cab = ?
+          AND m.mst_brg_kode = b.brg_kode
+      ), 0) AS stok
+    FROM kencanaprint.tgarmen_brg b
+    WHERE b.brg_aktif = 'Y'
+      AND b.brg_jenis = 'ACCESORIES'
+      AND (
+        b.brg_nama LIKE 'PLASTIK%'
+        OR b.brg_nama LIKE 'GOODIE%'
+        OR b.brg_nama LIKE 'KARDUS%'
+      )
+    ORDER BY b.brg_nama
+  `;
+  const [rows] = await pool.query(query, [cabang]);
+  return rows;
+};
+
 module.exports = {
   searchSo,
   getSoDetailsForGrid,
@@ -3573,4 +3675,5 @@ module.exports = {
   searchSj,
   getSjDetails,
   getCustomerDebt,
+  getPackagingOptions,
 };

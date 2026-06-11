@@ -25,7 +25,7 @@ const generateNewSoNumber = async (connection, cabang, tanggal) => {
  */
 // Fungsi utama untuk menyimpan data
 const save = async (data, user) => {
-  const { header, footer, details, dps, isNew } = data;
+  const { header, footer, details, dps, isNew, tipeKunjungan } = data;
   // --- VALIDASI TANGGAL SERVER (SO) ---
   if (isNew) {
     const serverDate = format(new Date(), "yyyy-MM-dd");
@@ -186,6 +186,33 @@ const save = async (data, user) => {
         user.kode,
         soNomor,
       ]);
+    }
+
+    // ========================================================================
+    // [BARU] CATAT KUNJUNGAN CUSTOMER (Mencegah Duplikasi)
+    // ========================================================================
+    if (
+      tipeKunjungan &&
+      (tipeKunjungan === "STORE" || tipeKunjungan === "WA")
+    ) {
+      try {
+        await connection.query(
+          `INSERT IGNORE INTO tkunjungan_customer 
+           (tanggal, cabang, cus_kode, tipe_kunjungan, sumber_dokumen, nomor_dokumen, user_create) 
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            header.tanggal,
+            user.cabang,
+            header.customer.kode,
+            tipeKunjungan,
+            "SO",
+            soNomor,
+            user.kode,
+          ],
+        );
+      } catch (visitError) {
+        console.warn("Gagal mencatat kunjungan SO:", visitError.message);
+      }
     }
 
     // ========================================================================

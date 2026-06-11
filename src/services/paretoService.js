@@ -8,8 +8,10 @@ const getList = async (filters) => {
   const { startDate, endDate, cabang, kategori, limit, search, isExport } =
     filters;
 
+  const shouldExport = isExport === true || isExport === "true";
+
   // Jika export dan ALL cabang, jalankan query per cabang
-  if (isExport && cabang === "ALL") {
+  if (shouldExport && cabang === "ALL") {
     return await getListPerCabang(filters);
   }
 
@@ -117,6 +119,7 @@ const getList = async (filters) => {
         WHERE h.inv_sts_pro = 0 
           AND h.inv_tanggal BETWEEN ? AND ?
           AND a.brg_logstok = "Y"
+          AND a.brg_kode != '2500053'
           ${branchFilter}
           ${categoryFilter}
           ${searchFilter}
@@ -146,18 +149,21 @@ const getListPerCabang = async (filters) => {
       endDate,
       cabang: gdg_kode,
       kategori,
-      limit: limit || 9999,
+      limit: 99999, // ← ambil semua dulu, sort & limit di akhir
       search,
       isExport: false,
     });
 
-    // Tambahkan kolom cabang ke setiap row
     rows.forEach((r) => {
       results.push({ ...r, Cab: gdg_kode });
     });
   }
 
-  return results;
+  // Sort by TOTAL DESC, lalu ambil sesuai limit
+  results.sort((a, b) => Number(b.TOTAL) - Number(a.TOTAL));
+
+  const finalLimit = parseInt(limit, 10) || 50;
+  return results.slice(0, finalLimit);
 };
 
 /**

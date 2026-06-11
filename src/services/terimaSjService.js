@@ -41,53 +41,109 @@ const getCabangList = async (user) => {
  * Mengambil daftar master Surat Jalan (SJ) untuk diterima.
  */
 const getList = async (filters) => {
-  const { startDate, endDate, cabang, kodeBarang } = filters;
-  let params = [cabang, startDate, endDate];
-  let itemFilter = "";
+  const { startDate, endDate, cabang, kodeBarang, source } = filters;
 
+  // ── SJ DC ──────────────────────────────────────────
+  const dcParams = [cabang, startDate, endDate];
+  let dcItemFilter = "";
   if (kodeBarang) {
-    itemFilter = "AND d.sjd_kode = ?";
-    params.push(kodeBarang);
+    dcItemFilter = "AND d.sjd_kode = ?";
+    dcParams.push(kodeBarang);
   }
 
-  const query = `
+  const dcQuery = `
     SELECT DISTINCT
-        h.sj_nomor AS Nomor,
-        h.sj_tanggal AS Tanggal,
-        h.sj_mt_nomor AS NomorMinta,
-        h.sj_noterima AS NomorTerima,
-        t.tj_tanggal AS TglTerima,
-        h.sj_kecab AS Store,
-        -- LOGIKA DEADLINE
-        CASE 
-          WHEN h.sj_kecab IN ('K01','K03','K06','K08') THEN 3
-          WHEN h.sj_kecab IN ('K10') THEN 7
-          ELSE 5 
-        END AS BatasHari,
-        
-        -- HITUNG SELISIH HARI (Hanya untuk yang belum diterima)
-        IF(h.sj_noterima IS NULL OR h.sj_noterima = '', DATEDIFF(CURDATE(), h.sj_tanggal), 0) AS SelisihHari,
-        g.gdg_nama AS Nama_Store,
-        h.sj_ket AS Keterangan,
-        IFNULL(t.tj_closing, "N") AS Closing,
-        IFNULL((SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor_so = h.sj_nomor LIMIT 1), "") AS NoInvoice
+      h.sj_nomor          AS Nomor,
+      h.sj_tanggal        AS Tanggal,
+      h.sj_mt_nomor       AS NomorMinta,
+      h.sj_noterima       AS NomorTerima,
+      t.tj_tanggal        AS TglTerima,
+      h.sj_kecab          AS Store,
+      g.gdg_nama          AS Nama_Store,
+      h.sj_ket            AS Keterangan,
+      IFNULL(t.tj_closing,'N') AS Closing,
+      IFNULL((
+        SELECT inv_nomor FROM tinv_hdr 
+        WHERE inv_nomor_so = h.sj_nomor LIMIT 1
+      ), '') AS NoInvoice,
+      'DC'                AS Source,
+      CASE 
+        WHEN h.sj_kecab IN ('K01','K03','K06','K08') THEN 3
+        WHEN h.sj_kecab IN ('K10') THEN 7
+        ELSE 5 
+      END AS BatasHari,
+      IF(h.sj_noterima IS NULL OR h.sj_noterima = '',
+        DATEDIFF(CURDATE(), h.sj_tanggal), 0) AS SelisihHari
     FROM tdc_sj_hdr h
     INNER JOIN tdc_sj_dtl d ON d.sjd_nomor = h.sj_nomor
     LEFT JOIN ttrm_sj_hdr t ON t.tj_nomor = h.sj_noterima
     LEFT JOIN tgudang g ON g.gdg_kode = h.sj_kecab
-    WHERE h.sj_peminta = ""
-        AND h.sj_kecab = ?
-        AND h.sj_tanggal BETWEEN ? AND ?
-    ${itemFilter}
-    ORDER BY h.sj_noterima, h.sj_nomor;
-    `;
-  const [rows] = await pool.query(query, params);
+    WHERE h.sj_peminta = ''
+      AND h.sj_kecab = ?
+      AND h.sj_tanggal BETWEEN ? AND ?
+      ${dcItemFilter}
+  `;
+
+  // ── SJ Workshop ────────────────────────────────────
+  const wkParams = [cabang, startDate, endDate];
+  let wkItemFilter = "";
+  if (kodeBarang) {
+    wkItemFilter = "AND d.sjwd_kode = ?";
+    wkParams.push(kodeBarang);
+  }
+
+  const wkQuery = `
+    SELECT DISTINCT
+      h.sjw_nomor         AS Nomor,
+      h.sjw_tanggal       AS Tanggal,
+      h.sjw_so_nomor      AS NomorMinta,
+      t.tj_nomor          AS NomorTerima,
+      t.tj_tanggal        AS TglTerima,
+      h.sjw_tujuan_cab    AS Store,
+      g.gdg_nama          AS Nama_Store,
+      h.sjw_ket           AS Keterangan,
+      IFNULL(t.tj_closing,'N') AS Closing,
+      ''                  AS NoInvoice,
+      'WORKSHOP'          AS Source,
+      3                   AS BatasHari,
+      IF(t.tj_nomor IS NULL,
+        DATEDIFF(CURDATE(), h.sjw_tanggal), 0) AS SelisihHari
+    FROM tsj_workshop_hdr h
+    INNER JOIN tsj_workshop_dtl d ON d.sjwd_nomor = h.sjw_nomor
+    LEFT JOIN ttrm_sj_hdr t ON t.tj_sj_workshop = h.sjw_nomor
+    LEFT JOIN tgudang g ON g.gdg_kode = h.sjw_tujuan_cab
+    WHERE h.sjw_tujuan_cab = ?
+      AND h.sjw_tanggal BETWEEN ? AND ?
+      ${wkItemFilter}
+  `;
+
+  // ── Gabungkan & filter source ───────────────────────
+  let rows = [];
+
+  if (!source || source === "ALL") {
+    const [dcRows] = await pool.query(dcQuery, dcParams);
+    const [wkRows] = await pool.query(wkQuery, wkParams);
+    rows = [...dcRows, ...wkRows];
+  } else if (source === "DC") {
+    const [dcRows] = await pool.query(dcQuery, dcParams);
+    rows = dcRows;
+  } else if (source === "WORKSHOP") {
+    const [wkRows] = await pool.query(wkQuery, wkParams);
+    rows = wkRows;
+  }
+
+  // Sort: belum diterima dulu, lalu nomor DESC
+  rows.sort((a, b) => {
+    if (!a.NomorTerima && b.NomorTerima) return -1;
+    if (a.NomorTerima && !b.NomorTerima) return 1;
+    return a.Nomor > b.Nomor ? -1 : 1;
+  });
+
   return rows.map((row) => {
     let statusDeadline = "AMAN";
     if (!row.NomorTerima) {
-      if (row.SelisihHari > row.BatasHari + 1)
-        statusDeadline = "EKSEKUSI"; // H+2
-      else if (row.SelisihHari > row.BatasHari) statusDeadline = "TERLAMBAT"; // H+1
+      if (row.SelisihHari > row.BatasHari + 1) statusDeadline = "EKSEKUSI";
+      else if (row.SelisihHari > row.BatasHari) statusDeadline = "TERLAMBAT";
     }
     return { ...row, StatusDeadline: statusDeadline };
   });

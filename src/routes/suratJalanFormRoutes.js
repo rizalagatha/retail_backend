@@ -38,6 +38,12 @@ router.get(
   checkPermission(MENU_ID, "view"),
   sjFormController.searchSoBordirGlobal,
 );
+router.get(
+  "/bahan-penolong/search",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  sjFormController.searchBahanPenolong,
+);
 router.get("/by-barcode/:barcode", verifyToken, sjFormController.getByBarcode);
 // Load items from Permintaan or Terima RB
 router.get(

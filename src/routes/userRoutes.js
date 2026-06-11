@@ -6,27 +6,37 @@ const {
   checkPermission,
 } = require("../middleware/authMiddleware");
 
-// Definisikan ID Menu untuk Master User
-const USER_MENU_ID = 1; // Pastikan ID ini sesuai dengan di database Anda
+const USER_MENU_ID = 1;
 
-/*
- * Middleware untuk rute /save yang menangani 'insert' dan 'edit'.
- */
 const checkSavePermission = (req, res, next) => {
   const action = req.body.isNewUser ? "insert" : "edit";
   return checkPermission(USER_MENU_ID, action)(req, res, next);
 };
 
-// --- RUTE BARU ---
-// Endpoint ini mungkin tidak perlu proteksi spesifik jika hanya untuk data pendukung
+// --- Rute data pendukung (tidak butuh permission ketat) ---
 router.get(
   "/available-for-sc",
   verifyToken,
   userController.getAvailableForSalesCounter,
 );
 
-// --- Rute yang sudah ada ---
-// Rute-rute ini umumnya butuh hak 'view' untuk bisa diakses
+// [BARU] Daftar user per cabang — untuk fitur copy permission
+router.get("/users-by-cabang", verifyToken, userController.getUsersByCabang);
+
+// [BARU] Ambil template permission dari user referensi
+router.get("/template", verifyToken, userController.getTemplate);
+
+// [BARU] Deteksi menu baru yang belum dikonfigurasi
+router.get("/new-menus", verifyToken, userController.getNewMenus);
+
+router.post(
+  "/apply-new-menus",
+  verifyToken,
+  checkPermission("1", "edit"),
+  userController.applyNewMenusToUsers,
+);
+
+// --- Rute utama ---
 router.get(
   "/",
   verifyToken,
@@ -46,15 +56,9 @@ router.get(
   userController.getMenus,
 );
 
-// Rute ini membutuhkan hak insert atau edit
 router.post("/save", verifyToken, checkSavePermission, userController.save);
-
-// Mengubah password adalah bagian dari 'edit'
 router.post("/change-password", verifyToken, userController.updatePassword);
 
-// Menghapus user membutuhkan hak 'delete'
-// PERHATIAN: Rute Anda menggunakan POST/DELETE dengan body, ini tidak standar.
-// Sebaiknya gunakan DELETE /api/users/:kode/:cabang
 router.delete(
   "/delete",
   verifyToken,
@@ -62,7 +66,7 @@ router.delete(
   userController.remove,
 );
 
-// Rute dinamis untuk mendapatkan detail (membutuhkan hak 'view')
+// Rute dinamis — harus di paling bawah agar tidak bentrok dengan rute statis di atas
 router.get(
   "/:kode/:cabang",
   verifyToken,

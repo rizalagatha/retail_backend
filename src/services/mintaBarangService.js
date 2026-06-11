@@ -3,10 +3,13 @@ const pool = require("../config/database");
 // Di file: src/services/mintaBarangService.js
 
 const getList = async (filters) => {
-  const { startDate, endDate, cabang, jenisPermintaan } = filters;
+  const { startDate, endDate, cabang, jenisPermintaan, statusClosing } =
+    filters;
+
   let params = [startDate, endDate];
   let branchFilter = "",
-    jenisFilter = "";
+    jenisFilter = "",
+    statusFilter = "";
 
   if (cabang !== "ALL") {
     branchFilter = "AND h.mt_cab = ?";
@@ -15,6 +18,12 @@ const getList = async (filters) => {
   if (jenisPermintaan === "manual") jenisFilter = 'AND h.mt_otomatis = "N"';
   else if (jenisPermintaan === "otomatis")
     jenisFilter = 'AND h.mt_otomatis = "Y"';
+
+  if (statusClosing === "N") {
+    statusFilter = "AND h.mt_closing = 'N'";
+  } else if (statusClosing === "Y") {
+    statusFilter = "AND h.mt_closing = 'Y'";
+  }
 
   const query = `
     SELECT 
@@ -54,6 +63,7 @@ const getList = async (filters) => {
     WHERE h.mt_tanggal BETWEEN ? AND ?
     ${branchFilter}
     ${jenisFilter}
+    ${statusFilter}
     ORDER BY h.mt_nomor DESC
 `;
   const [rows] = await pool.query(query, params);

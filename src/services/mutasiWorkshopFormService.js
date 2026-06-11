@@ -23,9 +23,15 @@ const getForEdit = async (nomor) => {
       h.mw_tanggal AS tanggal,
       h.mw_cab_tujuan AS storeTujuanKode,
       g.gdg_nama AS storeTujuanNama,
-      h.mw_ket AS keterangan
+      h.mw_ket AS keterangan,
+      h.mw_so_nomor AS nomorSo,
+      h.mw_so_dtf AS noSoDtf,
+      g_so.gdg_nama AS storeAsalNama,
+      h.mw_rute AS rute
     FROM tmutasi_workshop_hdr h
     LEFT JOIN tgudang g ON g.gdg_kode = h.mw_cab_tujuan
+    LEFT JOIN tso_hdr sh ON sh.so_nomor = h.mw_so_nomor
+    LEFT JOIN tgudang g_so ON g_so.gdg_kode = sh.so_cab
     WHERE h.mw_nomor = ?;
   `;
   const [headerRows] = await pool.query(headerQuery, [nomor]);
@@ -42,8 +48,22 @@ const getForEdit = async (nomor) => {
       TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), " ", IFNULL(a.brg_tipe,''), " ", IFNULL(a.brg_lengan,''), " ", IFNULL(a.brg_jeniskain,''), " ", IFNULL(a.brg_warna,''))) AS nama,
       d.mwd_ukuran AS ukuran,
       d.mwd_jumlah AS jumlah,
+
+      IFNULL((
+        SELECT sod_jumlah 
+        FROM tso_dtl 
+        WHERE sod_so_nomor = h.mw_so_nomor 
+          AND sod_kode = d.mwd_kode 
+          AND sod_ukuran = d.mwd_ukuran 
+        LIMIT 1
+      ), 0) AS qtySo,
+
+      IFNULL(h.mw_so_dtf, '') AS noSoDtf,
+
       (IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_brg_kode=d.mwd_kode AND m.mst_ukuran=d.mwd_ukuran), 0) + d.mwd_jumlah) AS stok
+    
     FROM tmutasi_workshop_dtl d
+    INNER JOIN tmutasi_workshop_hdr h ON h.mw_nomor = d.mwd_nomor /* 👈 JOIN dengan Header untuk dapat mw_so_nomor */
     LEFT JOIN tbarangdc a ON a.brg_kode = d.mwd_kode
     LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mwd_kode AND b.brgd_ukuran = d.mwd_ukuran
     WHERE d.mwd_nomor = ?;
@@ -76,14 +96,20 @@ const save = async (payload, user) => {
 
     let nomorDokumen = header.nomor;
 
+    const mwSoNomor = header.nomorSo || "";
+    const mwSoDtf = header.noSoDtf || "";
+
+    // Tarik nilai rute dari frontend
+    const rute = header.rute || "LANGSUNG";
+
     if (isNew) {
       nomorDokumen = await generateNewNomor(user.cabang, header.tanggal);
       const headerInsertQuery = `
         INSERT INTO tmutasi_workshop_hdr (
           mw_nomor, mw_tanggal, mw_cab_tujuan, mw_ket, 
-          mw_cab_asal, user_create, date_create
+          mw_cab_asal, mw_so_nomor, mw_so_dtf, mw_rute, user_create, date_create
         )
-        VALUES (?, ?, ?, ?, ?, ?, NOW());
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
       `;
       await connection.query(headerInsertQuery, [
         nomorDokumen,
@@ -91,18 +117,25 @@ const save = async (payload, user) => {
         header.storeTujuanKode,
         header.keterangan,
         user.cabang,
+        mwSoNomor,
+        mwSoDtf,
+        rute,
         user.kode,
       ]);
     } else {
       const headerUpdateQuery = `
         UPDATE tmutasi_workshop_hdr 
-        SET mw_tanggal = ?, mw_cab_tujuan = ?, mw_ket = ?, user_modified = ?, date_modified = NOW()
+        SET mw_tanggal = ?, mw_cab_tujuan = ?, mw_ket = ?, 
+            mw_so_nomor = ?, mw_so_dtf = ?, mw_rute = ?, user_modified = ?, date_modified = NOW()
         WHERE mw_nomor = ? AND mw_cab_asal = ?
       `;
       await connection.query(headerUpdateQuery, [
         header.tanggal,
         header.storeTujuanKode,
         header.keterangan,
+        mwSoNomor,
+        mwSoDtf,
+        rute,
         user.kode,
         nomorDokumen,
         user.cabang,
@@ -211,6 +244,8 @@ const getPrintData = async (nomor, user) => {
       h.mw_cab_tujuan,
       g_tujuan.gdg_nama,
       h.mw_ket,
+      h.mw_so_nomor,
+      h.mw_so_dtf,
       DATE_FORMAT(h.date_create, '%d-%m-%Y %H:%i:%s') AS created,
       h.user_create,
       d.mwd_kode,
@@ -239,6 +274,8 @@ const getPrintData = async (nomor, user) => {
     tanggal: rows[0].mw_tanggal,
     keCabang: `${rows[0].mw_cab_tujuan} - ${rows[0].gdg_nama}`,
     keterangan: rows[0].mw_ket,
+    nomorSo: rows[0].mw_so_nomor || "-",
+    nomorSoDtf: rows[0].mw_so_dtf || "-",
     created: rows[0].created,
     user_create: rows[0].user_create,
     perush_nama: rows[0].gdg_inv_nama,
@@ -258,7 +295,45 @@ const getPrintData = async (nomor, user) => {
   return { header, details };
 };
 
-// ... fungsi lookupProductsForMutasiKirim bisa di-copy paste persis dari aslinya ...
+const getSoBordirDetails = async (nomorSo, cabang) => {
+  const query = `
+    SELECT
+      d.sod_kode AS kode,
+      b.brgd_barcode AS barcode,
+      TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), " ", IFNULL(a.brg_tipe,''), " ", IFNULL(a.brg_lengan,''), " ", IFNULL(a.brg_jeniskain,''), " ", IFNULL(a.brg_warna,''))) AS nama,
+      d.sod_ukuran AS ukuran,
+      IFNULL((SELECT g.gdg_nama FROM tgudang g WHERE g.gdg_kode = h.so_cab LIMIT 1), '') AS store_asal_nama,
+      (d.sod_jumlah - IFNULL((
+        SELECT SUM(md.mwd_jumlah)
+        FROM tmutasi_workshop_dtl md
+        INNER JOIN tmutasi_workshop_hdr mh ON mh.mw_nomor = md.mwd_nomor
+        WHERE mh.mw_so_nomor = d.sod_so_nomor
+          AND md.mwd_kode = d.sod_kode
+          AND md.mwd_ukuran = d.sod_ukuran
+      ), 0)) AS sisa_so,
+      IFNULL((
+        SELECT GROUP_CONCAT(DISTINCT d2.sod_sd_nomor SEPARATOR ', ')
+        FROM tso_dtl d2 
+        WHERE d2.sod_so_nomor = d.sod_so_nomor 
+          AND d2.sod_sd_nomor LIKE '%.BR.%' 
+      ), '') AS no_so_dtf,
+      IFNULL((
+        SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+        FROM tmasterstok m
+        WHERE m.mst_aktif = 'Y' AND m.mst_cab = ? AND m.mst_brg_kode = d.sod_kode AND m.mst_ukuran = d.sod_ukuran
+      ), 0) AS stok
+    FROM tso_dtl d
+    INNER JOIN tso_hdr h ON h.so_nomor = d.sod_so_nomor
+    INNER JOIN tbarangdc a ON a.brg_kode = d.sod_kode
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
+    WHERE d.sod_so_nomor = ?
+      AND d.sod_kode NOT LIKE 'JASA%'
+      AND d.sod_kode != 'CUSTOM'
+    HAVING sisa_so > 0
+  `;
+  const [rows] = await pool.query(query, [cabang, nomorSo]);
+  return rows;
+};
 
 module.exports = {
   getForEdit,
@@ -267,4 +342,5 @@ module.exports = {
   getProductDetails,
   findByBarcode,
   getPrintData,
+  getSoBordirDetails,
 };

@@ -16,26 +16,18 @@ const checkSavePermission = (req, res, next) => {
 
 // --- ROUTES ---
 
-// Memuat data Invoice yang sudah ada untuk mode "Ubah"
-router.get(
-  "/:nomor",
-  verifyToken,
-  checkPermission(MENU_ID, "edit"),
-  controller.loadForEdit
-);
-
 router.get(
   "/print/:nomor",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getPrintData
+  controller.getPrintData,
 );
 
 router.get(
   "/print-kasir/:nomor",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getPrintDataKasir
+  controller.getPrintDataKasir,
 );
 
 router.get("/print-sj/:nomor", verifyToken, controller.getDataForSjPrint);
@@ -46,27 +38,27 @@ router.get(
   "/lookup/so",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.searchSo
+  controller.searchSo,
 );
 
 router.get(
   "/lookup/promo",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.searchPromo
+  controller.searchPromo,
 );
 
 router.get(
   "/lookup/member/:hp",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getMemberByHp
+  controller.getMemberByHp,
 );
 
 router.get(
   "/lookup/default-customer",
   verifyToken,
-  controller.getDefaultCustomer
+  controller.getDefaultCustomer,
 );
 
 router.get("/lookup/so-dtf", verifyToken, controller.searchSoDtf);
@@ -74,7 +66,7 @@ router.get("/lookup/so-dtf", verifyToken, controller.searchSoDtf);
 router.get(
   "/lookup/so-dtf-details/:nomor",
   verifyToken,
-  controller.getSoDtfDetails
+  controller.getSoDtfDetails,
 );
 
 router.get("/lookup/retur-jual", verifyToken, controller.searchReturJual);
@@ -82,33 +74,45 @@ router.get("/lookup/retur-jual", verifyToken, controller.searchReturJual);
 router.get(
   "/lookup/discount-rule/:customerKode",
   verifyToken,
-  controller.getDiscountRule
+  controller.getDiscountRule,
 );
 
 // Endpoint lookup sisa piutang customer
-router.get('/lookup/customer-debt/:kode', verifyToken, controller.getCustomerDebt);
+router.get(
+  "/lookup/customer-debt/:kode",
+  verifyToken,
+  controller.getCustomerDebt,
+);
 
 router.get("/lookup/active-promos", verifyToken, controller.getActivePromos);
 
-router.get('/lookup/promo-items/:nomorPromo', verifyToken, controller.getPromoItems);
+router.get(
+  "/lookup/promo-items/:nomorPromo",
+  verifyToken,
+  controller.getPromoItems,
+);
 
-router.get('/lookup/promo/:nomorPromo', verifyToken, controller.getPromoHeader);
+router.get("/lookup/promo/:nomorPromo", verifyToken, controller.getPromoHeader);
 
-router.put("/update-header/:nomor", verifyToken, controller.updateInvoiceHeaderOnly);
+router.put(
+  "/update-header/:nomor",
+  verifyToken,
+  controller.updateInvoiceHeaderOnly,
+);
 
 // Mengambil detail item dari SO yang dipilih untuk mengisi grid
 router.get(
   "/lookup/so-details/:soNomor",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getSoDetailsForGrid
+  controller.getSoDetailsForGrid,
 );
 
 router.get(
   "/lookup/sales-counters",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getSalesCounters
+  controller.getSalesCounters,
 );
 
 router.get("/by-barcode/:barcode", verifyToken, controller.getByBarcode);
@@ -117,7 +121,7 @@ router.get(
   "/lookup/products",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.searchProducts
+  controller.searchProducts,
 );
 
 // Lookup SJ khusus cabang KPR
@@ -125,14 +129,14 @@ router.get(
   "/lookup/sj-list",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.searchSj
+  controller.searchSj,
 );
 
 router.get(
   "/lookup/sj-details/:nomor",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getSjDetails
+  controller.getSjDetails,
 );
 
 // Mencari DP (Setoran) yang belum lunas milik customer
@@ -140,19 +144,26 @@ router.get(
   "/lookup/unpaid-dp/:customerKode",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.searchUnpaidDp
+  controller.searchUnpaidDp,
 );
 
 router.get(
   "/lookup/promo-bonus/:promoNomor",
   verifyToken,
-  controller.getPromoBonusItems
+  controller.getPromoBonusItems,
 );
 
 router.get(
   "/lookup/applicable-item-promo",
   verifyToken,
-  controller.getApplicableItemPromo
+  controller.getApplicableItemPromo,
+);
+
+router.get(
+  "/lookup/packaging-options",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getPackagingOptions,
 );
 
 router.get("/check-printables/:nomor", verifyToken, controller.checkPrintables);
@@ -162,7 +173,7 @@ router.get("/print-kupon/:nomor", verifyToken, controller.getKuponPrintData);
 router.get(
   "/print-voucher/:nomor",
   verifyToken,
-  controller.getVoucherPrintData
+  controller.getVoucherPrintData,
 );
 
 // Menyimpan data (baru atau yang diubah)
@@ -172,11 +183,19 @@ router.post(
   "/save-member",
   verifyToken,
   checkPermission(MENU_ID, "insert"),
-  controller.saveMember
+  controller.saveMember,
 );
 
 router.post("/save-satisfaction", verifyToken, controller.saveSatisfaction);
 
 router.post("/validate-voucher", verifyToken, controller.validateVoucher);
+
+// Memuat data Invoice yang sudah ada untuk mode "Ubah"
+router.get(
+  "/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  controller.loadForEdit,
+);
 
 module.exports = router;

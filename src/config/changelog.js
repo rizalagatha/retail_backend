@@ -1,4 +1,25 @@
 const changelogs = {
+  "1.5.0": {
+    date: "2026-05-31",
+    changes: [
+      {
+        title: "Pembaruan:",
+        items: [
+          "STOK ACCESORIES DAN OBAT di Kaosan, sekarang pada Halaman Permintaan Kaosan, ketika klik Approve Realisasi maka stok Accesories dan Obat akan masuk ke stok Kaosan di DC Pusat, kemudian dapat didistribusikan oleh DC Pusat ke Store. Store dapat melakukan penerimaan SJ untuk menambah stok Accesories dan Obat ke stok toko masing-masing",
+          "LAPORAN STOK BAHAN, untuk monitoring sisa stok Accesories dan Obat di toko dan di DC Pusat",
+          "Terkait Stok Accesories, saat Invoice dan Lanjutkan ke Pembayaran, terdapat pilihan packaging yang dapat dipilih oleh store. Dengan catatan Store sudah menerima SJ atau melakukan koreksi stok untuk stok accesories yang sudah ada",
+          "Koreksi Stok untuk Accesories, dapat digunakan untuk adjustment/penyesuaian stok Accesories dengan stok riil di toko. Dapat dilakukan pencarian accesories dengan menekan F3 pada kolom cari",
+          "INPUT LOST ORDER dan COUNTER KUNJUNGAN CUSTOMER, lost order dapat diinput melalui badge kecil di dashboard, sementara count kunjungan otomatis ketika simpan penawaran, surat pesanan, dan invoice. Untuk pelaporannya dapat dilihat pada Laporan > Penjualan > Laporan Lost Order dan Kunjungan",
+          "MODUL WORKSHOP, meliputi Mutasi ke Workshop yang ditambahkan referensi nomor SO, dan Surat Jalan (SJ) dari Workshop ke Store. Store dapat menerima Surat Jalan dari Workshop melalui menu Operasional > Internal Store > Terima Surat Jalan, namun harus tetap scan barang satu per satu",
+          "Menu Terima Surat Jalan sekarang memiliki dua mode, mode Terima Surat Jalan Workshop dan Terima Surat Jalan dari DC",
+          "CARD PENCARIAN STOK REAL-TIME TOKO, dapat digunakan untuk melihat stok riil di toko yang dapat dijual secara langsung ke customer, dimana sudah dikurangi dengan stok pesanan",
+          "Validasi pada saat input Customer baru, harus memasukkan format no telepon yang benar dan Kota/Kabupaten yang sesuai",
+          "Otorisasi Close Penawaran, Close SO DTF, dan Close Surat Pesanan harus melalui SPV (Bp. Estu)",
+          "Perbaikan pada halaman Laporan Pareto Penjualan",
+        ],
+      },
+    ],
+  },
   "1.4.5": {
     date: "2026-05-31",
     changes: [

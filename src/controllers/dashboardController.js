@@ -489,6 +489,17 @@ const getAutoMintaAnalytics = async (req, res) => {
   }
 };
 
+const getRealStockList = async (req, res, next) => {
+  try {
+    // Teruskan req.query (bisa berisi search, cabang, dll) ke service
+    const data = await dashboardService.getRealStockList(req.user, req.query);
+    res.json(data);
+  } catch (error) {
+    console.error("Error in getRealStockList controller:", error);
+    res.status(500).json({ message: "Gagal mengambil data stok real." });
+  }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -527,4 +538,5 @@ module.exports = {
   getDeadStockSalesDetail,
   getSpkPendingApproval,
   getAutoMintaAnalytics,
+  getRealStockList,
 };

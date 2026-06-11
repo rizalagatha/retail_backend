@@ -76,16 +76,26 @@ const getList = async (filters) => {
  */
 const getDetails = async (nomor) => {
   const query = `
-        SELECT 
-            d.sjd_kode AS Kode,
-            CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna) AS Nama,
-            d.sjd_ukuran AS Ukuran,
-            d.sjd_jumlah AS Jumlah
-        FROM tdc_sj_dtl d
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.sjd_kode
-        WHERE d.sjd_nomor = ?
-        ORDER BY d.sjd_kode;
-    `;
+    SELECT 
+      d.sjd_kode AS Kode,
+      COALESCE(
+        NULLIF(TRIM(CONCAT(
+          IFNULL(a.brg_jeniskaos,''), ' ',
+          IFNULL(a.brg_tipe,''), ' ',
+          IFNULL(a.brg_lengan,''), ' ',
+          IFNULL(a.brg_jeniskain,''), ' ',
+          IFNULL(a.brg_warna,'')
+        )), ''),
+        b.brg_nama
+      ) AS Nama,
+      d.sjd_ukuran AS Ukuran,
+      d.sjd_jumlah AS Jumlah
+    FROM tdc_sj_dtl d
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.sjd_kode
+    LEFT JOIN kencanaprint.tgarmen_brg b ON b.brg_kode = d.sjd_kode
+    WHERE d.sjd_nomor = ?
+    ORDER BY d.sjd_kode
+  `;
   const [rows] = await pool.query(query, [nomor]);
   return rows;
 };
@@ -211,7 +221,6 @@ const submitRequest = async (payload) => {
  * @param {string} nomor - Nomor Surat Jalan.
  * @returns {Promise<object>}
  */
-// GANTI FUNGSI LAMA DENGAN INI:
 const getPrintData = async (nomor) => {
   // 1. Query untuk header, mengambil data SJ, data store tujuan, dan data perusahaan pengirim
   const headerQuery = `
@@ -240,15 +249,25 @@ const getPrintData = async (nomor) => {
   // 2. Query untuk detail item
   const detailQuery = `
     SELECT 
-        d.sjd_kode,
-        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama_barang,
-        d.sjd_ukuran,
-        d.sjd_jumlah
+      d.sjd_kode,
+      COALESCE(
+        NULLIF(TRIM(CONCAT(
+          IFNULL(a.brg_jeniskaos,''), ' ',
+          IFNULL(a.brg_tipe,''), ' ',
+          IFNULL(a.brg_lengan,''), ' ',
+          IFNULL(a.brg_jeniskain,''), ' ',
+          IFNULL(a.brg_warna,'')
+        )), ''),
+        b.brg_nama
+      ) AS nama_barang,
+      d.sjd_ukuran,
+      d.sjd_jumlah
     FROM tdc_sj_dtl d
     LEFT JOIN tbarangdc a ON a.brg_kode = d.sjd_kode
+    LEFT JOIN kencanaprint.tgarmen_brg b ON b.brg_kode = d.sjd_kode
     WHERE d.sjd_nomor = ?
-    ORDER BY d.sjd_kode, d.sjd_ukuran;
-    `;
+    ORDER BY d.sjd_kode, d.sjd_ukuran
+  `;
   const [detailRows] = await pool.query(detailQuery, [nomor]);
 
   return {

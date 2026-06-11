@@ -31,7 +31,7 @@ const save = async (req, res) => {
         // A. Ambil Header (tkor_hdr)
         const [headerRows] = await pool.query(
           "SELECT * FROM tkor_hdr WHERE kor_nomor = ?",
-          [nomorDokumen]
+          [nomorDokumen],
         );
 
         if (headerRows.length > 0) {
@@ -40,21 +40,21 @@ const save = async (req, res) => {
           // B. Ambil Detail Utama (tkor_dtl)
           const [detailRows] = await pool.query(
             "SELECT * FROM tkor_dtl WHERE kord_kor_nomor = ?",
-            [nomorDokumen]
+            [nomorDokumen],
           );
 
           // C. Ambil Detail 2 (tkor_dtl2) - Jika ada logika terkait mutasi stok
           // Asumsi tabel detail 2 juga di-handle (biasanya untuk breakdown selisih/mutasi)
           const [detail2Rows] = await pool.query(
             "SELECT * FROM tkor_dtl2 WHERE kord2_nomor = ?",
-            [nomorDokumen]
+            [nomorDokumen],
           );
 
           // D. Gabungkan menjadi struktur data lama yang lengkap
           oldData = {
             ...header,
             items: detailRows,
-            items2: detail2Rows // Opsional, sesuaikan dengan kebutuhan frontend/service
+            items2: detail2Rows, // Opsional, sesuaikan dengan kebutuhan frontend/service
           };
         }
       } catch (e) {
@@ -68,7 +68,7 @@ const save = async (req, res) => {
     // 4. AUDIT: Catat Log
     const targetId = result.nomor || nomorDokumen || "UNKNOWN";
     const action = isUpdate ? "UPDATE" : "CREATE";
-    const note = `${action === "CREATE" ? "Input" : "Edit"} Koreksi Stok (Ref: ${payload.header?.keterangan || '-'})`;
+    const note = `${action === "CREATE" ? "Input" : "Edit"} Koreksi Stok (Ref: ${payload.header?.keterangan || "-"})`;
 
     auditService.logActivity(
       req,
@@ -77,7 +77,7 @@ const save = async (req, res) => {
       targetId,
       oldData, // Data Lama (Null jika Create)
       payload, // Data Baru
-      note
+      note,
     );
 
     res.status(201).json(result);
@@ -88,11 +88,17 @@ const save = async (req, res) => {
 
 const getProductDetails = async (req, res) => {
   try {
-    const { kode, ukuran, gudang, tanggal } = req.query;
+    const { kode, ukuran, gudang, tanggal, isBahan } = req.query;
     if (!kode || !ukuran || !gudang || !tanggal) {
       return res.status(400).json({ message: "Parameter tidak lengkap." });
     }
-    const data = await service.getProductDetails(kode, ukuran, gudang, tanggal);
+    const data = await service.getProductDetails(
+      kode,
+      ukuran,
+      gudang,
+      tanggal,
+      isBahan,
+    );
     res.json(data);
   } catch (error) {
     res.status(404).json({ message: error.message });

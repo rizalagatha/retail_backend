@@ -38,7 +38,11 @@ const getDetails = async (nomor) => {
   const detailQuery = `
         SELECT 
             d.kord_kode AS kode,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+            COALESCE(
+                NULLIF(TRIM(CONCAT(IFNULL(a.brg_jeniskaos, ''), " ", IFNULL(a.brg_tipe, ''), " ", IFNULL(a.brg_lengan, ''), " ", IFNULL(a.brg_jeniskain, ''), " ", IFNULL(a.brg_warna, ''))), ''),
+                tb.brg_nama,
+                d.kord_kode
+            ) AS nama,
             d.kord_ukuran AS ukuran,
             d.kord_stok AS stok,
             d.kord_jumlah AS jumlah,
@@ -47,6 +51,7 @@ const getDetails = async (nomor) => {
             d.kord_ket AS keterangan
         FROM tkor_dtl d
         LEFT JOIN tbarangdc a ON a.brg_kode = d.kord_kode
+        LEFT JOIN kencanaprint.tgarmen_brg tb ON tb.brg_kode = d.kord_kode
         WHERE d.kord_kor_nomor = ?;
     `;
   const [rows] = await pool.query(detailQuery, [nomor]);
@@ -156,21 +161,14 @@ const remove = async (nomor, user) => {
 const getExportDetails = async (filters, user) => {
   const { startDate, endDate, belumAccSaja } = filters;
 
-  // Gunakan DATE() agar jam diabaikan untuk konsistensi pencarian
   let whereClauses = ["DATE(h.kor_tanggal) BETWEEN ? AND ?"];
   let params = [startDate, endDate];
 
-  // --- PERBAIKAN LOGIKA AKSES DATA (SINKRON DENGAN GETLIST) ---
   if (user.cabang !== "KDC") {
-    // Jika user cabang biasa, batasi hanya data cabangnya sendiri
     whereClauses.push("h.kor_cab = ?");
     params.push(user.cabang);
   }
-  // Jika user KDC, maka whereClauses untuk 'kor_cab' TIDAK DITAMBAHKAN.
-  // Hasilnya: Query akan mengambil data dari SEMUA cabang yang ada.
-  // ------------------------------------------------------------
 
-  // Filter Status ACC
   if (belumAccSaja === "true" || belumAccSaja === true) {
     whereClauses.push('(h.kor_acc IS NULL OR h.kor_acc = "")');
   }
@@ -178,12 +176,16 @@ const getExportDetails = async (filters, user) => {
   const query = `
         SELECT 
             h.kor_nomor AS 'Nomor Koreksi',
-            g.gdg_nama AS 'Cabang', -- Tambahkan info Cabang di kolom Excel
+            g.gdg_nama AS 'Cabang',
             h.kor_tanggal AS 'Tanggal',
             h.kor_ket AS 'Keterangan Header',
             COALESCE(h.kor_acc, '-') AS 'DiAcc Oleh',
             d.kord_kode AS 'Kode Barang',
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS 'Nama Barang',
+            COALESCE(
+                NULLIF(TRIM(CONCAT(IFNULL(a.brg_jeniskaos, ''), " ", IFNULL(a.brg_tipe, ''), " ", IFNULL(a.brg_lengan, ''), " ", IFNULL(a.brg_jeniskain, ''), " ", IFNULL(a.brg_warna, ''))), ''),
+                tb.brg_nama,
+                d.kord_kode
+            ) AS 'Nama Barang',
             d.kord_ukuran AS 'Ukuran',
             d.kord_stok AS 'Stok Awal',
             d.kord_jumlah AS 'Stok Fisik',
@@ -194,6 +196,7 @@ const getExportDetails = async (filters, user) => {
         FROM tkor_hdr h
         INNER JOIN tkor_dtl d ON d.kord_kor_nomor = h.kor_nomor
         LEFT JOIN tbarangdc a ON a.brg_kode = d.kord_kode
+        LEFT JOIN kencanaprint.tgarmen_brg tb ON tb.brg_kode = d.kord_kode
         LEFT JOIN tgudang g ON g.gdg_kode = h.kor_cab
         WHERE ${whereClauses.join(" AND ")}
         ORDER BY h.kor_tanggal, h.kor_nomor;

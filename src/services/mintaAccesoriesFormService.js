@@ -2,46 +2,70 @@ const pool = require("../config/database");
 const { format } = require("date-fns");
 
 // --- HELPER: GENERATE NOMOR ---
-// Format: MIA2026.00001
-const generateNomor = async (connection, tanggal) => {
+const generateNomor = async (connection, jenis, tanggal) => {
   const year = format(new Date(tanggal), "yyyy");
-  const prefix = `MIA${year}.`;
+  // Tentukan prefix berdasarkan jenis
+  const prefix = jenis === "OBAT" ? `MIO${year}.` : `MIA${year}.`;
 
   const query = `
-    SELECT IFNULL(MAX(RIGHT(min_nomor, 5)), 0) + 1 AS next_num
-    FROM kencanaprint.taccmintabahan_hdr 
-    WHERE LEFT(min_nomor, 8) = ?;
+    SELECT IFNULL(MAX(CAST(RIGHT(min_nomor, 5) AS UNSIGNED)), 0) + 1 AS next_num
+    FROM kencanaprint.tgarmenminta_hdr 
+    WHERE min_nomor LIKE ?;
   `;
-  const [rows] = await connection.query(query, [prefix]);
+  const [rows] = await connection.query(query, [`${prefix}%`]);
   const nextNumber = rows[0].next_num.toString().padStart(5, "0");
 
   return `${prefix}${nextNumber}`;
 };
 
 // --- CARI BARANG KAOSAN (F1) ---
-const searchBarangKaosan = async (keyword) => {
+const searchBarangKaosan = async (keyword, jenis, cabang = "P03") => {
   const searchTerm = `%${keyword || ""}%`;
 
-  // Filter: Aktif = 'Y' dan Kategori = 'STORE'
+  // Filter kategori dan tentukan tabel stok berdasarkan jenis
+  let ktgFilter = "";
+  let stockTable = "kencanaprint.tmasterstok_acc"; // Default
+
+  if (jenis === "ACCESORIES") {
+    ktgFilter = `AND b.brg_ktg = 'STORE'`;
+    stockTable = "kencanaprint.tmasterstok_acc";
+  } else if (jenis === "OBAT") {
+    ktgFilter = `AND b.brg_ktg = 'DTF'`;
+    stockTable = "kencanaprint.tmasterstok_obat";
+  }
+
   const query = `
     SELECT 
-      acc_kode AS kode, 
-      acc_nama AS nama, 
-      acc_satuan AS satuan, 
-      acc_note AS note
-    FROM kencanaprint.taccesories
-    WHERE acc_aktif = 'Y' 
-      AND acc_kategori = 'STORE'
-      AND (acc_kode LIKE ? OR acc_nama LIKE ?)
-    ORDER BY acc_nama ASC
-    LIMIT 100;
+      b.brg_kode AS kode, 
+      b.brg_nama AS nama, 
+      b.brg_satuan AS satuan, 
+      b.brg_note AS note,
+      IFNULL((
+        SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
+        FROM ${stockTable} m 
+        WHERE m.mst_aktif = 'Y' 
+          AND m.mst_cab = ? 
+          AND m.mst_brg_kode = b.brg_kode
+      ), 0) AS stok
+    FROM kencanaprint.tgarmen_brg b
+    WHERE b.brg_aktif = 'Y' 
+      AND b.brg_jenis = ?
+      ${ktgFilter}
+      AND (b.brg_kode LIKE ? OR b.brg_nama LIKE ?)
+    ORDER BY b.brg_nama ASC
   `;
 
-  const [rows] = await pool.query(query, [searchTerm, searchTerm]);
+  // Jangan lupa parameter cabang dimasukkan di urutan pertama array
+  const [rows] = await pool.query(query, [
+    cabang,
+    jenis,
+    searchTerm,
+    searchTerm,
+  ]);
   return rows;
 };
 
-// --- LOAD DATA (UNTUK MODE EDIT) ---
+// --- LOAD DATA (UNTUK MODE EDIT & PRINT) ---
 const loadData = async (nomor) => {
   // Ambil Header
   const headerQuery = `
@@ -49,9 +73,10 @@ const loadData = async (nomor) => {
       min_nomor AS nomor,
       min_tanggal AS tanggal,
       min_cab AS cabang,
-      min_gp AS gudangProduksiKode,
-      min_ket AS keterangan
-    FROM kencanaprint.taccmintabahan_hdr
+      min_jenis AS jenis,
+      min_ket AS keterangan,
+      user_create
+    FROM kencanaprint.tgarmenminta_hdr
     WHERE min_nomor = ?
   `;
   const [headerRows] = await pool.query(headerQuery, [nomor]);
@@ -61,14 +86,15 @@ const loadData = async (nomor) => {
   // Ambil Details
   const detailQuery = `
     SELECT 
-      d.mind_acc_kode AS kode,
-      b.acc_nama AS nama,
-      b.acc_satuan AS satuan,
+      d.mind_brg_kode AS kode,
+      b.brg_nama AS nama,
+      b.brg_satuan AS satuan,
       d.mind_jumlah AS jumlah,
       d.mind_ket AS keterangan
-    FROM kencanaprint.taccmintabahan_dtl d
-    LEFT JOIN kencanaprint.taccesories b ON b.acc_kode = d.mind_acc_kode
+    FROM kencanaprint.tgarmenminta_dtl d
+    LEFT JOIN kencanaprint.tgarmen_brg b ON b.brg_kode = d.mind_brg_kode
     WHERE d.mind_nomor = ?
+    ORDER BY d.mind_urut ASC
   `;
   const [itemRows] = await pool.query(detailQuery, [nomor]);
 
@@ -86,34 +112,34 @@ const saveData = async (payload, user) => {
 
     const { header, items, isNew } = payload;
 
-    // Default P03 & Gudang Produksi Kaosan (K0001)
+    // Terkunci di P03
     const cabang = "P03";
-    const gudangProduksi = "K0001";
-    const spkNomor = ""; // SPK ditiadakan
+    const jenis = header.jenis || "ACCESORIES";
+    const bagianUser = user.bagian ? user.bagian.toUpperCase() : "";
 
     let nomorPermintaan = header.nomor;
 
     if (isNew) {
-      nomorPermintaan = await generateNomor(connection, header.tanggal);
+      nomorPermintaan = await generateNomor(connection, jenis, header.tanggal);
 
       const insertHeaderSql = `
-        INSERT INTO kencanaprint.taccmintabahan_hdr 
-        (min_nomor, min_tanggal, min_cab, min_gp, min_spk_nomor, min_ket, date_create, user_create) 
-        VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)
+        INSERT INTO kencanaprint.tgarmenminta_hdr 
+        (min_jenis, min_nomor, min_tanggal, min_cab, min_bagian, min_ket, date_create, user_create, min_close) 
+        VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, 0)
       `;
       await connection.query(insertHeaderSql, [
+        jenis,
         nomorPermintaan,
         header.tanggal,
         cabang,
-        gudangProduksi,
-        spkNomor,
+        bagianUser,
         header.keterangan || "",
         user.kode,
       ]);
     } else {
       // Validasi sebelum Edit
       const [cekRows] = await connection.query(
-        `SELECT min_close FROM kencanaprint.taccmintabahan_hdr WHERE min_nomor = ?`,
+        `SELECT min_close FROM kencanaprint.tgarmenminta_hdr WHERE min_nomor = ?`,
         [nomorPermintaan],
       );
       if (cekRows.length === 0) throw new Error("Data tidak ditemukan.");
@@ -121,7 +147,7 @@ const saveData = async (payload, user) => {
         throw new Error("Data sudah diproses/diclose, tidak bisa diubah.");
 
       const updateHeaderSql = `
-        UPDATE kencanaprint.taccmintabahan_hdr SET 
+        UPDATE kencanaprint.tgarmenminta_hdr SET 
           min_tanggal = ?, 
           min_ket = ?, 
           date_modified = NOW(), 
@@ -137,7 +163,7 @@ const saveData = async (payload, user) => {
 
       // Hapus detail lama untuk ditimpa yang baru
       await connection.query(
-        `DELETE FROM kencanaprint.taccmintabahan_dtl WHERE mind_nomor = ?`,
+        `DELETE FROM kencanaprint.tgarmenminta_dtl WHERE mind_nomor = ?`,
         [nomorPermintaan],
       );
     }
@@ -146,18 +172,20 @@ const saveData = async (payload, user) => {
     const validItems = items.filter((item) => item.kode && item.jumlah > 0);
     if (validItems.length > 0) {
       const insertDetailSql = `
-        INSERT INTO kencanaprint.taccmintabahan_dtl 
-        (mind_nomor, mind_acc_kode, mind_jumlah, mind_pcs, mind_pemakaian, mind_ket) 
+        INSERT INTO kencanaprint.tgarmenminta_dtl 
+        (mind_nomor, mind_brg_kode, mind_jumlah, mind_pcs, mind_pemakaian, mind_ket, mind_urut) 
         VALUES ?
       `;
 
+      let noUrut = 1;
       const detailValues = validItems.map((item) => [
         nomorPermintaan,
         item.kode,
-        item.jumlah,
-        0, // mind_pcs default 0 (karena SPK dihilangkan)
-        0, // mind_pemakaian default 0
+        parseFloat(item.jumlah).toFixed(2), // Pastikan format decimal
+        0,
+        0,
         item.keterangan || "",
+        noUrut++,
       ]);
 
       await connection.query(insertDetailSql, [detailValues]);

@@ -81,17 +81,7 @@ const save = async (payload, user) => {
       );
 
       // 4. Proses Otomatis Pembuatan Dokumen Mutasi & SJ Cabang
-      const cabangAlokasi = [
-        "KBS",
-        "KPS",
-        "KPR",
-        "K01",
-        "K02",
-        "K03",
-        "K04",
-        "K05",
-        "K06",
-      ];
+      const cabangAlokasi = ["KBS", "KPS", "KPR"];
 
       for (const cabang of cabangAlokasi) {
         const itemsForCabang = allocationItems.filter(

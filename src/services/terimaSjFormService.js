@@ -63,6 +63,51 @@ const loadInitialData = async (nomorSj) => {
   return { header: headerRows[0], items };
 };
 
+const loadInitialDataWorkshop = async (nomorSjw) => {
+  const headerQuery = `
+    SELECT 
+      h.sjw_nomor                    AS sj_nomor,
+      h.sjw_tanggal                  AS sj_tanggal,
+      h.sjw_so_nomor                 AS sj_mt_nomor,
+      h.sjw_ket                      AS keterangan,
+      LEFT(h.sjw_nomor, 3)           AS gudang_asal_kode,
+      g_asal.gdg_nama                AS gudang_asal_nama,
+      h.sjw_tujuan_cab               AS tujuan_kode,
+      g_tujuan.gdg_nama              AS tujuan_nama
+    FROM tsj_workshop_hdr h
+    LEFT JOIN tgudang g_asal   ON g_asal.gdg_kode   = LEFT(h.sjw_nomor, 3)
+    LEFT JOIN tgudang g_tujuan ON g_tujuan.gdg_kode = h.sjw_tujuan_cab
+    WHERE h.sjw_nomor = ?
+  `;
+  const [headerRows] = await pool.query(headerQuery, [nomorSjw]);
+  if (headerRows.length === 0)
+    throw new Error("Data SJ Workshop tidak ditemukan.");
+
+  const itemsQuery = `
+    SELECT
+      d.sjwd_kode     AS kode,
+      b.brgd_barcode  AS barcode,
+      TRIM(CONCAT(
+        IFNULL(a.brg_jeniskaos,''), ' ',
+        IFNULL(a.brg_tipe,''), ' ',
+        IFNULL(a.brg_lengan,''), ' ',
+        IFNULL(a.brg_jeniskain,''), ' ',
+        IFNULL(a.brg_warna,'')
+      ))              AS nama,
+      d.sjwd_ukuran   AS ukuran,
+      d.sjwd_jumlah   AS jumlahKirim
+    FROM tsj_workshop_dtl d
+    LEFT JOIN tbarangdc a ON a.brg_kode = d.sjwd_kode
+    LEFT JOIN tbarangdc_dtl b 
+      ON b.brgd_kode = d.sjwd_kode AND b.brgd_ukuran = d.sjwd_ukuran
+    WHERE d.sjwd_nomor = ?
+    ORDER BY d.sjwd_kode, d.sjwd_ukuran
+  `;
+  const [items] = await pool.query(itemsQuery, [nomorSjw]);
+
+  return { header: headerRows[0], items, isWorkshop: true };
+};
+
 /**
  * Menyimpan data Terima SJ.
  */
@@ -83,51 +128,67 @@ const saveData = async (payload, user) => {
       0,
     );
 
-    // --- 1️⃣ BATAL TERIMA (jika semua jumlahTerima = 0) ---
+    // --- 1️⃣ BATAL TERIMA ---
     if (totalTerima === 0) {
-      // Ambil nomor terima dulu dari SJ-nya
-      const [cekSjBatal] = await connection.query(
-        `SELECT sj_noterima FROM tdc_sj_hdr WHERE sj_nomor = ?`,
-        [nomorSj],
-      );
-      const tjNomorBatal = cekSjBatal[0]?.sj_noterima;
-
-      if (tjNomorBatal) {
-        // Hapus detail
-        await connection.query(`DELETE FROM ttrm_sj_dtl WHERE tjd_nomor = ?`, [
-          tjNomorBatal,
-        ]);
-        // Hapus header
-        await connection.query(`DELETE FROM ttrm_sj_hdr WHERE tj_nomor = ?`, [
-          tjNomorBatal,
-        ]);
-        // Kosongkan link di SJ
-        await connection.query(
-          `UPDATE tdc_sj_hdr SET sj_noterima = '' WHERE sj_nomor = ?`,
+      if (header.isWorkshop) {
+        // Workshop: cari tj_nomor dari ttrm_sj_hdr.tj_sj_workshop
+        const [cekWk] = await connection.query(
+          `SELECT tj_nomor FROM ttrm_sj_hdr WHERE tj_sj_workshop = ?`,
           [nomorSj],
         );
+        const tjNomorBatal = cekWk[0]?.tj_nomor;
+        if (tjNomorBatal) {
+          await connection.query(
+            `DELETE FROM ttrm_sj_dtl WHERE tjd_nomor = ?`,
+            [tjNomorBatal],
+          );
+          await connection.query(`DELETE FROM ttrm_sj_hdr WHERE tj_nomor = ?`, [
+            tjNomorBatal,
+          ]);
+        }
+      } else {
+        const [cekSjBatal] = await connection.query(
+          `SELECT sj_noterima FROM tdc_sj_hdr WHERE sj_nomor = ?`,
+          [nomorSj],
+        );
+        const tjNomorBatal = cekSjBatal[0]?.sj_noterima;
+        if (tjNomorBatal) {
+          await connection.query(
+            `DELETE FROM ttrm_sj_dtl WHERE tjd_nomor = ?`,
+            [tjNomorBatal],
+          );
+          await connection.query(`DELETE FROM ttrm_sj_hdr WHERE tj_nomor = ?`, [
+            tjNomorBatal,
+          ]);
+          await connection.query(
+            `UPDATE tdc_sj_hdr SET sj_noterima = '' WHERE sj_nomor = ?`,
+            [nomorSj],
+          );
+        }
       }
-
       await connection.commit();
       return { message: "Penerimaan dibatalkan.", nomor: null };
     }
 
-    // --- 2️⃣ CEK STATUS SJ (EDIT ATAU BARU) ---
-    // Jangan cek ke ttrm_sj_hdr via mt_nomor (karena bisa kosong).
-    // Cek langsung ke tdc_sj_hdr: Apakah SJ ini sudah punya sj_noterima?
+    // --- 2️⃣ CEK STATUS (EDIT ATAU BARU) ---
+    let existingTjNomor = null;
 
-    const [cekSj] = await connection.query(
-      `SELECT sj_noterima FROM tdc_sj_hdr WHERE sj_nomor = ?`,
-      [nomorSj],
-    );
-
-    if (cekSj.length === 0) {
-      throw new Error("Nomor Surat Jalan tidak valid / tidak ditemukan.");
+    if (header.isWorkshop) {
+      const [cekWk] = await connection.query(
+        `SELECT tj_nomor FROM ttrm_sj_hdr WHERE tj_sj_workshop = ?`,
+        [nomorSj],
+      );
+      existingTjNomor = cekWk[0]?.tj_nomor || null;
+    } else {
+      const [cekSj] = await connection.query(
+        `SELECT sj_noterima FROM tdc_sj_hdr WHERE sj_nomor = ?`,
+        [nomorSj],
+      );
+      if (cekSj.length === 0)
+        throw new Error("Nomor Surat Jalan tidak valid / tidak ditemukan.");
+      existingTjNomor = cekSj[0].sj_noterima || null;
     }
 
-    const existingTjNomor = cekSj[0].sj_noterima;
-
-    // Jika sj_noterima ada isinya, berarti EDIT MODE. Jika kosong, INSERT MODE.
     const isEdit = existingTjNomor && existingTjNomor.trim() !== "";
 
     let tjNomor = null;
@@ -158,7 +219,9 @@ const saveData = async (payload, user) => {
 
       // Update header info (optional, misal user ubah tanggal terima)
       await connection.query(
-        `UPDATE ttrm_sj_hdr SET tj_tanggal = ?, user_update = ?, date_update = NOW() WHERE tj_nomor = ?`,
+        `UPDATE ttrm_sj_hdr 
+          SET tj_tanggal = ?, user_modified = ?, date_modified = NOW() 
+         WHERE tj_nomor = ?`,
         [tanggalTerima, user.kode, tjNomor],
       );
     } else {
@@ -175,9 +238,18 @@ const saveData = async (payload, user) => {
 
       await connection.query(
         `INSERT INTO ttrm_sj_hdr 
-          (tj_idrec, tj_nomor, tj_tanggal, tj_mt_nomor, tj_cab, user_create, date_create)
-         VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-        [idrec, tjNomor, tanggalTerima, nomorMinta, user.cabang, user.kode],
+          (tj_idrec, tj_nomor, tj_tanggal, tj_mt_nomor, tj_cab,
+          tj_sj_workshop, user_create, date_create)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [
+          idrec,
+          tjNomor,
+          tanggalTerima,
+          nomorMinta,
+          user.cabang,
+          header.isWorkshop ? nomorSj : null, // ← set langsung saat INSERT
+          user.kode,
+        ],
       );
     }
 
@@ -199,15 +271,13 @@ const saveData = async (payload, user) => {
       );
     }
 
-    // --- 6️⃣ UPDATE SJ HEADER (nomor terima) ---
-    // Pakai '' (empty string) bukan NULL!
-    await connection.query(
-      `UPDATE tdc_sj_hdr 
-       SET sj_noterima = ?
-       WHERE sj_nomor = ?`,
-      [tjNomor, nomorSj],
-    );
-
+    // --- 6️⃣ UPDATE RELASI ---
+    if (!header.isWorkshop) {
+      await connection.query(
+        `UPDATE tdc_sj_hdr SET sj_noterima = ? WHERE sj_nomor = ?`,
+        [tjNomor, nomorSj],
+      );
+    }
     await connection.commit();
 
     return {
@@ -227,5 +297,6 @@ const saveData = async (payload, user) => {
 
 module.exports = {
   loadInitialData,
+  loadInitialDataWorkshop,
   saveData,
 };

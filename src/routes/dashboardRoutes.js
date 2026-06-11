@@ -199,4 +199,6 @@ router.get(
   dashboardController.getAutoMintaAnalytics,
 );
 
+router.get("/real-stock", verifyToken, dashboardController.getRealStockList);
+
 module.exports = router;

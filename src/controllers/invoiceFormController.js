@@ -75,7 +75,15 @@ const loadForEdit = async (req, res) => {
   }
 };
 
-// [AUDIT TRAIL DITERAPKAN DI SINI]
+const getPackagingOptions = async (req, res) => {
+  try {
+    const data = await service.getPackagingOptions(req.user.cabang);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // [AUDIT TRAIL DITERAPKAN DI SINI]
 const save = async (req, res) => {
   try {
@@ -469,6 +477,7 @@ const getCustomerDebt = async (req, res) => {
 
 module.exports = {
   loadForEdit,
+  getPackagingOptions,
   save,
   searchSo,
   getSoDetailsForGrid,

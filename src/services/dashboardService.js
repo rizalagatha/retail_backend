@@ -266,8 +266,8 @@ const getPendingActions = async (user) => {
                   FROM tso_hdr h
                   WHERE h.so_tanggal >= ? 
                     AND h.so_aktif = 'Y' 
-                    AND h.so_close = 0 -- Tambahan: Hanya ambil yang belum di-close
-                    -- Tambahan filter: Pastikan SO belum terdaftar di Invoice
+                    AND h.so_close = 0 
+                    
                     AND h.so_nomor NOT IN (
                         SELECT DISTINCT inv_nomor_so 
                         FROM tinv_hdr 
@@ -1533,28 +1533,47 @@ const getBranchInfo = async (cabang) => {
 
 // --- JADWAL BORDIR ---
 const getBordirSchedules = async (filters = {}) => {
-  // Gunakan default 7 hari terakhir jika tidak ada filter yang dikirim
   const startDate =
     filters.startDate || format(subDays(new Date(), 7), "yyyy-MM-dd");
   const endDate = filters.endDate || format(new Date(), "yyyy-MM-dd");
 
   const query = `
     SELECT 
-      h.sd_nomor AS so_nomor,
-      h.sd_tanggal AS tanggal_so,
-      h.sd_nama AS customer,
-      IFNULL((SELECT SUM(d.sdd_jumlah) FROM tsodtf_dtl d WHERE d.sdd_nomor = h.sd_nomor), 0) AS jumlah_kaos,
+      h.sd_nomor    AS so_nomor,
+      h.sd_tanggal  AS tanggal_so,
+      h.sd_nama     AS customer,
+
+      IFNULL((
+        SELECT SUM(d.sdd_jumlah) 
+        FROM tsodtf_dtl d 
+        WHERE d.sdd_nomor = h.sd_nomor
+      ), 0) AS jumlah_kaos,
+
+      -- Qty sudah diterima workshop
+      -- mw_so_dtf di tmutasi_workshop_hdr berisi nomor SO DTF (bisa multiple, pisah koma)
+      -- Cari MWK yang mw_so_dtf mengandung nomor SO DTF ini,
+      -- lalu cek apakah sudah ada penerimaan (mw_noterima terisi)
+      IFNULL((
+        SELECT SUM(wd.mwtd_jumlah)
+        FROM tmutasi_workshop_hdr mwh
+        JOIN tmwt_hdr twh ON twh.mwt_nokirim = mwh.mw_nomor
+        JOIN tmwt_dtl wd  ON wd.mwtd_nomor   = twh.mwt_nomor
+        WHERE FIND_IN_SET(h.sd_nomor, REPLACE(mwh.mw_so_dtf, ' ', ''))
+          AND mwh.mw_noterima IS NOT NULL
+          AND mwh.mw_noterima <> ''
+      ), 0) AS masuk_workshop,
+
       b.tgl_pengerjaan,
       b.deadline,
       CASE 
-          WHEN EXISTS (SELECT 1 FROM tdtf WHERE sodtf = h.sd_nomor) THEN 'Ready'
-          ELSE IFNULL(b.status, 'Antri') 
+        WHEN EXISTS (SELECT 1 FROM tdtf WHERE sodtf = h.sd_nomor) THEN 'Ready'
+        ELSE IFNULL(b.status, 'Antri') 
       END AS status,
       b.alasan_pending
     FROM tsodtf_hdr h
     LEFT JOIN tdashboard_bordir b ON h.sd_nomor = b.so_nomor
     WHERE h.sd_nomor LIKE '%.BR.%'
-      AND h.sd_tanggal BETWEEN ? AND ?  -- <-- Filter Tanggal SO
+      AND h.sd_tanggal BETWEEN ? AND ?
     ORDER BY h.sd_tanggal DESC, h.sd_nomor DESC
   `;
 
@@ -2305,6 +2324,391 @@ const getAutoMintaAnalytics = async (user, filters = {}) => {
   return processedData;
 };
 
+// =========================================================================
+// FITUR BARU: Lihat Stok Real Toko (Fisik - Pesanan) -> Infinite Scroll & Smart Search
+// =========================================================================
+const getRealStockList = async (user, filters = {}) => {
+  // Tangkap parameter page dan limit untuk infinite scroll (default: page 1, limit 50)
+  const { cabang = "ALL", search = "", page = 1, limit = 50 } = filters;
+
+  let branchFilter = "";
+  let params = [];
+
+  // 1. Penentuan Filter Cabang
+  if (user.cabang !== "KDC") {
+    branchFilter = "AND m.mst_cab = ?";
+    params.push(user.cabang);
+  } else if (cabang !== "ALL") {
+    branchFilter = "AND m.mst_cab = ?";
+    params.push(cabang);
+  }
+
+  // 2. Filter Pencarian Cerdas (Smart Search Tokenization)
+  const tokens = (search || "")
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+
+  let searchFilter = "";
+
+  if (tokens.length > 0) {
+    searchFilter += " AND (";
+    const likeParts = [];
+
+    for (const t of tokens) {
+      likeParts.push(`
+        (
+          a.brg_kode LIKE ?
+          OR TRIM(CONCAT(
+            IFNULL(a.brg_jeniskaos,''), ' ', 
+            IFNULL(a.brg_tipe,''), ' ', 
+            IFNULL(a.brg_lengan,''), ' ', 
+            IFNULL(a.brg_jeniskain,''), ' ', 
+            IFNULL(a.brg_warna,'')
+          )) LIKE ?
+        )
+      `);
+
+      const likeVal = `%${t}%`;
+      // Push 2 parameter untuk setiap token (1 untuk kode, 1 untuk nama lengkap)
+      params.push(likeVal, likeVal);
+    }
+
+    // Semua potongan kata (token) wajib match
+    searchFilter += likeParts.join(" AND ");
+    searchFilter += ")";
+  }
+
+  // 3. Setup Kalkulasi Offset untuk Pagination/Infinite Scroll
+  const pageNum = parseInt(page) || 1;
+  const limitNum = parseInt(limit) || 50;
+  const offset = (pageNum - 1) * limitNum;
+
+  // 4. Query Pengambilan Stok Real
+  const query = `
+    WITH open_so AS (
+      SELECT Nomor
+      FROM (
+        SELECT
+          y.Nomor,
+          CASE
+            WHEN y.sts <> 0 THEN 'DICLOSE'
+            WHEN y.StatusKirim = 'TERKIRIM' THEN 'CLOSE'
+            WHEN y.StatusKirim = 'BELUM'
+                AND y.keluar = 0
+                AND y.minta = ''
+                AND y.pesan = 0
+              THEN 'OPEN'
+            ELSE 'PROSES'
+          END AS StatusFinal
+        FROM (
+          SELECT
+            x.*,
+            IF(
+              x.QtyInv = 0,
+              'BELUM',
+              IF(x.QtyInv >= x.QtySO, 'TERKIRIM', 'SEBAGIAN')
+            ) AS StatusKirim,
+
+            IFNULL((
+              SELECT SUM(m.mst_stok_out)
+              FROM tmasterstok m
+              WHERE m.mst_noreferensi IN (
+                SELECT o.mo_nomor
+                FROM tmutasiout_hdr o
+                WHERE o.mo_so_nomor = x.Nomor
+              )
+            ), 0) AS keluar,
+
+            IFNULL((
+              SELECT mt_nomor
+              FROM tmintabarang_hdr
+              WHERE mt_so = x.Nomor
+              LIMIT 1
+            ), '') AS minta,
+
+            IFNULL((
+              SELECT SUM(mst_stok_in - mst_stok_out)
+              FROM tmasterstokso
+              WHERE mst_aktif = 'Y'
+                AND mst_nomor_so = x.Nomor
+            ), 0) AS pesan
+
+          FROM (
+            SELECT
+              h.so_nomor AS Nomor,
+              h.so_close AS sts,
+
+              IFNULL((
+                SELECT SUM(dd.sod_jumlah)
+                FROM tso_dtl dd
+                WHERE dd.sod_so_nomor = h.so_nomor
+              ), 0) AS QtySO,
+
+              IFNULL((
+                SELECT SUM(dd.invd_jumlah)
+                FROM tinv_hdr hh
+                JOIN tinv_dtl dd
+                  ON dd.invd_inv_nomor = hh.inv_nomor
+                WHERE hh.inv_sts_pro = 0
+                  AND hh.inv_nomor_so = h.so_nomor
+              ), 0) AS QtyInv
+
+            FROM tso_hdr h
+            WHERE h.so_close = 0
+              AND h.so_aktif = 'Y'
+          ) x
+        ) y
+      ) z
+      WHERE z.StatusFinal = 'OPEN'
+    )
+    
+    ,
+    so_summary AS (
+      SELECT
+        h.so_cab,
+        d.sod_kode,
+        d.sod_ukuran,
+
+        SUM(
+          d.sod_jumlah - IFNULL(d.sod_scanned,0)
+        ) AS pesanan_proses,
+
+        GROUP_CONCAT(
+          CONCAT(
+            h.so_nomor,
+            ' (',
+            IFNULL(c.cus_nama,'-'),
+            ') - ',
+            (d.sod_jumlah - IFNULL(d.sod_scanned,0)),
+            ' pcs'
+          )
+          ORDER BY h.so_nomor
+          SEPARATOR '<br>'
+        ) AS detail_pesanan_proses
+
+      FROM open_so os
+      JOIN tso_hdr h
+        ON h.so_nomor = os.Nomor
+      JOIN tso_dtl d
+        ON d.sod_so_nomor = h.so_nomor
+      LEFT JOIN tcustomer c
+        ON c.cus_kode = h.so_cus_kode
+
+      WHERE d.sod_jumlah > IFNULL(d.sod_scanned,0)
+
+      GROUP BY
+        h.so_cab,
+        d.sod_kode,
+        d.sod_ukuran
+    ),
+
+    otw_summary AS (
+
+      SELECT
+        cabang,
+        kode,
+        ukuran,
+
+        SUM(qty) AS sudah_minta,
+
+        GROUP_CONCAT(
+          CONCAT(
+            sumber,
+            ' : ',
+            nomor,
+            ' - ',
+            qty,
+            ' pcs'
+          )
+          SEPARATOR '<br>'
+        ) AS detail_sudah_minta
+
+      FROM (
+
+        SELECT
+          h.mt_cab AS cabang,
+          d.mtd_kode AS kode,
+          d.mtd_ukuran AS ukuran,
+          h.mt_nomor AS nomor,
+          SUM(d.mtd_jumlah) AS qty,
+          'Minta Barang' AS sumber
+        FROM tmintabarang_hdr h
+        JOIN tmintabarang_dtl d
+          ON d.mtd_nomor = h.mt_nomor
+        WHERE h.mt_closing='N'
+          AND h.mt_close='N'
+        GROUP BY
+          h.mt_cab,
+          d.mtd_kode,
+          d.mtd_ukuran,
+          h.mt_nomor
+
+        UNION ALL
+
+        SELECT
+          h.pl_cab_tujuan,
+          d.pld_kode,
+          d.pld_ukuran,
+          h.pl_nomor,
+          SUM(d.pld_jumlah),
+          'Packing List'
+        FROM tpacking_list_hdr h
+        JOIN tpacking_list_dtl d
+          ON d.pld_nomor = h.pl_nomor
+        WHERE h.pl_status='O'
+        GROUP BY
+          h.pl_cab_tujuan,
+          d.pld_kode,
+          d.pld_ukuran,
+          h.pl_nomor
+
+        UNION ALL
+
+        SELECT
+          h.sj_kecab,
+          d.sjd_kode,
+          d.sjd_ukuran,
+          h.sj_nomor,
+          SUM(d.sjd_jumlah),
+          'Surat Jalan'
+        FROM tdc_sj_hdr h
+        JOIN tdc_sj_dtl d
+          ON d.sjd_nomor = h.sj_nomor
+        WHERE h.sj_noterima=''
+        GROUP BY
+          h.sj_kecab,
+          d.sjd_kode,
+          d.sjd_ukuran,
+          h.sj_nomor
+
+      ) x
+
+      GROUP BY
+        cabang,
+        kode,
+        ukuran
+    )
+
+    SELECT
+      m.mst_cab AS cabang,
+      a.brg_kode AS kode,
+
+      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+
+      m.mst_ukuran AS ukuran,
+
+      SUM(
+        CASE
+          WHEN m.sumber='RAK'
+          THEN (m.mst_stok_in-m.mst_stok_out)
+          ELSE 0
+        END
+      ) AS stok_fisik,
+
+      SUM(
+        CASE
+          WHEN m.sumber='SO'
+          THEN (m.mst_stok_in-m.mst_stok_out)
+          ELSE 0
+        END
+      ) AS stok_pesanan,
+
+    IFNULL(so.pesanan_proses,0) AS pesanan_proses,
+
+    IFNULL(otw.sudah_minta,0) AS sudah_minta,
+       
+    IFNULL(otw.detail_sudah_minta,'') AS detail_sudah_minta,
+
+    IFNULL(so.detail_pesanan_proses,'') AS detail_pesanan_proses,
+
+      (
+        SUM(
+          CASE
+            WHEN m.sumber='RAK'
+            THEN (m.mst_stok_in-m.mst_stok_out)
+            ELSE 0
+          END
+        )
+        -
+        SUM(
+          CASE
+            WHEN m.sumber='SO'
+            THEN (m.mst_stok_in-m.mst_stok_out)
+            ELSE 0
+          END
+        )
+      ) AS stok_real
+
+    FROM (
+      SELECT
+        mst_brg_kode,
+        mst_ukuran,
+        mst_stok_in,
+        mst_stok_out,
+        mst_cab,
+        'RAK' AS sumber
+      FROM tmasterstok
+      WHERE mst_aktif='Y'
+
+      UNION ALL
+
+      SELECT
+        mst_brg_kode,
+        mst_ukuran,
+        mst_stok_in,
+        mst_stok_out,
+        mst_cab,
+        'SO' AS sumber
+      FROM tmasterstokso
+      WHERE mst_aktif='Y'
+    ) m
+
+    JOIN tbarangdc a
+      ON a.brg_kode = m.mst_brg_kode
+
+    LEFT JOIN so_summary so
+      ON so.so_cab = m.mst_cab
+    AND so.sod_kode = a.brg_kode
+    AND so.sod_ukuran = m.mst_ukuran
+
+    LEFT JOIN otw_summary otw
+      ON otw.cabang = m.mst_cab
+    AND otw.kode = a.brg_kode
+    AND otw.ukuran = m.mst_ukuran
+
+    WHERE 1=1
+      ${branchFilter}
+      ${searchFilter}
+      AND a.brg_aktif = 0
+      AND a.brg_logstok = 'Y'
+      AND a.brg_kode NOT LIKE 'JASA%'
+
+    GROUP BY
+      m.mst_cab,
+      a.brg_kode,
+      nama,
+      m.mst_ukuran
+
+    HAVING
+      stok_fisik > 0
+      OR stok_pesanan > 0
+      OR pesanan_proses > 0
+
+    ORDER BY
+      stok_real ASC,
+      nama ASC
+
+    LIMIT ? OFFSET ?
+  `;
+
+  // 5. Push parameter untuk Limit dan Offset di urutan paling akhir
+  params.push(limitNum, offset);
+
+  const [rows] = await pool.query(query, params);
+  return rows;
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -2342,4 +2746,5 @@ module.exports = {
   getDeadStockSalesDetail,
   getSpkPendingApproval,
   getAutoMintaAnalytics,
+  getRealStockList,
 };

@@ -10,6 +10,16 @@ const load = async (req, res) => {
   }
 };
 
+const loadInitialDataWorkshop = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const data = await terimaSjFormService.loadInitialDataWorkshop(nomor);
+    res.json(data);
+  } catch (error) {
+    res.status(404).json({ message: error.message });
+  }
+};
+
 const save = async (req, res) => {
   try {
     const result = await terimaSjFormService.saveData(req.body, req.user);
@@ -21,5 +31,6 @@ const save = async (req, res) => {
 
 module.exports = {
   load,
+  loadInitialDataWorkshop,
   save,
 };

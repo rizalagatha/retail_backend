@@ -69,15 +69,30 @@ const getDasborData = async (filters) => {
     end: new Date(endDate),
   });
 
+  // Variabel untuk menyimpan saldo secara berantai
+  let saldoAkumulatif = 0;
+
   return dateRange.map((date) => {
     const tglStr = format(date, "yyyy-MM-dd");
     const data = totalsMap.get(tglStr);
+
+    const totalSpk = data ? Number(data.totalSpk) : 0;
+    const totalJumlah = data ? Number(data.totalJumlah) : 0;
+
+    // Sisa kuota hari ini murni (Batas Kuota dikurangi Jumlah yang dikerjakan)
+    const sisa = kuota - totalJumlah;
+
+    // Perhitungan Saldo Akumulatif:
+    // Saldo Sebelumnya ditambah Kuota Hari Ini, lalu dikurangi Pengerjaan SPK
+    saldoAkumulatif = saldoAkumulatif + kuota - totalJumlah;
+
     return {
       TglSPK: tglStr,
       Kuota: kuota,
-      TotalSPK: data ? Number(data.totalSpk) : 0,
-      TotalJumlah: data ? Number(data.totalJumlah) : 0,
-      Sisa: kuota - (data ? Number(data.totalJumlah) : 0),
+      TotalSPK: totalSpk,
+      TotalJumlah: totalJumlah,
+      Sisa: sisa,
+      SaldoAkumulatif: saldoAkumulatif,
     };
   });
 };
