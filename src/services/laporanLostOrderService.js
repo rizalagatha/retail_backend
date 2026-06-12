@@ -64,7 +64,7 @@ const getKunjunganReport = async (filters, user) => {
   }
 
   const query = `
-    SELECT kc.id, kc.tanggal, kc.created_at AS tanggal_jam, // ← TAMBAH
+    SELECT kc.id, kc.tanggal, kc.created_at AS tanggal_jam, 
        kc.cabang AS kode_cabang, IFNULL(g.gdg_nama, kc.cabang) AS nama_cabang,
        kc.cus_kode AS customer_kode, IFNULL(c.cus_nama, 'Umum/Retail') AS customer_nama,
        kc.tipe_kunjungan, kc.sumber_dokumen, kc.nomor_dokumen, kc.user_create, kc.created_at
