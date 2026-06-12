@@ -211,15 +211,17 @@ const getProposalForEdit = async (nomor) => {
     cabang,
     `${nomor}.jpg`,
   );
+  const imageDir = path.join(process.cwd(), "public", "images", cabang);
   let imageUrl = null;
 
-  if (fs.existsSync(imagePath)) {
-    // SEBELUMNYA:
-    // imageUrl = `${process.env.BASE_URL || "http://192.168.1.73:8000"}/images/${cabang}/${nomor}.jpg`;
+  if (fs.existsSync(imageDir)) {
+    const files = fs.readdirSync(imageDir);
+    const fileName = files.find((file) => file.startsWith(nomor + "."));
 
-    // PERBAIKAN: Gunakan path relatif agar mengikuti protokol HTTPS halaman saat ini
-    const timeStamp = Date.now();
-    imageUrl = `/images/${cabang}/${nomor}.jpg?t=${timeStamp}`;
+    if (fileName) {
+      const timeStamp = Date.now();
+      imageUrl = `/images/${cabang}/${fileName}?t=${timeStamp}`;
+    }
   }
 
   // 2. Ambil data detail ukuran/size
