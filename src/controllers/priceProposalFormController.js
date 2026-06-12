@@ -71,10 +71,9 @@ const uploadImage = async (req, res) => {
       nomor,
     );
 
+    const cabang = nomor.substring(0, 3); // ← TAMBAH
     const timeStamp = Date.now();
-    const imageUrl = `${
-      process.env.BASE_URL || "http://192.168.1.73:8000"
-    }/images/${cabang}/${nomor}${path.extname(req.file.originalname)}?t=${timeStamp}`;
+    const imageUrl = `/images/${cabang}/${nomor}${path.extname(req.file.originalname)}?t=${timeStamp}`; // ← path relatif
 
     res.status(200).json({
       message: "Gambar berhasil diunggah.",
