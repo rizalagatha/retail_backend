@@ -51,7 +51,7 @@ const findById = async (nomor) => {
     ]);
 
     const detailsTitikQuery =
-      "SELECT sdd2_ket as keterangan, sdd2_size as sizeCetak, sdd2_panjang as panjang, sdd2_lebar as lebar FROM tsodtf_dtl2 WHERE sdd2_nomor = ? ORDER BY sdd2_nourut";
+      "SELECT sdd2_ket as keterangan, sdd2_size as sizeCetak, sdd2_warna as warna, sdd2_panjang as panjang, sdd2_lebar as lebar FROM tsodtf_dtl2 WHERE sdd2_nomor = ? ORDER BY sdd2_nourut";
     const [detailsTitikRows] = await connection.query(detailsTitikQuery, [
       nomor,
     ]);
@@ -185,13 +185,14 @@ const create = async (data, user) => {
       const detailTitikIdRec = `${user.cabang}DT2${timestamp}${index}`;
       await connection.query(
         `INSERT INTO tsodtf_dtl2
-          (sdd2_idrec, sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      (sdd2_idrec, sdd2_nomor, sdd2_ket, sdd2_size, sdd2_warna, sdd2_panjang, sdd2_lebar, sdd2_nourut)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           detailTitikIdRec,
           newNomor,
           detail.keterangan,
           detail.sizeCetak,
+          detail.warna || null,
           detail.panjang,
           detail.lebar,
           index + 1,
@@ -345,13 +346,14 @@ const update = async (nomor, data, user) => {
     for (const [i, det] of detailsTitik.entries()) {
       const detailTitikIdRec = `${user.cabang}DT2${timestamp}${i}`;
       await connection.query(
-        `INSERT INTO tsodtf_dtl2 (sdd2_idrec, sdd2_nomor, sdd2_ket, sdd2_size, sdd2_panjang, sdd2_lebar, sdd2_nourut)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tsodtf_dtl2 (sdd2_idrec, sdd2_nomor, sdd2_ket, sdd2_size, sdd2_warna, sdd2_panjang, sdd2_lebar, sdd2_nourut)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           detailTitikIdRec,
           finalNomor,
           det.keterangan || "",
           det.sizeCetak || "",
+          det.warna || null,
           det.panjang ?? 0,
           det.lebar ?? 0,
           i + 1,
@@ -738,9 +740,8 @@ const getSizeCetakList = async (jenisOrder) => {
   const [rows] = await pool.query(query, [jenisOrder]);
   let results = rows.map((row) => row.nama);
 
-  // Meniru logika Delphi: tambahkan opsi kosong untuk SD dan DP
   if (jenisOrder === "SD" || jenisOrder === "DP") {
-    results.unshift(""); // Tambahkan string kosong di awal array
+    results.unshift("");
   }
   return results;
 };
@@ -762,10 +763,12 @@ const getDataForPrint = async (nomor) => {
         DATE_FORMAT(h.sd_dateline, "%Y-%m-%d") AS dateline,
 
         (SELECT CAST(GROUP_CONCAT(
-            CONCAT(sdd2_nourut, ". ", sdd2_ket, ": P=", sdd2_panjang, "cm L=", sdd2_lebar, "cm")
-            SEPARATOR '\\n') AS CHAR)
-         FROM tsodtf_dtl2 
-         WHERE sdd2_nomor = h.sd_nomor) AS titik,
+          CONCAT(sdd2_nourut, ". ", sdd2_ket, 
+            IF(sdd2_warna IS NOT NULL AND sdd2_warna <> '', CONCAT(" (", sdd2_warna, ")"), ""),
+            ": P=", sdd2_panjang, "cm L=", sdd2_lebar, "cm")
+          SEPARATOR '\\n') AS CHAR)
+        FROM tsodtf_dtl2 
+        WHERE sdd2_nomor = h.sd_nomor) AS titik,
 
         (SELECT SUM(sdd_jumlah) 
          FROM tsodtf_dtl WHERE sdd_nomor = h.sd_nomor) AS jumlah,

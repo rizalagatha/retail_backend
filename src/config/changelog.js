@@ -1,6 +1,15 @@
 const changelogs = {
+  "1.5.1": {
+    date: "2026-06-12",
+    changes: [
+      {
+        title: "Pembaruan:",
+        items: ["Setting Harga untuk Jenis Order Polyflex"],
+      },
+    ],
+  },
   "1.5.0": {
-    date: "2026-05-31",
+    date: "2026-06-11",
     changes: [
       {
         title: "Pembaruan:",

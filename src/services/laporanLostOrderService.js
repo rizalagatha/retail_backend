@@ -64,9 +64,10 @@ const getKunjunganReport = async (filters, user) => {
   }
 
   const query = `
-    SELECT kc.id, kc.tanggal, kc.cabang AS kode_cabang, IFNULL(g.gdg_nama, kc.cabang) AS nama_cabang,
-           kc.cus_kode AS customer_kode, IFNULL(c.cus_nama, 'Umum/Retail') AS customer_nama,
-           kc.tipe_kunjungan, kc.sumber_dokumen, kc.nomor_dokumen, kc.user_create, kc.created_at
+    SELECT kc.id, kc.tanggal, kc.created_at AS tanggal_jam, // ← TAMBAH
+       kc.cabang AS kode_cabang, IFNULL(g.gdg_nama, kc.cabang) AS nama_cabang,
+       kc.cus_kode AS customer_kode, IFNULL(c.cus_nama, 'Umum/Retail') AS customer_nama,
+       kc.tipe_kunjungan, kc.sumber_dokumen, kc.nomor_dokumen, kc.user_create, kc.created_at
     FROM tkunjungan_customer kc
     LEFT JOIN tgudang g ON g.gdg_kode = kc.cabang
     LEFT JOIN tcustomer c ON c.cus_kode = kc.cus_kode
