@@ -1,4 +1,5 @@
 const pool = require("../config/database");
+const moment = require("moment");
 
 /**
  * Mengambil detail barang berdasarkan barcode.
@@ -32,14 +33,31 @@ const processScan = async (data, user) => {
     throw new Error("Data tidak lengkap.");
   }
 
-  // Query dari Delphi: INSERT ... ON DUPLICATE KEY UPDATE
-  // Ini sangat efisien untuk menambah jumlah jika data sudah ada, atau membuat baru jika belum.
-  // Asumsi PRIMARY KEY atau UNIQUE KEY di tabel thitungstok adalah (hs_cab, hs_lokasi, hs_kode, hs_ukuran)
+  // 1. CARI TANGGAL STOK OPNAME AKTIF (Sama seperti versi Mobile)
+  const [activeSoRows] = await pool.query(
+    `SELECT st_tanggal FROM tsop_tanggal WHERE st_cab = ? AND st_transfer = 'N' ORDER BY st_tanggal DESC LIMIT 1`,
+    [user.cabang],
+  );
+
+  // Jika tidak ada jadwal SO aktif, jadikan hari ini sebagai default fallback
+  const activeSoDate =
+    activeSoRows.length > 0
+      ? moment(activeSoRows[0].st_tanggal).format("YYYY-MM-DD")
+      : moment().format("YYYY-MM-DD");
+
+  // 2. QUERY DENGAN LOGIKA AKUMULASI CERDAS
   const query = `
         INSERT INTO thitungstok 
             (hs_cab, hs_lokasi, hs_barcode, hs_kode, hs_nama, hs_ukuran, hs_qty, hs_proses, date_create, user_create) 
-        VALUES (?, ?, ?, ?, ?, ?, 1, 'N', CURDATE(), ?)
-        ON DUPLICATE KEY UPDATE hs_nama = ?, hs_qty = hs_qty + 1
+        VALUES (?, ?, ?, ?, ?, ?, 1, 'N', NOW(), ?)
+        ON DUPLICATE KEY UPDATE 
+            -- JIKA data sudah diposting ('Y') ATAU tanggal scan-nya lebih tua dari SO aktif, TIMPA/RESET ke 1.
+            -- JIKA masih di periode SO yang sama ('N'), AKUMULASIKAN (+ 1).
+            hs_qty = IF(hs_proses = 'Y' OR date_create IS NULL OR DATE(date_create) < ?, 1, hs_qty + 1),
+            hs_proses = 'N', -- Buka kembali status prosesnya
+            hs_nama = VALUES(hs_nama),
+            date_create = VALUES(date_create),
+            user_create = VALUES(user_create)
     `;
 
   const params = [
@@ -49,8 +67,8 @@ const processScan = async (data, user) => {
     product.brg_kode,
     product.nama,
     product.brgd_ukuran,
-    user.kode, // Untuk INSERT
-    product.nama, // Untuk UPDATE
+    user.kode, // user_create untuk INSERT
+    activeSoDate, // parameter tanggal untuk logika IF di ON DUPLICATE KEY UPDATE
   ];
 
   await pool.query(query, params);
@@ -115,14 +133,16 @@ const updateQty = async (data, user) => {
         WHERE hs_cab = ? AND hs_lokasi = ? AND hs_barcode = ? AND hs_proses = 'N'
     `;
 
-  const [result] = await pool.query(query, [delta, user.cabang, lokasi, barcode]);
+  const [result] = await pool.query(query, [
+    delta,
+    user.cabang,
+    lokasi,
+    barcode,
+  ]);
 
   if (result.affectedRows === 0) {
     throw new Error("Data tidak ditemukan atau sudah diposting.");
   }
-
-  // Opsional: Hapus baris jika Qty menjadi 0 (tergantung kebijakan bisnis)
-  // await pool.query("DELETE FROM thitungstok WHERE hs_qty <= 0 AND hs_cab = ? AND hs_lokasi = ? AND hs_barcode = ?", [user.cabang, lokasi, barcode]);
 
   return { message: "Jumlah berhasil diperbarui." };
 };
