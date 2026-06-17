@@ -55,10 +55,20 @@ const remove = async (req, res) => {
   }
 };
 
+const exportDetails = async (req, res) => {
+  try {
+    const data = await lhkSoDtfService.getExportDetails(req.query);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getAll,
   getDetailList,
   getCabangList,
   remove,
   getJenisOrderList,
+  exportDetails,
 };

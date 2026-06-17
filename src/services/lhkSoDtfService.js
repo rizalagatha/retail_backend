@@ -154,10 +154,57 @@ const remove = async (nomorLhk, user) => {
   }
 };
 
+// Tambahkan di Service LHK Anda
+const getExportDetails = async (filters) => {
+  const { startDate, endDate, cabang, jenisOrder } = filters;
+  const params = [startDate, endDate];
+
+  let cabFilter = "";
+  if (cabang && cabang !== "ALL") {
+    cabFilter = "AND d.cab = ?";
+    params.push(cabang);
+  }
+
+  let joFilter = "";
+  if (jenisOrder && jenisOrder !== "ALL") {
+    joFilter = "AND d.jo_kode = ?";
+    params.push(jenisOrder);
+  }
+
+  const query = `
+    SELECT 
+        d.lhk_nomor AS 'Nomor LHK',
+        DATE_FORMAT(d.tanggal, '%Y-%m-%d') AS 'Tanggal',
+        IFNULL(g_peminta.gdg_nama, g_pengerja.gdg_nama) AS 'Store',
+        jo.jo_nama AS 'Jenis Order',
+        d.user_create AS 'User',
+        d.sodtf AS 'No. SO DTF',
+        COALESCE(h.sd_nama, s.spk_nama, d.sodtf) AS 'Nama DTF',
+        d.depan AS 'Jml Titik',
+        d.jumlah AS 'Jml Kaos',
+        d.belakang AS 'Total Titik',
+        d.jumlah_sistem AS 'Sistem (PCS)',
+        d.reject AS 'Reject',
+        d.luas_sistem AS 'Sistem (cm2)'
+    FROM tdtf d
+    LEFT JOIN kencanaprint.tjenisorder jo ON jo.jo_kode = d.jo_kode
+    LEFT JOIN tgudang g_peminta ON g_peminta.gdg_kode = LEFT(d.sodtf, 3)
+    LEFT JOIN tgudang g_pengerja ON g_pengerja.gdg_kode = d.cab
+    LEFT JOIN tsodtf_hdr h ON h.sd_nomor = d.sodtf
+    LEFT JOIN kencanaprint.tspk s ON s.spk_nomor = d.sodtf
+    WHERE d.tanggal BETWEEN ? AND ? ${cabFilter} ${joFilter}
+    ORDER BY d.tanggal DESC, d.lhk_nomor DESC, d.sodtf ASC
+  `;
+
+  const [rows] = await pool.query(query, params);
+  return rows;
+};
+
 module.exports = {
   getJenisOrderList,
   getLhkList,
   getLhkDetail,
   getCabangList,
   remove,
+  getExportDetails,
 };

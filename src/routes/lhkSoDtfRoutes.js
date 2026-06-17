@@ -38,7 +38,13 @@ router.get(
   checkPermission(MENU_ID, "view"),
   lhkSoDtfController.getJenisOrderList,
 );
-
+// GET: Export Detail LHK (Taruh di atas route DELETE)
+router.get(
+  "/export-details",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  lhkSoDtfController.exportDetails,
+);
 // DELETE: Hapus satu bundel LHK berdasarkan nomor
 router.delete(
   "/:nomorLhk",
