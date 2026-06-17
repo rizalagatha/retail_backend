@@ -12,18 +12,18 @@ const { differenceInDays } = require("date-fns");
  */
 const getPermissions = async (userKode) => {
   const query = `
-        SELECT 
-            m.men_id AS id,
-            m.men_nama AS name,
-            m.web_route AS path,
-            h.hak_men_view AS 'view',
-            h.hak_men_insert AS 'insert',
-            h.hak_men_edit AS 'edit',
-            h.hak_men_delete AS 'delete'
-        FROM thakuser h
-        JOIN tmenu m ON h.hak_men_id = m.men_id
-        WHERE h.hak_user_kode = ? AND m.web_route IS NOT NULL AND m.web_route <> '';
-    `;
+    SELECT 
+      m.men_id AS id,
+      m.men_nama AS name,
+      m.web_route AS path,
+      h.hak_men_view AS 'view',
+      h.hak_men_insert AS 'insert',
+      h.hak_men_edit AS 'edit',
+      h.hak_men_delete AS 'delete'
+    FROM thakuser h
+    JOIN tmenu m ON h.hak_men_id = m.men_id
+    WHERE h.hak_user_kode = ? AND m.web_route IS NOT NULL AND m.web_route <> '';
+  `;
   const [permissions] = await pool.query(query, [userKode]);
   return permissions.map((p) => ({
     ...p,
@@ -71,9 +71,9 @@ const generateFinalPayload = async (user, selectedCabang) => {
   };
 
   // --- LOGIKA EXPIRATION TOKEN KHUSUS ---
-  // Jika user adalah SETYO, berikan masa aktif 30 hari ('30d').
+  // Jika user adalah SETYO, berikan masa aktif 1 tahun ('365d').
   // User lainnya tetap menggunakan standar 12 jam ('12h').
-  const tokenExpiry = userKodeUpper === "SETYO" ? "30d" : "12h";
+  const tokenExpiry = userKodeUpper === "SETYO" ? "365d" : "12h";
 
   const token = jwt.sign(userForToken, process.env.JWT_SECRET, {
     expiresIn: tokenExpiry, // Menggunakan variabel dinamis
