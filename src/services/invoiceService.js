@@ -499,9 +499,10 @@ const getDetails = async (nomor) => {
 
       IF(
         d.invd_pro_nomor = "",
-        IFNULL(
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), 
-            f.sd_nama
+        COALESCE(
+            NULLIF(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), ''), 
+            f.sd_nama,
+            IF(g.brg_jenis IN ('ACCESORIES','OBAT'), SUBSTRING_INDEX(g.brg_nama, ' ', 3), NULL)
         ),
         TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna, " #BONUS"))
       ) AS Nama,
@@ -569,6 +570,7 @@ const getDetails = async (nomor) => {
          AND b.brgd_ukuran = COALESCE(NULLIF(d.invd_ukuran, ''), bk.brgd_ukuran)
          
     LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
+    LEFT JOIN kencanaprint.tgarmen_brg g ON g.brg_kode = COALESCE(bk.brgd_kode, d.invd_kode)
     WHERE d.invd_inv_nomor = ?
     ORDER BY d.invd_nourut;
   `;
