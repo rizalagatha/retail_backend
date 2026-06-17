@@ -148,10 +148,10 @@ const getList = async (filters) => {
                 WHERE hh.so_nomor = h.so_nomor) AS Nominal,
 
                 IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
-                IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0) AS QtyInv,
+                IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor AND dd.invd_kode NOT IN (SELECT brg_kode FROM kencanaprint.tgarmen_brg WHERE brg_jenis IN ('ACCESORIES','OBAT'))), 0) AS QtyInv,
 
                 (IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0)
-                 - IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0)
+                - IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor AND dd.invd_kode NOT IN (SELECT brg_kode FROM kencanaprint.tgarmen_brg WHERE brg_jenis IN ('ACCESORIES','OBAT'))), 0)
                 ) AS Belum,
 
                 h.so_cus_kode AS kdcus,
@@ -252,15 +252,16 @@ const getDetails = async (nomor) => {
             d.sod_jumlah AS QtySO,
             d.sod_harga AS Harga,
             (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS TotalSO,
-            IFNULL((
-                SELECT SUM(i.invd_jumlah) 
-                FROM tinv_hdr j 
-                JOIN tinv_dtl i ON i.invd_inv_nomor = j.inv_nomor
-                WHERE j.inv_sts_pro = 0 
-                  AND j.inv_nomor_so = h.so_nomor 
-                  AND i.invd_kode = d.sod_kode 
-                  AND i.invd_ukuran = d.sod_ukuran
-            ), 0) AS QtyInvoice
+           IFNULL((
+              SELECT SUM(i.invd_jumlah) 
+              FROM tinv_hdr j 
+              JOIN tinv_dtl i ON i.invd_inv_nomor = j.inv_nomor
+              WHERE j.inv_sts_pro = 0 
+                AND j.inv_nomor_so = h.so_nomor 
+                AND i.invd_kode = d.sod_kode 
+                AND i.invd_ukuran = d.sod_ukuran
+                AND i.invd_kode NOT IN (SELECT brg_kode FROM kencanaprint.tgarmen_brg WHERE brg_jenis IN ('ACCESORIES','OBAT'))
+          ), 0) AS QtyInvoice
         FROM tso_dtl d
         JOIN tso_hdr h ON h.so_nomor = d.sod_so_nomor
         LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
@@ -453,7 +454,7 @@ const close = async (data) => {
                 SELECT 
                     h.so_nomor AS Nomor, h.so_close AS sts,
                     IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
-                    IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0) AS QtyInv
+                    IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor AND dd.invd_kode NOT IN (SELECT brg_kode FROM kencanaprint.tgarmen_brg WHERE brg_jenis IN ('ACCESORIES','OBAT'))), 0) AS QtyInv
                 FROM tso_hdr h
                 WHERE h.so_nomor = ?
             ) x
@@ -615,6 +616,7 @@ const getExportDetails = async (filters) => {
                 AND ih.inv_nomor_so = h.so_nomor 
                 AND id.invd_kode = d.sod_kode 
                 AND id.invd_ukuran = d.sod_ukuran
+                AND id.invd_kode NOT IN (SELECT brg_kode FROM kencanaprint.tgarmen_brg WHERE brg_jenis IN ('ACCESORIES','OBAT'))
           ), 0) AS 'Qty Kirim',
           (d.sod_jumlah - IFNULL((
               SELECT SUM(id.invd_jumlah) 
