@@ -83,6 +83,7 @@ const getStokBahan = async (filters, user) => {
       IFNULL(b.brg_satuan, '-')                 AS Satuan,
       s.mst_jenis                               AS Jenis,
       IFNULL(g.gdg_nama, s.mst_cab)             AS Cabang,
+      s.mst_cab                                 AS KodeCabang,
       SUM(s.mst_stok_in)                        AS TotalMasuk,
       SUM(s.mst_stok_out)                       AS TotalKeluar,
       SUM(s.mst_stok_in - s.mst_stok_out)       AS stok
@@ -104,7 +105,6 @@ const getStokBahan = async (filters, user) => {
 };
 
 // Kartu stok per kode barang
-// Kartu stok per kode barang (DITAMBAH PROTEKSI OTORISASI CABANG)
 const getKartuStokBahan = async (filters, user) => {
   let { cabang, kodeBarang, tanggalAwal, tanggalAkhir } = filters;
 
@@ -147,7 +147,7 @@ const getKartuStokBahan = async (filters, user) => {
       s.mst_noreferensi AS Referensi,
       s.mst_tanggal     AS Tanggal,
       s.mst_jenis       AS Jenis,
-      s.mst_cab         AS Cabang,
+      IFNULL(g.gdg_nama, s.mst_cab) AS Cabang,
       s.mst_stok_in     AS Masuk,
       s.mst_stok_out    AS Keluar,
       s.mst_ket         AS Keterangan,
@@ -156,6 +156,7 @@ const getKartuStokBahan = async (filters, user) => {
       IFNULL(b.brg_satuan, '-')          AS Satuan
     FROM tmasterstok_bahan s
     LEFT JOIN kencanaprint.tgarmen_brg b ON b.brg_kode = s.mst_brg_kode
+    LEFT JOIN tgudang g ON g.gdg_kode = s.mst_cab
     WHERE s.mst_brg_kode = ?
       AND s.mst_aktif = 'Y'
       ${cabangFilter}

@@ -59,8 +59,11 @@ const getKprItemDiscount = (namaBarang, kategori) => {
   // PRIORITAS 1: PENGECEKAN BAHAN SPESIFIK (Tidak peduli Reguler atau Sesional)
   // ==============================================================================
 
-  // KATUN AIR & CARLOS: 10%
-  if (nama.includes("KATUN AIR") || nama.includes("CARLOS")) return 10;
+  // KATUN AIR: 10%
+  if (nama.includes("KATUN AIR")) return 10;
+
+  // CARLOS: 5%
+  if (nama.includes("CARLOS")) return 5;
 
   // DBF: 5%
   if (nama.includes("DBF")) return 5;
@@ -92,8 +95,10 @@ const getKprItemDiscount = (namaBarang, kategori) => {
       return 15;
     }
 
-    // 2. ANAK, TUNIK, HOODIE, POLO
+    // 2. PENDEK ANAK, PANJANG ANAK, ANAK, TUNIK, HOODIE, POLO
     if (
+      nama.includes("PENDEK ANAK") ||
+      nama.includes("PANJANG ANAK") ||
       /\bANAK\b/.test(nama) ||
       nama.includes("TUNIK") ||
       nama.includes("HOODIE") ||
