@@ -505,14 +505,16 @@ FROM tso_dtl d
 
 const searchUnpaidDp = async (customerKode, user) => {
   const query = `
-        SELECT 
-            h.sh_nomor AS nomor, 
-            IF(h.sh_jenis=0, "TUNAI", IF(h.sh_jenis=1, "TRANSFER", "GIRO")) AS jenis,
-            (h.sh_nominal - IFNULL((SELECT SUM(d.sd_bayar) FROM tsetor_dtl d WHERE d.sd_sh_nomor = h.sh_nomor), 0)) AS nominal
-        FROM tsetor_hdr h
-        WHERE h.sh_cus_kode = ? AND h.sh_cab = ?
-        HAVING nominal > 0;
-    `;
+    SELECT 
+      h.sh_nomor AS nomor, 
+      IF(h.sh_jenis=0, "TUNAI", IF(h.sh_jenis=1, "TRANSFER", "GIRO")) AS jenis,
+      (h.sh_nominal - IFNULL((SELECT SUM(d.sd_bayar) FROM tsetor_dtl d WHERE d.sd_sh_nomor = h.sh_nomor), 0)) AS nominal
+    FROM tsetor_hdr h
+    WHERE h.sh_cus_kode = ? 
+      AND h.sh_cab = ?
+      AND h.sh_is_locked = 'N' 
+    HAVING nominal > 0;
+  `;
   const [rows] = await pool.query(query, [customerKode, user.cabang]);
   return rows;
 };

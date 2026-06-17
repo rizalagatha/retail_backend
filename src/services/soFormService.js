@@ -972,6 +972,7 @@ const searchAvailableSetoran = async (filters) => {
               AND j.jur_no IS NULL
               AND h.sh_cab = ? AND h.sh_cus_kode = ?
               AND h.sh_nomor LIKE ?
+              AND h.sh_is_locked = 'N'
         ) x 
         WHERE (x.Nominal - x.Terpakai) > 0
     `;
