@@ -240,6 +240,16 @@ const processSoDtfStokImage = async (tempFilePath, nomorSo) => {
         console.error("Gagal me-rename file SO DTF Stok:", err);
         return reject(new Error("Gagal memproses file gambar SO DTF Stok."));
       }
+
+      // ========================================================
+      // [TAMBAHAN KUNCI] Buka gembok permission agar Nginx bisa baca!
+      // ========================================================
+      try {
+        fs.chmodSync(finalPath, 0o644);
+      } catch (chmodErr) {
+        console.warn("Gagal mengubah permission file:", chmodErr);
+      }
+
       resolve(finalPath);
     });
   });
