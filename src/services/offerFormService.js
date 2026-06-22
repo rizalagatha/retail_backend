@@ -63,15 +63,19 @@ const searchCustomers = async (term, gudang, page, itemsPerPage, isInvoice) => {
   // 4. Filter Search (Term)
   let searchFilter = "";
   if (term) {
-    // Tanda tanya berikutnya (ke-2, 3, 4) ada di sini
+    // Bersihkan inputan dari spasi dan strip khusus untuk no HP
+    const cleanPhoneTerm = `%${term.replace(/[\s-]/g, "")}%`;
+    const searchTerm = `%${term}%`; // (Atau gunakan variabel searchTerm yang sudah kamu definisikan di atas)
+
     searchFilter = `
       AND (
         c.cus_kode LIKE ? 
         OR c.cus_nama LIKE ?
-        OR c.cus_telp LIKE ?
+        OR REPLACE(REPLACE(c.cus_telp, ' ', ''), '-', '') LIKE ?
       )
     `;
-    params.push(searchTerm, searchTerm, searchTerm);
+    // Masukkan parameter secara berurutan
+    params.push(searchTerm, searchTerm, cleanPhoneTerm);
   }
 
   // Gabungkan ke Base Query

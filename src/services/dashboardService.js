@@ -1002,11 +1002,16 @@ const getStokKosongReguler = async (
   searchTerm = "",
   targetCabang = "",
   isExport = false,
+  page = 1,
+  limit = 50,
 ) => {
+  // Jika user adalah KDC dan tidak ada target, paksa default jadi 'ALL'
   let branchToCheck =
-    user.cabang === "KDC" && targetCabang ? targetCabang : user.cabang;
+    user.cabang === "KDC" ? targetCabang || "ALL" : user.cabang;
+
   const searchPattern = `%${searchTerm}%`;
-  const limitClause = isExport ? "" : "LIMIT 250";
+  const offset = (Math.max(1, parseInt(page)) - 1) * parseInt(limit);
+  const limitClause = isExport ? "" : "LIMIT ? OFFSET ?";
 
   let query = "";
   let params = [];
@@ -1037,21 +1042,25 @@ const getStokKosongReguler = async (
           mi.ukuran,
           IFNULL(SUM(m.mst_stok_in - m.mst_stok_out), 0) AS stok_akhir
       FROM ActiveStores s
-      CROSS JOIN MasterItems mi -- Gabungkan tiap toko dengan tiap barang
+      CROSS JOIN MasterItems mi 
       LEFT JOIN tmasterstok m ON m.mst_brg_kode = mi.kode 
           AND m.mst_ukuran = mi.ukuran 
           AND m.mst_cab = s.gdg_kode
           AND m.mst_aktif = 'Y'
-      GROUP BY s.gdg_kode, mi.kode, mi.ukuran
+      GROUP BY s.gdg_kode, s.gdg_nama, mi.kode, mi.ukuran
       HAVING stok_akhir <= 0
       ORDER BY s.gdg_kode, mi.nama_barang, mi.ukuran
       ${limitClause};
     `;
     params = [searchPattern, searchPattern, searchPattern];
   } else {
-    // --- MODE SINGLE CABANG (TETAP) ---
+    // --- MODE SINGLE CABANG ---
     query = `
-      WITH MasterData AS (
+      WITH TargetStore AS (
+          -- [FIX] Pastikan cabang yang difilter adalah Toko (gdg_dc = 0)
+          SELECT gdg_kode, gdg_nama FROM tgudang WHERE gdg_kode = ? AND gdg_dc = 0
+      ),
+      MasterItems AS (
           SELECT 
               b.brgd_kode AS kode,
               b.brgd_barcode AS barcode,
@@ -1064,23 +1073,28 @@ const getStokKosongReguler = async (
             AND (b.brgd_kode LIKE ? OR b.brgd_barcode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos,' ',a.brg_tipe,' ',a.brg_lengan,' ',a.brg_jeniskain,' ',a.brg_warna)) LIKE ?)
       )
       SELECT 
-          '' AS nama_cabang,
-          md.kode,
-          md.barcode,
-          md.nama_barang,
-          md.ukuran,
+          ts.gdg_nama AS nama_cabang,
+          mi.kode,
+          mi.barcode,
+          mi.nama_barang,
+          mi.ukuran,
           IFNULL(SUM(m.mst_stok_in - m.mst_stok_out), 0) AS stok_akhir
-      FROM MasterData md
-      LEFT JOIN tmasterstok m ON m.mst_brg_kode = md.kode 
-          AND m.mst_ukuran = md.ukuran 
+      FROM TargetStore ts
+      CROSS JOIN MasterItems mi
+      LEFT JOIN tmasterstok m ON m.mst_brg_kode = mi.kode 
+          AND m.mst_ukuran = mi.ukuran 
           AND m.mst_aktif = 'Y'
-          AND m.mst_cab = ?
-      GROUP BY md.kode, md.ukuran
+          AND m.mst_cab = ts.gdg_kode
+      GROUP BY ts.gdg_nama, mi.kode, mi.ukuran
       HAVING stok_akhir <= 0
-      ORDER BY md.nama_barang, md.ukuran
+      ORDER BY mi.nama_barang, mi.ukuran
       ${limitClause};
     `;
-    params = [searchPattern, searchPattern, searchPattern, branchToCheck];
+    params = [branchToCheck, searchPattern, searchPattern, searchPattern];
+  }
+
+  if (!isExport) {
+    params.push(parseInt(limit), parseInt(offset));
   }
 
   const [allRows] = await pool.query(query, params);

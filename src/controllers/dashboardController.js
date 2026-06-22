@@ -215,17 +215,20 @@ const getStockAlerts = async (req, res) => {
 
 const getStokKosong = async (req, res) => {
   try {
-    const { q, cabang, export: isExportParam } = req.query; // Tangkap parameter 'export'
+    // 1. Tangkap parameter 'page' dan 'limit' dari query URL frontend
+    const { q, cabang, export: isExportParam, page, limit } = req.query;
 
     // Ubah string 'true' dari axios menjadi nilai boolean
     const isExport = isExportParam === "true";
 
-    // Oper boolean isExport ke service
+    // 2. Oper parameter tambahan tersebut ke service
     const result = await dashboardService.getStokKosongReguler(
       req.user,
       q,
       cabang,
       isExport,
+      page,
+      limit,
     );
 
     res.json(result);

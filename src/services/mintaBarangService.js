@@ -30,27 +30,67 @@ const getList = async (filters) => {
         h.mt_nomor AS Nomor,
         h.mt_tanggal AS Tanggal,
         h.mt_so AS NoSO,
-        -- 1. Ambil No. Packing List (Trigger status Hitam/Proses)
-        IFNULL((SELECT pl.pl_nomor FROM tpacking_list_hdr pl WHERE pl.pl_mt_nomor = h.mt_nomor LIMIT 1), "") AS NoPL,
         
-        -- 2. Ambil No. SJ (Cek di Packing List dulu, jika tidak ada baru cek di SJ langsung)
+        -- PACKING LIST
+        IFNULL((SELECT pl.pl_nomor FROM tpacking_list_hdr pl WHERE pl.pl_mt_nomor = h.mt_nomor LIMIT 1), "") AS NoPL,
+        IFNULL((SELECT pl.pl_tanggal FROM tpacking_list_hdr pl WHERE pl.pl_mt_nomor = h.mt_nomor LIMIT 1), NULL) AS TglPL,
+        
+        -- SURAT JALAN
         IFNULL(
             (SELECT pl.pl_sj_nomor FROM tpacking_list_hdr pl WHERE pl.pl_mt_nomor = h.mt_nomor AND pl.pl_sj_nomor <> '' LIMIT 1),
             IFNULL((SELECT j.sj_nomor FROM tdc_sj_hdr j WHERE j.sj_mt_nomor = h.mt_nomor LIMIT 1), "")
         ) AS NoSJ,
         
-        -- 3. Ambil Status Terima (Berdasarkan NoSJ yang ditemukan di atas)
         IFNULL(
-            (SELECT sj2.sj_noterima FROM tdc_sj_hdr sj2 
-             WHERE sj2.sj_nomor = (
+            (SELECT sj_tgl.sj_tanggal FROM tdc_sj_hdr sj_tgl WHERE sj_tgl.sj_nomor = (
                 SELECT COALESCE(NULLIF(pl2.pl_sj_nomor, ''), sj3.sj_nomor)
                 FROM tmintabarang_hdr h2
                 LEFT JOIN tpacking_list_hdr pl2 ON pl2.pl_mt_nomor = h2.mt_nomor
                 LEFT JOIN tdc_sj_hdr sj3 ON sj3.sj_mt_nomor = h2.mt_nomor
-                WHERE h2.mt_nomor = h.mt_nomor
-                LIMIT 1
+                WHERE h2.mt_nomor = h.mt_nomor LIMIT 1
+            ) LIMIT 1), 
+        NULL) AS TglSJ,
+        
+        -- TERIMA SJ
+        IFNULL(
+            (SELECT sj_terima.sj_noterima FROM tdc_sj_hdr sj_terima
+             WHERE sj_terima.sj_nomor = (
+                SELECT COALESCE(NULLIF(pl2.pl_sj_nomor, ''), sj3.sj_nomor)
+                FROM tmintabarang_hdr h2
+                LEFT JOIN tpacking_list_hdr pl2 ON pl2.pl_mt_nomor = h2.mt_nomor
+                LEFT JOIN tdc_sj_hdr sj3 ON sj3.sj_mt_nomor = h2.mt_nomor
+                WHERE h2.mt_nomor = h.mt_nomor LIMIT 1
              ) LIMIT 1), 
         "") AS TerimaSJ,
+
+        -- TANGGAL TERIMA SJ
+        IFNULL(
+            (SELECT trm.tj_tanggal FROM ttrm_sj_hdr trm 
+             WHERE trm.tj_nomor = (
+                SELECT sj_terima2.sj_noterima FROM tdc_sj_hdr sj_terima2
+                WHERE sj_terima2.sj_nomor = (
+                    SELECT COALESCE(NULLIF(pl2.pl_sj_nomor, ''), sj3.sj_nomor)
+                    FROM tmintabarang_hdr h2
+                    LEFT JOIN tpacking_list_hdr pl2 ON pl2.pl_mt_nomor = h2.mt_nomor
+                    LEFT JOIN tdc_sj_hdr sj3 ON sj3.sj_mt_nomor = h2.mt_nomor
+                    WHERE h2.mt_nomor = h.mt_nomor LIMIT 1
+                ) LIMIT 1
+             ) LIMIT 1), 
+        NULL) AS TglTerima,
+
+        -- TOTAL MINTA & TOTAL KIRIM SJ (Untuk Hitung Persentase di UI)
+        IFNULL((SELECT SUM(mtd_jumlah) FROM tmintabarang_dtl WHERE mtd_nomor = h.mt_nomor), 1) AS TotalMinta,
+        IFNULL((
+            SELECT SUM(i.sjd_jumlah) 
+            FROM tdc_sj_dtl i
+            WHERE i.sjd_nomor = (
+                SELECT COALESCE(NULLIF(pl2.pl_sj_nomor, ''), sj3.sj_nomor)
+                FROM tmintabarang_hdr h2
+                LEFT JOIN tpacking_list_hdr pl2 ON pl2.pl_mt_nomor = h2.mt_nomor
+                LEFT JOIN tdc_sj_hdr sj3 ON sj3.sj_mt_nomor = h2.mt_nomor
+                WHERE h2.mt_nomor = h.mt_nomor LIMIT 1
+            )
+        ), 0) AS TotalKirimSJ,
         
         h.mt_cus AS KdCus,
         c.cus_nama AS Customer,
@@ -65,14 +105,12 @@ const getList = async (filters) => {
     ${jenisFilter}
     ${statusFilter}
     ORDER BY h.mt_nomor DESC
-`;
+  `;
   const [rows] = await pool.query(query, params);
   return rows;
 };
 
 const getDetails = async (nomor) => {
-  // [PERBAIKAN] Query diubah untuk join ke tmintabarang_hdr agar tahu cabang peminta
-  // Lalu join ke tbarangdc_dtl2 berdasarkan kode, ukuran, DAN cabang
   const query = `
     SELECT 
         d.mtd_kode AS Kode,
@@ -85,22 +123,27 @@ const getDetails = async (nomor) => {
             IFNULL(a.brg_warna, '')
         )) AS Nama,
         d.mtd_ukuran AS Ukuran,
-        -- Ambil buffer dari tbarangdc_dtl2 (Tabel yang menyimpan setting buffer per store)
         IFNULL(b2.brgd_min, 0) AS StokMinimal,
         IFNULL(b2.brgd_max, 0) AS StokMaximal,
         d.mtd_jumlah AS Jumlah,
+        -- SUBQUERY DIPERBAIKI (Lewat jembatan PL jika ada)
         IFNULL((
-            SELECT SUM(i.sjd_jumlah) FROM tdc_sj_hdr j
-            JOIN tdc_sj_dtl i ON i.sjd_nomor = j.sj_nomor
-            WHERE j.sj_mt_nomor = d.mtd_nomor 
-                AND i.sjd_kode = d.mtd_kode 
-                AND i.sjd_ukuran = d.mtd_ukuran
+            SELECT SUM(i.sjd_jumlah) 
+            FROM tdc_sj_dtl i
+            WHERE i.sjd_kode = d.mtd_kode 
+              AND i.sjd_ukuran = d.mtd_ukuran
+              AND i.sjd_nomor = (
+                  SELECT COALESCE(NULLIF(pl2.pl_sj_nomor, ''), sj3.sj_nomor)
+                  FROM tmintabarang_hdr h2
+                  LEFT JOIN tpacking_list_hdr pl2 ON pl2.pl_mt_nomor = h2.mt_nomor
+                  LEFT JOIN tdc_sj_hdr sj3 ON sj3.sj_mt_nomor = h2.mt_nomor
+                  WHERE h2.mt_nomor = d.mtd_nomor LIMIT 1
+              )
         ), 0) AS SJ
     FROM tmintabarang_dtl d
     JOIN tmintabarang_hdr h ON h.mt_nomor = d.mtd_nomor
     LEFT JOIN tbarangdc a ON a.brg_kode = d.mtd_kode
     LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mtd_kode AND b.brgd_ukuran = d.mtd_ukuran
-    -- JOIN ke tbarangdc_dtl2 dengan mencocokkan cabang (mt_cab)
     LEFT JOIN tbarangdc_dtl2 b2 ON b2.brgd_kode = d.mtd_kode 
                                AND b2.brgd_ukuran = d.mtd_ukuran 
                                AND b2.brgd_cab = h.mt_cab
@@ -197,25 +240,84 @@ const getExportDetails = async (filters) => {
 
   const query = `
     SELECT 
-        h.mt_nomor AS 'Nomor Minta',
-        h.mt_tanggal AS 'Tanggal',
-        h.mt_so AS 'No SO',
-        c.cus_nama AS 'Customer',
-        d.mtd_kode AS 'Kode Barang',
-        -- Nama Barang
-        IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), d.mtd_kode) AS 'Nama Barang',
-        d.mtd_ukuran AS 'Ukuran',
-        d.mtd_jumlah AS 'Jumlah Minta'
+        h.mt_nomor AS Nomor,
+        h.mt_tanggal AS Tanggal,
+        h.mt_so AS NoSO,
+
+        -- PACKING LIST
+        IFNULL((SELECT pl.pl_nomor FROM tpacking_list_hdr pl WHERE pl.pl_mt_nomor = h.mt_nomor LIMIT 1), "") AS NoPL,
+        IFNULL((SELECT pl.pl_tanggal FROM tpacking_list_hdr pl WHERE pl.pl_mt_nomor = h.mt_nomor LIMIT 1), NULL) AS TglPL,
+        
+        -- SURAT JALAN
+        IFNULL(
+            (SELECT pl.pl_sj_nomor FROM tpacking_list_hdr pl WHERE pl.pl_mt_nomor = h.mt_nomor AND pl.pl_sj_nomor <> '' LIMIT 1),
+            IFNULL((SELECT j.sj_nomor FROM tdc_sj_hdr j WHERE j.sj_mt_nomor = h.mt_nomor LIMIT 1), "")
+        ) AS NoSJ,
+        IFNULL(
+            (SELECT sj_tgl.sj_tanggal FROM tdc_sj_hdr sj_tgl WHERE sj_tgl.sj_nomor = (
+                SELECT COALESCE(NULLIF(pl2.pl_sj_nomor, ''), sj3.sj_nomor)
+                FROM tmintabarang_hdr h2
+                LEFT JOIN tpacking_list_hdr pl2 ON pl2.pl_mt_nomor = h2.mt_nomor
+                LEFT JOIN tdc_sj_hdr sj3 ON sj3.sj_mt_nomor = h2.mt_nomor
+                WHERE h2.mt_nomor = h.mt_nomor LIMIT 1
+            ) LIMIT 1), 
+        NULL) AS TglSJ,
+        
+        -- TERIMA SJ
+        IFNULL(
+            (SELECT sj_terima.sj_noterima FROM tdc_sj_hdr sj_terima
+             WHERE sj_terima.sj_nomor = (
+                SELECT COALESCE(NULLIF(pl2.pl_sj_nomor, ''), sj3.sj_nomor)
+                FROM tmintabarang_hdr h2
+                LEFT JOIN tpacking_list_hdr pl2 ON pl2.pl_mt_nomor = h2.mt_nomor
+                LEFT JOIN tdc_sj_hdr sj3 ON sj3.sj_mt_nomor = h2.mt_nomor
+                WHERE h2.mt_nomor = h.mt_nomor LIMIT 1
+             ) LIMIT 1), 
+        "") AS TerimaSJ,
+
+        -- TGL TERIMA SJ
+        IFNULL(
+            (SELECT trm.tj_tanggal FROM ttrm_sj_hdr trm 
+             WHERE trm.tj_nomor = (
+                SELECT sj_terima2.sj_noterima FROM tdc_sj_hdr sj_terima2
+                WHERE sj_terima2.sj_nomor = (
+                    SELECT COALESCE(NULLIF(pl2.pl_sj_nomor, ''), sj3.sj_nomor)
+                    FROM tmintabarang_hdr h2
+                    LEFT JOIN tpacking_list_hdr pl2 ON pl2.pl_mt_nomor = h2.mt_nomor
+                    LEFT JOIN tdc_sj_hdr sj3 ON sj3.sj_mt_nomor = h2.mt_nomor
+                    WHERE h2.mt_nomor = h.mt_nomor LIMIT 1
+                ) LIMIT 1
+             ) LIMIT 1), 
+        NULL) AS TglTerima,
+
+        c.cus_nama AS Customer,
+        d.mtd_kode AS KodeBarang,
+        IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), d.mtd_kode) AS NamaBarang,
+        d.mtd_ukuran AS Ukuran,
+        d.mtd_jumlah AS JumlahMinta,
+        
+        -- Qty SJ Per Item
+        IFNULL((
+            SELECT SUM(i.sjd_jumlah) 
+            FROM tdc_sj_dtl i
+            WHERE i.sjd_kode = d.mtd_kode 
+              AND i.sjd_ukuran = d.mtd_ukuran
+              AND i.sjd_nomor = (
+                  SELECT COALESCE(NULLIF(pl2.pl_sj_nomor, ''), sj3.sj_nomor)
+                  FROM tmintabarang_hdr h2
+                  LEFT JOIN tpacking_list_hdr pl2 ON pl2.pl_mt_nomor = h2.mt_nomor
+                  LEFT JOIN tdc_sj_hdr sj3 ON sj3.sj_mt_nomor = h2.mt_nomor
+                  WHERE h2.mt_nomor = d.mtd_nomor LIMIT 1
+              )
+        ), 0) AS JumlahSJ
     FROM tmintabarang_hdr h
     JOIN tmintabarang_dtl d ON h.mt_nomor = d.mtd_nomor
     LEFT JOIN tcustomer c ON c.cus_kode = h.mt_cus
     LEFT JOIN tbarangdc a ON a.brg_kode = d.mtd_kode
-    WHERE 
-        DATE(h.mt_tanggal) BETWEEN ? AND ? 
-        ${branchFilter}
-    -- [PERBAIKAN] Ganti d.mtd_nourut menjadi d.mtd_kode
+    WHERE DATE(h.mt_tanggal) BETWEEN ? AND ? 
+    ${branchFilter}
     ORDER BY h.mt_nomor, d.mtd_kode;
-    `;
+  `;
 
   const [rows] = await pool.query(query, params);
   return rows;

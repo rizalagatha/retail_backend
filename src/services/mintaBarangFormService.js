@@ -729,7 +729,7 @@ const generateAutomasiMintaBarang = async (user) => {
     }
 
     // =========================================================================
-    // 2. DETEKSI JADWAL KIRIM H-1 (UNTUK BESOK)
+    // 2. DETEKSI JADWAL KIRIM H-1 (BERLAKU UNTUK SEMUA CABANG KECUALI KDC/K04)
     // =========================================================================
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
@@ -746,32 +746,33 @@ const generateAutomasiMintaBarang = async (user) => {
     ];
     const tomorrowDayName = indonesianDays[tomorrow.getDay()];
 
-    // Ambil cabang dari jadwal rutin (Sementara dikunci K03 & K11 sesuai request)
+    // Cek cabang mana saja yang jadwal kirimannya jatuh pada hari esok
+    // Memfilter hanya cabang K01-K03 dan K05-K11 sesuai request
     const [scheduledStores] = await connection.query(
       `
       SELECT cabang_kode 
       FROM tmaster_jadwal_rutin 
-      WHERE cabang_kode IN ('K03', 'K11')
-        AND (kiriman_1 = ? OR kiriman_2 = ?)
+      WHERE (kiriman_1 = ? OR kiriman_2 = ?)
+        AND cabang_kode IN ('K01', 'K02', 'K03', 'K05', 'K06', 'K07', 'K08', 'K09', 'K10', 'K11')
     `,
       [tomorrowDayName, tomorrowDayName],
     );
 
-    // Jika besok tidak ada jadwal kirim untuk K03 maupun K11, stop proses disini
+    // Jika besok tidak ada jadwal kirim untuk cabang manapun, stop proses disini
     if (scheduledStores.length === 0) {
       await connection.rollback();
       return {
-        message: `Hari ini tidak ada antrean. Besok (${tomorrowDayName}) tidak ada jadwal pengiriman untuk K03 maupun K11.`,
+        message: `Hari ini tidak ada antrean. Besok (${tomorrowDayName}) tidak ada jadwal pengiriman untuk cabang manapun.`,
         jalur_hijau_docs: 0,
         jalur_kuning_items: 0,
       };
     }
 
-    // Tampung list cabang yang aktif besok ke dalam array, contoh: ['K03', 'K11']
+    // Tampung list cabang yang aktif besok ke dalam array
     const activeCabangs = scheduledStores.map((row) => row.cabang_kode);
 
     // =========================================================================
-    // 2.5 [BARU] AUTO-CLOSE PERMINTAAN OTOMATIS LAMA YANG BELUM DIPROSES DC
+    // 2.5 AUTO-CLOSE PERMINTAAN OTOMATIS LAMA YANG BELUM DIPROSES DC
     // =========================================================================
     const [closeResult] = await connection.query(
       `
@@ -903,10 +904,11 @@ const generateAutomasiMintaBarang = async (user) => {
     );
 
     // =========================================================================
-    // 5. HITUNG DEMAND DAN PISAHKAN JALUR NORMAL VS JALUR KOSONG
+    // 5. HITUNG DEMAND DAN PISAHKAN JALUR PRIORITAS, NORMAL, & KOSONG
     // =========================================================================
-    const autoMintaNormal = {};
-    const autoMintaKosong = {};
+    const autoMintaPrioritas = {}; // Kumpulan item kritis (stok < 5)
+    const autoMintaNormal = {}; // Kumpulan item normal (berdasarkan jenis kain)
+    const autoMintaKosong = {}; // Kumpulan item yang stok DC-nya kurang
 
     for (const buf of storeBuffers) {
       const k = makeKey(buf.cabang, buf.kode, buf.ukuran);
@@ -917,28 +919,38 @@ const generateAutomasiMintaBarang = async (user) => {
 
       const stokEfektif = stokFisik + minta + pl + sj;
 
+      // Hanya isi jika total stok (termasuk yang dlm perjalanan) di bawah Minimal Buffer
       if (stokEfektif < buf.stokmin && buf.stokmin > 0) {
-        // [FIX] Memenuhi batas MIN BUFFER saja sesuai request terbaru
         const mino = buf.stokmin - stokFisik;
 
         if (mino > 0) {
           const dcKey = makeKeyDc(buf.kode, buf.ukuran);
           const currentDcStock = mapStokDc.get(dcKey) || 0;
           const jenisKain = mapJenisKain.get(buf.kode) || "LAINNYA";
-          const groupKey = `${buf.cabang}|${jenisKain}`;
 
           const payload = {
             kode: buf.kode,
             ukuran: buf.ukuran,
             mino,
             cabang: buf.cabang,
-            jenisKain,
+            stokToko: stokFisik,
           };
 
           if (currentDcStock > 10) {
-            if (!autoMintaNormal[groupKey]) autoMintaNormal[groupKey] = [];
-            autoMintaNormal[groupKey].push(payload);
+            // [KUNCI PEMISAHAN] Cek apakah stok toko di bawah 5
+            if (stokFisik < 5) {
+              // Masuk ke grup PRIORITAS (Tidak peduli jenis kain apa)
+              if (!autoMintaPrioritas[buf.cabang])
+                autoMintaPrioritas[buf.cabang] = [];
+              autoMintaPrioritas[buf.cabang].push(payload);
+            } else {
+              // Masuk ke grup NORMAL (Dikelompokkan per jenis kain)
+              const groupKey = `${buf.cabang}|${jenisKain}`;
+              if (!autoMintaNormal[groupKey]) autoMintaNormal[groupKey] = [];
+              autoMintaNormal[groupKey].push(payload);
+            }
           } else {
+            // Masuk ke grup STOK DC KOSONG
             if (!autoMintaKosong[buf.cabang]) autoMintaKosong[buf.cabang] = [];
             autoMintaKosong[buf.cabang].push(payload);
           }
@@ -947,7 +959,7 @@ const generateAutomasiMintaBarang = async (user) => {
     }
 
     // =========================================================================
-    // 6. INSERT DATABASE
+    // 6. INSERT DATABASE (CHUNK 120 & PRIORITAS)
     // =========================================================================
     const maxNumberMap = {};
     const timestampRec = format(new Date(), "yyyyMMddHHmmssSSS");
@@ -968,17 +980,17 @@ const generateAutomasiMintaBarang = async (user) => {
       return { mtNomor, idrec };
     };
 
-    // --- INSERT JALUR NORMAL (CHUNKING 120) ---
-    for (const [groupKey, items] of Object.entries(autoMintaNormal)) {
-      const [cabang, jenisKain] = groupKey.split("|");
-      const keterangan = `AUTO REPLENISHMENT - ${jenisKain}`;
+    // Fungsi Bantuan untuk Chunking & Insert agar tidak mengulang kode
+    const processInsert = async (cabangTarget, keteranganTitle, itemsArray) => {
+      // Sortir item dari yang stoknya paling seditkit (paling kritis)
+      const sortedItems = itemsArray.sort((a, b) => a.stokToko - b.stokToko);
 
       const chunks = [];
       let currentChunk = [];
       let currentSum = 0;
       const MAX_QTY_PER_DOC = 120;
 
-      for (const item of items) {
+      for (const item of sortedItems) {
         let remainingQty = item.mino;
         while (remainingQty > 0) {
           let spaceLeft = MAX_QTY_PER_DOC - currentSum;
@@ -1001,12 +1013,12 @@ const generateAutomasiMintaBarang = async (user) => {
       if (currentChunk.length > 0) chunks.push(currentChunk);
 
       for (const chunk of chunks) {
-        const { mtNomor, idrec } = await getNextNomor(cabang);
+        const { mtNomor, idrec } = await getNextNomor(cabangTarget);
         await connection.query(
           `INSERT INTO tmintabarang_hdr 
            (mt_idrec, mt_nomor, mt_tanggal, mt_so, mt_cus, mt_cab, mt_ket, mt_otomatis, user_create, date_create) 
-           VALUES (?, ?, NOW(), '', '', ?, ?, 'Y', ?, NOW())`,
-          [idrec, mtNomor, cabang, keterangan, user.kode],
+           VALUES (?, ?, NOW(), '', '', ?, ?, 'Y', 'SYSTEM', NOW())`,
+          [idrec, mtNomor, cabangTarget, keteranganTitle],
         );
         const dtlValues = chunk.map((c) => [
           idrec,
@@ -1021,38 +1033,38 @@ const generateAutomasiMintaBarang = async (user) => {
         );
         autoDocsCount++;
       }
+    };
+
+    // --- 6A. INSERT JALUR PRIORITAS ---
+    for (const [cabang, items] of Object.entries(autoMintaPrioritas)) {
+      if (items.length > 0) {
+        await processInsert(cabang, "AUTO REPLENISHMENT - PRIORITAS", items);
+      }
     }
 
-    // --- INSERT JALUR KOSONG (TANPA LIMIT) ---
-    for (const [cabang, items] of Object.entries(autoMintaKosong)) {
-      if (items.length === 0) continue;
-      const keterangan = `AUTO REPLENISHMENT - STOK DC KOSONG`;
-      const { mtNomor, idrec } = await getNextNomor(cabang);
+    // --- 6B. INSERT JALUR NORMAL (Berdasarkan Jenis Kain) ---
+    for (const [groupKey, items] of Object.entries(autoMintaNormal)) {
+      if (items.length > 0) {
+        const [cabang, jenisKain] = groupKey.split("|");
+        await processInsert(cabang, `AUTO REPLENISHMENT - ${jenisKain}`, items);
+      }
+    }
 
-      await connection.query(
-        `INSERT INTO tmintabarang_hdr 
-         (mt_idrec, mt_nomor, mt_tanggal, mt_so, mt_cus, mt_cab, mt_ket, mt_otomatis, user_create, date_create) 
-         VALUES (?, ?, NOW(), '', '', ?, ?, 'Y', ?, NOW())`,
-        [idrec, mtNomor, cabang, keterangan, user.kode],
-      );
-      const dtlValues = items.map((c) => [
-        idrec,
-        mtNomor,
-        c.kode,
-        c.ukuran,
-        c.mino,
-      ]);
-      await connection.query(
-        `INSERT INTO tmintabarang_dtl (mtd_idrec, mtd_nomor, mtd_kode, mtd_ukuran, mtd_jumlah) VALUES ?`,
-        [dtlValues],
-      );
-      autoDocsCount++;
+    // --- 6C. INSERT JALUR KOSONG ---
+    for (const [cabang, items] of Object.entries(autoMintaKosong)) {
+      if (items.length > 0) {
+        await processInsert(
+          cabang,
+          "AUTO REPLENISHMENT - STOK DC KOSONG",
+          items,
+        );
+      }
     }
 
     await connection.commit();
 
     return {
-      message: `Berhasil! ${autoDocsCount} Dokumen Minta Barang berhasil di-generate otomatis untuk jadwal besok (${tomorrowDayName}).`,
+      message: `Berhasil! ${autoDocsCount} Dokumen Minta Barang di-generate untuk pengiriman esok hari (${tomorrowDayName}) pada cabang: ${activeCabangs.join(", ")}.`,
       jalur_hijau_docs: autoDocsCount,
       jalur_kuning_items: 0,
     };

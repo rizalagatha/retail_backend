@@ -1,4 +1,19 @@
 const changelogs = {
+  "1.5.2": {
+    date: "2026-06-22",
+    changes: [
+      {
+        title: "Pembaruan dan Perbaikan:",
+        items: [
+          "Setting Harga Polyflex pada Jenis Order Modal dan SO DTF Trial",
+          "Wajib upload gambar pada Pengajuan Harga untuk bisa di-Approve",
+          "Permintaan Otomatis untuk All Cabang, digenerate oleh sistem secara otomatis pada H-1 Jadwal Kirim masing-masing Store, dengan memprioritaskan stok toko kritis (di bawah 5)",
+          "Scan Ready pada SO tidak boleh input manual atau copy paste barcode, harus menggunakan alat barcode scanner",
+          "Perbaikan pada Card Stok Kosong pada Dashboard tab Stok",
+        ],
+      },
+    ],
+  },
   "1.5.1": {
     date: "2026-06-12",
     changes: [
