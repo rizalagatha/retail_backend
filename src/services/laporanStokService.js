@@ -80,9 +80,21 @@ const getRealTimeStock = async (filters) => {
     // 7. Query Utama
     let mainParams = [...params, ...kodeParams, ...searchParams];
 
+    // [PERBAIKAN] Logika subquery untuk buffer berdasarkan cabang atau total keseluruhan (ALL)
+    let bufferSubquery = "";
+    if (gudang === "KDC") {
+      bufferSubquery = `IFNULL((SELECT SUM(brgd_mindc) FROM tbarangdc_dtl b WHERE b.brgd_kode = a.brg_kode), 0)`;
+    } else if (gudang !== "ALL") {
+      // Ambil dari tbarangdc_dtl2 sesuai cabang
+      bufferSubquery = `IFNULL((SELECT SUM(brgd_min) FROM tbarangdc_dtl2 b2 WHERE b2.brgd_kode = a.brg_kode AND b2.brgd_cab = ?), 0)`;
+      mainParams.push(gudang); // Masukkan parameter untuk subquery buffer
+    } else {
+      // Ambil TOTAL dari semua cabang di tbarangdc_dtl2
+      bufferSubquery = `IFNULL((SELECT SUM(brgd_min) FROM tbarangdc_dtl2 b2 WHERE b2.brgd_kode = a.brg_kode), 0)`;
+    }
+
     const havingClause = !tampilkanKosong ? "HAVING TOTAL <> 0" : "";
     const isKDC = gudang === "KDC" ? 1 : 0;
-    const bufferColumn = isKDC ? "brgd_mindc" : "brgd_min";
 
     const query = `
         SELECT
@@ -107,7 +119,7 @@ const getRealTimeStock = async (filters) => {
                     WHERE pld.pld_kode = a.brg_kode AND plh.pl_status = 'O'), 0), 
           0)) AS TOTAL2
           
-            , IFNULL((SELECT SUM(${bufferColumn}) FROM tbarangdc_dtl b WHERE b.brgd_kode = a.brg_kode), 0) AS Buffer
+            , ${bufferSubquery} AS Buffer
         FROM tbarangdc a
         LEFT JOIN (
             SELECT 
@@ -267,8 +279,22 @@ const getRealTimeStockExport = async (filters) => {
     }
 
     const isKDC = gudang === "KDC" ? 1 : 0;
-    const bufferMinColumn = isKDC ? "brgd_mindc" : "brgd_min";
-    const bufferMaxColumn = isKDC ? "brgd_maxdc" : "brgd_max";
+
+    // [PERBAIKAN] Logika subquery buffer untuk export (memiliki min dan max)
+    let bufferMinSubquery = "";
+    let bufferMaxSubquery = "";
+
+    if (gudang === "KDC") {
+      bufferMinSubquery = "COALESCE(b.brgd_mindc, 0)";
+      bufferMaxSubquery = "COALESCE(b.brgd_maxdc, 0)";
+    } else if (gudang !== "ALL") {
+      bufferMinSubquery = `IFNULL((SELECT b2.brgd_min FROM tbarangdc_dtl2 b2 WHERE b2.brgd_kode = b.brgd_kode AND b2.brgd_ukuran = b.brgd_ukuran AND b2.brgd_cab = ? LIMIT 1), 0)`;
+      bufferMaxSubquery = `IFNULL((SELECT b2.brgd_max FROM tbarangdc_dtl2 b2 WHERE b2.brgd_kode = b.brgd_kode AND b2.brgd_ukuran = b.brgd_ukuran AND b2.brgd_cab = ? LIMIT 1), 0)`;
+      params.push(gudang, gudang); // Param untuk Min dan Max
+    } else {
+      bufferMinSubquery = `IFNULL((SELECT SUM(b2.brgd_min) FROM tbarangdc_dtl2 b2 WHERE b2.brgd_kode = b.brgd_kode AND b2.brgd_ukuran = b.brgd_ukuran), 0)`;
+      bufferMaxSubquery = `IFNULL((SELECT SUM(b2.brgd_max) FROM tbarangdc_dtl2 b2 WHERE b2.brgd_kode = b.brgd_kode AND b2.brgd_ukuran = b.brgd_ukuran), 0)`;
+    }
 
     const query = `
         SELECT
@@ -297,9 +323,9 @@ const getRealTimeStockExport = async (filters) => {
                 ), 0),
             0)) AS TOTAL2,
         
-            -- [BARU] Ambil Buffer Min dan Max
-            COALESCE(b.${bufferMinColumn}, 0) AS BUFFER_MIN,
-            COALESCE(b.${bufferMaxColumn}, 0) AS BUFFER_MAX
+            -- [BARU] Dinamis Buffer Min & Max
+            ${bufferMinSubquery} AS BUFFER_MIN,
+            ${bufferMaxSubquery} AS BUFFER_MAX
             
         FROM tbarangdc a
         JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
