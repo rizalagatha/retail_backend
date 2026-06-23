@@ -23,16 +23,15 @@ const getRealTimeStock = async (filters) => {
       )`;
     }
 
-    // 2. Siapkan Filter Dasar
-    let params = [tanggal];
-    let gudangFilter = "1 = 1"; // Default ALL
+    // 2. Siapkan Filter Dasar untuk subquery Size
+    let baseParams = [tanggal];
+    let gudangFilter = "1 = 1";
 
     if (gudang !== "ALL") {
       gudangFilter = `m.mst_cab = ?`;
-      params.push(gudang);
+      baseParams.push(gudang);
     }
 
-    // 3. Filter Spesifik Kode Barang (Dari Modal F1)
     let kodeBarangFilter = "";
     let kodeParams = [];
     if (kodeBarang && kodeBarang.trim() !== "") {
@@ -40,7 +39,6 @@ const getRealTimeStock = async (filters) => {
       kodeParams.push(kodeBarang);
     }
 
-    // 4. Filter Pencarian Bebas (Keyword)
     let searchFilter = "";
     let searchParams = [];
     if (keyword && keyword.trim() !== "") {
@@ -49,7 +47,7 @@ const getRealTimeStock = async (filters) => {
       searchParams.push(searchTerm, searchTerm);
     }
 
-    // 5. Ambil Daftar Ukuran yang AKTIF/ADA STOKNYA SAJA
+    // 3. Ambil Daftar Ukuran
     const sizeQuery = `
       SELECT DISTINCT m.mst_ukuran
       FROM ${stockSourceTable} m
@@ -61,11 +59,9 @@ const getRealTimeStock = async (filters) => {
         ${searchFilter}
       ORDER BY m.mst_ukuran
     `;
-
-    const sizeParams = [...params, ...kodeParams, ...searchParams];
+    const sizeParams = [...baseParams, ...kodeParams, ...searchParams];
     const [sizes] = await connection.query(sizeQuery, sizeParams);
 
-    // 6. Rakit Kolom PIVOT secara Dinamis
     let dynamicColumns = "";
     if (sizes.length > 0) {
       dynamicColumns = sizes
@@ -77,21 +73,31 @@ const getRealTimeStock = async (filters) => {
       dynamicColumns = ", " + dynamicColumns;
     }
 
-    // 7. Query Utama
-    let mainParams = [...params, ...kodeParams, ...searchParams];
+    // =================================================================================
+    // [PERBAIKAN KUNCI]: Susun Array Parameter Utama sesuai urutan kemunculan '?' di SQL
+    // =================================================================================
+    let mainParams = [];
 
-    // [PERBAIKAN] Logika subquery untuk buffer berdasarkan cabang atau total keseluruhan (ALL)
+    // Urutan 1: Parameter untuk Buffer (di dalam SELECT)
     let bufferSubquery = "";
     if (gudang === "KDC") {
       bufferSubquery = `IFNULL((SELECT SUM(brgd_mindc) FROM tbarangdc_dtl b WHERE b.brgd_kode = a.brg_kode), 0)`;
     } else if (gudang !== "ALL") {
-      // Ambil dari tbarangdc_dtl2 sesuai cabang
       bufferSubquery = `IFNULL((SELECT SUM(brgd_min) FROM tbarangdc_dtl2 b2 WHERE b2.brgd_kode = a.brg_kode AND b2.brgd_cab = ?), 0)`;
-      mainParams.push(gudang); // Masukkan parameter untuk subquery buffer
+      mainParams.push(gudang); // <-- MASUK PALING PERTAMA
     } else {
-      // Ambil TOTAL dari semua cabang di tbarangdc_dtl2
       bufferSubquery = `IFNULL((SELECT SUM(brgd_min) FROM tbarangdc_dtl2 b2 WHERE b2.brgd_kode = a.brg_kode), 0)`;
     }
+
+    // Urutan 2: Parameter untuk Tanggal & Gudang (di dalam LEFT JOIN stok)
+    mainParams.push(tanggal);
+    if (gudang !== "ALL") {
+      mainParams.push(gudang);
+    }
+
+    // Urutan 3: Parameter untuk WHERE (Kode & Search)
+    mainParams.push(...kodeParams);
+    mainParams.push(...searchParams);
 
     const havingClause = !tampilkanKosong ? "HAVING TOTAL <> 0" : "";
     const isKDC = gudang === "KDC" ? 1 : 0;
@@ -258,29 +264,25 @@ const getRealTimeStockExport = async (filters) => {
       )`;
     }
 
-    let params = [tanggal];
     let gudangFilter = "1 = 1";
-    if (gudang !== "ALL") {
-      gudangFilter = `m.mst_cab = ?`;
-      params.push(gudang);
-    }
-
     let kodeBarangFilter = "";
-    if (kodeBarang && kodeBarang.trim() !== "") {
-      kodeBarangFilter = " AND a.brg_kode = ? ";
-      params.push(kodeBarang);
-    }
-
     let searchFilter = "";
+
+    if (gudang !== "ALL") gudangFilter = `m.mst_cab = ?`;
+    if (kodeBarang && kodeBarang.trim() !== "")
+      kodeBarangFilter = " AND a.brg_kode = ? ";
     if (keyword && keyword.trim() !== "") {
-      const searchTerm = `%${keyword.trim()}%`;
       searchFilter = ` AND (a.brg_kode LIKE ? OR TRIM(CONCAT_WS(' ', a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna)) LIKE ?)`;
-      params.push(searchTerm, searchTerm);
     }
 
     const isKDC = gudang === "KDC" ? 1 : 0;
 
-    // [PERBAIKAN] Logika subquery buffer untuk export (memiliki min dan max)
+    // =================================================================================
+    // [PERBAIKAN KUNCI]: Susun Array Parameter Export
+    // =================================================================================
+    let exportParams = [];
+
+    // Urutan 1: Parameter SELECT (Buffer Min & Max)
     let bufferMinSubquery = "";
     let bufferMaxSubquery = "";
 
@@ -290,10 +292,23 @@ const getRealTimeStockExport = async (filters) => {
     } else if (gudang !== "ALL") {
       bufferMinSubquery = `IFNULL((SELECT b2.brgd_min FROM tbarangdc_dtl2 b2 WHERE b2.brgd_kode = b.brgd_kode AND b2.brgd_ukuran = b.brgd_ukuran AND b2.brgd_cab = ? LIMIT 1), 0)`;
       bufferMaxSubquery = `IFNULL((SELECT b2.brgd_max FROM tbarangdc_dtl2 b2 WHERE b2.brgd_kode = b.brgd_kode AND b2.brgd_ukuran = b.brgd_ukuran AND b2.brgd_cab = ? LIMIT 1), 0)`;
-      params.push(gudang, gudang); // Param untuk Min dan Max
+      exportParams.push(gudang, gudang); // <-- Masuk pertama (Untuk subquery Min dan Max)
     } else {
       bufferMinSubquery = `IFNULL((SELECT SUM(b2.brgd_min) FROM tbarangdc_dtl2 b2 WHERE b2.brgd_kode = b.brgd_kode AND b2.brgd_ukuran = b.brgd_ukuran), 0)`;
       bufferMaxSubquery = `IFNULL((SELECT SUM(b2.brgd_max) FROM tbarangdc_dtl2 b2 WHERE b2.brgd_kode = b.brgd_kode AND b2.brgd_ukuran = b.brgd_ukuran), 0)`;
+    }
+
+    // Urutan 2: Parameter LEFT JOIN (Tanggal & Gudang)
+    exportParams.push(tanggal);
+    if (gudang !== "ALL") {
+      exportParams.push(gudang);
+    }
+
+    // Urutan 3: Parameter WHERE
+    if (kodeBarang && kodeBarang.trim() !== "") exportParams.push(kodeBarang);
+    if (keyword && keyword.trim() !== "") {
+      const searchTerm = `%${keyword.trim()}%`;
+      exportParams.push(searchTerm, searchTerm);
     }
 
     const query = `
@@ -323,7 +338,6 @@ const getRealTimeStockExport = async (filters) => {
                 ), 0),
             0)) AS TOTAL2,
         
-            -- [BARU] Dinamis Buffer Min & Max
             ${bufferMinSubquery} AS BUFFER_MIN,
             ${bufferMaxSubquery} AS BUFFER_MAX
             
@@ -345,7 +359,7 @@ const getRealTimeStockExport = async (filters) => {
         ORDER BY NAMA, b.brgd_ukuran;
     `;
 
-    const [rows] = await connection.query(query, params);
+    const [rows] = await connection.query(query, exportParams);
     return rows;
   } finally {
     connection.release();
