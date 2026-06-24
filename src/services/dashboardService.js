@@ -1009,12 +1009,24 @@ const getStokKosongReguler = async (
   let branchToCheck =
     user.cabang === "KDC" ? targetCabang || "ALL" : user.cabang;
 
-  const searchPattern = `%${searchTerm}%`;
   const offset = (Math.max(1, parseInt(page)) - 1) * parseInt(limit);
   const limitClause = isExport ? "" : "LIMIT ? OFFSET ?";
 
+  // OPTIMASI 1: Jangan gunakan LIKE '%...%' jika user tidak mengetik pencarian
+  let searchCondition = "";
+  let searchParams = [];
+  if (searchTerm && searchTerm.trim() !== "") {
+    searchCondition = `AND (
+      b.brgd_kode LIKE ? OR 
+      b.brgd_barcode LIKE ? OR 
+      TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), ' ', IFNULL(a.brg_tipe,''), ' ', IFNULL(a.brg_lengan,''), ' ', IFNULL(a.brg_jeniskain,''), ' ', IFNULL(a.brg_warna,''))) LIKE ?
+    )`;
+    const searchPattern = `%${searchTerm.trim()}%`;
+    searchParams = [searchPattern, searchPattern, searchPattern];
+  }
+
   let query = "";
-  let params = [];
+  let finalParams = [];
 
   if (branchToCheck === "ALL") {
     // --- MODE PECAH PER TOKO (ALL) ---
@@ -1032,7 +1044,14 @@ const getStokKosongReguler = async (
           JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
           WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y' AND a.brg_ktgp = 'REGULER'
             AND b.brgd_ukuran IN ('S', 'M', 'L', 'XL', '2XL')
-            AND (b.brgd_kode LIKE ? OR b.brgd_barcode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos,' ',a.brg_tipe,' ',a.brg_lengan,' ',a.brg_jeniskain,' ',a.brg_warna)) LIKE ?)
+            ${searchCondition}
+      ),
+      -- OPTIMASI 2: Hitung Total Stok ke dalam tabel virtual terlebih dahulu
+      AggregatedStock AS (
+          SELECT mst_cab, mst_brg_kode, mst_ukuran, SUM(mst_stok_in - mst_stok_out) AS stok_akhir
+          FROM tmasterstok
+          WHERE mst_aktif = 'Y' AND mst_cab IN (SELECT gdg_kode FROM ActiveStores)
+          GROUP BY mst_cab, mst_brg_kode, mst_ukuran
       )
       SELECT 
           s.gdg_nama AS nama_cabang,
@@ -1040,24 +1059,21 @@ const getStokKosongReguler = async (
           mi.barcode,
           mi.nama_barang,
           mi.ukuran,
-          IFNULL(SUM(m.mst_stok_in - m.mst_stok_out), 0) AS stok_akhir
+          IFNULL(agg.stok_akhir, 0) AS stok_akhir
       FROM ActiveStores s
       CROSS JOIN MasterItems mi 
-      LEFT JOIN tmasterstok m ON m.mst_brg_kode = mi.kode 
-          AND m.mst_ukuran = mi.ukuran 
-          AND m.mst_cab = s.gdg_kode
-          AND m.mst_aktif = 'Y'
-      GROUP BY s.gdg_kode, s.gdg_nama, mi.kode, mi.ukuran
-      HAVING stok_akhir <= 0
+      LEFT JOIN AggregatedStock agg ON mi.kode = agg.mst_brg_kode 
+          AND mi.ukuran = agg.mst_ukuran 
+          AND s.gdg_kode = agg.mst_cab
+      WHERE IFNULL(agg.stok_akhir, 0) <= 0
       ORDER BY s.gdg_kode, mi.nama_barang, mi.ukuran
       ${limitClause};
     `;
-    params = [searchPattern, searchPattern, searchPattern];
+    finalParams = [...searchParams];
   } else {
     // --- MODE SINGLE CABANG ---
     query = `
       WITH TargetStore AS (
-          -- [FIX] Pastikan cabang yang difilter adalah Toko (gdg_dc = 0)
           SELECT gdg_kode, gdg_nama FROM tgudang WHERE gdg_kode = ? AND gdg_dc = 0
       ),
       MasterItems AS (
@@ -1070,34 +1086,38 @@ const getStokKosongReguler = async (
           JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
           WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y' AND a.brg_ktgp = 'REGULER'
             AND b.brgd_ukuran IN ('S', 'M', 'L', 'XL', '2XL')
-            AND (b.brgd_kode LIKE ? OR b.brgd_barcode LIKE ? OR TRIM(CONCAT(a.brg_jeniskaos,' ',a.brg_tipe,' ',a.brg_lengan,' ',a.brg_jeniskain,' ',a.brg_warna)) LIKE ?)
+            ${searchCondition}
+      ),
+      -- OPTIMASI 2: Hitung Total Stok ke dalam tabel virtual terlebih dahulu (Khusus 1 Cabang)
+      AggregatedStock AS (
+          SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_in - mst_stok_out) AS stok_akhir
+          FROM tmasterstok
+          WHERE mst_aktif = 'Y' AND mst_cab = ?
+          GROUP BY mst_brg_kode, mst_ukuran
       )
       SELECT 
-          ts.gdg_nama AS nama_cabang,
+          (SELECT gdg_nama FROM TargetStore) AS nama_cabang,
           mi.kode,
           mi.barcode,
           mi.nama_barang,
           mi.ukuran,
-          IFNULL(SUM(m.mst_stok_in - m.mst_stok_out), 0) AS stok_akhir
-      FROM TargetStore ts
-      CROSS JOIN MasterItems mi
-      LEFT JOIN tmasterstok m ON m.mst_brg_kode = mi.kode 
-          AND m.mst_ukuran = mi.ukuran 
-          AND m.mst_aktif = 'Y'
-          AND m.mst_cab = ts.gdg_kode
-      GROUP BY ts.gdg_nama, mi.kode, mi.ukuran
-      HAVING stok_akhir <= 0
+          IFNULL(agg.stok_akhir, 0) AS stok_akhir
+      FROM MasterItems mi
+      LEFT JOIN AggregatedStock agg ON mi.kode = agg.mst_brg_kode 
+          AND mi.ukuran = agg.mst_ukuran 
+      WHERE IFNULL(agg.stok_akhir, 0) <= 0
       ORDER BY mi.nama_barang, mi.ukuran
       ${limitClause};
     `;
-    params = [branchToCheck, searchPattern, searchPattern, searchPattern];
+    finalParams = [branchToCheck, ...searchParams, branchToCheck];
   }
 
+  // Jika bukan export, masukkan parameter limit & offset ke SQL
   if (!isExport) {
-    params.push(parseInt(limit), parseInt(offset));
+    finalParams.push(parseInt(limit), parseInt(offset));
   }
 
-  const [allRows] = await pool.query(query, params);
+  const [allRows] = await pool.query(query, finalParams);
   return { data: allRows, totalCount: allRows.length };
 };
 
