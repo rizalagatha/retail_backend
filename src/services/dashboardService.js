@@ -2276,46 +2276,62 @@ const getAutoMintaAnalytics = async (user, filters = {}) => {
   let params = [start, end];
 
   if (user.cabang !== "KDC") {
-    branchFilter = "AND h.mt_cab = ?";
+    branchFilter = "AND mt_cab = ?";
     params.push(user.cabang);
   } else if (cabang !== "ALL") {
-    branchFilter = "AND h.mt_cab = ?";
+    branchFilter = "AND mt_cab = ?";
     params.push(cabang);
   }
 
+  // Menggunakan CTE (WITH) agar query dieksekusi secara bulk dan SANGAT CEPAT
   const query = `
+    WITH TargetHeaders AS (
+        SELECT mt_nomor, mt_cab
+        FROM tmintabarang_hdr
+        WHERE mt_otomatis = 'Y' 
+          AND DATE(mt_tanggal) BETWEEN ? AND ?
+          ${branchFilter}
+    ),
+    ReqQty AS (
+        SELECT h.mt_cab, SUM(d.mtd_jumlah) as qty_minta
+        FROM TargetHeaders h
+        JOIN tmintabarang_dtl d ON h.mt_nomor = d.mtd_nomor
+        GROUP BY h.mt_cab
+    ),
+    PackedQty AS (
+        SELECT h.mt_cab, SUM(pld.pld_jumlah) as qty_packed
+        FROM TargetHeaders h
+        JOIN tpacking_list_hdr plh ON plh.pl_mt_nomor = h.mt_nomor
+        JOIN tpacking_list_dtl pld ON pld.pld_nomor = plh.pl_nomor
+        GROUP BY h.mt_cab
+    ),
+    TargetSJ AS (
+        SELECT 
+            h.mt_cab,
+            COALESCE(NULLIF(pl.pl_sj_nomor, ''), sj.sj_nomor) AS final_sj_nomor
+        FROM TargetHeaders h
+        LEFT JOIN tpacking_list_hdr pl ON pl.pl_mt_nomor = h.mt_nomor
+        LEFT JOIN tdc_sj_hdr sj ON sj.sj_mt_nomor = h.mt_nomor
+    ),
+    SentQty AS (
+        SELECT t.mt_cab, SUM(sjd.sjd_jumlah) AS qty_sent
+        FROM TargetSJ t
+        JOIN tdc_sj_dtl sjd ON sjd.sjd_nomor = t.final_sj_nomor
+        WHERE t.final_sj_nomor IS NOT NULL AND t.final_sj_nomor != ''
+        GROUP BY t.mt_cab
+    )
     SELECT 
-        h.mt_nomor AS nomor_mt,
-        DATE_FORMAT(h.mt_tanggal, '%Y-%m-%d') AS tanggal_mt,
-        h.mt_cab AS kode_cabang,
+        th.mt_cab AS kode_cabang,
         g.gdg_nama AS nama_cabang,
-        h.mt_ket AS keterangan,
-        
-        -- 1. Total Qty Yang Diminta Sistem
-        IFNULL((SELECT SUM(mtd_jumlah) FROM tmintabarang_dtl WHERE mtd_nomor = h.mt_nomor), 0) AS qty_minta,
-        
-        -- 2. Total Qty Yang Berhasil Masuk Packing List DC
-        IFNULL((
-            SELECT SUM(pld.pld_jumlah) 
-            FROM tpacking_list_hdr plh
-            JOIN tpacking_list_dtl pld ON pld.pld_nomor = plh.pl_nomor
-            WHERE plh.pl_mt_nomor = h.mt_nomor
-        ), 0) AS qty_packed,
-        
-        -- 3. Total Qty Yang Berhasil Menjadi Surat Jalan Final
-        IFNULL((
-            SELECT SUM(sjd.sjd_jumlah)
-            FROM tdc_sj_hdr sjh
-            JOIN tdc_sj_dtl sjd ON sjd.sjd_nomor = sjh.sj_nomor
-            WHERE sjh.sj_mt_nomor = h.mt_nomor
-        ), 0) AS qty_sent
-        
-    FROM tmintabarang_hdr h
-    LEFT JOIN tgudang g ON g.gdg_kode = h.mt_cab
-    WHERE h.mt_otomatis = 'Y' 
-      AND DATE(h.mt_tanggal) BETWEEN ? AND ?
-      ${branchFilter}
-    ORDER BY h.mt_tanggal ASC, h.mt_nomor ASC;
+        IFNULL(rq.qty_minta, 0) AS qty_minta,
+        IFNULL(pq.qty_packed, 0) AS qty_packed,
+        IFNULL(sq.qty_sent, 0) AS qty_sent
+    FROM (SELECT DISTINCT mt_cab FROM TargetHeaders) th
+    LEFT JOIN tgudang g ON g.gdg_kode = th.mt_cab
+    LEFT JOIN ReqQty rq ON rq.mt_cab = th.mt_cab
+    LEFT JOIN PackedQty pq ON pq.mt_cab = th.mt_cab
+    LEFT JOIN SentQty sq ON sq.mt_cab = th.mt_cab
+    ORDER BY th.mt_cab ASC;
   `;
 
   const [rows] = await pool.query(query, params);
