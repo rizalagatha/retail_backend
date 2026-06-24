@@ -1066,7 +1066,7 @@ const getStokKosongReguler = async (
           AND mi.ukuran = agg.mst_ukuran 
           AND s.gdg_kode = agg.mst_cab
       WHERE IFNULL(agg.stok_akhir, 0) <= 0
-      ORDER BY s.gdg_kode, mi.nama_barang, mi.ukuran
+      ORDER BY mi.nama_barang, mi.ukuran, s.gdg_kode
       ${limitClause};
     `;
     finalParams = [...searchParams];
