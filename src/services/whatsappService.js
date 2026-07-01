@@ -74,11 +74,11 @@ const getClient = (cabang) => {
   if (
     !clients[cabang] ||
     ["DISCONNECTED", "AUTH_FAILURE", "ERROR_INIT"].includes(
-      clientStatus[cabang]
+      clientStatus[cabang],
     )
   ) {
     console.log(
-      `[WhatsApp] Client ${cabang} tidak ada atau disconnected/error. Membuat ulang...`
+      `[WhatsApp] Client ${cabang} tidak ada atau disconnected/error. Membuat ulang...`,
     );
     return createClient(cabang);
   }
@@ -86,7 +86,15 @@ const getClient = (cabang) => {
 };
 
 const getClientStatus = async (cabang) => {
-  const client = getClient(cabang); // Panggil getClient untuk trigger createClient jika perlu
+  const client = clients[cabang];
+
+  if (!client) {
+    return {
+      status: "NOT_INITIALIZED",
+      qrDataUrl: null,
+      message: "WhatsApp belum dijalankan.",
+    };
+  }
   const status = clientStatus[cabang] || "NOT_INITIALIZED";
   const qr = qrCodes[cabang];
 
@@ -112,7 +120,7 @@ const getClientStatus = async (cabang) => {
   } catch (error) {
     console.warn(
       `[WhatsApp] Gagal mendapatkan state real-time untuk ${cabang}:`,
-      error.message
+      error.message,
     );
     // Jika error state, anggap disconnected
     if (status === "READY") {
@@ -157,7 +165,7 @@ const removeSessionFiles = (cabang) => {
 
   // Tambahkan log path absolut untuk debugging
   console.log(
-    `[WhatsApp] Mencoba menghapus path sesi: ${path.resolve(sessionPath)}`
+    `[WhatsApp] Mencoba menghapus path sesi: ${path.resolve(sessionPath)}`,
   );
 
   try {
@@ -174,7 +182,7 @@ const removeSessionFiles = (cabang) => {
     // Error ini biasanya karena masalah izin (permissions)
     console.error(
       `[WhatsApp] Gagal menghapus folder sesi ${sessionPath}:`,
-      error
+      error,
     );
     return false;
   }
@@ -190,7 +198,7 @@ const logoutClient = async (cabang) => {
     } catch (error) {
       console.warn(
         `[WhatsApp] Error saat logout client ${cabang} (mungkin sudah disconnected):`,
-        error.message
+        error.message,
       );
       // Tetap lanjutkan proses penghapusan
     } finally {
@@ -199,7 +207,7 @@ const logoutClient = async (cabang) => {
         await client
           .destroy()
           .catch((err) =>
-            console.error(`[WhatsApp] Error destroying client ${cabang}:`, err)
+            console.error(`[WhatsApp] Error destroying client ${cabang}:`, err),
           );
       }
       delete clients[cabang]; // Hapus dari memori
@@ -208,7 +216,7 @@ const logoutClient = async (cabang) => {
     }
   } else {
     console.log(
-      `[WhatsApp] Client ${cabang} tidak ditemukan di memori untuk logout.`
+      `[WhatsApp] Client ${cabang} tidak ditemukan di memori untuk logout.`,
     );
     clientStatus[cabang] = "DISCONNECTED"; // Pastikan statusnya disconnected
   }
@@ -266,7 +274,7 @@ const sendReceipt = async (cabang, nomorInvoice, nomorHp, token) => {
     const receiptElement = await page.$(".receipt");
     if (!receiptElement) {
       throw new Error(
-        "Elemen .receipt tidak ditemukan. Periksa output HTML di atas."
+        "Elemen .receipt tidak ditemukan. Periksa output HTML di atas.",
       );
     }
 
