@@ -17,24 +17,19 @@ const getSoDtfList = async (filters, user) => {
 
   if (userCabang === "K06") {
     if (cabang === "ALL") {
-      // Mode Workshop: Tampilkan kiriman dari SEMUA cabang lain ke workshop K06
       branchQuery = "AND h.sd_Workshop = 'K06' AND h.sd_cab <> 'K06'";
     } else if (cabang === "K06") {
-      // [FIX] Mode Toko: Jika K06 melihat tokonya sendiri, tampilkan semua tanpa membatasi Workshop
       branchQuery = "AND h.sd_cab = 'K06'";
     } else {
-      // Mode Workshop: Tampilkan kiriman dari cabang spesifik yang dipilih ke workshop K06
       branchQuery = "AND h.sd_cab = ? AND h.sd_Workshop = 'K06'";
       params.push(cabang);
     }
   } else if (userCabang === "KDC") {
-    // Admin Pusat tetap bisa lihat sesuai pilihan dropdown
     if (cabang !== "ALL") {
       branchQuery = "AND h.sd_cab = ?";
       params.push(cabang);
     }
   } else {
-    // Cabang standar hanya lihat miliknya sendiri
     branchQuery = "AND h.sd_cab = ?";
     params.push(userCabang);
   }
@@ -48,16 +43,13 @@ const getSoDtfList = async (filters, user) => {
             x.NamaDTF, 
             x.Jumlah, 
             x.Titik, 
-            -- [FIX] Gunakan Nama Kolom yang Sesuai (Case Sensitive)
             (x.Jumlah * x.Titik) AS TotalTitik, 
-            -- [FIX] Pastikan LHK yang null menjadi 0
             IFNULL(x.LHK_Count, 0) AS LHK,
             x.TotalHarga,
             x.NoSO, x.NoINV, x.Sales, x.BagDesain, x.KdCus, x.Customer, x.Kain, 
             x.Finishing, x.Workshop, x.Keterangan, x.AlasanClose, x.Created, x.Close,
             x.UserModified, x.DateModified,
             
-            -- [PERBAIKAN] Tentukan status langsung dari SQL
             CASE
               WHEN x.AlasanClose <> '' AND x.AlasanClose IS NOT NULL THEN 'Closed'
               WHEN x.NoINV <> '' THEN 'Sudah INV'
@@ -73,8 +65,17 @@ const getSoDtfList = async (filters, user) => {
                 IFNULL((SELECT SUM(i.sdd_jumlah) FROM tsodtf_dtl i WHERE i.sdd_nomor = h.sd_nomor), 0) AS Jumlah,
                 IFNULL((SELECT SUM(i.sdd_jumlah * i.sdd_harga) FROM tsodtf_dtl i WHERE i.sdd_nomor = h.sd_nomor), 0) AS TotalHarga,
                 IFNULL((SELECT COUNT(*) FROM tsodtf_dtl2 i WHERE i.sdd2_nomor = h.sd_nomor), 0) AS Titik,
-                -- [FIX] Beri alias berbeda agar bisa di-IFNULL di luar
-                (SELECT COUNT(*) FROM tdtf f WHERE f.sodtf = h.sd_nomor) AS LHK_Count,
+                
+                -- [PERBAIKAN] Gabungkan pencarian LHK dari DB Retail dan DB Kencana Print
+                (SELECT COUNT(*) 
+                 FROM (
+                     SELECT sodtf AS nomor_dtf FROM tdtf
+                     UNION ALL
+                     SELECT spk_nomor AS nomor_dtf FROM kencanaprint.tdtf
+                 ) f 
+                 WHERE f.nomor_dtf = h.sd_nomor
+                ) AS LHK_Count,
+                
                 IFNULL((SELECT dd.sod_so_nomor FROM tso_dtl dd WHERE dd.sod_sd_nomor = h.sd_nomor GROUP BY dd.sod_so_nomor LIMIT 1), "") AS NoSO,
                 IFNULL((SELECT dd.invd_inv_nomor FROM tinv_dtl dd WHERE dd.invd_sd_nomor = h.sd_nomor GROUP BY dd.invd_inv_nomor LIMIT 1), "") AS NoINV,
                 s.sal_nama AS Sales, h.sd_desain AS BagDesain, h.sd_Workshop AS Workshop,

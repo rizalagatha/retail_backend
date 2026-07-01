@@ -1454,9 +1454,15 @@ const checkLhkStatus = async (soNomor) => {
              AND sod_sd_nomor IS NOT NULL 
              AND sod_sd_nomor != '') AS total_dtf,
              
-          (SELECT COUNT(DISTINCT lhk.sodtf) 
-           FROM tdtf lhk 
-           JOIN tso_dtl dd ON lhk.sodtf = dd.sod_sd_nomor 
+          (SELECT COUNT(DISTINCT lhk.nomor_dtf) 
+           FROM (
+               -- Ambil dari DB Retail (Lokal) menggunakan kolom 'sodtf'
+               SELECT sodtf AS nomor_dtf FROM tdtf
+               UNION ALL
+               -- Ambil dari DB Pabrik menggunakan kolom 'spk_nomor'
+               SELECT spk_nomor AS nomor_dtf FROM kencanaprint.tdtf
+           ) lhk 
+           JOIN tso_dtl dd ON lhk.nomor_dtf = dd.sod_sd_nomor 
            WHERE dd.sod_so_nomor = ?) AS total_lhk,
            
           (SELECT COUNT(*) 
