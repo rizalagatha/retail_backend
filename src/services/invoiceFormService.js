@@ -2958,12 +2958,17 @@ const searchSoDtf = async (filters, user) => {
             h.sd_tanggal AS tanggal, 
             h.sd_nama AS namaDtf, 
             h.sd_ket AS keterangan,
-            -- Tentukan status LHK: 
-            -- 1 jika (tanggal lama < CUTOFF) ATAU (ada di tabel tdtf)
-            -- 0 jika tanggal baru dan belum ada di tabel tdtf
             CASE 
+                -- Bypass untuk cabang KPR: selalu dianggap sudah LHK
+                WHEN h.sd_cab = 'KPR' THEN 1
+                -- Tanggal lama selalu dianggap sudah LHK
                 WHEN h.sd_tanggal < '${CUTOFF_DATE}' THEN 1
-                WHEN EXISTS (SELECT 1 FROM tdtf WHERE tdtf.sodtf = h.sd_nomor) THEN 1
+                -- Cek di kedua tabel (Retail lokal dan KencanaPrint)
+                WHEN EXISTS (
+                    SELECT 1 FROM tdtf WHERE sodtf = h.sd_nomor
+                    UNION ALL
+                    SELECT 1 FROM kencanaprint.tdtf WHERE spk_nomor = h.sd_nomor
+                ) THEN 1
                 ELSE 0 
             END AS isLhk
         FROM tsodtf_hdr h
