@@ -5,8 +5,12 @@ const { format } = require("date-fns");
 const generateNewNomor = async (connection, date) => {
   const prefix = `KDC.QC.${format(new Date(date), "yyMM")}.`;
   const [rows] = await connection.query(
-    "SELECT IFNULL(MAX(RIGHT(mut_nomor, 4)), 0) as max_nomor FROM tdc_qc_hdr WHERE LEFT(mut_nomor, 11) = ?",
-    [prefix]
+    `
+    SELECT IFNULL(MAX(CAST(RIGHT(mut_nomor,4) AS UNSIGNED)),0) max_nomor
+    FROM tdc_qc_hdr
+    WHERE mut_nomor LIKE CONCAT(?, '%')
+    `,
+    [prefix],
   );
   const nextNum = parseInt(rows[0].max_nomor, 10) + 1;
   return `${prefix}${String(nextNum).padStart(4, "0")}`;
@@ -17,7 +21,7 @@ const generateNewMutasiNomor = async (connection, date) => {
   const prefix = `KDC.MUT.${format(new Date(date), "yyMM")}`;
   const [rows] = await connection.query(
     "SELECT IFNULL(MAX(RIGHT(mutd_mutasi, 5)), 0) as max_nomor FROM tdc_qc_dtl2 WHERE LEFT(mutd_mutasi, 12) = ?",
-    [prefix]
+    [prefix],
   );
   return parseInt(rows[0].max_nomor, 10);
 };
@@ -26,7 +30,7 @@ const generateNewMutasiNomor = async (connection, date) => {
 const getDataForEdit = async (nomor) => {
   const [hdr] = await pool.query(
     "SELECT h.*, g.gdg_nama FROM tdc_qc_hdr h LEFT JOIN kencanaprint.tgudang g ON g.gdg_kode = h.mut_kecab WHERE h.mut_nomor = ?",
-    [nomor]
+    [nomor],
   );
   if (hdr.length === 0) throw new Error("Nomor tidak ditemukan.");
 
@@ -45,7 +49,7 @@ const getDataForEdit = async (nomor) => {
          LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.mutd_kode
          LEFT JOIN retail.tbarangdc_dtl b ON b.brgd_kode = d.mutd_kode AND b.brgd_ukuran = d.mutd_ukuran
          WHERE d.mutd_nomor = ?`,
-    [nomor]
+    [nomor],
   );
 
   // Ambil detail 2 (Terima)
@@ -60,12 +64,16 @@ const getDataForEdit = async (nomor) => {
          LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.mutd_kode
          LEFT JOIN retail.tbarangdc_dtl b ON b.brgd_kode = d.mutd_kode AND b.brgd_ukuran = d.mutd_ukuran
          WHERE d.mutd_nomor = ? ORDER BY d.mutd_mutasi`,
-    [nomor]
+    [nomor],
   );
 
   const header = {
-    ...hdr[0],
+    nomor: hdr[0].mut_nomor,
     tanggal: format(new Date(hdr[0].mut_tanggal), "yyyy-MM-dd"),
+    gudang: hdr[0].mut_kecab,
+    namaGudang: hdr[0].gdg_nama,
+    keterangan: hdr[0].mut_ket,
+    closing: hdr[0].mut_closing,
   };
 
   // Hitung 'belum' untuk detail 1
@@ -97,12 +105,12 @@ const saveData = async (data, user) => {
     if (isEdit) {
       await connection.query(
         "UPDATE tdc_qc_hdr SET mut_tanggal = ?, mut_kecab = ?, mut_ket = ?, user_modified = ?, date_modified = NOW() WHERE mut_nomor = ?",
-        [header.tanggal, header.gudang, header.keterangan, user.kode, qcNomor]
+        [header.tanggal, header.gudang, header.keterangan, user.kode, qcNomor],
       );
     } else {
       await connection.query(
         "INSERT INTO tdc_qc_hdr (mut_nomor, mut_tanggal, mut_kecab, mut_ket, user_create, date_create) VALUES (?, ?, ?, ?, ?, NOW())",
-        [qcNomor, header.tanggal, header.gudang, header.keterangan, user.kode]
+        [qcNomor, header.tanggal, header.gudang, header.keterangan, user.kode],
       );
     }
 
@@ -122,7 +130,7 @@ const saveData = async (data, user) => {
               item.kode,
               item.ukuran,
               item.jumlah,
-            ]
+            ],
           );
         }
       }
@@ -132,7 +140,7 @@ const saveData = async (data, user) => {
     // Hapus item yg belum closing saja
     await connection.query(
       'DELETE FROM tdc_qc_dtl2 WHERE mutd_closing="N" AND mutd_nomor = ?',
-      [qcNomor]
+      [qcNomor],
     );
 
     let nn = await generateNewMutasiNomor(connection, header.tanggal);
@@ -143,7 +151,7 @@ const saveData = async (data, user) => {
         if (!cmut) {
           nn++;
           cmut = `KDC.MUT.${format(new Date(header.tanggal), "yyMM")}${String(
-            nn
+            nn,
           ).padStart(5, "0")}`;
         }
         await connection.query(
@@ -159,7 +167,7 @@ const saveData = async (data, user) => {
             item.kodelama,
             item.ukuranlama,
             item.resize,
-          ]
+          ],
         );
       }
     }
@@ -177,7 +185,7 @@ const saveData = async (data, user) => {
 // Mengambil info gudang (F1)
 const getGudangOptions = async () => {
   const [rows] = await pool.query(
-    'SELECT gdg_kode AS kode, gdg_nama AS nama FROM kencanaprint.tgudang WHERE gdg_kode IN ("GJ001", "GJ002")'
+    'SELECT gdg_kode AS kode, gdg_nama AS nama FROM kencanaprint.tgudang WHERE gdg_kode IN ("GJ001", "GJ002")',
   );
   return rows;
 };
