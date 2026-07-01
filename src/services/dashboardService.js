@@ -950,27 +950,32 @@ const getStockAlerts = async (user) => {
   let paramsPiutangOverdue = [];
 
   if (cabang === "KDC") {
+    // Mode KDC: Perhitungan dilakukan dengan standar JOIN + HAVING
+    // Filter tanggal dilakukan terlebih dahulu agar jumlah baris yang di JOIN sedikit
     queryPiutangOverdue = `
       SELECT COUNT(*) AS total
-      FROM tpiutang_hdr u
-      LEFT JOIN (
-          SELECT pd_ph_nomor, SUM(pd_debet) AS debet, SUM(pd_kredit) AS kredit
-          FROM tpiutang_dtl GROUP BY pd_ph_nomor
-      ) v ON v.pd_ph_nomor = u.ph_nomor
-      WHERE (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) > 100
-        AND DATE_ADD(u.ph_tanggal, INTERVAL u.ph_top DAY) < CURDATE()
+      FROM (
+        SELECT u.ph_nomor
+        FROM tpiutang_hdr u
+        JOIN tpiutang_dtl d ON u.ph_nomor = d.pd_ph_nomor
+        WHERE DATE_ADD(u.ph_tanggal, INTERVAL u.ph_top DAY) < CURDATE()
+        GROUP BY u.ph_nomor
+        HAVING (SUM(d.pd_debet) - SUM(d.pd_kredit)) > 100
+      ) AS overdue_invoices
     `;
   } else {
+    // Mode Cabang: Sama, filter cabang dan tanggal dulu, baru gabung dan cek selisihnya
     queryPiutangOverdue = `
       SELECT COUNT(*) AS total
-      FROM tpiutang_hdr u
-      LEFT JOIN (
-          SELECT pd_ph_nomor, SUM(pd_debet) AS debet, SUM(pd_kredit) AS kredit
-          FROM tpiutang_dtl GROUP BY pd_ph_nomor
-      ) v ON v.pd_ph_nomor = u.ph_nomor
-      WHERE u.ph_cab = ?
-        AND (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) > 100
-        AND DATE_ADD(u.ph_tanggal, INTERVAL u.ph_top DAY) < CURDATE()
+      FROM (
+        SELECT u.ph_nomor
+        FROM tpiutang_hdr u
+        JOIN tpiutang_dtl d ON u.ph_nomor = d.pd_ph_nomor
+        WHERE u.ph_cab = ?
+          AND DATE_ADD(u.ph_tanggal, INTERVAL u.ph_top DAY) < CURDATE()
+        GROUP BY u.ph_nomor
+        HAVING (SUM(d.pd_debet) - SUM(d.pd_kredit)) > 100
+      ) AS overdue_invoices
     `;
     paramsPiutangOverdue.push(cabang);
   }
@@ -983,7 +988,7 @@ const getStockAlerts = async (user) => {
       pool.query(queryRetur, paramsRetur),
       pool.query(queryPinjam, paramsPinjam),
       pool.query(queryMemo),
-      pool.query(queryPiutangOverdue, paramsPiutangOverdue), // <--- INI TAMBAHANNYA
+      pool.query(queryPiutangOverdue, paramsPiutangOverdue),
     ]);
 
   return {
@@ -993,7 +998,7 @@ const getStockAlerts = async (user) => {
     pinjam_overdue: rowsPinjam[0][0].total || 0,
     new_memo_count: rowsMemo[0][0].total || 0,
     latest_memo_date: rowsMemo[0][0].latest_date || null,
-    piutang_overdue: rowsPiutang[0][0].total || 0, // <--- INI TAMBAHANNYA
+    piutang_overdue: rowsPiutang[0][0].total || 0,
   };
 };
 
@@ -1790,40 +1795,48 @@ const getAgendaDateline = async (user) => {
     params = [];
   }
 
+  // OPTIMASI: Ganti Correlated Subquery dengan JOIN & GROUP BY di luar
   let query = `
     SELECT 
         'SO' as tipe, 
         h.so_nomor as nomor, 
         DATE_FORMAT(h.so_dateline, '%Y-%m-%d') as dateline, 
         c.cus_nama as customer,
-        IF((SELECT COUNT(inv_nomor) FROM tinv_hdr WHERE inv_nomor_so = h.so_nomor AND inv_sts_pro = 0) > 0, 1, 0) AS is_completed,
         
+        -- Cek apakah sudah jadi invoice
+        IF(EXISTS(SELECT 1 FROM tinv_hdr WHERE inv_nomor_so = h.so_nomor AND inv_sts_pro = 0), 1, 0) AS is_completed,
+        
+        -- Cek scan ready
         IFNULL((
             SELECT IF(SUM(sod_jumlah) > 0 AND SUM(sod_scanned) >= SUM(sod_jumlah), 1, 0)
             FROM tso_dtl
             WHERE sod_so_nomor = h.so_nomor
         ), 0) AS is_scan_ready,
 
-        (
-            SELECT GROUP_CONCAT(
-                DISTINCT CASE 
-                    WHEN d.sod_custom_nama IS NOT NULL AND d.sod_custom_nama != '' THEN d.sod_custom_nama
-                    WHEN d.sod_sd_nomor IS NOT NULL AND d.sod_sd_nomor != '' THEN f.sd_nama
-                    ELSE NULL
-                END 
-                SEPARATOR ', '
-            )
-            FROM tso_dtl d
-            LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_sd_nomor
-            WHERE d.sod_so_nomor = h.so_nomor AND d.sod_custom = 'Y'
+        -- Ambil rincian DTF menggunakan GROUP_CONCAT yang lebih efisien via JOIN di bawah
+        GROUP_CONCAT(
+            DISTINCT CASE 
+                WHEN d.sod_custom_nama IS NOT NULL AND d.sod_custom_nama != '' THEN d.sod_custom_nama
+                WHEN d.sod_sd_nomor IS NOT NULL AND d.sod_sd_nomor != '' THEN f.sd_nama
+                ELSE NULL
+            END 
+            SEPARATOR ', '
         ) AS rincian_dtf
+
     FROM tso_hdr h 
     LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
+    
+    -- Lakukan LEFT JOIN langsung untuk mempermudah GROUP_CONCAT
+    LEFT JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor AND d.sod_custom = 'Y'
+    LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_sd_nomor
+
     WHERE h.so_close = 0 
       AND h.so_dateline IS NOT NULL 
       AND h.so_cab <> 'KPR'
-      -- AND h.so_dateline >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
       ${filterSo}
+    
+    -- Wajib di-group per SO karena kita pakai GROUP_CONCAT di atas
+    GROUP BY h.so_nomor, h.so_dateline, c.cus_nama
   `;
 
   // [BARU] Sisipkan SPK untuk user KDC
@@ -1836,29 +1849,28 @@ const getAgendaDateline = async (user) => {
         DATE_FORMAT(spk_dateline, '%Y-%m-%d') as dateline,
         CONCAT('[', IFNULL(spk_cabkaos, 'UMUM'), '] ', spk_nama) as customer,
         
-        -- [BARU] SPK dianggap "Jadi/Selesai" jika sudah masuk ke tabel penerimaan DC
-        IF((SELECT COUNT(*) FROM tdc_stbj_dtl WHERE tsd_spk_nomor = spk_nomor) > 0, 1, 0) AS is_completed,
+        -- Gunakan EXISTS agar lebih ringan daripada COUNT
+        IF(EXISTS(SELECT 1 FROM tdc_stbj_dtl WHERE tsd_spk_nomor = spk_nomor), 1, 0) AS is_completed,
         
         0 AS is_scan_ready,
         
-        -- [BARU] Ambil status pengerjaan riil sebagai rincian (Dari bawah ke atas)
+        -- Ambil status pengerjaan riil sebagai rincian (Dari bawah ke atas)
         CASE
-            WHEN (SELECT COUNT(*) FROM tdc_stbj_dtl WHERE tsd_spk_nomor = spk_nomor) > 0 THEN 'Selesai (Diterima DC)'
-            WHEN (SELECT COUNT(*) FROM kencanaprint.tstbj_dtl WHERE stbjd_spk_nomor = spk_nomor) > 0 THEN 'Dikirim ke DC (STBJ)'
-            WHEN (SELECT COUNT(*) FROM kencanaprint.tmutasiproduksi_hdr WHERE mph_spk_nomor = spk_nomor AND mph_gdgasal = 'GP013') > 0 THEN 'Barang Jadi (Koli)'
-            WHEN (SELECT COUNT(*) FROM kencanaprint.tmutasiproduksi_hdr WHERE mph_spk_nomor = spk_nomor AND mph_gdgasal = 'GP004') > 0 THEN 'Proses Lipat'
-            WHEN (SELECT COUNT(*) FROM kencanaprint.tmutasiproduksi_hdr WHERE mph_spk_nomor = spk_nomor AND mph_gdgasal = 'GP003') > 0 THEN 'Proses Jahit'
-            WHEN (SELECT COUNT(*) FROM kencanaprint.tmutasiproduksi_hdr WHERE mph_spk_nomor = spk_nomor AND mph_gdgasal = 'GP002') > 0 THEN 'Proses Cetak'
-            WHEN (SELECT COUNT(*) FROM kencanaprint.tmutasiproduksi_hdr WHERE mph_spk_nomor = spk_nomor AND mph_gdgasal = 'GP001') > 0 THEN 'Proses Potong'
-            WHEN (SELECT COUNT(*) FROM kencanaprint.tproduksiminta_hdr WHERE promin_spk_nomor = spk_nomor) > 0 THEN 'Bahan Dikeluarkan'
-            WHEN (SELECT COUNT(*) FROM kencanaprint.tmintabahan_hdr WHERE min_spk_nomor = spk_nomor) > 0 THEN 'Permintaan Bahan'
+            WHEN EXISTS(SELECT 1 FROM tdc_stbj_dtl WHERE tsd_spk_nomor = spk_nomor) THEN 'Selesai (Diterima DC)'
+            WHEN EXISTS(SELECT 1 FROM kencanaprint.tstbj_dtl WHERE stbjd_spk_nomor = spk_nomor) THEN 'Dikirim ke DC (STBJ)'
+            WHEN EXISTS(SELECT 1 FROM kencanaprint.tmutasiproduksi_hdr WHERE mph_spk_nomor = spk_nomor AND mph_gdgasal = 'GP013') THEN 'Barang Jadi (Koli)'
+            WHEN EXISTS(SELECT 1 FROM kencanaprint.tmutasiproduksi_hdr WHERE mph_spk_nomor = spk_nomor AND mph_gdgasal = 'GP004') THEN 'Proses Lipat'
+            WHEN EXISTS(SELECT 1 FROM kencanaprint.tmutasiproduksi_hdr WHERE mph_spk_nomor = spk_nomor AND mph_gdgasal = 'GP003') THEN 'Proses Jahit'
+            WHEN EXISTS(SELECT 1 FROM kencanaprint.tmutasiproduksi_hdr WHERE mph_spk_nomor = spk_nomor AND mph_gdgasal = 'GP002') THEN 'Proses Cetak'
+            WHEN EXISTS(SELECT 1 FROM kencanaprint.tmutasiproduksi_hdr WHERE mph_spk_nomor = spk_nomor AND mph_gdgasal = 'GP001') THEN 'Proses Potong'
+            WHEN EXISTS(SELECT 1 FROM kencanaprint.tproduksiminta_hdr WHERE promin_spk_nomor = spk_nomor) THEN 'Bahan Dikeluarkan'
+            WHEN EXISTS(SELECT 1 FROM kencanaprint.tmintabahan_hdr WHERE min_spk_nomor = spk_nomor) THEN 'Permintaan Bahan'
             ELSE 'Menunggu Produksi'
         END AS rincian_dtf
       FROM kencanaprint.tspk
       WHERE spk_divisi = 3 
         AND spk_close = 0 
         AND spk_dateline IS NOT NULL 
-        -- AND spk_dateline >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
     `;
   }
 
