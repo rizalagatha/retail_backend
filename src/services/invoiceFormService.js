@@ -2959,11 +2959,8 @@ const searchSoDtf = async (filters, user) => {
             h.sd_nama AS namaDtf, 
             h.sd_ket AS keterangan,
             CASE 
-                -- Bypass untuk cabang KPR: selalu dianggap sudah LHK
                 WHEN h.sd_cab = 'KPR' THEN 1
-                -- Tanggal lama selalu dianggap sudah LHK
                 WHEN h.sd_tanggal < '${CUTOFF_DATE}' THEN 1
-                -- Cek di kedua tabel (Retail lokal dan KencanaPrint)
                 WHEN EXISTS (
                     SELECT 1 FROM tdtf WHERE sodtf = h.sd_nomor
                     UNION ALL
@@ -2975,10 +2972,14 @@ const searchSoDtf = async (filters, user) => {
         WHERE h.sd_stok = "" AND h.sd_alasan = "" 
           AND h.sd_cab = ?
           AND h.sd_cus_kode = ?
-          AND h.sd_nomor NOT IN (
-              SELECT DISTINCT sod_sd_nomor FROM tso_dtl WHERE sod_sd_nomor <> ''
-              UNION ALL
-              SELECT DISTINCT invd_sd_nomor FROM tinv_dtl WHERE invd_sd_nomor <> ''
+          -- Tambahkan pengecualian: KPR tidak dibatasi oleh status SO/INV
+          AND (
+              h.sd_cab = 'KPR' 
+              OR h.sd_nomor NOT IN (
+                  SELECT DISTINCT sod_sd_nomor FROM tso_dtl WHERE sod_sd_nomor <> ''
+                  UNION ALL
+                  SELECT DISTINCT invd_sd_nomor FROM tinv_dtl WHERE invd_sd_nomor <> ''
+              )
           )
           AND (h.sd_nomor LIKE ? OR h.sd_nama LIKE ?)
         ORDER BY h.sd_nomor DESC;
