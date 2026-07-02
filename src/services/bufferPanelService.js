@@ -227,7 +227,7 @@ const getPreviewData = async (cabang) => {
     ) stok ON stok.mst_brg_kode = b.brgd_kode AND stok.mst_ukuran = b.brgd_ukuran
     WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
       AND a.brg_ktgp = 'REGULER' 
-      AND b.brgd_ukuran NOT IN ('4XL', '5XL', '6XL', '7XL', '8XL', '9XL', '10XL', 'JUMBO')
+      AND b.brgd_ukuran NOT IN ('ALLSIZE', 'XS', '4XL', '5XL', '6XL', '7XL', '8XL', '9XL', '10XL', 'OVERSIZE', 'JUMBO') 
     GROUP BY b.brgd_kode, b.brgd_ukuran
     ORDER BY nama, b.brgd_ukuran
   `,
@@ -351,32 +351,21 @@ const getPreviewData = async (cabang) => {
   return result;
 };
 
-// KDC version — agregat semua cabang
+// KDC version — 1,5x lipat dari jumlah semua buffer toko
 const getPreviewDataKDC = async () => {
-  // Logika sama tapi tanpa filter cabang untuk avg penjualan
-  // dan real_stok dari KDC stock
-  const now = new Date();
-  const curYear = now.getFullYear();
-  const curMonth = now.getMonth();
-
-  const normalStart = new Date(curYear - 1, curMonth, 1);
-  const normalEnd = new Date(curYear - 1, curMonth + 5, 0);
-  const fmt = (d) => d.toISOString().slice(0, 10);
-
-  const [skuRows] = await pool.query(`
+  const [rows] = await pool.query(`
     SELECT 
       b.brgd_kode AS kode,
-      TRIM(REGEXP_REPLACE(
-        CONCAT(a.brg_jeniskaos,' ',a.brg_tipe,' ',a.brg_lengan,' ',a.brg_jeniskain,' ',a.brg_warna),
-        '\\\\s+', ' '
-      )) AS nama,
       b.brgd_ukuran AS ukuran,
+      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
       CASE 
         WHEN a.brg_ktgp = 'REGULER' THEN 'reg'
         WHEN a.brg_ktgp = 'SESIONAL' THEN 'sea'
         WHEN a.brg_ktgp = 'PESANAN' THEN 'ord'
         ELSE 'lainnya'
-      END AS kategori_produk,
+      END AS kategori,
+      IFNULL(SUM(d2.brgd_min), 0) AS total_min_toko,
+      IFNULL(SUM(d2.brgd_max), 0) AS total_max_toko,
       IFNULL((
         SELECT SUM(mst_stok_in - mst_stok_out)
         FROM tmasterstok
@@ -391,61 +380,73 @@ const getPreviewDataKDC = async () => {
         WHERE pld.pld_kode = b.brgd_kode
           AND pld.pld_ukuran = b.brgd_ukuran
           AND plh.pl_status = 'O'
-      ), 0) AS real_stok
+      ), 0) AS real_stok,
+      
+      -- [BARU] Subquery SPK Beredar
+      IFNULL((
+        SELECT SUM(spkd.spkd_qtyorder)
+        FROM kencanaprint.tspk_dc spkd
+        JOIN kencanaprint.tspk spk ON spk.spk_nomor = spkd.spkd_nomor
+        WHERE spkd.spkd_kode = b.brgd_kode
+          AND spkd.spkd_ukuran = b.brgd_ukuran
+          AND spk.spk_aktif = 'Y' 
+          AND spk.spk_close = 0
+          AND YEAR(spk.spk_tanggal) >= 2026
+      ), 0) AS spk_beredar
+
     FROM tbarangdc a
     JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
-    WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
+    LEFT JOIN tbarangdc_dtl2 d2 ON d2.brgd_kode = b.brgd_kode AND d2.brgd_ukuran = b.brgd_ukuran
+    WHERE a.brg_aktif = 0 
+      AND a.brg_logstok = 'Y'
       AND a.brg_ktgp = 'REGULER'
-      AND b.brgd_ukuran NOT IN ('4XL', '5XL', '6XL', '7XL', '8XL', '9XL', '10XL', 'JUMBO') 
+      AND UPPER(a.brg_warna) NOT LIKE '%STICKER%'
+      AND UPPER(a.brg_warna) NOT LIKE '%EMBLEM%'
+      AND b.brgd_ukuran NOT IN ('ALLSIZE', 'XS', '4XL', '5XL', '6XL', '7XL', '8XL', '9XL', '10XL', 'OVERSIZE', 'JUMBO') 
     GROUP BY b.brgd_kode, b.brgd_ukuran
     ORDER BY nama, b.brgd_ukuran
   `);
 
-  const allKodes = [...new Set(skuRows.map((r) => r.kode))];
-
-  // Avg semua cabang gabungan
-  const [salesRows] = await pool.query(
-    `
-    SELECT d.invd_kode AS kode, d.invd_ukuran AS ukuran,
-           SUM(d.invd_jumlah) AS total_terjual
-    FROM tinv_dtl d
-    JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
-    WHERE h.inv_tanggal BETWEEN ? AND ?
-      AND d.invd_kode IN (${allKodes.map(() => "?").join(",")})
-    GROUP BY d.invd_kode, d.invd_ukuran
-  `,
-    [fmt(normalStart), fmt(normalEnd), ...allKodes],
-  );
-
-  const avgMap = {};
-  salesRows.forEach((r) => {
-    avgMap[`${r.kode}||${r.ukuran}`] = Number(r.total_terjual) / 5;
-  });
-
-  const result = skuRows.map((row) => {
-    const key = `${row.kode}||${row.ukuran}`;
-    const avgPerBulan = avgMap[key] ?? 0;
-    const salesKategori = getSalesCategory(avgPerBulan);
-    const bufferValue = getBufferValue(row.ukuran, salesKategori);
+  return rows.map((row) => {
+    const mindc = Math.ceil(row.total_min_toko * 1.5);
+    const maxdc = Math.ceil(row.total_max_toko * 1.5);
 
     return {
       kode: row.kode,
       nama: row.nama,
       ukuran: row.ukuran,
-      kategori: row.kategori_produk,
-      avg_per_bulan: Math.round(avgPerBulan * 10) / 10,
-      sales_kategori: salesKategori,
-      is_pareto: false,
-      data_source: "tahun_lalu",
-      buffer: bufferValue,
-      min: bufferValue,
-      max: bufferValue * 2,
-      rop: Math.round(bufferValue * 0.7),
+      kategori: row.kategori,
+      buffer: mindc,
+      min: mindc,
+      max: maxdc,
       real_stok: row.real_stok,
+      spk_beredar: row.spk_beredar,
     };
   });
+};
 
-  return result;
+const getDetailSpkByItem = async (kode, ukuran) => {
+  const [rows] = await pool.query(
+    `
+    SELECT 
+      spk.spk_nomor, 
+      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS spk_nama,
+      spk.spk_tanggal,
+      spk.spk_dateline,
+      spkd.spkd_qtyorder
+    FROM kencanaprint.tspk_dc spkd
+    JOIN kencanaprint.tspk spk ON spk.spk_nomor = spkd.spkd_nomor
+    JOIN tbarangdc a ON a.brg_kode = spkd.spkd_kode
+    WHERE spkd.spkd_kode = ? 
+      AND spkd.spkd_ukuran = ?
+      AND spk.spk_aktif = 'Y'
+      AND spk.spk_close = 0
+      AND YEAR(spk.spk_tanggal) >= 2026
+    ORDER BY spk.spk_tanggal DESC
+    `,
+    [kode, ukuran],
+  );
+  return rows;
 };
 
 // ── Fungsi lain tidak berubah ────────────────────────────
@@ -535,6 +536,40 @@ const saveCalculatedBuffer = async (cabang, itemsArray, userKode) => {
     connection.release();
   }
 };
+
+const saveCalculatedBufferKDC = async (itemsArray) => {
+  if (!itemsArray || itemsArray.length === 0)
+    return { message: "Tidak ada data KDC untuk disimpan." };
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const query = `
+      UPDATE tbarangdc_dtl 
+      SET brgd_mindc = ?, brgd_maxdc = ?
+      WHERE brgd_kode = ? AND brgd_ukuran = ?
+    `;
+
+    for (const item of itemsArray) {
+      await connection.query(query, [
+        item.min,
+        item.max,
+        item.kode,
+        item.ukuran,
+      ]);
+    }
+
+    await connection.commit();
+    return { message: "Buffer Stok KDC Pusat berhasil diperbarui!" };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
 const getStokPerCabang = async (kode, ukuran) => {
   const [rows] = await pool.query(
     `
@@ -617,10 +652,12 @@ const saveSesionalItems = async (cabang, items) => {
 module.exports = {
   getPreviewData,
   getPreviewDataKDC,
+  getDetailSpkByItem,
   getConfig,
   saveConfig,
   saveCalculatedBuffer,
+  saveCalculatedBufferKDC,
   getStokPerCabang,
   getSesionalItems,
-  saveSesionalItems, // ← tambah
+  saveSesionalItems,
 };

@@ -16,6 +16,13 @@ router.get(
   bufferPanelController.getPreview,
 );
 
+router.get(
+  "/detail-spk",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  bufferPanelController.getDetailSpk,
+);
+
 // POST: Menyimpan hasil hitungan (Min, Max) ke database
 router.post(
   "/save",

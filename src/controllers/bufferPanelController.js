@@ -15,6 +15,16 @@ const getPreview = async (req, res, next) => {
   }
 };
 
+const getDetailSpk = async (req, res, next) => {
+  try {
+    const { kode, ukuran } = req.query;
+    const data = await bufferPanelService.getDetailSpkByItem(kode, ukuran);
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+};
+
 const saveSettings = async (req, res, next) => {
   try {
     const cabang = req.query.cabang || req.body.cabang || req.user.cabang;
@@ -27,11 +37,16 @@ const saveSettings = async (req, res, next) => {
         .json({ message: "Data kalkulasi kosong. Tidak ada yang disimpan." });
     }
 
-    const result = await bufferPanelService.saveCalculatedBuffer(
-      cabang,
-      itemsArray,
-      userKode,
-    );
+    // Kondisi untuk memisahkan penyimpanan buffer cabang vs KDC Pusat
+    const result =
+      cabang === "KDC"
+        ? await bufferPanelService.saveCalculatedBufferKDC(itemsArray)
+        : await bufferPanelService.saveCalculatedBuffer(
+            cabang,
+            itemsArray,
+            userKode,
+          );
+
     res.json(result);
   } catch (error) {
     next(error);
@@ -113,6 +128,7 @@ const saveSesionalItems = async (req, res, next) => {
 
 module.exports = {
   getPreview,
+  getDetailSpk,
   saveSettings,
   getConfig,
   saveConfig,
