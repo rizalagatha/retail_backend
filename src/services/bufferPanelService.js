@@ -396,6 +396,7 @@ const getPreviewDataKDC = async () => {
                 AND stb.stbjd_size = spkd.spkd_ukuran
           WHERE spk.spk_aktif = 'Y' 
             AND spk.spk_close = 0
+            AND YEAR(spk.spk_tanggal) >= 2026
             AND spk.user_create IN ('ADIN', 'LUTFI')
           GROUP BY spkd.spkd_nomor, spkd.spkd_ukuran
           HAVING qty_sisa > 0
