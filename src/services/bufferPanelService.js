@@ -430,7 +430,7 @@ const getDetailSpkByItem = async (kode, ukuran) => {
     `
     SELECT 
       spk.spk_nomor, 
-      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS spk_nama,
+      spk.spk_nama, 
       spk.spk_tanggal,
       spk.spk_dateline,
       spkd.spkd_qtyorder
