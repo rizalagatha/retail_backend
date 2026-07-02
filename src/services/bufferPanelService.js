@@ -387,12 +387,15 @@ const getPreviewDataKDC = async () => {
         SELECT SUM(spkd.spkd_qtyorder)
         FROM kencanaprint.tspk_dc spkd
         JOIN kencanaprint.tspk spk ON spk.spk_nomor = spkd.spkd_nomor
+        LEFT JOIN kencanaprint.tstbj_dtl stb ON stb.stbjd_spk_nomor = spkd.spkd_nomor 
+              AND stb.stbjd_size = spkd.spkd_ukuran
         WHERE spkd.spkd_kode = b.brgd_kode
           AND spkd.spkd_ukuran = b.brgd_ukuran
           AND spk.spk_aktif = 'Y' 
           AND spk.spk_close = 0
-          AND YEAR(spk.spk_tanggal) >= 2026
           AND spk.user_create IN ('ADIN', 'LUTFI')
+        GROUP BY spkd.spkd_nomor, spkd.spkd_ukuran
+        HAVING spkd.spkd_qtyorder > IFNULL(SUM(stb.stbjd_jumlah), 0)
       ), 0) AS spk_beredar
 
     FROM tbarangdc a
@@ -431,19 +434,23 @@ const getDetailSpkByItem = async (kode, ukuran) => {
     `
     SELECT 
       spk.spk_nomor, 
-      spk.spk_nama, 
+      spk.spk_nama,
       spk.spk_tanggal,
       spk.spk_dateline,
       spkd.spkd_qtyorder
     FROM kencanaprint.tspk_dc spkd
     JOIN kencanaprint.tspk spk ON spk.spk_nomor = spkd.spkd_nomor
     JOIN tbarangdc a ON a.brg_kode = spkd.spkd_kode
+    LEFT JOIN kencanaprint.tstbj_dtl stb ON stb.stbjd_spk_nomor = spkd.spkd_nomor 
+          AND stb.stbjd_size = spkd.spkd_ukuran
     WHERE spkd.spkd_kode = ? 
       AND spkd.spkd_ukuran = ?
       AND spk.spk_aktif = 'Y'
       AND spk.spk_close = 0
       AND YEAR(spk.spk_tanggal) >= 2026
       AND spk.user_create IN ('ADIN', 'LUTFI')
+    GROUP BY spkd.spkd_nomor, spkd.spkd_ukuran
+    HAVING spkd.spkd_qtyorder > IFNULL(SUM(stb.stbjd_jumlah), 0)
     ORDER BY spk.spk_tanggal DESC
     `,
     [kode, ukuran],
