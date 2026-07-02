@@ -392,6 +392,7 @@ const getPreviewDataKDC = async () => {
           AND spk.spk_aktif = 'Y' 
           AND spk.spk_close = 0
           AND YEAR(spk.spk_tanggal) >= 2026
+          AND spk.user_create IN ('ADIN', 'LUTFI')
       ), 0) AS spk_beredar
 
     FROM tbarangdc a
@@ -442,6 +443,7 @@ const getDetailSpkByItem = async (kode, ukuran) => {
       AND spk.spk_aktif = 'Y'
       AND spk.spk_close = 0
       AND YEAR(spk.spk_tanggal) >= 2026
+      AND spk.user_create IN ('ADIN', 'LUTFI')
     ORDER BY spk.spk_tanggal DESC
     `,
     [kode, ukuran],
