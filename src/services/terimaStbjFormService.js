@@ -169,7 +169,7 @@ const save = async (payload, user) => {
             "Gagal menyimpan data setelah beberapa kali percobaan karena nomor duplikat.",
           );
         }
-        console.log("Terjadi duplikasi nomor STBJ/MTS/SJ, mencoba lagi...");
+
         await new Promise((res) => setTimeout(res, Math.random() * 200)); // Sedikit delay sebelum retry
       } else {
         throw error;

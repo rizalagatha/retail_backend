@@ -77,29 +77,28 @@ const saveData = async (payload, user) => {
       // UPDATE HEADER
       await connection.query(
         `UPDATE tdc_sj_hdr SET sj_tanggal = ?, sj_peminta = ?, user_modified = ?, date_modified = NOW() WHERE sj_nomor = ?`,
-        [header.tanggal, header.peminta, userId, nomorSJ] // Gunakan userId
+        [header.tanggal, header.peminta, userId, nomorSJ], // Gunakan userId
       );
       // HAPUS DETAIL LAMA
       await connection.query(`DELETE FROM tdc_sj_dtl WHERE sjd_nomor = ?`, [
         nomorSJ,
       ]);
-      await connection.query(
-        `DELETE FROM ttrm_sj_dtl WHERE tjd_nomor = ?`,
-        [nomorTerima]
-      );
+      await connection.query(`DELETE FROM ttrm_sj_dtl WHERE tjd_nomor = ?`, [
+        nomorTerima,
+      ]);
     } else {
       // BUAT HEADER BARU
       nomorSJ = await getNomor(
         connection,
         header.gudangKode,
         "tdc_sj_hdr",
-        "sj_nomor"
+        "sj_nomor",
       );
       nomorTerima = await getNomorTerima(
         connection,
         header.storeKode,
         "ttrm_sj_hdr",
-        "tj_nomor"
+        "tj_nomor",
       );
 
       await connection.query(
@@ -111,11 +110,11 @@ const saveData = async (payload, user) => {
           header.storeKode,
           header.peminta,
           userId, // <--- INI YANG MEMPERBAIKI ERROR
-        ]
+        ],
       );
       await connection.query(
         `INSERT INTO ttrm_sj_hdr (tj_nomor, tj_tanggal, user_create, date_create) VALUES (?, ?, ?, NOW())`,
-        [nomorTerima, header.tanggal, userId]
+        [nomorTerima, header.tanggal, userId],
       );
     }
 
@@ -124,18 +123,13 @@ const saveData = async (payload, user) => {
       if (item.kode && item.jumlah > 0) {
         await connection.query(
           `INSERT INTO tdc_sj_dtl (sjd_nomor, sjd_kode, sjd_ukuran, sjd_jumlah) VALUES (?, ?, ?, ?)`,
-          [nomorSJ, item.kode, item.ukuran, item.jumlah]
+          [nomorSJ, item.kode, item.ukuran, item.jumlah],
         );
         await connection.query(
           `INSERT INTO ttrm_sj_dtl (tjd_nomor, tjd_kode, tjd_ukuran, tjd_jumlah) VALUES (?, ?, ?, ?)`,
-          [nomorTerima, item.kode, item.ukuran, item.jumlah]
+          [nomorTerima, item.kode, item.ukuran, item.jumlah],
         );
       }
-    }
-
-    if (approver) {
-      // Opsional: Simpan ke tabel log otorisasi atau update kolom di header jika ada
-      // console.log("Transaksi di-approve oleh:", approver);
     }
 
     // Update Status PIN (Jika pakai sistem lama)
@@ -143,7 +137,7 @@ const saveData = async (payload, user) => {
       await connection.query(
         `UPDATE kencanaprint.tspk_pin5 SET pin_dipakai = 'Y' 
          WHERE pin_trs = 'PENGAMBILAN BARANG' AND pin_nomor = ? AND pin_urut = ?`,
-        [header.nomor, approvalInfo.urut]
+        [header.nomor, approvalInfo.urut],
       );
     }
 

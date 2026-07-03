@@ -62,4 +62,11 @@ router.post(
   bufferPanelController.saveSesionalItems,
 );
 
+router.post(
+  "/generate-log",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"), // Bisa dikunci khusus level admin
+  bufferPanelController.triggerGenerateLog,
+);
+
 module.exports = router;

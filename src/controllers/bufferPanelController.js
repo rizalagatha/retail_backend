@@ -126,6 +126,15 @@ const saveSesionalItems = async (req, res, next) => {
   }
 };
 
+const triggerGenerateLog = async (req, res, next) => {
+  try {
+    const result = await bufferPanelService.generateMonthlyLog();
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getPreview,
   getDetailSpk,
@@ -135,4 +144,5 @@ module.exports = {
   getStokPerCabang,
   getSesionalItems,
   saveSesionalItems,
+  triggerGenerateLog,
 };

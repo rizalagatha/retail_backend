@@ -8,6 +8,7 @@ const cron = require("node-cron");
 const terimaSjService = require("./services/terimaSjService");
 const terimaReturService = require("./services/terimaReturService");
 const mintaBarangFormService = require("./services/mintaBarangFormService");
+const bufferPanelService = require("./services/bufferPanelService");
 require("dotenv/config"); // Memuat variabel dari .env
 // === Global Rounding Policy ===
 global.ROUNDING_POLICY = process.env.ROUNDING_POLICY || "ROUND_1";
@@ -380,6 +381,24 @@ cron.schedule(
   {
     scheduled: true,
     timezone: "Asia/Jakarta", // Memastikan berjalan jam 06:00 WIB
+  },
+);
+
+// "0 0 1 * *" berarti berjalan tiap jam 00:00 tanggal 1 setiap bulan
+cron.schedule(
+  "0 0 1 * *",
+  async () => {
+    console.log(`[CRON] Memulai kalkulasi otomatis Buffer Stok Bulanan...`);
+    try {
+      await bufferPanelService.generateMonthlyLog();
+      console.log(`[CRON] Berhasil melakukan update dan log Buffer Stok.`);
+    } catch (error) {
+      console.error(`[CRON] Gagal generate Buffer Stok:`, error);
+    }
+  },
+  {
+    scheduled: true,
+    timezone: "Asia/Jakarta", // (tepat 00:00 WIB)
   },
 );
 

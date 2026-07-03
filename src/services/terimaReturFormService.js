@@ -185,8 +185,6 @@ const save = async (payload, user) => {
             "Gagal menyimpan data setelah beberapa kali percobaan karena nomor duplikat.",
           );
         }
-        // Jika masih ada jatah, loop akan berlanjut dan mencoba lagi
-        console.log("Terjadi duplikasi nomor, mencoba lagi...");
       } else {
         // Jika error lain, langsung lempar
         throw error;

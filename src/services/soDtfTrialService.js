@@ -100,11 +100,6 @@ const getSoDtfList = async (filters, user) => {
         ORDER BY x.Tanggal DESC, x.Nomor DESC;
     `;
 
-  // Debugging log baru yang lebih tajam
-  console.log("\n--- DEBUG GET LIST ---");
-  console.log("SQL Params:", params);
-  console.log("Branch Query:", branchQuery);
-
   const [rows] = await pool.query(query, params);
   return rows;
 };

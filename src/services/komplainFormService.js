@@ -38,8 +38,20 @@ const getKomplainDetail = async (nomor) => {
     SELECT d.cmpd_id, d.cmpd_nomor, d.cmpd_brg_kode as kode_barang, d.cmpd_ukuran as ukuran, 
            d.cmpd_qty_inv as qty_invoice, 
            d.cmpd_qty as qty, d.cmpd_foto as foto, d.cmpd_keterangan as keterangan, 
-           IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) as nama_barang
+           IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) as nama_barang,
+           
+           -- [PERBAIKAN] Tarik harga satuan asli dari invoice
+           IFNULL((
+             SELECT (invd_harga - invd_diskon) 
+             FROM tinv_dtl 
+             WHERE invd_inv_nomor = h.cmp_ref_nomor 
+               AND invd_kode = d.cmpd_brg_kode 
+               AND invd_ukuran = d.cmpd_ukuran 
+             LIMIT 1
+           ), 0) AS harga_satuan
+
     FROM tkomplain_dtl d
+    JOIN tkomplain_hdr h ON h.cmp_nomor = d.cmpd_nomor
     LEFT JOIN tbarangdc a ON a.brg_kode = d.cmpd_brg_kode
     LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.cmpd_brg_kode
     WHERE d.cmpd_nomor = ?
@@ -160,16 +172,40 @@ const saveKomplain = async (payload, user) => {
       const dtlValues = details.map((d, i) => {
         const dtlId = `${nomorCmp.replace(/\./g, "")}${String(i + 1).padStart(3, "0")}`;
         let finalFotoPath = d.foto || null;
-        if (d.foto && d.foto.startsWith("temp-")) {
-          const tempPath = path.join(process.cwd(), "temp", d.foto);
-          const ext = path.extname(d.foto);
-          const newFilename = `BAP-${dtlId}${ext}`;
-          const destPath = path.join(finalDir, newFilename);
-          if (fs.existsSync(tempPath)) {
-            fs.renameSync(tempPath, destPath);
+
+        // [PERBAIKAN] Cari file temporary di beberapa lokasi folder
+        if (d.foto && d.foto.includes("temp-")) {
+          const fileName = path.basename(d.foto); // Ekstrak nama file saja
+
+          // Daftar folder yang mungkin digunakan untuk menyimpan file upload
+          const possiblePaths = [
+            path.join(process.cwd(), "temp", fileName),
+            path.join(process.cwd(), "public", "uploads", fileName),
+            path.join(process.cwd(), "public", "images", fileName),
+          ];
+
+          let foundPath = null;
+          for (const p of possiblePaths) {
+            if (fs.existsSync(p)) {
+              foundPath = p;
+              break;
+            }
+          }
+
+          if (foundPath) {
+            // File fisik ketemu, pindahkan dan ganti nama
+            const ext = path.extname(fileName);
+            const newFilename = `BAP-${dtlId}${ext}`;
+            const destPath = path.join(finalDir, newFilename);
+
+            fs.renameSync(foundPath, destPath);
             finalFotoPath = `/images/cabang/${user.cabang}/komplain/${newFilename}`;
-          } else finalFotoPath = null;
+          } else {
+            // Jika tidak ketemu, biarkan null
+            finalFotoPath = null;
+          }
         }
+
         return [
           dtlId,
           nomorCmp,
