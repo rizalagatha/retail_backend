@@ -983,7 +983,9 @@ const saveData = async (payload, user) => {
     // [UPDATE BARU] Generate Nomor Setoran untuk Tunai
     // =====================================================================
     let nomorSetoranTunai = "";
-    if (bayarTunaiBersih > 0) {
+
+    // [PERBAIKAN] Cabang KDC tidak perlu generate Setoran Kasir untuk Tunai
+    if (bayarTunaiBersih > 0 && user.cabang !== "KDC") {
       nomorSetoranTunai = await generateNewSetorNumber(
         connection,
         user.cabang,
