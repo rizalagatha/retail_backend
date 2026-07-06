@@ -183,7 +183,7 @@ const getPriorityData = async (filters) => {
 
     const dataSql = `
       ${wrapperQuery}
-      ORDER BY gap_buffer_dc DESC, gap_store DESC
+      ORDER BY cvg_setelah_wip ASC, gap_buffer_dc DESC
       ${paginationSql}
     `;
 
