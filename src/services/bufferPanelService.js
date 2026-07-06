@@ -564,6 +564,16 @@ const saveCalculatedBufferKDC = async (itemsArray) => {
   try {
     await connection.beginTransaction();
 
+    // ── 1. [BARU] BERSIHKAN BUFFER BARANG NON-REGULER TERLEBIH DAHULU ──
+    // Reset mindc & maxdc menjadi 0 untuk semua barang selain REGULER
+    await connection.query(`
+      UPDATE tbarangdc_dtl b
+      JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
+      SET b.brgd_mindc = 0, b.brgd_maxdc = 0
+      WHERE IFNULL(a.brg_ktgp, '') != 'REGULER'
+    `);
+
+    // ── 2. UPDATE BUFFER BARANG REGULER HASIL KALKULASI ──
     const query = `
       UPDATE tbarangdc_dtl 
       SET brgd_mindc = ?, brgd_maxdc = ?
@@ -580,7 +590,10 @@ const saveCalculatedBufferKDC = async (itemsArray) => {
     }
 
     await connection.commit();
-    return { message: "Buffer Stok KDC Pusat berhasil diperbarui!" };
+    return {
+      message:
+        "Buffer Stok KDC Pusat berhasil diperbarui & data non-reguler dibersihkan!",
+    };
   } catch (error) {
     await connection.rollback();
     throw error;
@@ -736,7 +749,15 @@ const generateMonthlyLog = async () => {
     // 3. Kalkulasi KDC setelah semua toko ter-update
     const dataKDC = await getPreviewDataKDC();
     if (dataKDC && dataKDC.length > 0) {
-      // Update tabel master KDC (loop karena query di service KDC butuh UPDATE per baris)
+      // [BARU] Reset dulu buffer non-reguler di KDC
+      await connection.query(`
+        UPDATE tbarangdc_dtl b
+        JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
+        SET b.brgd_mindc = 0, b.brgd_maxdc = 0
+        WHERE IFNULL(a.brg_ktgp, '') != 'REGULER'
+      `);
+
+      // Update tabel master KDC untuk barang reguler
       for (const item of dataKDC) {
         await connection.query(
           `
