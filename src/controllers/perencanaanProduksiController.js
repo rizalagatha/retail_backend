@@ -57,8 +57,40 @@ const generateBulkSpk = async (req, res) => {
   }
 };
 
+const getKepentinganOptions = async (req, res) => {
+  try {
+    const data = await perencanaanProduksiService.getKepentinganOptions();
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error("Error in getKepentinganOptions:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getDatelineRange = async (req, res) => {
+  try {
+    const { kepentingan, joKode } = req.query;
+    if (!kepentingan || !joKode) {
+      return res.status(400).json({
+        success: false,
+        message: "Kepentingan dan joKode diperlukan.",
+      });
+    }
+    const range = await perencanaanProduksiService.getDatelineRange(
+      kepentingan,
+      joKode,
+    );
+    res.json({ success: true, ...range });
+  } catch (error) {
+    console.error("Error in getDatelineRange:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getPriorityList,
   getStoreDetails,
   generateBulkSpk,
+  getKepentinganOptions,
+  getDatelineRange,
 };

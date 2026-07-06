@@ -347,6 +347,52 @@ const formatSpkNama = (item, joKode) => {
   return clean(`KAOSAN POLOS ${lengan} ${warna} (${jeniskain})`);
 };
 
+// --- Ambil daftar Kepentingan (untuk dropdown) ---
+const getKepentinganOptions = async () => {
+  const [rows] = await pool.query(
+    `SELECT DISTINCT kepentingan FROM kencanaprint.tspk_kepentingan ORDER BY kepentingan`,
+  );
+  return rows.map((r) => r.kepentingan);
+};
+
+// --- Hitung rentang dateline berdasarkan Kepentingan + Jo Kode (replikasi logika SO divisi Kaosan) ---
+const getDatelineRange = async (kepentingan, joKode) => {
+  const [rows] = await pool.query(
+    `SELECT * FROM kencanaprint.tspk_kepentingan WHERE kepentingan = ?`,
+    [kepentingan],
+  );
+
+  let minHari = 0;
+  let maxHari = 0;
+
+  if (rows.length > 0) {
+    const rules = rows[0];
+    const isPengerjaan = ["BR", "SB", "SD", "PL", "DP", "TG", "PM"].some(
+      (sub) => String(joKode).toUpperCase().includes(sub),
+    );
+    if (isPengerjaan) {
+      minHari = Number(rules.kaosan1sb) || 0;
+      maxHari = Number(rules.kaosan2sb) || 0;
+    } else {
+      minHari = Number(rules.kaosan1) || 0;
+      maxHari = Number(rules.kaosan2) || 0;
+    }
+  }
+
+  const today = new Date();
+  const minDate = new Date(today);
+  minDate.setDate(minDate.getDate() + minHari);
+  const maxDate = new Date(today);
+  maxDate.setDate(maxDate.getDate() + maxHari);
+
+  return {
+    minHari,
+    maxHari,
+    minDate: format(minDate, "yyyy-MM-dd"),
+    maxDate: format(maxDate, "yyyy-MM-dd"),
+  };
+};
+
 const generateBulkSpk = async (items, user) => {
   const connection = await pool.getConnection();
   try {
@@ -354,7 +400,7 @@ const generateBulkSpk = async (items, user) => {
 
     const today = format(new Date(), "yyyy-MM-dd");
 
-    // Kelompokkan per kode barang — satu SPK mencakup semua ukuran dari kode yang sama
+    // Kelompokkan per kode barang — satu SPK, banyak ukuran
     const grouped = new Map();
     for (const item of items) {
       if (!item.rekomendasi_spk || item.rekomendasi_spk <= 0) continue;
@@ -381,17 +427,21 @@ const generateBulkSpk = async (items, user) => {
       const totalQty = sizes.reduce((sum, s) => sum + s.qty, 0);
       const ukuranGabungan = sizes.map((s) => s.ukuran).join(", ");
 
-      // 1. Insert Header SPK (satu baris per kode barang)
+      // Kepentingan & dateline diambil dari representative (baris pertama grup kode ini)
+      const kepentingan = representative.kepentingan || "NORMAL";
+      const dateline = representative.dateline || today;
+
       await connection.query(
-        `INSERT INTO kencanaprint.tspk (
+        `INSERT INTO kencanaprintnew.tspk (
            spk_nomor, spk_is_so, spk_so_ref,
            spk_tanggal, spk_cus_kode, spk_cus_kaosan,
            spk_jo_kode, spk_divisi, spk_nama, spk_jumlah,
-           spk_ukuran, spk_dateline, spk_cab, spk_tipe,
+           spk_ukuran, spk_kain, spk_finishing, spk_nomor_po,
+           spk_dateline, spk_cab, spk_tipe, spk_statuskerja,
            spk_perush_kode, spk_ketbeli, spk_keterangan,
            spk_aktif, spk_close,
            user_create, date_create
-         ) VALUES (?, 0, NULL, ?, ?, '', ?, ?, ?, ?, ?, DATE_ADD(?, INTERVAL 14 DAY), ?, '', ?, ?, ?, 'Y', 0, ?, NOW())`,
+         ) VALUES (?, 0, NULL, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, 'Y', 0, ?, NOW())`,
         [
           spkNomor,
           today,
@@ -401,8 +451,12 @@ const generateBulkSpk = async (items, user) => {
           spkNama,
           totalQty,
           ukuranGabungan,
-          today,
+          representative.brg_jeniskain || "",
+          "POLOS",
+          "STOCK",
+          dateline,
           CAB_KODE_DC,
+          kepentingan,
           PERUSH_KODE_DC,
           "Rekomendasi otomatis Perencanaan Produksi (DC Planning)",
           `Auto-generate dari Rekomendasi SPK — SKU: ${kode}`,
@@ -410,10 +464,9 @@ const generateBulkSpk = async (items, user) => {
         ],
       );
 
-      // 2. Insert Detail Ukuran — bisa banyak baris untuk 1 nomor SPK
       for (const s of sizes) {
         await connection.query(
-          `INSERT INTO kencanaprint.tspk_size (spks_nomor, spks_size, spks_qty)
+          `INSERT INTO kencanaprintnew.tspk_size (spks_nomor, spks_size, spks_qty)
            VALUES (?, ?, ?)`,
           [spkNomor, s.ukuran, s.qty],
         );
@@ -428,6 +481,7 @@ const generateBulkSpk = async (items, user) => {
     };
   } catch (error) {
     await connection.rollback();
+    console.error("Error in generateBulkSpk:", error);
     throw error;
   } finally {
     connection.release();
@@ -438,4 +492,6 @@ module.exports = {
   getPriorityData,
   getStoreDetails,
   generateBulkSpk,
+  getKepentinganOptions,
+  getDatelineRange,
 };

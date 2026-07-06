@@ -20,6 +20,18 @@ router.get(
   checkPermission(MENU_ID, "view"),
   perencanaanProduksiController.getStoreDetails,
 );
+router.get(
+  "/kepentingan-options",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  perencanaanProduksiController.getKepentinganOptions,
+);
+router.get(
+  "/dateline-range",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  perencanaanProduksiController.getDatelineRange,
+);
 router.post(
   "/generate-spk-bulk",
   verifyToken,
