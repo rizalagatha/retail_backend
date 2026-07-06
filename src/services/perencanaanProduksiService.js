@@ -1,18 +1,18 @@
 const pool = require("../config/database");
 const { format } = require("date-fns");
 
-// --- HELPER: Generate Nomor SPK Baru ---
-const generateSpkNumber = async (connection, tanggal) => {
-  const date = new Date(tanggal);
-  const prefix = `SM-KO-${format(date, "MMyy")}`; // Format: SM-KO-MMYY
-  const query = `
-    SELECT IFNULL(MAX(RIGHT(spk_nomor, 4)), 0) + 1 AS next_num
-    FROM kencanaprint.tspk 
-    WHERE spk_nomor LIKE ?;
-  `;
-  const [rows] = await connection.query(query, [`${prefix}%`]);
-  const nextNumber = rows[0].next_num.toString().padStart(4, "0");
-  return `${prefix}${nextNumber}`;
+// --- Helper: generate nomor SPK format SPK PPIC: SPK-{perush}-{jo}-000001 ---
+const generateSpkNomorPpic = async (connection, perushKode, joKode) => {
+  const prefix = `SPK-${perushKode}-${joKode}-`;
+  const [rows] = await connection.query(
+    `SELECT IFNULL(MAX(CAST(SUBSTR(spk_nomor, ?, 6) AS UNSIGNED)), 0) AS jumlah
+     FROM kencanaprint.tspk
+     WHERE spk_perush_kode = ? AND spk_jo_kode = ? AND spk_nomor LIKE ?
+     FOR UPDATE`,
+    [prefix.length + 1, perushKode, joKode, `${prefix}%`],
+  );
+  const nextVal = rows[0].jumlah + 1;
+  return `${prefix}${String(nextVal).padStart(6, "0")}`;
 };
 
 const getPriorityData = async (filters) => {
@@ -35,7 +35,7 @@ const getPriorityData = async (filters) => {
       filterParams.push(searchTerm, searchTerm);
     }
 
-    // 1. QUERY INTI: Menggunakan Derived Tables agar agregasi hanya diproses 1x
+    // 1. QUERY INTI: Menggunakan Derived Tables
     const baseQuery = `
       FROM tbarangdc a
       JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
@@ -48,28 +48,58 @@ const getPriorityData = async (filters) => {
           GROUP BY mst_brg_kode, mst_ukuran
       ) dc ON dc.mst_brg_kode = b.brgd_kode AND dc.mst_ukuran = b.brgd_ukuran
 
-      -- Agregasi SPK Beredar
+      -- Agregasi SPK WIP (Ready < 5 Hari)
+      -- Fokus: SPK yang sudah memiliki entry di STBJ (Gudang Jadi/GP013)
       LEFT JOIN (
-          SELECT sub.kode, sub.ukuran, SUM(sub.qty_sisa) AS spk_beredar
+          SELECT sub.kode, sub.ukuran, SUM(sub.qty_wip) AS spk_ready
           FROM (
-              SELECT spkd.spkd_kode AS kode, spkd.spkd_ukuran AS ukuran, (spkd.spkd_qtyorder - IFNULL(SUM(stb.stbjd_jumlah), 0)) AS qty_sisa
+              SELECT 
+                spkd.spkd_kode AS kode, 
+                spkd.spkd_ukuran AS ukuran, 
+                -- Hitung sisa order yang sudah masuk STBJ
+                IFNULL(SUM(stb.stbjd_jumlah), 0) AS qty_wip
               FROM kencanaprint.tspk_dc spkd
               JOIN kencanaprint.tspk spk ON spk.spk_nomor = spkd.spkd_nomor
-              LEFT JOIN kencanaprint.tstbj_dtl stb ON stb.stbjd_spk_nomor = spkd.spkd_nomor AND stb.stbjd_size = spkd.spkd_ukuran
-              WHERE spk.spk_aktif = 'Y' AND spk.spk_close = 0 AND YEAR(spk.spk_tanggal) >= 2026 AND spk.user_create IN ('ADIN', 'LUTFI')
+              
+              -- Join ke STBJ untuk memastikan barang sudah sampai tahap ini
+              JOIN kencanaprint.tstbj_dtl stb ON stb.stbjd_spk_nomor = spkd.spkd_nomor 
+                                             AND stb.stbjd_size = spkd.spkd_ukuran
+              JOIN kencanaprint.tstbj_hdr sth ON sth.stbj_nomor = stb.stbjd_stbj_nomor
+
+              WHERE spk.spk_aktif = 'Y' AND spk.spk_close = 0 
+                AND YEAR(spk.spk_tanggal) >= 2026 
+                AND DATEDIFF(spk.spk_dateline, CURDATE()) <= 5
               GROUP BY spkd.spkd_nomor, spkd.spkd_kode, spkd.spkd_ukuran
-              HAVING qty_sisa > 0
+              HAVING qty_wip > 0
           ) sub
           GROUP BY sub.kode, sub.ukuran
       ) spk ON spk.kode = b.brgd_kode AND spk.ukuran = b.brgd_ukuran
 
-      -- Agregasi Toko (Buffer, Stok, Kekurangan per Toko diringkas ke level SKU)
+      -- Agregasi SPK Beredar (Aktif, belum masuk Jahit ke Lipat)
+      LEFT JOIN (
+          SELECT spkd.spkd_kode AS kode, spkd.spkd_ukuran AS ukuran,
+                SUM(spkd.spkd_qtyorder) AS spk_beredar
+          FROM kencanaprint.tspk_dc spkd
+          JOIN kencanaprint.tspk spk ON spk.spk_nomor = spkd.spkd_nomor
+          WHERE spk.spk_aktif = 'Y' 
+            AND spk.spk_close = 0
+            AND YEAR(spk.spk_tanggal) >= 2026
+            -- Belum masuk STBJ sama sekali
+            AND NOT EXISTS (
+                SELECT 1 FROM kencanaprint.tstbj_dtl stb
+                WHERE stb.stbjd_spk_nomor = spkd.spkd_nomor
+                  AND stb.stbjd_size = spkd.spkd_ukuran
+            )
+          GROUP BY spkd.spkd_kode, spkd.spkd_ukuran
+      ) beredar ON beredar.kode = b.brgd_kode AND beredar.ukuran = b.brgd_ukuran
+
+      -- Agregasi Toko (Buffer, Stok, Gap Store)
       LEFT JOIN (
           SELECT 
               b2.brgd_kode, b2.brgd_ukuran,
               SUM(b2.brgd_min) AS total_buffer_store,
               SUM(IFNULL(mst.stok_aktual, 0)) AS total_stok_store,
-              SUM(GREATEST(0, b2.brgd_min - IFNULL(mst.stok_aktual, 0))) AS total_kekurangan_store
+              SUM(GREATEST(0, b2.brgd_min - IFNULL(mst.stok_aktual, 0))) AS gap_store
           FROM tbarangdc_dtl2 b2
           LEFT JOIN (
               SELECT mst_cab, mst_brg_kode, mst_ukuran, SUM(mst_stok_in - mst_stok_out) AS stok_aktual
@@ -89,19 +119,19 @@ const getPriorityData = async (filters) => {
         ${searchFilter}
     `;
 
-    // 2. PEMBUNGKUS KALKULASI: Agar bisa di-sort by Gap DC secara langsung
+    // 2. PEMBUNGKUS KALKULASI UTAMA (Sesuai Rumus di Desain)
     const wrapperQuery = `
       SELECT 
         *,
-        GREATEST(0, buffer_dc - (stok_dc + spk_beredar)) AS gap_dc,
-        ROUND((stok_dc + spk_beredar) / GREATEST(buffer_store / 30, 1)) AS coverage_dc
+        (stok_dc / daily_need) AS cvg_saat_ini,
+        ((stok_dc + spk_ready) / daily_need) AS cvg_setelah_wip,
+        GREATEST(0, (buffer_dc + gap_store) - (stok_dc + spk_ready)) AS gap_buffer_dc
       FROM (
         SELECT 
           b.brgd_kode AS kode, b.brgd_ukuran AS ukuran,
           TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) AS nama,
           a.brg_ktgp AS kategori, b.brgd_hpp AS hpp,
           
-          -- [BARU] Subquery untuk mengambil 1 gambar utama
           IFNULL((
             SELECT img_url 
             FROM tbarangdc_images 
@@ -111,28 +141,32 @@ const getPriorityData = async (filters) => {
 
           IFNULL(b.brgd_mindc, 0) AS buffer_dc,
           IFNULL(dc.stok_dc, 0) AS stok_dc,
-          IFNULL(spk.spk_beredar, 0) AS spk_beredar,
+          IFNULL(spk.spk_ready, 0) AS spk_ready,
           IFNULL(store.total_buffer_store, 0) AS buffer_store,
           IFNULL(store.total_stok_store, 0) AS stok_store,
-          IFNULL(store.total_kekurangan_store, 0) AS kekurangan_store
+          IFNULL(store.gap_store, 0) AS gap_store,
+          IFNULL(beredar.spk_beredar, 0) AS spk_beredar,
+          
+          -- Daily Need: Gap Store / 30. Minimal 1 agar tidak Error Divide By Zero
+          GREATEST((IFNULL(store.gap_store, 0) / 30), 1) AS daily_need
         ${baseQuery}
       ) AS raw_data
     `;
 
-    // 3. HITUNG SUMMARY KARTU ATAS (Dihitung dari total data tanpa limit)
+    // 3. HITUNG SUMMARY KARTU ATAS
     const summarySql = `
       SELECT 
         COUNT(*) AS total_items,
         SUM(stok_dc) AS total_stok_dc,
-        SUM(CASE WHEN coverage_dc < 7 THEN 1 ELSE 0 END) AS sku_kritis,
-        SUM(CASE WHEN coverage_dc >= 7 AND coverage_dc <= 15 THEN 1 ELSE 0 END) AS sku_perhatian,
-        SUM(CASE WHEN coverage_dc > 15 THEN 1 ELSE 0 END) AS sku_aman
+        SUM(CASE WHEN cvg_setelah_wip < 7 THEN 1 ELSE 0 END) AS sku_kritis,
+        SUM(CASE WHEN cvg_setelah_wip >= 7 AND cvg_setelah_wip <= 15 THEN 1 ELSE 0 END) AS sku_perhatian,
+        SUM(CASE WHEN cvg_setelah_wip > 15 THEN 1 ELSE 0 END) AS sku_aman
       FROM (${wrapperQuery}) AS summary_tbl
     `;
     const [summaryRows] = await connection.query(summarySql, filterParams);
     const summary = summaryRows[0];
 
-    // 4. TERAPKAN PAGINATION (Hanya narik data yang dilihat layar)
+    // 4. TERAPKAN PAGINATION
     let dataParams = [...filterParams];
     let paginationSql = "";
 
@@ -149,7 +183,7 @@ const getPriorityData = async (filters) => {
 
     const dataSql = `
       ${wrapperQuery}
-      ORDER BY gap_dc DESC, kekurangan_store DESC
+      ORDER BY gap_buffer_dc DESC, gap_store DESC
       ${paginationSql}
     `;
 
@@ -157,14 +191,20 @@ const getPriorityData = async (filters) => {
 
     const items = rows.map((row, index) => {
       let status = "Aman";
-      if (row.coverage_dc < 7) status = "Kritis";
-      else if (row.coverage_dc <= 15) status = "Perlu Perhatian";
+      if (row.cvg_setelah_wip < 7) status = "Kritis";
+      else if (row.cvg_setelah_wip <= 15) status = "Perlu Perhatian";
 
       return {
         ...row,
         status,
-        rekomendasi_spk: row.gap_dc > 0 ? row.gap_dc : 0,
-        // Kalkulasi index asli (meskipun di page 2, rank tetap lanjut)
+        cvg_saat_ini: Number(row.cvg_saat_ini).toFixed(1),
+        cvg_setelah_wip: Number(row.cvg_setelah_wip).toFixed(1),
+        daily_need: Number(row.daily_need).toFixed(1),
+        rekomendasi_spk: Math.max(
+          0,
+          (row.gap_buffer_dc || 0) - (row.spk_beredar || 0),
+        ),
+        spk_beredar: row.spk_beredar || 0,
         ranking_asli:
           (parseInt(page) > 0
             ? (parseInt(page) - 1) * parseInt(itemsPerPage)
@@ -212,6 +252,21 @@ const getStoreDetails = async (kode, ukuran) => {
   return rows;
 };
 
+// --- Ekstrak jo_kode dari kode SKU (contoh: 'KO-C30S-HITM-005' -> 'KO') ---
+// spk_jo_kode di DDL adalah varchar(2), jadi wajib dipotong maks 2 karakter
+const extractJoKode = (kodeSku) => {
+  if (!kodeSku) return "XX";
+  const parts = String(kodeSku).split("-");
+  return (parts[0] || "XX").substring(0, 2).toUpperCase();
+};
+
+// Sesuaikan jika kode perusahaan/cabang bukan 'KDC'
+const PERUSH_KODE_DC = "SM";
+const CAB_KODE_DC = "P04";
+// Customer dummy untuk SPK replenishment DC (setara SO divisi 3 / KAOSAN)
+const CUS_KODE_DC = "DC";
+const DIVISI_KAOSAN = 3; // sesuaikan jika divisi Kaosan bukan 3
+
 const generateBulkSpk = async (items, user) => {
   const connection = await pool.getConnection();
   try {
@@ -223,27 +278,47 @@ const generateBulkSpk = async (items, user) => {
     for (const item of items) {
       if (item.rekomendasi_spk <= 0) continue;
 
-      const spkNomor = await generateSpkNumber(connection, today);
-      const spkNama = item.nama; // Sesuai permintaan sebelumnya, bisa disesuaikan lagi
-
-      // 1. Insert Header SPK
-      await connection.query(
-        `
-        INSERT INTO kencanaprint.tspk 
-        (spk_nomor, spk_tanggal, spk_dateline, spk_nama, spk_qty, spk_aktif, spk_close, user_create, date_create) 
-        VALUES (?, ?, DATE_ADD(?, INTERVAL 14 DAY), ?, ?, 'Y', 0, ?, NOW())
-      `,
-        [spkNomor, today, today, spkNama, item.rekomendasi_spk, user.kode],
+      const joKode = extractJoKode(item.kode);
+      const spkNomor = await generateSpkNomorPpic(
+        connection,
+        PERUSH_KODE_DC,
+        joKode,
       );
 
-      // 2. Insert Detail SPK
+      // 1. Insert Header SPK — tabel tspk (skema sama dengan SPK PPIC)
       await connection.query(
-        `
-        INSERT INTO kencanaprint.tspk_dc 
-        (spkd_nomor, spkd_kode, spkd_ukuran, spkd_qtyorder) 
-        VALUES (?, ?, ?, ?)
-      `,
-        [spkNomor, item.kode, item.ukuran, item.rekomendasi_spk],
+        `INSERT INTO kencanaprint.tspk (
+           spk_nomor, spk_is_so, spk_so_ref,
+           spk_tanggal, spk_cus_kode, spk_cus_kaosan,
+           spk_jo_kode, spk_divisi, spk_nama, spk_jumlah,
+           spk_ukuran, spk_dateline, spk_cab, spk_tipe,
+           spk_perush_kode, spk_ketbeli, spk_keterangan,
+           spk_aktif, spk_close,
+           user_create, date_create
+         ) VALUES (?, 0, NULL, ?, ?, '', ?, ?, ?, ?, ?, DATE_ADD(?, INTERVAL 14 DAY), ?, '', ?, ?, ?, 'Y', 0, ?, NOW())`,
+        [
+          spkNomor,
+          today,
+          CUS_KODE_DC,
+          joKode,
+          DIVISI_KAOSAN,
+          item.nama,
+          item.rekomendasi_spk,
+          item.ukuran,
+          today,
+          CAB_KODE_DC,
+          PERUSH_KODE_DC,
+          "Rekomendasi otomatis Perencanaan Produksi (DC Planning)",
+          `Auto-generate dari Rekomendasi SPK — SKU: ${item.kode} / ${item.ukuran}`,
+          user.kode,
+        ],
+      );
+
+      // 2. Insert Detail Ukuran ke kencanaprint.tspk_size
+      await connection.query(
+        `INSERT INTO tspk_size (spks_nomor, spks_size, spks_qty)
+         VALUES (?, ?, ?)`,
+        [spkNomor, item.ukuran, item.rekomendasi_spk],
       );
 
       generatedCount++;
