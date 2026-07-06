@@ -291,52 +291,57 @@ const DIVISI_KAOSAN = 3; // sesuaikan jika divisi Kaosan bukan 3
 
 // --- Format Nama SPK sesuai konvensi KAOSAN ---
 const formatSpkNama = (item, joKode) => {
-  const lengan = String(item.brg_lengan || "")
+  let lengan = String(item.brg_lengan || "")
     .trim()
     .toUpperCase();
-  const warna = String(item.brg_warna || "")
+  let warna = String(item.brg_warna || "")
     .trim()
     .toUpperCase();
-  const jeniskain = String(item.brg_jeniskain || "")
+  let jeniskain = String(item.brg_jeniskain || "")
     .trim()
     .toUpperCase();
+
+  // [FALLBACK] Kalau field mentah kosong tapi 'nama' gabungan ada, log warning
+  // agar mudah ketahuan payload tidak lengkap — jangan diam-diam pakai nama kosong
+  if (!lengan && !warna && !jeniskain) {
+    console.warn(
+      `[formatSpkNama] Field mentah kosong untuk kode=${item.kode}. Cek payload dari frontend. nama="${item.nama}"`,
+    );
+    // Fallback darurat: pakai nama gabungan apa adanya, minimal tidak kosong total
+    return `KAOSAN ${String(item.nama || item.kode || "TANPA NAMA").toUpperCase()}`;
+  }
+
   const clean = (str) => str.replace(/\s+/g, " ").trim();
 
-  // 1. Jersey kode LL — sisip kata SPANDEK (template khusus)
+  // 1. Jersey kode LL
   if (joKode === "LL" && lengan.includes("JERSEY")) {
     return clean(`KAOSAN POLOS ${lengan} SPANDEK ${jeniskain} ${warna}`);
   }
-
-  // 2. Jaket / Hoodie — tanpa POLOS, tanpa lengan
+  // 2. Jaket/Hoodie
   if (
     jeniskain.includes("HOODIE FLEECE") ||
     jeniskain.includes("JAKET FLEECE")
   ) {
     return clean(`KAOSAN ${jeniskain} ${warna}`);
   }
-
-  // 3. Polo — KERAH POLO
+  // 3. Polo
   if (jeniskain.includes("POLO")) {
     return clean(`KAOSAN POLOS ${lengan} KERAH POLO ${warna}`);
   }
-
-  // 4. Katun Air — OVERSIZED KATUN AIR
+  // 4. Katun Air
   if (jeniskain.includes("KATUN AIR")) {
     return clean(`KAOSAN POLOS ${lengan} OVERSIZED KATUN AIR ${warna}`);
   }
-
-  // 5. DBF — tampil apa adanya, (OBLONG) hanya jika kode KO
+  // 5. DBF
   if (jeniskain.includes("DBF")) {
     const suffix = joKode === "KO" ? " (OBLONG)" : "";
     return clean(`KAOSAN POLOS ${lengan} ${jeniskain} ${warna}${suffix}`);
   }
-
-  // 6. Jersey generik (selain kasus LL) — jeniskain sebelum warna, tanpa kurung
+  // 6. Jersey generik
   if (jeniskain.includes("JERSEY")) {
     return clean(`KAOSAN POLOS ${lengan} ${jeniskain} ${warna}`);
   }
-
-  // 7. Default — kaos polos biasa, jeniskain dalam kurung
+  // 7. Default
   return clean(`KAOSAN POLOS ${lengan} ${warna} (${jeniskain})`);
 };
 
@@ -376,7 +381,7 @@ const generateBulkSpk = async (items, user) => {
 
       // 1. Insert Header SPK (satu baris per kode barang)
       await connection.query(
-        `INSERT INTO tspk (
+        `INSERT INTO kencanaprint.tspk (
            spk_nomor, spk_is_so, spk_so_ref,
            spk_tanggal, spk_cus_kode, spk_cus_kaosan,
            spk_jo_kode, spk_divisi, spk_nama, spk_jumlah,
@@ -406,7 +411,7 @@ const generateBulkSpk = async (items, user) => {
       // 2. Insert Detail Ukuran — bisa banyak baris untuk 1 nomor SPK
       for (const s of sizes) {
         await connection.query(
-          `INSERT INTO tspk_size (spks_nomor, spks_size, spks_qty)
+          `INSERT INTO kencanaprint.tspk_size (spks_nomor, spks_size, spks_qty)
            VALUES (?, ?, ?)`,
           [spkNomor, s.ukuran, s.qty],
         );
