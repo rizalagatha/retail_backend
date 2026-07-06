@@ -1,9 +1,9 @@
 const pool = require("../config/database");
 const { format } = require("date-fns");
 
-// --- Helper: generate nomor SPK format SPK PPIC: SPK-{perush}-{jo}-000001 ---
-const generateSpkNomorPpic = async (connection, perushKode, joKode) => {
-  const prefix = `SPK-${perushKode}-${joKode}-`;
+// --- Helper: generate nomor SO format MANKSI: SO-{perush}-{jo}-000001 ---
+const generateSpkNomorSo = async (connection, perushKode, joKode) => {
+  const prefix = `SO-${perushKode}-${joKode}-`;
   const [rows] = await connection.query(
     `SELECT IFNULL(MAX(CAST(SUBSTR(spk_nomor, ?, 6) AS UNSIGNED)), 0) AS jumlah
      FROM kencanaprint.tspk
@@ -11,9 +11,7 @@ const generateSpkNomorPpic = async (connection, perushKode, joKode) => {
      FOR UPDATE`,
     [prefix.length + 1, perushKode, joKode, `${prefix}%`],
   );
-
-  const nextVal = Number(rows[0].jumlah) + 1; // ← FIX: paksa Number() sebelum tambah
-
+  const nextVal = Number(rows[0].jumlah) + 1; // wajib Number() — cegah bug string concat
   return `${prefix}${String(nextVal).padStart(6, "0")}`;
 };
 
@@ -271,79 +269,64 @@ const determineJoKode = (item, kodeBarang) => {
   const jeniskain = String(item.brg_jeniskain || "")
     .trim()
     .toUpperCase();
-
-  // Jaket/Hoodie selalu pakai jo_kode JK, terlepas dari prefix kode barang
   if (
     jeniskain.includes("HOODIE FLEECE") ||
     jeniskain.includes("JAKET FLEECE")
   ) {
     return "JK";
   }
-
-  // Selain itu (termasuk Jersey non-LL) tetap ikut prefix kode barang (mis. KO)
   return extractJoKode(kodeBarang);
 };
 
-// Sesuaikan jika kode perusahaan/cabang bukan 'KDC'
+// --- Konstanta konfigurasi ---
 const PERUSH_KODE_DC = "SM";
 const CAB_KODE_DC = "P04";
-// Customer dummy untuk SPK replenishment DC (setara SO divisi 3 / KAOSAN)
 const CUS_KODE_DC = "DC";
-const DIVISI_KAOSAN = 3; // sesuaikan jika divisi Kaosan bukan 3
+const SAL_KODE_DC = "012";
+const DIVISI_KAOSAN = 3;
 
 // --- Format Nama SPK sesuai konvensi KAOSAN ---
 const formatSpkNama = (item, joKode) => {
-  let lengan = String(item.brg_lengan || "")
+  const lengan = String(item.brg_lengan || "")
     .trim()
     .toUpperCase();
-  let warna = String(item.brg_warna || "")
+  const warna = String(item.brg_warna || "")
     .trim()
     .toUpperCase();
-  let jeniskain = String(item.brg_jeniskain || "")
+  const jeniskain = String(item.brg_jeniskain || "")
     .trim()
     .toUpperCase();
+  const clean = (str) => str.replace(/\s+/g, " ").trim();
 
-  // [FALLBACK] Kalau field mentah kosong tapi 'nama' gabungan ada, log warning
-  // agar mudah ketahuan payload tidak lengkap — jangan diam-diam pakai nama kosong
   if (!lengan && !warna && !jeniskain) {
     console.warn(
-      `[formatSpkNama] Field mentah kosong untuk kode=${item.kode}. Cek payload dari frontend. nama="${item.nama}"`,
+      `[formatSpkNama] Field mentah kosong untuk kode=${item.kode}. nama="${item.nama}"`,
     );
-    // Fallback darurat: pakai nama gabungan apa adanya, minimal tidak kosong total
     return `KAOSAN ${String(item.nama || item.kode || "TANPA NAMA").toUpperCase()}`;
   }
 
-  const clean = (str) => str.replace(/\s+/g, " ").trim();
-
-  // 1. Jersey kode LL
   if (joKode === "LL" && lengan.includes("JERSEY")) {
     return clean(`KAOSAN POLOS ${lengan} SPANDEK ${jeniskain} ${warna}`);
   }
-  // 2. Jaket/Hoodie
   if (
     jeniskain.includes("HOODIE FLEECE") ||
     jeniskain.includes("JAKET FLEECE")
   ) {
     return clean(`KAOSAN ${jeniskain} ${warna}`);
   }
-  // 3. Polo
   if (jeniskain.includes("POLO")) {
     return clean(`KAOSAN POLOS ${lengan} KERAH POLO ${warna}`);
   }
-  // 4. Katun Air
   if (jeniskain.includes("KATUN AIR")) {
     return clean(`KAOSAN POLOS ${lengan} OVERSIZED KATUN AIR ${warna}`);
   }
-  // 5. DBF
   if (jeniskain.includes("DBF")) {
     const suffix = joKode === "KO" ? " (OBLONG)" : "";
     return clean(`KAOSAN POLOS ${lengan} ${jeniskain} ${warna}${suffix}`);
   }
-  // 6. Jersey generik
   if (jeniskain.includes("JERSEY")) {
     return clean(`KAOSAN POLOS ${lengan} ${jeniskain} ${warna}`);
   }
-  // 7. Default
   return clean(`KAOSAN POLOS ${lengan} ${warna} (${jeniskain})`);
 };
 
@@ -393,6 +376,41 @@ const getDatelineRange = async (kepentingan, joKode) => {
   };
 };
 
+// --- Ambil standar ukuran Kencana (sementara, sebelum standar Kaosan tersedia) ---
+const JO_KATEGORI = {
+  BB: "ATASAN",
+  BU: "ATASAN",
+  JK: "ATASAN",
+  JS: "ATASAN",
+  KK: "ATASAN",
+  KO: "ATASAN",
+  KS: "ATASAN",
+  CL: "BAWAHAN",
+  WP: "WEARPACK",
+};
+
+const getStandarUkuranKencana = async (joKode, varian = "STANDAR") => {
+  const jo = String(joKode || "").toUpperCase();
+  const kategori = JO_KATEGORI[jo];
+  if (!kategori) return {}; // jo_kode tidak dikenal (misal LL) → tidak ada standar, default 0
+
+  const kategoriList =
+    kategori === "WEARPACK" ? ["ATASAN", "BAWAHAN"] : [kategori];
+  const placeholders = kategoriList.map(() => "?").join(",");
+
+  const [standar] = await pool.query(
+    `SELECT * FROM tukuran_standar
+     WHERE ts_kategori IN (${placeholders}) AND ts_varian = ?`,
+    [...kategoriList, varian],
+  );
+
+  const standarMap = {};
+  for (const row of standar) {
+    standarMap[row.ts_ukuran] = row;
+  }
+  return standarMap;
+};
+
 const generateBulkSpk = async (items, user) => {
   const connection = await pool.getConnection();
   try {
@@ -400,7 +418,7 @@ const generateBulkSpk = async (items, user) => {
 
     const today = format(new Date(), "yyyy-MM-dd");
 
-    // Kelompokkan per kode barang — satu SPK, banyak ukuran
+    // Kelompokkan per kode barang — satu SO, banyak ukuran
     const grouped = new Map();
     for (const item of items) {
       if (!item.rekomendasi_spk || item.rekomendasi_spk <= 0) continue;
@@ -418,7 +436,7 @@ const generateBulkSpk = async (items, user) => {
     for (const [kode, group] of grouped) {
       const { representative, sizes } = group;
       const joKode = determineJoKode(representative, kode);
-      const spkNomor = await generateSpkNomorPpic(
+      const spkNomor = await generateSpkNomorSo(
         connection,
         PERUSH_KODE_DC,
         joKode,
@@ -427,25 +445,41 @@ const generateBulkSpk = async (items, user) => {
       const totalQty = sizes.reduce((sum, s) => sum + s.qty, 0);
       const ukuranGabungan = sizes.map((s) => s.ukuran).join(", ");
 
-      // Kepentingan & dateline diambil dari representative (baris pertama grup kode ini)
       const kepentingan = representative.kepentingan || "NORMAL";
       const dateline = representative.dateline || today;
 
+      // --- VALIDASI (replikasi logika SO divisi 3) ---
+      // sumKaosan (total qty per SO) harus sama dengan qtyPesan (spk_jumlah).
+      // Karena totalQty dihitung dari items yang sama dengan sizes, ini otomatis sama —
+      // dipertahankan sebagai pengaman jika logika berubah di masa depan.
+      const sumKaosan = sizes.reduce((acc, s) => acc + Number(s.qty || 0), 0);
+      if (sumKaosan === 0) {
+        console.warn(`[generateBulkSpk] Qty 0 untuk kode=${kode}, dilewati.`);
+        continue;
+      }
+      if (sumKaosan !== totalQty) {
+        throw new Error(
+          `Jumlah SO vs Total Qty Order di Detail Barang Kaosan berbeda untuk kode ${kode}.`,
+        );
+      }
+
+      // 1. Header SO
       await connection.query(
-        `INSERT INTO kencanaprintnew.tspk (
+        `INSERT INTO kencanaprint.tspk (
            spk_nomor, spk_is_so, spk_so_ref,
-           spk_tanggal, spk_cus_kode, spk_cus_kaosan,
+           spk_tanggal, spk_cus_kode, spk_cus_kaosan, spk_sal_kode,
            spk_jo_kode, spk_divisi, spk_nama, spk_jumlah,
            spk_ukuran, spk_kain, spk_finishing, spk_nomor_po,
-           spk_dateline, spk_cab, spk_tipe, spk_statuskerja,
+           spk_dateline, spk_cab, spk_cabkaos, spk_tipe, spk_statuskerja,
            spk_perush_kode, spk_ketbeli, spk_keterangan,
            spk_aktif, spk_close,
            user_create, date_create
-         ) VALUES (?, 0, NULL, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, 'Y', 0, ?, NOW())`,
+         ) VALUES (?, 1, NULL, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, 'Y', 0, ?, NOW())`,
         [
           spkNomor,
           today,
           CUS_KODE_DC,
+          SAL_KODE_DC,
           joKode,
           DIVISI_KAOSAN,
           spkNama,
@@ -456,6 +490,7 @@ const generateBulkSpk = async (items, user) => {
           "STOCK",
           dateline,
           CAB_KODE_DC,
+          CAB_KODE_DC,
           kepentingan,
           PERUSH_KODE_DC,
           "Rekomendasi otomatis Perencanaan Produksi (DC Planning)",
@@ -464,11 +499,54 @@ const generateBulkSpk = async (items, user) => {
         ],
       );
 
+      // 2. Detail Kaosan (tspk_dc) — WAJIB untuk divisi 3
+      // Karena jo_kode di sini selalu barang fisik (KO/KK/LL/JK, bukan jasa BR/SB/SD/PL/DP/TG/PM),
+      // kodeItem = kode barang asli (item.kode), bukan nomor SPK
       for (const s of sizes) {
         await connection.query(
-          `INSERT INTO kencanaprintnew.tspk_size (spks_nomor, spks_size, spks_qty)
-           VALUES (?, ?, ?)`,
-          [spkNomor, s.ukuran, s.qty],
+          `INSERT INTO kencanaprint.tspk_dc (spkd_nomor, spkd_kode, spkd_ukuran, spkd_qtyorder)
+           VALUES (?, ?, ?, ?)`,
+          [spkNomor, kode, s.ukuran, s.qty],
+        );
+
+        // Sinkronisasi ke tbarangdc_dtl (Ignore if exist) — kode & ukuran sudah pasti ada
+        // karena SKU ini memang berasal dari tbarangdc_dtl (data DC Planning)
+        await connection.query(
+          `INSERT IGNORE INTO tbarangdc_dtl (brgd_kode, brgd_ukuran, brgd_hrg1)
+           VALUES (?, ?, 0)`,
+          [kode, s.ukuran],
+        );
+      }
+
+      // 3. Detail Size (tspk_size) — ukuran badan, standar Kencana sementara
+      const standarMap = await getStandarUkuranKencana(joKode);
+      for (const s of sizes) {
+        const d = standarMap[s.ukuran] || {};
+        await connection.query(
+          `INSERT INTO kencanaprint.tspk_size
+            (spks_nomor, spks_size, spks_qty,
+             spks_ld, spks_pl_pendek, spks_pl_panjang, spks_p_bahu,
+             spks_l_lengan, spks_l_manset, spks_l_pinggang, spks_p_celana,
+             spks_l_panggul, spks_l_paha, spks_pesak, spks_l_lutut, spks_l_bawah)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            spkNomor,
+            s.ukuran,
+            s.qty,
+            Number(d.ts_ld) || 0,
+            Number(d.ts_pl_pendek) || 0,
+            Number(d.ts_pl_panjang) || 0,
+            Number(d.ts_p_bahu) || 0,
+            Number(d.ts_l_lengan) || 0,
+            Number(d.ts_l_manset) || 0,
+            Number(d.ts_l_pinggang) || 0,
+            Number(d.ts_p_celana) || 0,
+            Number(d.ts_l_panggul) || 0,
+            Number(d.ts_l_paha) || 0,
+            Number(d.ts_pesak) || 0,
+            Number(d.ts_l_lutut) || 0,
+            Number(d.ts_l_bawah) || 0,
+          ],
         );
       }
 
@@ -477,7 +555,7 @@ const generateBulkSpk = async (items, user) => {
 
     await connection.commit();
     return {
-      message: `Berhasil merilis ${generatedCount} SPK baru (mencakup ${items.length} baris SKU/ukuran) ke produksi.`,
+      message: `Berhasil merilis ${generatedCount} SO baru (mencakup ${items.length} baris SKU/ukuran) ke produksi.`,
     };
   } catch (error) {
     await connection.rollback();
