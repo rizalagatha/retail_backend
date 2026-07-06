@@ -264,7 +264,7 @@ const extractJoKode = (kodeSku) => {
   return (parts[0] || "XX").substring(0, 2).toUpperCase();
 };
 
-// --- Tentukan jo_kode SPK: override khusus untuk Jaket/Hoodie ---
+// --- Tentukan jo_kode SPK: override khusus untuk Jaket/Hoodie & normalisasi LL→KO ---
 const determineJoKode = (item, kodeBarang) => {
   const jeniskain = String(item.brg_jeniskain || "")
     .trim()
@@ -275,7 +275,18 @@ const determineJoKode = (item, kodeBarang) => {
   ) {
     return "JK";
   }
-  return extractJoKode(kodeBarang);
+
+  const rawKode = extractJoKode(kodeBarang);
+
+  // Kode barang LL (Jersey Spandek) tetap dicatat sebagai Jenis Order "KO"
+  // di Sales Order MANKSI, walau kode barang aslinya berprefix LL.
+  // (Deteksi penamaan "SPANDEK" tetap dilakukan terpisah di formatSpkNama
+  // berdasarkan prefix kode barang asli, bukan dari nilai ini.)
+  if (rawKode === "LL") {
+    return "KO";
+  }
+
+  return rawKode;
 };
 
 // --- Konstanta konfigurasi ---
@@ -296,6 +307,7 @@ const formatSpkNama = (item, joKode) => {
   const jeniskain = String(item.brg_jeniskain || "")
     .trim()
     .toUpperCase();
+  const kodePrefixAsli = extractJoKode(item.kode); // prefix kode barang asli (sebelum normalisasi)
   const clean = (str) => str.replace(/\s+/g, " ").trim();
 
   if (!lengan && !warna && !jeniskain) {
@@ -305,28 +317,42 @@ const formatSpkNama = (item, joKode) => {
     return `KAOSAN ${String(item.nama || item.kode || "TANPA NAMA").toUpperCase()}`;
   }
 
-  if (joKode === "LL" && lengan.includes("JERSEY")) {
+  // 1. Jersey kode barang LL — sisip kata SPANDEK (template khusus)
+  // Dicek dari PREFIX KODE BARANG ASLI, bukan dari joKode (yang sudah dinormalisasi ke KO)
+  if (kodePrefixAsli === "LL" && lengan.includes("JERSEY")) {
     return clean(`KAOSAN POLOS ${lengan} SPANDEK ${jeniskain} ${warna}`);
   }
+
+  // 2. Jaket/Hoodie — tanpa POLOS, tanpa lengan
   if (
     jeniskain.includes("HOODIE FLEECE") ||
     jeniskain.includes("JAKET FLEECE")
   ) {
     return clean(`KAOSAN ${jeniskain} ${warna}`);
   }
+
+  // 3. Polo — KERAH POLO
   if (jeniskain.includes("POLO")) {
     return clean(`KAOSAN POLOS ${lengan} KERAH POLO ${warna}`);
   }
+
+  // 4. Katun Air — OVERSIZED KATUN AIR
   if (jeniskain.includes("KATUN AIR")) {
     return clean(`KAOSAN POLOS ${lengan} OVERSIZED KATUN AIR ${warna}`);
   }
+
+  // 5. DBF — tampil apa adanya, (OBLONG) hanya jika kode ASLI-nya KO
   if (jeniskain.includes("DBF")) {
-    const suffix = joKode === "KO" ? " (OBLONG)" : "";
+    const suffix = kodePrefixAsli === "KO" ? " (OBLONG)" : "";
     return clean(`KAOSAN POLOS ${lengan} ${jeniskain} ${warna}${suffix}`);
   }
+
+  // 6. Jersey generik (selain kasus LL) — jeniskain sebelum warna, tanpa kurung
   if (jeniskain.includes("JERSEY")) {
     return clean(`KAOSAN POLOS ${lengan} ${jeniskain} ${warna}`);
   }
+
+  // 7. Default — kaos polos biasa, jeniskain dalam kurung
   return clean(`KAOSAN POLOS ${lengan} ${warna} (${jeniskain})`);
 };
 
@@ -392,7 +418,7 @@ const JO_KATEGORI = {
 const getStandarUkuranKencana = async (joKode, varian = "STANDAR") => {
   const jo = String(joKode || "").toUpperCase();
   const kategori = JO_KATEGORI[jo];
-  if (!kategori) return {}; // jo_kode tidak dikenal (misal LL) → tidak ada standar, default 0
+  if (!kategori) return {};
 
   const kategoriList =
     kategori === "WEARPACK" ? ["ATASAN", "BAWAHAN"] : [kategori];
@@ -448,6 +474,12 @@ const generateBulkSpk = async (items, user) => {
       const kepentingan = representative.kepentingan || "NORMAL";
       const dateline = representative.dateline || today;
 
+      // Tentukan varian ukuran dari brg_lengan (PENDEK/PANJANG)
+      const lenganUpper = String(representative.brg_lengan || "").toUpperCase();
+      const varianUkuran = lenganUpper.includes("PANJANG")
+        ? "LENGAN_PANJANG"
+        : "LENGAN_PENDEK";
+
       // --- VALIDASI (replikasi logika SO divisi 3) ---
       // sumKaosan (total qty per SO) harus sama dengan qtyPesan (spk_jumlah).
       // Karena totalQty dihitung dari items yang sama dengan sizes, ini otomatis sama —
@@ -471,10 +503,11 @@ const generateBulkSpk = async (items, user) => {
            spk_jo_kode, spk_divisi, spk_nama, spk_jumlah,
            spk_ukuran, spk_kain, spk_finishing, spk_nomor_po,
            spk_dateline, spk_cab, spk_cabkaos, spk_tipe, spk_statuskerja,
+           spk_standar_ukuran, spk_varian_ukuran,
            spk_perush_kode, spk_ketbeli, spk_keterangan,
            spk_aktif, spk_close,
            user_create, date_create
-         ) VALUES (?, 1, NULL, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, 'Y', 0, ?, NOW())`,
+         ) VALUES (?, 1, NULL, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, 'Y', 0, ?, NOW())`,
         [
           spkNomor,
           today,
@@ -492,6 +525,8 @@ const generateBulkSpk = async (items, user) => {
           CAB_KODE_DC,
           CAB_KODE_DC,
           kepentingan,
+          "KENCANA", // spk_standar_ukuran
+          varianUkuran, // spk_varian_ukuran
           PERUSH_KODE_DC,
           "Rekomendasi otomatis Perencanaan Produksi (DC Planning)",
           `Auto-generate dari Rekomendasi SPK — SKU: ${kode}`,
