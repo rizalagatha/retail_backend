@@ -6,7 +6,7 @@ const generateSpkNomorPpic = async (connection, perushKode, joKode) => {
   const prefix = `SPK-${perushKode}-${joKode}-`;
   const [rows] = await connection.query(
     `SELECT IFNULL(MAX(CAST(SUBSTR(spk_nomor, ?, 6) AS UNSIGNED)), 0) AS jumlah
-     FROM kencanaprintnew.tspk
+     FROM kencanaprint.tspk
      WHERE spk_perush_kode = ? AND spk_jo_kode = ? AND spk_nomor LIKE ?
      FOR UPDATE`,
     [prefix.length + 1, perushKode, joKode, `${prefix}%`],
