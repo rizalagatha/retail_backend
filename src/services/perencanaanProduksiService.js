@@ -6,12 +6,14 @@ const generateSpkNomorPpic = async (connection, perushKode, joKode) => {
   const prefix = `SPK-${perushKode}-${joKode}-`;
   const [rows] = await connection.query(
     `SELECT IFNULL(MAX(CAST(SUBSTR(spk_nomor, ?, 6) AS UNSIGNED)), 0) AS jumlah
-     FROM kencanaprint.tspk
+     FROM kencanaprintnew.tspk
      WHERE spk_perush_kode = ? AND spk_jo_kode = ? AND spk_nomor LIKE ?
      FOR UPDATE`,
     [prefix.length + 1, perushKode, joKode, `${prefix}%`],
   );
-  const nextVal = rows[0].jumlah + 1;
+
+  const nextVal = Number(rows[0].jumlah) + 1; // ← FIX: paksa Number() sebelum tambah
+
   return `${prefix}${String(nextVal).padStart(6, "0")}`;
 };
 
