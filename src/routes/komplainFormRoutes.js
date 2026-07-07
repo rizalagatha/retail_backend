@@ -48,6 +48,13 @@ router.post(
   upload.single("foto"), // Jika upload satu per satu. Pakai upload.array jika multiple.
   controller.uploadFoto,
 );
+// Tambahkan route untuk delete foto
+router.delete(
+  "/:nomor/foto/:dtlId",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  controller.deleteFoto,
+);
 
 router.get(
   "/lookup/invoice",

@@ -385,6 +385,32 @@ const getPrintData = async (nomor) => {
   return { header, details };
 };
 
+const deleteFoto = async (nomor, dtlId, user) => {
+  const connection = await pool.getConnection();
+  try {
+    // 1. Ambil path foto dari database
+    const [rows] = await connection.query(
+      "SELECT cmpd_foto FROM tkomplain_dtl WHERE cmpd_nomor = ? AND cmpd_id = ?",
+      [nomor, dtlId],
+    );
+
+    if (rows.length > 0 && rows[0].cmpd_foto) {
+      const filePath = path.join(process.cwd(), "public", rows[0].cmpd_foto);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath); // Hapus file fisik
+      }
+      // Update database jadi null
+      await connection.query(
+        "UPDATE tkomplain_dtl SET cmpd_foto = NULL WHERE cmpd_nomor = ? AND cmpd_id = ?",
+        [nomor, dtlId],
+      );
+    }
+    return { message: "Foto berhasil dihapus." };
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   getKomplainDetail,
   saveKomplain,
@@ -392,4 +418,5 @@ module.exports = {
   lookupInvoice,
   getInvoiceDetailsForKomplain,
   getPrintData,
+  deleteFoto,
 };

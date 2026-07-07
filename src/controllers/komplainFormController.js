@@ -49,6 +49,16 @@ const uploadFoto = async (req, res) => {
   }
 };
 
+const deleteFoto = async (req, res) => {
+  try {
+    const { nomor, dtlId } = req.params;
+    const result = await komplainFormService.deleteFoto(nomor, dtlId, req.user);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const lookupInvoice = async (req, res) => {
   try {
     const result = await komplainFormService.lookupInvoice(req.user.cabang);
@@ -87,6 +97,7 @@ module.exports = {
   save,
   changeStatus,
   uploadFoto,
+  deleteFoto,
   lookupInvoice,
   getInvoiceDetails,
   getPrintData,
