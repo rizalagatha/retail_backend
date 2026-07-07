@@ -77,8 +77,9 @@ const getDetails = async (nomor, filters) => {
 const getCabangList = async (user) => {
   let query;
   if (user.cabang === "KDC") {
+    // [PERBAIKAN] Tambahkan kondisi OR gdg_kode = 'KDC'
     query =
-      "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_dc=0 ORDER BY gdg_kode";
+      "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_dc = 0 OR gdg_kode = 'KDC' ORDER BY gdg_kode";
   } else {
     query =
       "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ?";
@@ -100,7 +101,7 @@ const close = async (data) => {
         FROM tsodtf_hdr h
         WHERE h.sd_nomor = ?
     `,
-    [nomor]
+    [nomor],
   );
 
   if (rows.length === 0) {
@@ -128,7 +129,7 @@ const remove = async (nomor, user) => {
     // Cek cabang
     const [hdr] = await connection.query(
       "SELECT sd_cab FROM tsodtf_hdr WHERE sd_nomor = ?",
-      [nomor]
+      [nomor],
     );
 
     if (!hdr.length) {
@@ -147,7 +148,7 @@ const remove = async (nomor, user) => {
     // Hapus header
     const [result] = await connection.query(
       "DELETE FROM tsodtf_hdr WHERE sd_nomor = ?",
-      [nomor]
+      [nomor],
     );
 
     if (result.affectedRows === 0) {
