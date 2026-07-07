@@ -469,7 +469,7 @@ const generateBulkSpk = async (items, user) => {
       );
       const spkNama = formatSpkNama(representative, joKode);
       const totalQty = sizes.reduce((sum, s) => sum + s.qty, 0);
-      const ukuranGabungan = sizes.map((s) => s.ukuran).join(", ");
+      const ukuranGabungan = sizes.map((s) => `${s.ukuran}=${s.qty}`).join(",");
 
       const kepentingan = representative.kepentingan || "NORMAL";
       const dateline = representative.dateline || today;
