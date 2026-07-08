@@ -275,7 +275,7 @@ const lookupInvoice = async (cabang) => {
     FROM tinv_hdr h
     LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
     WHERE h.inv_sts_pro = 0 AND LEFT(h.inv_nomor, 3) = ?
-    ORDER BY h.inv_tanggal DESC LIMIT 200
+    ORDER BY h.inv_tanggal DESC
   `;
   const [rows] = await pool.query(query, [cabang]);
   return rows;
