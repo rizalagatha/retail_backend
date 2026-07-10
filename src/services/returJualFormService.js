@@ -218,7 +218,7 @@ const lookupInvoices = async (cabang) => {
   // Tentukan batas waktu: 2 hari dari sekarang (Jan 29 s/d Jan 30)
   // Akses akan ditutup otomatis pada tanggal 31 Januari 2026
   const isTemporaryOpen =
-    cabang === "K06" && new Date() < new Date("2026-06-23");
+    cabang === "K01" && new Date() < new Date("2026-07-11");
 
   const dateCondition =
     cabang === "KON" || cabang === "KPR" || isTemporaryOpen
