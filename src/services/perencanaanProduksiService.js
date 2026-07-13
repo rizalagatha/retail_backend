@@ -3,7 +3,7 @@ const { format } = require("date-fns");
 
 // --- Helper: generate nomor SO format MANKSI: SO-{perush}-{jo}-000001 ---
 const generateSpkNomorSo = async (connection, perushKode, joKode) => {
-  const prefix = `SO-${perushKode}-${joKode}-`;
+  const prefix = `${perushKode}-${joKode}-`;
   const [rows] = await connection.query(
     `SELECT IFNULL(MAX(CAST(SUBSTR(spk_nomor, ?, 6) AS UNSIGNED)), 0) AS jumlah
      FROM kencanaprint.tspk
@@ -130,7 +130,7 @@ const getPriorityData = async (filters) => {
         SELECT 
           b.brgd_kode AS kode, b.brgd_ukuran AS ukuran,
           TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) AS nama,
-          a.brg_lengan, a.brg_warna, a.brg_jeniskain,
+          a.brg_lengan, a.brg_warna, a.brg_jeniskain, a.brg_jeniskaos,
           a.brg_ktgp AS kategori, b.brgd_hpp AS hpp,
           
           IFNULL((
@@ -201,6 +201,7 @@ const getPriorityData = async (filters) => {
         brg_lengan: row.brg_lengan || "",
         brg_warna: row.brg_warna || "",
         brg_jeniskain: row.brg_jeniskain || "",
+        brg_jeniskaos: row.brg_jeniskaos || "",
         cvg_saat_ini: Number(row.cvg_saat_ini).toFixed(1),
         cvg_setelah_wip: Number(row.cvg_setelah_wip).toFixed(1),
         daily_need: Number(row.daily_need).toFixed(1),
@@ -354,6 +355,164 @@ const formatSpkNama = (item, joKode) => {
 
   // 7. Default — kaos polos biasa, jeniskain dalam kurung
   return clean(`KAOSAN POLOS ${lengan} ${warna} (${jeniskain})`);
+};
+
+// --- Format Keterangan Produksi otomatis sesuai jenis kaos ---
+const formatSpkKeterangan = (item, kode) => {
+  const jeniskaos = String(item.brg_jeniskaos || "")
+    .trim()
+    .toUpperCase();
+  const lengan = String(item.brg_lengan || "")
+    .trim()
+    .toUpperCase();
+  const jeniskain = String(item.brg_jeniskain || "")
+    .trim()
+    .toUpperCase();
+
+  const defaultKet = `Auto-generate dari Rekomendasi SPK — SKU: ${kode}`;
+
+  let hasil = defaultKet;
+
+  if (jeniskain.includes("KATUN AIR")) {
+    hasil = `BUATKAN KAOS PENDEK OVERSIZE
+
+Size S (lb=50, pb=69) M (lb=54, pb=70),  L (lb=56 cm, pb=71),  XL (lb=60, pb=72)
+
+MODEL, POLA DAN UKURAN panjang depan belakang sama
+
+Haming 2 jahitan di lengan dan badan bawah
+
+Rib leher lebar. tindes MODEL oversized
+
+Lebar Lengan Mohon dipastikan tidak terlalu besar
+
+Size dan Logo kaosan Jahit jadi satu
+
+Label timbul kaosan di kiri bawah
+
+Dikerjakan di P04 JERON`;
+  } else if (jeniskain.includes("JERSEY EMBOZZ")) {
+    hasil = `Buatkan JERSEY BAHAN DRYFIT EMBOSS MOTIF TOPO HITAM
+
+
+Spek dan jahitan standart kaosan, jahitan tindes overdeck
+
+Jahit potongan di bagian belakang punggung, Blazer twiltip kaosan
+
+Size dan Logo kaosan Jahit jadi satu. Packing kaosan
+
+Lengan bagian dalam, ujung obras mohon dikunci
+
+Label timbul kaosan di kiri bawah
+
+Mohon Jahitan rapi dan bagus
+
+DIKERJAKAN DI P4 JERON`;
+  } else if (lengan.includes("TUNIK")) {
+    hasil = `Buatkan tunik dengan Spek ukuran dan Jahitan standar kaosan
+
+Belahan samping +- 20 CM dan panjang badan 80 CM
+
+Panjang lengan dari atas ke bawah mengecil, leher vneck
+
+Lengan bagian dalam, ujung obras mohon dikunci
+
+Size dan Logo kaosan Jahit jadi satu
+
+Packing kaosan
+
+Mohon jahitan rapi dan bagus, buang benang bersih
+
+DIKERJAKAN DI P04 JERON`;
+  } else if (lengan.includes("RIP")) {
+    hasil = `Buatkan kaos oblong polos panjang rip
+
+Spek ukuran dan Jahitan standar kaosan
+
+Size dan Logo kaosan Jahit jadi satu
+
+Label timbul kaosan di kiri bawah
+
+Packing kaosan
+
+Mohon jahitan rapi dan bagus, buang benang bersih
+
+DIKERJAKAN DI P4 JERON`;
+  } else if (jeniskaos === "KO" && lengan.includes("PENDEK")) {
+    hasil = `Buatkan kaos oblong polos pendek
+
+3 Jahitan di lengan dan badan bawah
+
+Spek ukuran dan Jahitan standar kaosan
+
+Lengan bagian dalam, ujung obras mohon dikunci
+
+Size dan Logo kaosan Jahit jadi satu
+
+Label timbul kaosan di kiri bawah
+
+Packing kaosan
+
+Mohon jahitan rapi dan bagus, buang benang bersih
+
+DIKERJAKAN DI P4 JERON`;
+  } else if (jeniskaos === "KO" && lengan.includes("PANJANG")) {
+    hasil = `Buatkan kaos oblong polos panjang
+
+3 Jahitan di lengan dan badan bawah
+
+Spek ukuran dan Jahitan standar kaosan
+
+Lengan bagian dalam, ujung obras mohon dikunci
+
+Size dan Logo kaosan Jahit jadi satu
+
+Label timbul kaosan di kiri bawah
+
+Packing kaosan
+
+Mohon jahitan rapi dan bagus, buang benang bersih
+
+DIKERJAKAN DI P4 JERON`;
+  } else if (jeniskaos === "KK" && lengan.includes("PENDEK")) {
+    hasil = `BUATKAN KAOS KERAH
+
+Spek ukuran, pola potong, cara belah samping standar Kaosan. maju bahu. 3 Jahitan
+
+3 kancing kaosan, warna kerah, manset, dan paspol sesuai badan
+
+Size dan Logo kaosan Jahit jadi satu
+
+Label timbul kaosan di kiri bawah
+
+Pakai blazer twiltip kaosan
+
+PACKING KAOSAN. 
+Pakai cadangan kancing 1 pcs
+
+DIKERJAKAN DI P4 JERON`;
+  } else if (jeniskaos === "KK" && lengan.includes("PANJANG")) {
+    hasil = `BUATKAN KAOS KERAH
+
+Spek ukuran, pola potong, cara belah samping standar Kaosan. maju bahu. 3 Jahitan
+
+3 kancing kaosan, warna kerah, rip lengan, dan paspol sesuai badan
+
+Size dan Logo kaosan Jahit jadi satu
+
+Label timbul kaosan di kiri bawah
+
+Pakai blazer twiltip kaosan
+
+PACKING KAOSAN. 
+Pakai cadangan kancing 1 pcs
+
+DIKERJAKAN DI P4 JERON`;
+  }
+
+  // Konversi LF (\n) jadi CRLF (\r\n) — wajib supaya TMemo Delphi (Windows edit control)
+  // mengenali baris baru. \n tunggal tidak dikenali dan bikin teks nempel tanpa spasi.
+  return hasil.replace(/\r?\n/g, "\r\n");
 };
 
 // --- Ambil daftar Kepentingan (untuk dropdown) ---
@@ -529,7 +688,7 @@ const generateBulkSpk = async (items, user) => {
           varianUkuran, // spk_varian_ukuran
           PERUSH_KODE_DC,
           "Rekomendasi otomatis Perencanaan Produksi (DC Planning)",
-          `Auto-generate dari Rekomendasi SPK — SKU: ${kode}`,
+          formatSpkKeterangan(representative, kode),
           user.kode,
         ],
       );
@@ -584,6 +743,29 @@ const generateBulkSpk = async (items, user) => {
           ],
         );
       }
+
+      // --- Log audit: catat bahwa SO ini hasil auto-generate dari DC Planning ---
+      const ukuranDetailLog = sizes
+        .map((s) => `${s.ukuran}=${s.qty}`)
+        .join(",");
+      await connection.query(
+        `INSERT INTO kencanaprint.tspk_log_autogenerate
+           (log_spk_nomor, log_source, log_kode_barang, log_ukuran_detail, log_qty_total,
+            log_gap_dc, log_spk_beredar, log_rekomendasi, log_kepentingan,
+            user_create, date_create)
+         VALUES (?, 'DC_PLANNING', ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [
+          spkNomor,
+          kode,
+          ukuranDetailLog,
+          totalQty,
+          representative.gap_buffer_dc ?? null,
+          representative.spk_beredar ?? null,
+          representative.rekomendasi_spk ?? null,
+          kepentingan,
+          user.kode,
+        ],
+      );
 
       generatedCount++;
     }
