@@ -84,6 +84,19 @@ router.get(
   controller.getCustomerDebt,
 );
 
+router.get(
+  "/lookup/free-item-quota",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.checkFreeItemQuota,
+);
+router.get(
+  "/lookup/tier-diskon",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getTierDiskonByPromo,
+);
+
 router.get("/lookup/active-promos", verifyToken, controller.getActivePromos);
 
 router.get(

@@ -118,6 +118,120 @@ const getKprItemDiscount = (namaBarang, kategori) => {
   return 0;
 };
 
+// =========================================================================
+// PROMO GRAND OPENING K12 — Free Item Tracker & Tier Diskon
+// =========================================================================
+
+/**
+ * Cek apakah customer masih berhak dapat item gratis untuk promo tertentu.
+ * Dipakai frontend untuk menampilkan/menyembunyikan tombol "+ Tambah Hadiah Gratis".
+ */
+const checkFreeItemQuota = async (proNomor, cusKode) => {
+  // [BARU] Cek nama customer, tolak jika RETAIL
+  const [custRows] = await pool.query(
+    `SELECT cus_nama FROM tcustomer WHERE cus_kode = ?`,
+    [cusKode],
+  );
+  const custNama = (custRows[0]?.cus_nama || "").toUpperCase();
+  if (custNama.includes("RETAIL")) {
+    return { available: false, sisaKuota: 0, reason: "CUSTOMER_RETAIL" };
+  }
+
+  const [countRows] = await pool.query(
+    `SELECT COUNT(*) AS jumlah FROM tpromo_free_item_tracker WHERE pft_pro_nomor = ?`,
+    [proNomor],
+  );
+  const sisaKuota = 100 - Number(countRows[0].jumlah);
+
+  if (sisaKuota <= 0) {
+    return { available: false, sisaKuota: 0, reason: "KUOTA_HABIS" };
+  }
+
+  const [existingRows] = await pool.query(
+    `SELECT pft_id FROM tpromo_free_item_tracker WHERE pft_pro_nomor = ? AND pft_cus_kode = ?`,
+    [proNomor, cusKode],
+  );
+
+  if (existingRows.length > 0) {
+    return { available: false, sisaKuota, reason: "CUSTOMER_SUDAH_DAPAT" };
+  }
+
+  return { available: true, sisaKuota, reason: null };
+};
+
+/**
+ * Dipanggil DI DALAM transaction saveData (bukan endpoint terpisah), agar
+ * atomic dengan penyimpanan invoice. FOR UPDATE mencegah race condition
+ * saat mendekati kuota 100 dari beberapa kasir bersamaan.
+ */
+const reserveFreeItemSlot = async (
+  connection,
+  proNomor,
+  cusKode,
+  invoiceNomor,
+  kodeBarangGratis,
+  customerHp = "", // [BARU] opsional, untuk referensi/tampilan
+  customerNama = "", // [BARU] opsional, untuk referensi/tampilan
+) => {
+  if ((customerNama || "").toUpperCase().includes("RETAIL")) {
+    throw new Error(
+      "Customer RETAIL tidak berhak atas hadiah gratis promo ini.",
+    );
+  }
+
+  const [countRows] = await connection.query(
+    `SELECT COUNT(*) AS jumlah FROM tpromo_free_item_tracker WHERE pft_pro_nomor = ? FOR UPDATE`,
+    [proNomor],
+  );
+  const jumlahTerpakai = Number(countRows[0].jumlah);
+
+  if (jumlahTerpakai >= 100) {
+    throw new Error("Kuota 100 hadiah gratis untuk promo ini sudah habis.");
+  }
+
+  const [existingRows] = await connection.query(
+    `SELECT pft_id FROM tpromo_free_item_tracker WHERE pft_pro_nomor = ? AND pft_cus_kode = ? FOR UPDATE`,
+    [proNomor, cusKode],
+  );
+
+  if (existingRows.length > 0) {
+    throw new Error(
+      "Customer ini sudah pernah mendapat hadiah gratis pada promo ini.",
+    );
+  }
+
+  await connection.query(
+    `INSERT INTO tpromo_free_item_tracker
+      (pft_pro_nomor, pft_cus_kode, pft_customer_hp, pft_customer_nama, pft_urutan_ke, pft_transaksi_nomor, pft_kode_barang_gratis)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      proNomor,
+      cusKode,
+      customerHp || "",
+      customerNama || "",
+      jumlahTerpakai + 1,
+      invoiceNomor,
+      kodeBarangGratis,
+    ],
+  );
+
+  return { urutanKe: jumlahTerpakai + 1 };
+};
+
+/**
+ * Ambil aturan diskon bertingkat (tier) per promo — untuk Mekanisme A.
+ */
+const getTierDiskonByPromo = async (proNomor) => {
+  const [rows] = await pool.query(
+    `SELECT ptd_prioritas, ptd_tipe_match, ptd_kata_kunci, ptd_persen
+     FROM tpromo_tier_diskon
+     WHERE ptd_pro_nomor = ?
+     ORDER BY ptd_prioritas ASC`,
+    [proNomor],
+  );
+  return rows;
+};
+
 // --- FUNGSI GENERATE NOMOR ---
 const generateNewInvNumber = async (gudang, tanggal) => {
   const date = new Date(tanggal);
@@ -1400,6 +1514,31 @@ const saveData = async (payload, user) => {
       }
 
       await connection.query(detailSql, [detailValues]);
+    }
+
+    // =========================================================================
+    // [BARU] PROMO GRAND OPENING K12 — Reserve slot item gratis (jika ada)
+    // Dipanggil di sini (dalam transaction yang sama) agar atomic:
+    // kalau invoice gagal simpan, slot tidak ikut "terbakar" (rollback otomatis).
+    // =========================================================================
+    for (const item of validItems) {
+      if (item.isFreeGift) {
+        const proNomorFreeItem = header.proNomorFreeItem || header.nomorPromo;
+        if (!proNomorFreeItem) {
+          throw new Error(
+            "Item hadiah gratis terdeteksi tapi nomor promo tidak dikirim dari frontend.",
+          );
+        }
+        await reserveFreeItemSlot(
+          connection,
+          proNomorFreeItem,
+          header.customer.kode,
+          invNomor,
+          item.kode,
+          header.customer.telp || "",
+          header.customer.nama || "",
+        );
+      }
     }
 
     // =========================================================================
@@ -3691,4 +3830,6 @@ module.exports = {
   getSjDetails,
   getCustomerDebt,
   getPackagingOptions,
+  checkFreeItemQuota,
+  getTierDiskonByPromo,
 };

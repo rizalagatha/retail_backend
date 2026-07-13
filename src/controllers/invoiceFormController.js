@@ -475,6 +475,34 @@ const getCustomerDebt = async (req, res) => {
   }
 };
 
+const checkFreeItemQuota = async (req, res) => {
+  try {
+    const { proNomor, cusKode } = req.query;
+    if (!proNomor || !cusKode) {
+      return res.status(400).json({
+        message: "proNomor dan cusKode diperlukan.",
+      });
+    }
+    const result = await service.checkFreeItemQuota(proNomor, cusKode);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getTierDiskonByPromo = async (req, res) => {
+  try {
+    const { proNomor } = req.query;
+    if (!proNomor) {
+      return res.status(400).json({ message: "proNomor diperlukan." });
+    }
+    const data = await service.getTierDiskonByPromo(proNomor);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   loadForEdit,
   getPackagingOptions,
@@ -510,4 +538,6 @@ module.exports = {
   searchSj,
   getSjDetails,
   getCustomerDebt,
+  checkFreeItemQuota,
+  getTierDiskonByPromo,
 };

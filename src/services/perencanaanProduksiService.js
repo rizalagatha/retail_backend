@@ -48,33 +48,6 @@ const getPriorityData = async (filters) => {
           GROUP BY mst_brg_kode, mst_ukuran
       ) dc ON dc.mst_brg_kode = b.brgd_kode AND dc.mst_ukuran = b.brgd_ukuran
 
-      -- Agregasi SPK WIP (Ready < 5 Hari)
-      -- Fokus: SPK yang sudah memiliki entry di STBJ (Gudang Jadi/GP013)
-      LEFT JOIN (
-          SELECT sub.kode, sub.ukuran, SUM(sub.qty_wip) AS spk_ready
-          FROM (
-              SELECT 
-                spkd.spkd_kode AS kode, 
-                spkd.spkd_ukuran AS ukuran, 
-                -- Hitung sisa order yang sudah masuk STBJ
-                IFNULL(SUM(stb.stbjd_jumlah), 0) AS qty_wip
-              FROM kencanaprint.tspk_dc spkd
-              JOIN kencanaprint.tspk spk ON spk.spk_nomor = spkd.spkd_nomor
-              
-              -- Join ke STBJ untuk memastikan barang sudah sampai tahap ini
-              JOIN kencanaprint.tstbj_dtl stb ON stb.stbjd_spk_nomor = spkd.spkd_nomor 
-                                             AND stb.stbjd_size = spkd.spkd_ukuran
-              JOIN kencanaprint.tstbj_hdr sth ON sth.stbj_nomor = stb.stbjd_stbj_nomor
-
-              WHERE spk.spk_aktif = 'Y' AND spk.spk_close = 0 
-                AND YEAR(spk.spk_tanggal) >= 2026 
-                AND DATEDIFF(spk.spk_dateline, CURDATE()) <= 5
-              GROUP BY spkd.spkd_nomor, spkd.spkd_kode, spkd.spkd_ukuran
-              HAVING qty_wip > 0
-          ) sub
-          GROUP BY sub.kode, sub.ukuran
-      ) spk ON spk.kode = b.brgd_kode AND spk.ukuran = b.brgd_ukuran
-
       -- Agregasi SPK Beredar (Aktif, belum masuk Jahit ke Lipat)
       LEFT JOIN (
           SELECT spkd.spkd_kode AS kode, spkd.spkd_ukuran AS ukuran,
@@ -124,8 +97,7 @@ const getPriorityData = async (filters) => {
       SELECT 
         *,
         (stok_dc / daily_need) AS cvg_saat_ini,
-        ((stok_dc + spk_ready) / daily_need) AS cvg_setelah_wip,
-        GREATEST(0, (buffer_dc + gap_store) - (stok_dc + spk_ready)) AS gap_buffer_dc
+        GREATEST(0, (buffer_dc + gap_store) - stok_dc) AS gap_buffer_dc
       FROM (
         SELECT 
           b.brgd_kode AS kode, b.brgd_ukuran AS ukuran,
@@ -142,7 +114,6 @@ const getPriorityData = async (filters) => {
 
           IFNULL(b.brgd_mindc, 0) AS buffer_dc,
           IFNULL(dc.stok_dc, 0) AS stok_dc,
-          IFNULL(spk.spk_ready, 0) AS spk_ready,
           IFNULL(store.total_buffer_store, 0) AS buffer_store,
           IFNULL(store.total_stok_store, 0) AS stok_store,
           IFNULL(store.gap_store, 0) AS gap_store,
@@ -159,9 +130,9 @@ const getPriorityData = async (filters) => {
       SELECT 
         COUNT(*) AS total_items,
         SUM(stok_dc) AS total_stok_dc,
-        SUM(CASE WHEN cvg_setelah_wip < 7 THEN 1 ELSE 0 END) AS sku_kritis,
-        SUM(CASE WHEN cvg_setelah_wip >= 7 AND cvg_setelah_wip <= 15 THEN 1 ELSE 0 END) AS sku_perhatian,
-        SUM(CASE WHEN cvg_setelah_wip > 15 THEN 1 ELSE 0 END) AS sku_aman
+        SUM(CASE WHEN cvg_saat_ini < 7 THEN 1 ELSE 0 END) AS sku_kritis,
+        SUM(CASE WHEN cvg_saat_ini >= 7 AND cvg_saat_ini <= 15 THEN 1 ELSE 0 END) AS sku_perhatian,
+        SUM(CASE WHEN cvg_saat_ini > 15 THEN 1 ELSE 0 END) AS sku_aman
       FROM (${wrapperQuery}) AS summary_tbl
     `;
     const [summaryRows] = await connection.query(summarySql, filterParams);
@@ -184,7 +155,7 @@ const getPriorityData = async (filters) => {
 
     const dataSql = `
       ${wrapperQuery}
-      ORDER BY (buffer_dc > 0) DESC, cvg_setelah_wip ASC, gap_buffer_dc DESC
+      ORDER BY (buffer_dc > 0) DESC, cvg_saat_ini ASC, gap_buffer_dc DESC
       ${paginationSql}
     `;
 
@@ -192,8 +163,8 @@ const getPriorityData = async (filters) => {
 
     const items = rows.map((row, index) => {
       let status = "Aman";
-      if (row.cvg_setelah_wip < 7) status = "Kritis";
-      else if (row.cvg_setelah_wip <= 15) status = "Perlu Perhatian";
+      if (row.cvg_saat_ini < 7) status = "Kritis";
+      else if (row.cvg_saat_ini <= 15) status = "Perlu Perhatian";
 
       return {
         ...row,
@@ -203,7 +174,6 @@ const getPriorityData = async (filters) => {
         brg_jeniskain: row.brg_jeniskain || "",
         brg_jeniskaos: row.brg_jeniskaos || "",
         cvg_saat_ini: Number(row.cvg_saat_ini).toFixed(1),
-        cvg_setelah_wip: Number(row.cvg_setelah_wip).toFixed(1),
         daily_need: Number(row.daily_need).toFixed(1),
         rekomendasi_spk: Math.max(
           0,
