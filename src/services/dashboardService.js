@@ -1027,13 +1027,24 @@ const getStokKosongReguler = async (
   let searchCondition = "";
   let searchParams = [];
   if (searchTerm && searchTerm.trim() !== "") {
+    // [FIX] Pecah jadi kata per kata, wajibkan SEMUA kata ketemu (posisi
+    // bebas) di nama barang — toleran kalau AI menyusun kata kunci dengan
+    // urutan sedikit beda dari urutan field asli, atau ada kata terlewat.
+    const keywords = searchTerm.trim().split(/\s+/).filter(Boolean);
+    const namaCondPerWord = keywords
+      .map(
+        () =>
+          `TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), ' ', IFNULL(a.brg_tipe,''), ' ', IFNULL(a.brg_lengan,''), ' ', IFNULL(a.brg_jeniskain,''), ' ', IFNULL(a.brg_warna,''))) LIKE ?`,
+      )
+      .join(" AND ");
+
     searchCondition = `AND (
-      b.brgd_kode LIKE ? OR 
-      b.brgd_barcode LIKE ? OR 
-      TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), ' ', IFNULL(a.brg_tipe,''), ' ', IFNULL(a.brg_lengan,''), ' ', IFNULL(a.brg_jeniskain,''), ' ', IFNULL(a.brg_warna,''))) LIKE ?
+      (b.brgd_kode LIKE ? OR b.brgd_barcode LIKE ?)
+      OR (${namaCondPerWord})
     )`;
-    const searchPattern = `%${searchTerm.trim()}%`;
-    searchParams = [searchPattern, searchPattern, searchPattern];
+    const exactPattern = `%${searchTerm.trim()}%`;
+    const wordPatterns = keywords.map((k) => `%${k}%`);
+    searchParams = [exactPattern, exactPattern, ...wordPatterns];
   }
 
   let query = "";

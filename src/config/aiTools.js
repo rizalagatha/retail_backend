@@ -210,7 +210,8 @@ const buildTools = (user, cabangOptions) => {
             },
             search: {
               type: "string",
-              description: "Kata kunci nama/kode barang, opsional.",
+              description:
+                "Kata kunci nama barang, opsional. PENTING: nama barang Kaosan selalu tersusun dengan urutan tetap: {JenisKaos} {Tipe} {Lengan} {JenisKain} {Warna} — contoh: 'KO POLOS PENDEK COMBED 30S MARUN'. Susun kata kunci pencarian mengikuti urutan ini (bukan urutan sesuai kalimat user), dan boleh pakai sebagian saja (mis. hanya 'COMBED 30S MARUN') asalkan urutan relatifnya tetap benar.",
             },
           },
           required: [],

@@ -1,7 +1,9 @@
-// Semaphore sederhana — batasi jumlah request yang boleh diproses Ollama
-// bersamaan. Berdasarkan load test: 3 concurrent masih wajar (~35s rata-rata),
-// 5 concurrent sudah jauh memburuk (~70s rata-rata, ada yang sampai 127s).
-const MAX_CONCURRENT = 3;
+// [REVISI] Turunkan ke 1 — 4 vCPU nggak sanggup jalanin beberapa inference
+// LLM beneran paralel tanpa saling rebutan CPU parah (lihat log production:
+// Round 1 sampai 462s gara-gara oversubscription num_thread x concurrency).
+// Serialize total lebih predictable: request nunggu giliran, tapi begitu
+// dapat giliran, prosesnya cepat (~11-15s) karena CPU nggak direbutin.
+const MAX_CONCURRENT = 1;
 
 let activeCount = 0;
 const queue = [];

@@ -31,7 +31,8 @@ Konteks tambahan:
         : " (Store, hanya bisa lihat data cabangnya sendiri)"
     }
 - Jika ada tool yang relevan untuk menjawab pertanyaan, WAJIB gunakan tool tersebut. Jangan menjawab dari ingatan/tebakan.
-- Jika tidak ada tool yang relevan (user cuma menyapa, atau bertanya di luar topik sistem), jawab langsung tanpa memanggil tool.`;
+- Jika tidak ada tool yang relevan (user cuma menyapa, atau bertanya di luar topik sistem), jawab langsung tanpa memanggil tool.
+- Istilah baku produk Kaosan (koreksi typo user ke ejaan ini sebelum memanggil tool pencarian barang): COMBED 24S, COMBED 30S, KATUN AIR, HOODIE FLEECE, JAKET FLEECE, KERAH POLO, KAOS OBLONG (KO), KAOS KERAH (KK).`;
 
     // 3. Riwayat percakapan dari frontend (sudah dibatasi 6 pesan terakhir di sana)
     let conversation = [
