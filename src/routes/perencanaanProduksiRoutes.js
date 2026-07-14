@@ -32,6 +32,12 @@ router.get(
   checkPermission(MENU_ID, "view"),
   perencanaanProduksiController.getDatelineRange,
 );
+router.get(
+  "/spk-beredar-detail",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  perencanaanProduksiController.spkBeredarDetail,
+);
 router.post(
   "/generate-spk-bulk",
   verifyToken,

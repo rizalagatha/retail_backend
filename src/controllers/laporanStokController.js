@@ -58,9 +58,25 @@ const getRealTimeStockExport = async (req, res) => {
   }
 };
 
+const pesananBookedDetail = async (req, res) => {
+  try {
+    const { kode, cabang } = req.query;
+    if (!kode || !cabang) {
+      return res
+        .status(400)
+        .json({ message: "Parameter kode dan cabang wajib diisi." });
+    }
+    const data = await laporanStokService.getPesananBookedDetail(kode, cabang);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getRealTimeStock,
   getGudangOptions,
   getLowStock,
   getRealTimeStockExport,
+  pesananBookedDetail,
 };

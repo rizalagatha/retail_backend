@@ -165,6 +165,12 @@ Konteks tambahan:
     return "Maaf, permintaan ini terlalu kompleks untuk saya proses saat ini. Coba tanya lebih spesifik.";
   } catch (error) {
     console.error("[AI AGENT] Error processing message:", error);
+
+    // [BARU] Deteksi jika error karena kena limit API Groq
+    if (error.message && error.message.toLowerCase().includes("rate limit")) {
+      return "Maaf, batas antrian AI sedang penuh. Silakan tunggu sekitar 15 detik lalu coba tanyakan lagi ya.";
+    }
+
     return "Maaf, sistem AI sedang mengalami gangguan saat mengambil data. Silakan coba lagi nanti.";
   } finally {
     aiQueueService.releaseSlot();

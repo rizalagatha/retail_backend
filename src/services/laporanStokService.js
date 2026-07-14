@@ -5,7 +5,6 @@ const getRealTimeStock = async (filters) => {
   const { gudang, kodeBarang, keyword, jenisStok, tampilkanKosong, tanggal } =
     filters;
   const connection = await pool.getConnection();
-
   try {
     // 1. Tentukan Sumber Tabel
     let stockSourceTable = "";
@@ -26,7 +25,6 @@ const getRealTimeStock = async (filters) => {
     // 2. Siapkan Filter Dasar untuk subquery Size
     let baseParams = [tanggal];
     let gudangFilter = "1 = 1";
-
     if (gudang !== "ALL") {
       gudangFilter = `m.mst_cab = ?`;
       baseParams.push(gudang);
@@ -73,10 +71,98 @@ const getRealTimeStock = async (filters) => {
       dynamicColumns = ", " + dynamicColumns;
     }
 
+    // [BARU] Mode "store spesifik" — cuma aktif kalau gudang bukan ALL/KDC.
+    // Pesanan Ready/Booked cuma bermakna untuk 1 cabang toko tertentu, bukan
+    // agregat lintas cabang (ALL) atau konteks DC (KDC).
+    const isStoreMode = gudang !== "ALL" && gudang !== "KDC";
+
+    let pesananCTESql = "";
+    let pesananSelectSql = "";
+    let pesananJoinSql = "";
+    const pesananParamsPre = [];
+    const pesananParamsSelect = [];
+
+    if (isStoreMode) {
+      // Reuse persis logic penentuan "SO masih OPEN" dari dashboardService.getRealStockList
+      pesananCTESql = `
+        WITH open_so AS (
+          SELECT Nomor
+          FROM (
+            SELECT
+              y.Nomor,
+              CASE
+                WHEN y.sts <> 0 THEN 'DICLOSE'
+                WHEN y.StatusKirim = 'TERKIRIM' THEN 'CLOSE'
+                WHEN y.StatusKirim = 'BELUM' AND y.keluar = 0 AND y.minta = '' AND y.pesan = 0 THEN 'OPEN'
+                ELSE 'PROSES'
+              END AS StatusFinal
+            FROM (
+              SELECT
+                x.*,
+                IF(x.QtyInv = 0, 'BELUM', IF(x.QtyInv >= x.QtySO, 'TERKIRIM', 'SEBAGIAN')) AS StatusKirim,
+                IFNULL((
+                  SELECT SUM(m.mst_stok_out)
+                  FROM tmasterstok m
+                  WHERE m.mst_noreferensi IN (
+                    SELECT o.mo_nomor FROM tmutasiout_hdr o WHERE o.mo_so_nomor = x.Nomor
+                  )
+                ), 0) AS keluar,
+                IFNULL((
+                  SELECT mt_nomor FROM tmintabarang_hdr WHERE mt_so = x.Nomor LIMIT 1
+                ), '') AS minta,
+                IFNULL((
+                  SELECT SUM(mst_stok_in - mst_stok_out)
+                  FROM tmasterstokso
+                  WHERE mst_aktif = 'Y' AND mst_nomor_so = x.Nomor
+                ), 0) AS pesan
+              FROM (
+                SELECT
+                  h.so_nomor AS Nomor,
+                  h.so_close AS sts,
+                  IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
+                  IFNULL((
+                    SELECT SUM(dd.invd_jumlah)
+                    FROM tinv_hdr hh
+                    JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor
+                    WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor
+                  ), 0) AS QtyInv
+                FROM tso_hdr h
+                WHERE h.so_close = 0 AND h.so_aktif = 'Y' AND h.so_cab = ?
+              ) x
+            ) y
+          ) z
+          WHERE z.StatusFinal = 'OPEN'
+        ),
+        pesanan_booked_summary AS (
+          SELECT d.sod_kode AS kode, SUM(d.sod_jumlah - IFNULL(d.sod_scanned, 0)) AS booked
+          FROM open_so os
+          JOIN tso_dtl d ON d.sod_so_nomor = os.Nomor
+          WHERE d.sod_jumlah > IFNULL(d.sod_scanned, 0)
+          GROUP BY d.sod_kode
+        )
+      `;
+      pesananParamsPre.push(gudang);
+
+      pesananSelectSql = `
+        , IFNULL(pb.booked, 0) AS PESANAN_BOOKED
+        , IFNULL((
+            SELECT SUM(mso.mst_stok_in - mso.mst_stok_out)
+            FROM tmasterstokso mso
+            WHERE mso.mst_brg_kode = a.brg_kode AND mso.mst_cab = ? AND mso.mst_aktif = 'Y'
+          ), 0) AS PESANAN_READY
+      `;
+      pesananParamsSelect.push(gudang);
+
+      pesananJoinSql = `LEFT JOIN pesanan_booked_summary pb ON pb.kode = a.brg_kode`;
+    }
+
     // =================================================================================
-    // [PERBAIKAN KUNCI]: Susun Array Parameter Utama sesuai urutan kemunculan '?' di SQL
+    // Susun Array Parameter Utama sesuai urutan kemunculan '?' di SQL
     // =================================================================================
     let mainParams = [];
+
+    // Urutan 0 (BARU): Parameter CTE Pesanan (WITH ... AS, muncul paling awal di teks SQL)
+    mainParams.push(...pesananParamsPre);
 
     // Urutan 1: Parameter untuk Buffer (di dalam SELECT)
     let bufferSubquery = "";
@@ -84,10 +170,13 @@ const getRealTimeStock = async (filters) => {
       bufferSubquery = `IFNULL((SELECT SUM(brgd_mindc) FROM tbarangdc_dtl b WHERE b.brgd_kode = a.brg_kode), 0)`;
     } else if (gudang !== "ALL") {
       bufferSubquery = `IFNULL((SELECT SUM(brgd_min) FROM tbarangdc_dtl2 b2 WHERE b2.brgd_kode = a.brg_kode AND b2.brgd_cab = ?), 0)`;
-      mainParams.push(gudang); // <-- MASUK PALING PERTAMA
+      mainParams.push(gudang);
     } else {
       bufferSubquery = `IFNULL((SELECT SUM(brgd_min) FROM tbarangdc_dtl2 b2 WHERE b2.brgd_kode = a.brg_kode), 0)`;
     }
+
+    // Urutan 1b (BARU): Parameter subquery PESANAN_READY (muncul di SELECT, setelah Buffer)
+    mainParams.push(...pesananParamsSelect);
 
     // Urutan 2: Parameter untuk Tanggal & Gudang (di dalam LEFT JOIN stok)
     mainParams.push(tanggal);
@@ -103,6 +192,7 @@ const getRealTimeStock = async (filters) => {
     const isKDC = gudang === "KDC" ? 1 : 0;
 
     const query = `
+        ${pesananCTESql}
         SELECT
             a.brg_kode AS KODE,
             a.brg_ktgp AS KATEGORI,
@@ -126,6 +216,7 @@ const getRealTimeStock = async (filters) => {
           0)) AS TOTAL2
           
             , ${bufferSubquery} AS Buffer
+            ${pesananSelectSql}
         FROM tbarangdc a
         LEFT JOIN (
             SELECT 
@@ -136,12 +227,12 @@ const getRealTimeStock = async (filters) => {
             WHERE m.mst_aktif = 'Y' AND m.mst_tanggal <= ? AND ${gudangFilter}
             GROUP BY m.mst_brg_kode, m.mst_ukuran
         ) s ON a.brg_kode = s.mst_brg_kode
+        ${pesananJoinSql}
         WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y' ${kodeBarangFilter} ${searchFilter}
         GROUP BY a.brg_kode, a.brg_ktgp, NAMA
         ${havingClause}
         ORDER BY NAMA;
     `;
-
     const [rows] = await connection.query(query, mainParams);
     return rows;
   } finally {
@@ -249,6 +340,87 @@ const getRealTimeStockExport = async (filters) => {
   try {
     const isShowZero = String(tampilkanKosong) === "true";
 
+    // [BARU] Sama seperti getRealTimeStock — reuse logic Pesanan Ready/Booked
+    const isStoreMode = gudang !== "ALL" && gudang !== "KDC";
+    let pesananCTESql = "";
+    let pesananSelectSql = "";
+    let pesananJoinSql = "";
+    const pesananParamsPre = [];
+    const pesananParamsSelect = [];
+
+    if (isStoreMode) {
+      pesananCTESql = `
+        WITH open_so AS (
+          SELECT Nomor
+          FROM (
+            SELECT
+              y.Nomor,
+              CASE
+                WHEN y.sts <> 0 THEN 'DICLOSE'
+                WHEN y.StatusKirim = 'TERKIRIM' THEN 'CLOSE'
+                WHEN y.StatusKirim = 'BELUM' AND y.keluar = 0 AND y.minta = '' AND y.pesan = 0 THEN 'OPEN'
+                ELSE 'PROSES'
+              END AS StatusFinal
+            FROM (
+              SELECT
+                x.*,
+                IF(x.QtyInv = 0, 'BELUM', IF(x.QtyInv >= x.QtySO, 'TERKIRIM', 'SEBAGIAN')) AS StatusKirim,
+                IFNULL((
+                  SELECT SUM(m.mst_stok_out)
+                  FROM tmasterstok m
+                  WHERE m.mst_noreferensi IN (
+                    SELECT o.mo_nomor FROM tmutasiout_hdr o WHERE o.mo_so_nomor = x.Nomor
+                  )
+                ), 0) AS keluar,
+                IFNULL((
+                  SELECT mt_nomor FROM tmintabarang_hdr WHERE mt_so = x.Nomor LIMIT 1
+                ), '') AS minta,
+                IFNULL((
+                  SELECT SUM(mst_stok_in - mst_stok_out)
+                  FROM tmasterstokso
+                  WHERE mst_aktif = 'Y' AND mst_nomor_so = x.Nomor
+                ), 0) AS pesan
+              FROM (
+                SELECT
+                  h.so_nomor AS Nomor,
+                  h.so_close AS sts,
+                  IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
+                  IFNULL((
+                    SELECT SUM(dd.invd_jumlah)
+                    FROM tinv_hdr hh
+                    JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor
+                    WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor
+                  ), 0) AS QtyInv
+                FROM tso_hdr h
+                WHERE h.so_close = 0 AND h.so_aktif = 'Y' AND h.so_cab = ?
+              ) x
+            ) y
+          ) z
+          WHERE z.StatusFinal = 'OPEN'
+        ),
+        pesanan_booked_summary AS (
+          SELECT d.sod_kode AS kode, SUM(d.sod_jumlah - IFNULL(d.sod_scanned, 0)) AS booked
+          FROM open_so os
+          JOIN tso_dtl d ON d.sod_so_nomor = os.Nomor
+          WHERE d.sod_jumlah > IFNULL(d.sod_scanned, 0)
+          GROUP BY d.sod_kode
+        )
+      `;
+      pesananParamsPre.push(gudang);
+
+      pesananSelectSql = `
+        , IFNULL(pb.booked, 0) AS PESANAN_BOOKED
+        , IFNULL((
+            SELECT SUM(mso.mst_stok_in - mso.mst_stok_out)
+            FROM tmasterstokso mso
+            WHERE mso.mst_brg_kode = a.brg_kode AND mso.mst_cab = ? AND mso.mst_aktif = 'Y'
+          ), 0) AS PESANAN_READY
+      `;
+      pesananParamsSelect.push(gudang);
+
+      pesananJoinSql = `LEFT JOIN pesanan_booked_summary pb ON pb.kode = a.brg_kode`;
+    }
+
     let stockSourceTable = "";
     if (jenisStok === "showroom") {
       stockSourceTable = "tmasterstok";
@@ -282,6 +454,9 @@ const getRealTimeStockExport = async (filters) => {
     // =================================================================================
     let exportParams = [];
 
+    // Urutan 0 (BARU): Parameter CTE Pesanan
+    exportParams.push(...pesananParamsPre);
+
     // Urutan 1: Parameter SELECT (Buffer Min & Max)
     let bufferMinSubquery = "";
     let bufferMaxSubquery = "";
@@ -298,6 +473,9 @@ const getRealTimeStockExport = async (filters) => {
       bufferMaxSubquery = `IFNULL((SELECT SUM(b2.brgd_max) FROM tbarangdc_dtl2 b2 WHERE b2.brgd_kode = b.brgd_kode AND b2.brgd_ukuran = b.brgd_ukuran), 0)`;
     }
 
+    // Urutan 1b (BARU): Parameter subquery PESANAN_READY
+    exportParams.push(...pesananParamsSelect);
+
     // Urutan 2: Parameter LEFT JOIN (Tanggal & Gudang)
     exportParams.push(tanggal);
     if (gudang !== "ALL") {
@@ -312,6 +490,7 @@ const getRealTimeStockExport = async (filters) => {
     }
 
     const query = `
+        ${pesananCTESql}
         SELECT
             a.brg_kode AS KODE,
             a.brg_ktgp AS KATEGORI,
@@ -340,6 +519,7 @@ const getRealTimeStockExport = async (filters) => {
         
             ${bufferMinSubquery} AS BUFFER_MIN,
             ${bufferMaxSubquery} AS BUFFER_MAX
+            ${pesananSelectSql}
             
         FROM tbarangdc a
         JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
@@ -352,6 +532,7 @@ const getRealTimeStockExport = async (filters) => {
             WHERE m.mst_aktif = 'Y' AND m.mst_tanggal <= ? AND ${gudangFilter}
             GROUP BY m.mst_brg_kode, m.mst_ukuran
         ) s ON b.brgd_kode = s.mst_brg_kode AND b.brgd_ukuran = s.mst_ukuran
+        ${pesananJoinSql}
         WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y' ${kodeBarangFilter} ${searchFilter}
         
         ${!isShowZero ? "HAVING TOTAL <> 0" : ""}
@@ -366,9 +547,83 @@ const getRealTimeStockExport = async (filters) => {
   }
 };
 
+const getPesananBookedDetail = async (kode, cabang) => {
+  const connection = await pool.getConnection();
+  try {
+    const query = `
+      WITH open_so AS (
+        SELECT Nomor
+        FROM (
+          SELECT
+            y.Nomor,
+            CASE
+              WHEN y.sts <> 0 THEN 'DICLOSE'
+              WHEN y.StatusKirim = 'TERKIRIM' THEN 'CLOSE'
+              WHEN y.StatusKirim = 'BELUM' AND y.keluar = 0 AND y.minta = '' AND y.pesan = 0 THEN 'OPEN'
+              ELSE 'PROSES'
+            END AS StatusFinal
+          FROM (
+            SELECT
+              x.*,
+              IF(x.QtyInv = 0, 'BELUM', IF(x.QtyInv >= x.QtySO, 'TERKIRIM', 'SEBAGIAN')) AS StatusKirim,
+              IFNULL((
+                SELECT SUM(m.mst_stok_out)
+                FROM tmasterstok m
+                WHERE m.mst_noreferensi IN (
+                  SELECT o.mo_nomor FROM tmutasiout_hdr o WHERE o.mo_so_nomor = x.Nomor
+                )
+              ), 0) AS keluar,
+              IFNULL((
+                SELECT mt_nomor FROM tmintabarang_hdr WHERE mt_so = x.Nomor LIMIT 1
+              ), '') AS minta,
+              IFNULL((
+                SELECT SUM(mst_stok_in - mst_stok_out)
+                FROM tmasterstokso
+                WHERE mst_aktif = 'Y' AND mst_nomor_so = x.Nomor
+              ), 0) AS pesan
+            FROM (
+              SELECT
+                h.so_nomor AS Nomor,
+                h.so_close AS sts,
+                IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
+                IFNULL((
+                  SELECT SUM(dd.invd_jumlah)
+                  FROM tinv_hdr hh
+                  JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor
+                  WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor
+                ), 0) AS QtyInv
+              FROM tso_hdr h
+              WHERE h.so_close = 0 AND h.so_aktif = 'Y' AND h.so_cab = ?
+            ) x
+          ) y
+        ) z
+        WHERE z.StatusFinal = 'OPEN'
+      )
+      SELECT
+        h.so_nomor AS soNomor,
+        h.so_tanggal AS tanggal,
+        IFNULL(c.cus_nama, '-') AS customer,
+        d.sod_ukuran AS ukuran,
+        (d.sod_jumlah - IFNULL(d.sod_scanned, 0)) AS qty
+      FROM open_so os
+      JOIN tso_hdr h ON h.so_nomor = os.Nomor
+      JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor
+      LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
+      WHERE d.sod_kode = ?
+        AND d.sod_jumlah > IFNULL(d.sod_scanned, 0)
+      ORDER BY h.so_tanggal DESC;
+    `;
+    const [rows] = await connection.query(query, [cabang, kode]);
+    return rows;
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   getRealTimeStock,
   getGudangOptions,
   getLowStock,
   getRealTimeStockExport,
+  getPesananBookedDetail,
 };

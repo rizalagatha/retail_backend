@@ -87,10 +87,29 @@ const getDatelineRange = async (req, res) => {
   }
 };
 
+const spkBeredarDetail = async (req, res) => {
+  try {
+    const { kode, ukuran } = req.query;
+    if (!kode || !ukuran) {
+      return res
+        .status(400)
+        .json({ message: "Parameter kode dan ukuran wajib diisi." });
+    }
+    const data = await perencanaanProduksiService.getSpkBeredarDetail(
+      kode,
+      ukuran,
+    );
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getPriorityList,
   getStoreDetails,
   generateBulkSpk,
   getKepentinganOptions,
   getDatelineRange,
+  spkBeredarDetail,
 };

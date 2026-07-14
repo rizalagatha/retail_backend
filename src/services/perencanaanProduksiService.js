@@ -636,7 +636,7 @@ const generateBulkSpk = async (items, user) => {
            spk_perush_kode, spk_ketbeli, spk_keterangan,
            spk_aktif, spk_close,
            user_create, date_create
-         ) VALUES (?, 1, NULL, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, 'Y', 0, ?, NOW())`,
+         ) VALUES (?, 1, NULL, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Y', 0, ?, NOW())`,
         [
           spkNomor,
           today,
@@ -653,6 +653,7 @@ const generateBulkSpk = async (items, user) => {
           dateline,
           CAB_KODE_DC,
           CAB_KODE_DC,
+          "Premium", // [FIX] spk_tipe — sebelumnya literal '' kosong, tidak pernah terisi
           kepentingan,
           "KENCANA", // spk_standar_ukuran
           varianUkuran, // spk_varian_ukuran
@@ -753,10 +754,39 @@ const generateBulkSpk = async (items, user) => {
   }
 };
 
+// --- Detail SPK Beredar per kode+ukuran (untuk dialog "klik SPK Beredar") ---
+const getSpkBeredarDetail = async (kode, ukuran) => {
+  const [rows] = await pool.query(
+    `SELECT 
+        spk.spk_nomor AS spkNomor,
+        spk.spk_tanggal AS tanggal,
+        spk.spk_dateline AS dateline,
+        spk.spk_statuskerja AS kepentingan,
+        spkd.spkd_qtyorder AS qty
+     FROM kencanaprint.tspk_dc spkd
+     JOIN kencanaprint.tspk spk ON spk.spk_nomor = spkd.spkd_nomor
+     WHERE spkd.spkd_kode = ?
+       AND spkd.spkd_ukuran = ?
+       AND spk.spk_aktif = 'Y'
+       AND spk.spk_close = 0
+       AND YEAR(spk.spk_tanggal) >= 2026
+       -- Belum masuk STBJ sama sekali (persis filter di getPriorityData)
+       AND NOT EXISTS (
+           SELECT 1 FROM kencanaprint.tstbj_dtl stb
+           WHERE stb.stbjd_spk_nomor = spkd.spkd_nomor
+             AND stb.stbjd_size = spkd.spkd_ukuran
+       )
+     ORDER BY spk.spk_tanggal DESC`,
+    [kode, ukuran],
+  );
+  return rows;
+};
+
 module.exports = {
   getPriorityData,
   getStoreDetails,
   generateBulkSpk,
   getKepentinganOptions,
   getDatelineRange,
+  getSpkBeredarDetail,
 };
