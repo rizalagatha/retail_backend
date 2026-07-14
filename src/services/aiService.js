@@ -20,7 +20,7 @@ const sendChat = async (messages, options = {}) => {
       options: {
         temperature: options.temperature ?? 0.2,
         num_thread: 3,
-        num_ctx: 4096,
+        num_ctx: 6144,
       },
     };
 
