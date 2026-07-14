@@ -53,12 +53,38 @@ const processMessage = async (incomingMessages, user) => {
     }
 
     // 1. Ambil daftar cabang dari DB (bukan hardcode) untuk enum parameter tool
-    const cabangOptions = await dashboardService.getCabangOptions(user);
-    const { tools, executors } = buildTools(
-      user,
-      cabangOptions,
-      lastUserMsg?.content || "",
-    );
+    const cabangOptionsRaw = await dashboardService.getCabangOptions(user);
+
+    // [BARU] Channel penjualan tambahan (bukan toko fisik K01-K12) — cuma
+    // relevan untuk konteks AI (laporan piutang/penjualan lintas channel),
+    // sengaja tidak disuntik ke getCabangOptions supaya tidak mengubah
+    // dropdown/filter di fitur lain yang belum tentu mau nampilkan ini.
+    const EXTRA_CABANG_AI = [
+      { kode: "KPR", nama: "PRIORITAS" },
+      { kode: "KON", nama: "KAOSAN ONLINE" },
+    ];
+    const existingKodes = new Set(cabangOptionsRaw.map((c) => c.kode));
+    const cabangOptions = [
+      ...cabangOptionsRaw,
+      ...EXTRA_CABANG_AI.filter((c) => !existingKodes.has(c.kode)),
+    ];
+
+    // [FIX] Cari sinyal cabang dari SELURUH histori user (bukan cuma pesan
+    // terakhir) — supaya follow-up seperti "selain 10 itu ada lagi?" tetap
+    // "ingat" cabang yang disebut di pertanyaan sebelumnya dalam sesi ini.
+    const allUserText = incomingMessages
+      .filter((m) => m.role === "user")
+      .map((m) => m.content)
+      .join(" ");
+
+    const { tools, executors } = buildTools(user, cabangOptions, allUserText);
+
+    // [BARU] Legend cabang disebut SEKALI di system prompt — sebelumnya
+    // daftar 12 cabang ini di-copy ke deskripsi parameter di 5 tool
+    // berbeda, boros token per request (relevan untuk kuota Groq 6000 tok/menit).
+    const cabangLegend = cabangOptions
+      .map((c) => `${c.kode}=${c.nama}`)
+      .join(", ");
 
     // 2. Bangun system prompt dinamis: tanggal hari ini + konteks user yang login
     const todayStr = format(new Date(), "yyyy-MM-dd (EEEE)");
@@ -71,9 +97,13 @@ Konteks tambahan:
         ? " (Kantor Pusat, bisa lihat semua cabang)"
         : " (Store, hanya bisa lihat data cabangnya sendiri)"
     }
-- Jika ada tool yang relevan untuk menjawab pertanyaan, WAJIB gunakan tool tersebut. Jangan menjawab dari ingatan/tebakan.
+- Daftar kode cabang: ${cabangLegend}
 - Jika tidak ada tool yang relevan (user cuma menyapa, atau bertanya di luar topik sistem), jawab langsung tanpa memanggil tool.
-- Istilah baku produk Kaosan (koreksi typo user ke ejaan ini sebelum memanggil tool pencarian barang): COMBED 24S, COMBED 30S, KATUN AIR, HOODIE FLEECE, JAKET FLEECE, KERAH POLO, KAOS OBLONG (KO), KAOS KERAH (KK).`;
+- WAJIB hanya memanggil parameter yang benar-benar terdaftar di skema tool. JANGAN pernah menambah parameter yang tidak ada di skema (contoh: jangan kirim "search" ke tool yang skemanya tidak punya parameter search).
+- Jika tidak ada tool yang relevan (user cuma menyapa, atau bertanya di luar topik sistem), jawab langsung tanpa memanggil tool.
+- PENTING soal parameter cabang: baris "User yang bertanya: cabang ${user.cabang}" di atas HANYA informasi siapa yang login — JANGAN pernah pakai nilai itu sebagai filter cabang kecuali user secara eksplisit memintanya. Pertanyaan tanpa sebutan cabang (mis. "customer piutang terbanyak?", "penjualan hari ini?") artinya mencakup SEMUA cabang, kosongkan parameter cabang di tool.
+- Istilah baku produk Kaosan (koreksi typo user ke ejaan ini sebelum memanggil tool pencarian barang): COMBED 24S, COMBED 30S, KATUN AIR, HOODIE FLEECE, JAKET FLEECE, KERAH POLO, KAOS OBLONG (KO), KAOS KERAH (KK).
+- Jika user minta BANDINGKAN 2 periode/bulan berbeda, panggil tool yang sama DUA KALI dalam satu balasan (satu per periode), masing-masing dengan period='custom' + startDate/endDate yang sesuai bulan itu.`;
 
     // 3. Riwayat percakapan dari frontend (sudah dibatasi 6 pesan terakhir di sana)
     let conversation = [
@@ -84,10 +114,14 @@ Konteks tambahan:
     // 4. Loop tool-calling
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const t0 = Date.now();
+      const isLastRound = round === MAX_TOOL_ROUNDS - 1;
       console.log(`[AI] Round ${round + 1}/${MAX_TOOL_ROUNDS}...`);
       const assistantMessage = await aiService.sendChat(conversation, {
         temperature: 0.2,
-        tools,
+        // [BARU] Round terakhir: JANGAN kirim tools lagi — paksa model
+        // kasih jawaban teks final (hemat token skema, dan cegah loop
+        // "mau manggil tool lagi" yang berakhir di fallback kompleks).
+        tools: isLastRound ? [] : tools,
       });
       console.log(
         `[AI] Round ${round + 1} selesai dalam ${((Date.now() - t0) / 1000).toFixed(1)}s. Tool calls:`,
@@ -139,6 +173,8 @@ Konteks tambahan:
 
         conversation.push({
           role: "tool",
+          tool_call_id: call.id, // [FIX WAJIB] Groq (beda dari Ollama) mewajibkan ini,
+          // kalau tidak ada, SEMUA request yang butuh Round 2 pasti gagal.
           name: fnName,
           content: JSON.stringify(resultContent),
         });
@@ -165,12 +201,11 @@ Konteks tambahan:
     return "Maaf, permintaan ini terlalu kompleks untuk saya proses saat ini. Coba tanya lebih spesifik.";
   } catch (error) {
     console.error("[AI AGENT] Error processing message:", error);
-
-    // [BARU] Deteksi jika error karena kena limit API Groq
-    if (error.message && error.message.toLowerCase().includes("rate limit")) {
-      return "Maaf, batas antrian AI sedang penuh. Silakan tunggu sekitar 15 detik lalu coba tanyakan lagi ya.";
+    // [BARU] Pakai flag isRateLimit (lebih pasti) — sekalian tampilkan
+    // detik tunggu asli dari Groq kalau tersedia, bukan angka tebakan.
+    if (error.isRateLimit) {
+      return error.message.replace("RATE_LIMIT: ", "");
     }
-
     return "Maaf, sistem AI sedang mengalami gangguan saat mengambil data. Silakan coba lagi nanti.";
   } finally {
     aiQueueService.releaseSlot();

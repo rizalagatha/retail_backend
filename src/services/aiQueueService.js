@@ -1,9 +1,9 @@
-// [REVISI] Turunkan ke 1 — 4 vCPU nggak sanggup jalanin beberapa inference
-// LLM beneran paralel tanpa saling rebutan CPU parah (lihat log production:
-// Round 1 sampai 462s gara-gara oversubscription num_thread x concurrency).
-// Serialize total lebih predictable: request nunggu giliran, tapi begitu
-// dapat giliran, prosesnya cepat (~11-15s) karena CPU nggak direbutin.
-const MAX_CONCURRENT = 1;
+// [REVISI] Groq API cepat (<1s) dan bukan CPU lokal kita — nggak perlu lagi
+// diserialize ketat kayak jaman Ollama CPU-only. Naikkan supaya beberapa
+// kasir/toko bisa nanya bersamaan tanpa antri lama. Tetap dibatasi (bukan
+// unlimited) supaya nggak bikin burst token besar sekaligus ke kuota
+// per-menit Groq — sesuaikan lagi kalau ternyata masih sering kena 429.
+const MAX_CONCURRENT = 4;
 
 let activeCount = 0;
 const queue = [];

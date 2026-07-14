@@ -10,18 +10,25 @@ const {
   subMonths,
 } = require("date-fns");
 
-// Tool yang aktif dulu (mode hemat, karena Ollama jalan CPU-only).
-// Nambah/kurangi tinggal edit array ini — semua definisi tool tetap ada di bawah,
-// cuma yang namanya ada di sini yang benar-benar dikirim ke model.
 const ENABLED_TOOLS = [
   "get_today_sales",
+  "get_sales_chart",
   "get_top_selling_products",
+  "get_total_stock",
+  "get_stock_breakdown_per_branch",
   "get_stok_kosong",
   "get_stok_kosong_fast_moving",
+  "get_real_stock",
   "get_piutang_total",
+  "get_piutang_per_cabang",
+  "get_piutang_customer_summary",
   "get_sales_target",
   "get_branch_performance",
-  "get_sales_chart",
+  "get_stagnant_stock_value",
+  "get_dead_stock_summary",
+  "get_cashflow_summary",
+  "get_shipment_schedules",
+  "get_agenda_dateline",
 ];
 
 // --- Resolusi rentang tanggal relatif -> tanggal aktual ---
@@ -99,10 +106,21 @@ const resolveCabangFromText = (rawText, cabangOptions) => {
   if (aliasHit) return aliasHit;
 
   const textUp = rawText.toUpperCase();
-  const matches = cabangOptions.filter(
+
+  // [FIX] Cek KODE cabang eksplisit dulu ("cabang K03") — sebelumnya cuma
+  // dicek by nama ("MENCO"), jadi "K03" nggak pernah ke-match sendiri dan
+  // model harus nebak dari 12 pilihan enum tanpa bantuan override.
+  const kodeMatches = cabangOptions.filter((c) => {
+    if (!c.kode) return false;
+    const re = new RegExp(`\\b${c.kode.toUpperCase()}\\b`);
+    return re.test(textUp);
+  });
+  if (kodeMatches.length === 1) return kodeMatches[0].kode;
+
+  const namaMatches = cabangOptions.filter(
     (c) => c.nama && c.nama.length > 2 && textUp.includes(c.nama.toUpperCase()),
   );
-  return matches.length === 1 ? matches[0].kode : null;
+  return namaMatches.length === 1 ? namaMatches[0].kode : null;
 };
 
 // [BARU] Alias manual untuk nama kota/panggilan umum yang TIDAK bisa
@@ -123,13 +141,191 @@ const resolveCabangAlias = (rawText) => {
   return found ? CABANG_ALIAS[found] : null;
 };
 
+// [BARU] Deteksi nama bulan Indonesia dari kalimat asli, secara deterministik
+// — model kecil nggak reliable itung tanggal sendiri, dan skema PERIOD_ENUM
+// yang ada cuma kata kunci relatif (this_month dst), tidak ada opsi
+// "bulan spesifik". Kalau ketemu, override total period/startDate/endDate
+// yang dikirim model, apapun yang dia pilih.
+const BULAN_NAMA = [
+  "januari",
+  "februari",
+  "maret",
+  "april",
+  "mei",
+  "juni",
+  "juli",
+  "agustus",
+  "september",
+  "oktober",
+  "november",
+  "desember",
+];
+
+const resolveMonthOverride = (rawText) => {
+  if (!rawText) return null;
+  const textLower = rawText.toLowerCase();
+
+  // [FIX] Kalau user sebut LEBIH DARI 1 bulan berbeda (pertanyaan
+  // perbandingan), JANGAN paksa override — biarkan model isi period='custom'
+  // sendiri per tool call, supaya masing-masing panggilan bisa dapat bulan
+  // yang berbeda. Override cuma aman dipakai kalau cuma 1 bulan disebut.
+  const distinctMonthsFound = BULAN_NAMA.filter((nama) =>
+    textLower.includes(nama),
+  );
+  if (distinctMonthsFound.length > 1) return null;
+
+  for (let i = 0; i < BULAN_NAMA.length; i++) {
+    const nama = BULAN_NAMA[i];
+    const idx = textLower.indexOf(nama);
+    if (idx === -1) continue;
+
+    // Cari tahun 4 digit di dekat kata bulan (opsional, mis. "januari 2025")
+    const nearText = textLower.slice(idx, idx + nama.length + 10);
+    const yearMatch = nearText.match(/\d{4}/);
+    const now = new Date();
+    let year = yearMatch ? parseInt(yearMatch[0], 10) : now.getFullYear();
+
+    // Tanpa tahun eksplisit: kalau bulan itu belum terjadi tahun ini,
+    // asumsikan maksudnya tahun lalu (bulan terdekat yang sudah lewat).
+    if (!yearMatch && i > now.getMonth()) {
+      year -= 1;
+    }
+
+    const start = new Date(year, i, 1);
+    const end = new Date(year, i + 1, 0);
+    const fmt = (d) => format(d, "yyyy-MM-dd");
+    const namaKapital = nama.charAt(0).toUpperCase() + nama.slice(1);
+
+    return {
+      startDate: fmt(start),
+      endDate: fmt(end),
+      label: `${namaKapital} ${year}`,
+    };
+  }
+  return null;
+};
+
+// [BARU] Pemetaan kata kunci -> tool relevan. Dipakai buat NARROWING skema
+// tool yang dikirim ke Groq (bukan pengganti tool-calling) — soalnya kirim
+// 16 skema tool sekaligus tiap request itu SENDIRIAN udah kelebihan kuota
+// 6000 token/menit di free tier (1 request bisa >6600 token). Model tetap
+// yang mutusin argumen & eksekusi tool dari daftar yang sudah dipersempit ini.
+const TOOL_KEYWORDS = {
+  get_today_sales: [
+    "penjualan hari ini",
+    "omset hari ini",
+    "omzet hari ini",
+    "jual hari ini",
+  ],
+  get_sales_chart: [
+    "penjualan",
+    "omset",
+    "omzet",
+    "kemarin",
+    "minggu lalu",
+    "minggu ini",
+    "bulan lalu",
+    "bulan ini",
+    "grafik",
+    "trend",
+  ],
+  get_top_selling_products: [
+    "laris",
+    "terlaris",
+    "top produk",
+    "top barang",
+    "best seller",
+    "paling laku",
+  ],
+  get_total_stock: ["total stok", "stok total", "berapa stok semua"],
+  get_stock_breakdown_per_branch: [
+    "stok per cabang",
+    "stok tiap cabang",
+    "stok semua cabang",
+    "stok masing",
+  ],
+  get_stok_kosong: ["stok kosong", "kosong", "habis"],
+  get_stok_kosong_fast_moving: ["fast moving"],
+  get_real_stock: [
+    "stok real",
+    "stok riil",
+    "berapa stok",
+    "sisa stok",
+    "stok barang",
+    "stok combed",
+  ],
+  get_piutang_total: ["piutang", "tagihan", "nunggak", "utang"],
+  get_piutang_per_cabang: [
+    "piutang cabang",
+    "piutang per cabang",
+    "piutang tiap cabang",
+  ],
+  get_piutang_customer_summary: [
+    "piutang customer",
+    "customer piutang",
+    "siapa yang",
+    "pelanggan piutang",
+    "terbanyak",
+  ],
+  get_sales_target: ["target"],
+  get_branch_performance: [
+    "performa",
+    "ranking cabang",
+    "peringkat cabang",
+    "cabang terbaik",
+    "cabang terbagus",
+  ],
+  get_stagnant_stock_value: ["stagnan"],
+  get_dead_stock_summary: ["dead stock", "mati", "tidak bergerak"],
+  get_cashflow_summary: ["laba", "rugi", "cashflow", "kas"],
+  get_shipment_schedules: [
+    "kirim",
+    "pengiriman",
+    "jadwal kirim",
+    "surat jalan",
+  ],
+  get_agenda_dateline: ["deadline", "dateline", "jatuh tempo"],
+};
+
+// Kalau tidak ada keyword yang cocok sama sekali, jatuh ke set default ini
+// (topik paling sering ditanyakan) — daripada kirim semua 16 tool.
+const DEFAULT_FALLBACK_TOOLS = [
+  "get_today_sales",
+  "get_stok_kosong",
+  "get_real_stock",
+  "get_piutang_total",
+  "get_top_selling_products",
+];
+
+const MAX_TOOLS_PER_REQUEST = 6;
+
+const selectRelevantTools = (rawText, availableNames) => {
+  const textLower = (rawText || "").toLowerCase();
+  const matched = availableNames.filter((name) => {
+    const keywords = TOOL_KEYWORDS[name] || [];
+    return keywords.some((kw) => textLower.includes(kw));
+  });
+
+  let selected =
+    matched.length > 0
+      ? matched
+      : DEFAULT_FALLBACK_TOOLS.filter((n) => availableNames.includes(n));
+
+  if (selected.length === 0) selected = availableNames; // last resort
+
+  return selected.slice(0, MAX_TOOLS_PER_REQUEST);
+};
+
 // --- Bangun daftar tool + eksekutornya, disesuaikan konteks user yang bertanya ---
 const buildTools = (user, cabangOptions, rawQuestion = "") => {
   const cabangOverride = resolveCabangFromText(rawQuestion, cabangOptions);
+  const monthOverride = resolveMonthOverride(rawQuestion);
   const cabangEnum = cabangOptions.map((c) => c.kode);
-  const cabangDesc = `Kode cabang. Pilihan: ${cabangOptions
-    .map((c) => `${c.kode} (${c.nama})`)
-    .join(", ")}. Kosongkan jika user tidak sebut cabang tertentu.`;
+  // [SINGKAT] Daftar kode+nama cabang sudah ada di system prompt (1x),
+  // jadi di sini cukup instruksi singkat — hemat token krusial karena
+  // deskripsi ini di-reuse di banyak tool tiap request.
+  const cabangDesc =
+    "Kode cabang. WAJIB dikosongkan kecuali user secara EKSPLISIT menyebut nama/kode cabang tertentu di kalimatnya. JANGAN diisi otomatis dengan cabang milik user yang sedang login — pertanyaan umum tanpa sebutan cabang berarti mencakup SEMUA cabang, bukan cabang user sendiri.";
 
   const tools = [
     {
@@ -193,7 +389,7 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
       function: {
         name: "get_top_selling_products",
         description:
-          "Ambil daftar barang paling laris (terjual terbanyak). Default bulan ini, bisa juga rentang tanggal custom.",
+          "Ambil daftar barang paling laris (terjual terbanyak). Default bulan ini, bisa juga rentang tanggal custom. Default menampilkan 10 barang teratas, sesuaikan parameter limit kalau user minta jumlah spesifik (mis. 'top 5', 'top 20').",
         parameters: {
           type: "object",
           properties: {
@@ -214,6 +410,11 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
             endDate: {
               type: "string",
               description: "Wajib jika period='custom'.",
+            },
+            limit: {
+              type: "number",
+              description:
+                "Jumlah barang yang ditampilkan. Default 10 kalau tidak disebut user. Maksimal 30.",
             },
           },
           required: ["period"],
@@ -286,6 +487,30 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
     {
       type: "function",
       function: {
+        name: "get_real_stock",
+        description:
+          "Cek stok REAL (jumlah pcs saat ini) untuk barang tertentu, boleh difilter cabang. Gunakan ini untuk pertanyaan seperti 'stok combed 24s hitam di boyolali berapa', 'berapa stok barang X'. Kata kunci pencarian barang WAJIB diisi.",
+        parameters: {
+          type: "object",
+          properties: {
+            search: {
+              type: "string",
+              description:
+                "Kata kunci nama barang, WAJIB diisi. Nama barang Kaosan tersusun tetap: {JenisKaos} {Tipe} {Lengan} {JenisKain} {Warna} — contoh: 'KO POLOS PENDEK COMBED 24S HITAM'. Susun kata kunci mengikuti urutan ini.",
+            },
+            cabang: {
+              type: "string",
+              enum: [...cabangEnum, "ALL"],
+              description: cabangDesc,
+            },
+          },
+          required: ["search"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "get_piutang_total",
         description:
           "Ambil total sisa piutang (tagihan belum lunas) untuk cabang user yang login, atau total semua cabang jika KDC.",
@@ -297,8 +522,42 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
       function: {
         name: "get_piutang_per_cabang",
         description:
-          "Ambil rincian sisa piutang per cabang. Hanya mengembalikan data untuk user Pusat (KDC).",
-        parameters: { type: "object", properties: {}, required: [] },
+          "Ambil rincian sisa piutang per cabang/channel. Bisa difilter ke 1 cabang/channel spesifik (mis. 'PRIORITAS', 'KAOSAN ONLINE', atau kode toko). Hanya mengembalikan data untuk user Pusat (KDC).",
+        parameters: {
+          type: "object",
+          properties: {
+            cabang: {
+              type: "string",
+              enum: [...cabangEnum, "ALL"],
+              description: cabangDesc,
+            },
+          },
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_piutang_customer_summary",
+        description:
+          "Ambil ringkasan piutang per CUSTOMER (bukan per cabang) — diagregasi dari semua invoice yang masih punya sisa piutang, diurutkan dari yang piutangnya terbesar. Cocok untuk pertanyaan seperti 'customer dengan piutang terbanyak' atau 'siapa yang paling banyak nunggak'.",
+        parameters: {
+          type: "object",
+          properties: {
+            cabang: {
+              type: "string",
+              enum: [...cabangEnum, "ALL"],
+              description: cabangDesc,
+            },
+            limit: {
+              type: "number",
+              description:
+                "Jumlah customer ditampilkan. Default 10, maksimal 30.",
+            },
+          },
+          required: [],
+        },
       },
     },
     {
@@ -315,8 +574,26 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
       function: {
         name: "get_branch_performance",
         description:
-          "Ambil ranking performa (omset, target, pencapaian %) semua cabang bulan ini. Hanya mengembalikan data untuk user Pusat (KDC).",
-        parameters: { type: "object", properties: {}, required: [] },
+          "Ambil ranking performa (omset, target, pencapaian %) semua cabang untuk periode tertentu. Default bulan berjalan. Bisa juga periode lain (mis. 'minggu lalu') — untuk periode bukan bulan penuh, ranking OMSET tetap akurat, tapi persentase pencapaian memakai target bulanan (bukan diprorata). Hanya untuk user Pusat (KDC).",
+        parameters: {
+          type: "object",
+          properties: {
+            period: {
+              type: "string",
+              enum: PERIOD_ENUM,
+              description: `${PERIOD_DESC} Default 'this_month'.`,
+            },
+            startDate: {
+              type: "string",
+              description: "Wajib jika period='custom'.",
+            },
+            endDate: {
+              type: "string",
+              description: "Wajib jika period='custom'.",
+            },
+          },
+          required: [],
+        },
       },
     },
     {
@@ -397,25 +674,47 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
     get_sales_chart: async (args) => {
       const cabang = cabangOverride || args.cabang;
       const { period, startDate, endDate, groupBy = "day" } = args;
-      const range = resolveDateRange(period, startDate, endDate);
+
+      let range;
+      if (monthOverride) {
+        range = {
+          startDate: monthOverride.startDate,
+          endDate: monthOverride.endDate,
+        };
+        args.monthLabel = monthOverride.label;
+      } else {
+        range = resolveDateRange(period, startDate, endDate);
+      }
+
       const filters = { ...range, cabang: cabang || "ALL", groupBy };
       return dashboardService.getSalesChartData(filters, user);
     },
 
     get_top_selling_products: async (args) => {
       const cabang = cabangOverride || args.cabang;
-      const { period, startDate, endDate } = args;
+      const { period, startDate, endDate, limit } = args;
       const branchFilter = cabang && cabang !== "ALL" ? cabang : "";
-      const dateRange =
-        period && period !== "this_month"
-          ? resolveDateRange(period, startDate, endDate)
-          : null;
+
+      let dateRange = null;
+      if (monthOverride) {
+        // [FIX] Nama bulan disebut eksplisit — menang mutlak, apapun period
+        // yang dipilih model.
+        dateRange = {
+          startDate: monthOverride.startDate,
+          endDate: monthOverride.endDate,
+        };
+        args.monthLabel = monthOverride.label; // dipakai formatter buat label jawaban
+      } else if (period && period !== "this_month") {
+        dateRange = resolveDateRange(period, startDate, endDate);
+      }
+
       const data = await dashboardService.getTopSellingProducts(
         user,
         branchFilter,
         dateRange,
       );
-      return data.slice(0, 10);
+      const safeLimit = Math.min(30, Math.max(1, Number(limit) || 10));
+      return data.slice(0, safeLimit);
     },
 
     get_total_stock: async () => dashboardService.getTotalStock(user),
@@ -452,15 +751,71 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
       });
     },
 
+    get_real_stock: async (args) => {
+      const cabang = cabangOverride || args.cabang;
+      const result = await dashboardService.getRealStockList(user, {
+        cabang: cabang || "ALL",
+        search: args.search || "",
+        page: 1,
+        limit: 15,
+      });
+      return result;
+    },
+
     get_piutang_total: async () => dashboardService.getTotalSisaPiutang(user),
 
-    get_piutang_per_cabang: async () =>
-      dashboardService.getPiutangPerCabang(user),
+    get_piutang_per_cabang: async (args) => {
+      const cabang = cabangOverride || args.cabang;
+      return dashboardService.getPiutangPerCabang(user, cabang || null);
+    },
+
+    // [BARU] Agregasi per customer dari data invoice — tidak ada tabel
+    // "per customer" tersendiri, jadi dihitung ulang di sini dari
+    // getPiutangPerInvoice (satu customer bisa punya beberapa invoice).
+    get_piutang_customer_summary: async (args) => {
+      const cabang = cabangOverride || args.cabang;
+      const rows = await dashboardService.getPiutangPerInvoice(
+        user,
+        cabang || "ALL",
+      );
+
+      const map = new Map();
+      for (const r of rows) {
+        const name = r.customer_nama || "UMUM";
+        if (!map.has(name)) {
+          map.set(name, {
+            customer_nama: name,
+            total_piutang: 0,
+            jumlah_invoice: 0,
+          });
+        }
+        const item = map.get(name);
+        item.total_piutang += Number(r.sisa_piutang) || 0;
+        item.jumlah_invoice += 1;
+      }
+
+      const list = Array.from(map.values()).sort(
+        (a, b) => b.total_piutang - a.total_piutang,
+      );
+      const safeLimit = Math.min(30, Math.max(1, Number(args.limit) || 10));
+      return list.slice(0, safeLimit);
+    },
 
     get_sales_target: async () => dashboardService.getSalesTargetSummary(user),
 
-    get_branch_performance: async () =>
-      dashboardService.getBranchPerformance(user),
+    get_branch_performance: async (args) => {
+      let dateRange = null;
+      if (monthOverride) {
+        dateRange = {
+          startDate: monthOverride.startDate,
+          endDate: monthOverride.endDate,
+        };
+        args.monthLabel = monthOverride.label;
+      } else if (args.period && args.period !== "this_month") {
+        dateRange = resolveDateRange(args.period, args.startDate, args.endDate);
+      }
+      return dashboardService.getBranchPerformance(user, dateRange);
+    },
 
     get_stagnant_stock_value: async () =>
       dashboardService.getStagnantStockSummary(user),
@@ -491,7 +846,19 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
     Object.entries(executors).filter(([name]) => ENABLED_TOOLS.includes(name)),
   );
 
-  return { tools: filteredTools, executors: filteredExecutors };
+  // [BARU] Persempit lagi jadi maksimal 6 tool paling relevan berdasarkan
+  // kata kunci di pertanyaan — executors TETAP lengkap (nggak makan token,
+  // cuma dipakai internal), yang dikecilkan cuma skema tool yang beneran
+  // dikirim ke Groq.
+  const relevantNames = selectRelevantTools(
+    rawQuestion,
+    filteredTools.map((t) => t.function.name),
+  );
+  const finalTools = filteredTools.filter((t) =>
+    relevantNames.includes(t.function.name),
+  );
+
+  return { tools: finalTools, executors: filteredExecutors };
 };
 
 module.exports = { buildTools, resolveDateRange };

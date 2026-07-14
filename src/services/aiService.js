@@ -62,6 +62,10 @@ const sendChat = async (messages, options = {}) => {
       stream: false,
       messages,
       temperature: options.temperature ?? 0.2,
+      // [BARU] Batasi output — jawaban kita selalu pendek (beberapa kalimat/list
+      // ≤10 baris), nggak perlu jatah token besar. Ini juga jaga-jaga model
+      // nggak "ngoceh" panjang dan boros kuota 6000 tok/menit.
+      max_tokens: 500,
     };
 
     if (options.tools && options.tools.length > 0) {
@@ -80,6 +84,18 @@ const sendChat = async (messages, options = {}) => {
     console.error("================ GROQ API ERROR ================");
     console.error(err.response?.data || err.message);
     console.error("================================================");
+
+    // [BARU] Deteksi rate limit dari HTTP status (lebih pasti daripada cuma
+    // cocokin teks pesan error), sertakan retry-after kalau Groq kasih tahu.
+    if (err.response?.status === 429) {
+      const retryAfter = err.response.headers?.["retry-after"];
+      const waitMsg = retryAfter ? ` Coba lagi dalam ${retryAfter} detik.` : "";
+      const rateLimitError = new Error(
+        `RATE_LIMIT: Kuota Groq per menit habis.${waitMsg}`,
+      );
+      rateLimitError.isRateLimit = true;
+      throw rateLimitError;
+    }
 
     throw new Error(err.response?.data?.error?.message || err.message);
   }

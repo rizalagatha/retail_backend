@@ -441,38 +441,56 @@ const getSalesTargetSummary = async (user) => {
  * Mengambil 3 cabang performa terbaik dan terburuk
  * berdasarkan pencapaian target bulan ini.
  */
-const getBranchPerformance = async (user) => {
+const getBranchPerformance = async (user, dateRange = null) => {
   // Fitur ini hanya relevan untuk KDC (Head Office)
   if (user.cabang !== "KDC") {
     return [];
   }
 
-  const tahun = new Date().getFullYear();
-  const bulan = new Date().getMonth() + 1;
+  // [BARU] Terima rentang tanggal opsional (mis. "minggu lalu"). Target
+  // (kpi.ttarget_kaosan) cuma tersimpan per BULAN, jadi target/ach tetap
+  // pakai target bulan tempat startDate berada — akurat untuk ranking
+  // OMSET di rentang manapun, tapi persentase pencapaian jadi kurang presisi
+  // kalau rentangnya bukan 1 bulan penuh (dijelaskan lagi di formatter AI).
+  const now = new Date();
+  let startDate, endDate, tahun, bulan;
+
+  if (dateRange && dateRange.startDate && dateRange.endDate) {
+    startDate = dateRange.startDate;
+    endDate = dateRange.endDate;
+    const refDate = new Date(startDate);
+    tahun = refDate.getFullYear();
+    bulan = refDate.getMonth() + 1;
+  } else {
+    tahun = now.getFullYear();
+    bulan = now.getMonth() + 1;
+    startDate = format(new Date(tahun, bulan - 1, 1), "yyyy-MM-dd");
+    endDate = format(now, "yyyy-MM-dd");
+  }
 
   const query = `
-        WITH MonthlySales AS (
-            SELECT 
-                cabang, 
-                SUM(nominal) AS nominal 
-            FROM v_sales_harian
-            WHERE YEAR(tanggal) = ? AND MONTH(tanggal) = ?
-            GROUP BY cabang
-        ),
-        MonthlyTargets AS (
-            SELECT 
-                kode_gudang AS cabang, 
-                SUM(target_omset) AS target
-            FROM kpi.ttarget_kaosan
-            WHERE tahun = ? AND bulan = ?
-            GROUP BY cabang
-        ),
-        -- [PERBAIKAN] Hitung Retur Berdasarkan Jenis (Achievement Mode)
-        MonthlyReturns AS (
-            SELECT 
-                rh.rj_cab AS cabang,
-                SUM(
-                    CASE 
+    WITH MonthlySales AS (
+      SELECT 
+        cabang, 
+        SUM(nominal) AS nominal 
+        FROM v_sales_harian
+      WHERE tanggal BETWEEN ? AND ?
+      GROUP BY cabang
+    ),
+    MonthlyTargets AS (
+      SELECT 
+        kode_gudang AS cabang, 
+        SUM(target_omset) AS target
+      FROM kpi.ttarget_kaosan
+      WHERE tahun = ? AND bulan = ?
+      GROUP BY cabang
+    ),
+    -- [PERBAIKAN] Hitung Retur Berdasarkan Jenis (Achievement Mode)
+    MonthlyReturns AS (
+      SELECT 
+        rh.rj_cab AS cabang,
+          SUM(
+              CASE 
                         -- Tukar Barang: Selisih antara barang balik vs barang keluar baru
                         WHEN rh.rj_jenis = 'N' THEN (
                             SELECT GREATEST(0, 
@@ -491,7 +509,7 @@ const getBranchPerformance = async (user) => {
                     END
                 ) AS total_retur
             FROM trj_hdr rh
-            WHERE YEAR(rh.rj_tanggal) = ? AND MONTH(rh.rj_tanggal) = ?
+            WHERE rh.rj_tanggal BETWEEN ? AND ?
             GROUP BY rh.rj_cab
         ),
         -- [BARU] Hitung Biaya Platform (Marketplace Fee)
@@ -500,7 +518,7 @@ const getBranchPerformance = async (user) => {
                 inv_cab AS cabang,
                 SUM(COALESCE(inv_mp_biaya_platform, 0)) AS total_fee
             FROM tinv_hdr
-            WHERE YEAR(inv_tanggal) = ? AND MONTH(inv_tanggal) = ?
+            WHERE inv_tanggal BETWEEN ? AND ?
             GROUP BY inv_cab
         )
         SELECT 
@@ -538,8 +556,17 @@ const getBranchPerformance = async (user) => {
     `;
 
   // [PENTING] Tambahkan parameter tahun & bulan untuk CTE MonthlyFees (Total 8 parameter)
-  // Urutan: Sales(2) -> Target(2) -> Returns(2) -> Fees(2)
-  const params = [tahun, bulan, tahun, bulan, tahun, bulan, tahun, bulan];
+  // Urutan sesuai posisi '?' di query: Sales(start,end) -> Target(tahun,bulan) -> Returns(start,end) -> Fees(start,end)
+  const params = [
+    startDate,
+    endDate,
+    tahun,
+    bulan,
+    startDate,
+    endDate,
+    startDate,
+    endDate,
+  ];
 
   try {
     const [rows] = await pool.query(query, params);
@@ -637,8 +664,18 @@ const getTotalSisaPiutang = async (user) => {
 /**
  * @description Menghitung sisa piutang per cabang (HANYA UNTUK KDC, Sisa >= 500).
  */
-const getPiutangPerCabang = async (user) => {
+const getPiutangPerCabang = async (user, cabangFilter = null) => {
   if (user.cabang !== "KDC") return [];
+
+  // [BARU] Filter opsional ke 1 baris cabang/channel spesifik (mis. KPR, KON,
+  // atau kode toko biasa) — dipakai AI tool. Parameter opsional, backward
+  // compatible dengan pemanggilan lama tanpa argumen kedua.
+  let filterSql = "";
+  const params = [];
+  if (cabangFilter && cabangFilter !== "ALL") {
+    filterSql = "AND u.ph_cab = ?";
+    params.push(cabangFilter);
+  }
 
   const query = `
     SELECT 
@@ -656,11 +693,12 @@ const getPiutangPerCabang = async (user) => {
     LEFT JOIN tgudang g ON g.gdg_kode = u.ph_cab
     WHERE (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) >= 500
       AND u.ph_inv_nomor NOT LIKE 'KDC.INV.%'
+      ${filterSql}
     GROUP BY u.ph_cab, g.gdg_nama
     ORDER BY sisa_piutang DESC;
   `;
 
-  const [rows] = await pool.query(query);
+  const [rows] = await pool.query(query, params);
   return rows;
 };
 
@@ -1895,7 +1933,14 @@ const getAgendaDateline = async (user) => {
   }
 
   const finalQuery = `
-    SELECT * FROM (${query}) AS combined_agenda
+    SELECT * FROM (
+      SELECT * FROM (${query}) AS combined_agenda
+      WHERE is_completed = 0
+        -- Buang deadline yang sudah lewat lebih dari 7 hari — kemungkinan
+        -- besar data lama yang tidak pernah ditutup (so_close tetap 0),
+        -- bukan "deadline terdekat" yang beneran perlu ditindaklanjuti hari ini.
+        AND dateline >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+    ) AS filtered_agenda
     ORDER BY dateline ASC;
   `;
 
