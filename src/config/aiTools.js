@@ -101,8 +101,18 @@ const buildTools = (user, cabangOptions) => {
       function: {
         name: "get_today_sales",
         description:
-          "Ambil data penjualan (omset), qty terjual, dan jumlah transaksi HARI INI. Untuk user Pusat (KDC), hasil termasuk rincian top cabang.",
-        parameters: { type: "object", properties: {}, required: [] },
+          "Ambil TOTAL penjualan (omset), qty terjual, dan jumlah transaksi HARI INI. Bisa difilter ke 1 cabang tertentu lewat parameter cabang (khusus berguna untuk user Pusat/KDC). Kalau cabang dikosongkan dan user KDC, hasilnya gabungan semua cabang plus rincian top 3 cabang.",
+        parameters: {
+          type: "object",
+          properties: {
+            cabang: {
+              type: "string",
+              enum: cabangEnum,
+              description: cabangDesc,
+            },
+          },
+          required: [],
+        },
       },
     },
     {
@@ -110,7 +120,7 @@ const buildTools = (user, cabangOptions) => {
       function: {
         name: "get_sales_chart",
         description:
-          "Ambil total nominal penjualan pada rentang waktu tertentu. Cocok untuk pertanyaan seperti 'penjualan minggu lalu', 'omset bulan ini', atau 'penjualan tanggal 1 sampai 10 Juli'.",
+          "Ambil total nominal penjualan pada rentang waktu tertentu. Cocok untuk pertanyaan seperti 'penjualan minggu lalu', 'omset bulan ini', atau 'penjualan tanggal 1 sampai 10 Juli'. JUGA dipakai untuk 'penjualan HARI INI per cabang tertentu' — gunakan period='today' + isi parameter cabang.",
         parameters: {
           type: "object",
           properties: {
@@ -343,7 +353,8 @@ const buildTools = (user, cabangOptions) => {
   // --- Eksekutor: banyak fungsi dashboardService SUDAH self-scoping
   // (cek user.cabang === "KDC" sendiri di dalam), jadi cukup teruskan argumen apa adanya.
   const executors = {
-    get_today_sales: async () => dashboardService.getTodayStats(user),
+    get_today_sales: async (args) =>
+      dashboardService.getTodayStats(user, args.cabang || null),
 
     get_sales_chart: async (args) => {
       const { period, startDate, endDate, cabang, groupBy = "day" } = args;

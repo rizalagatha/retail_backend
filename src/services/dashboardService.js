@@ -10,23 +10,26 @@ const {
 } = require("date-fns");
 
 // Fungsi untuk mengambil statistik penjualan & transaksi hari ini
-const getTodayStats = async (user) => {
+const getTodayStats = async (user, cabangOverride = null) => {
   const today = format(new Date(), "yyyy-MM-dd");
-  let branchFilter = "AND h.inv_cab = ?";
-  let params = [today, today, user.cabang];
-
   const isKDC = user.cabang === "KDC";
+  const excludePattern = "^K[0-9]{2}\\.(SD|BR|PM|DP|TG|PL|SB)\\.";
 
-  // LOGIK KHUSUS KDC
-  if (isKDC) {
-    branchFilter = "";
-    // Params untuk query utama: [Regex, Today, Today]
-    // Regex digunakan untuk exclude Custom Order di perhitungan QTY (bukan Omset)
-    const excludePattern = "^K[0-9]{2}\\.(SD|BR|PM|DP|TG|PL|SB)\\.";
-    params = [excludePattern, today, today];
+  // [BARU] targetCabang: cabang yang jadi acuan filter query.
+  // - Non-KDC: selalu cabangnya sendiri (perilaku lama, tidak berubah).
+  // - KDC + cabangOverride diisi (dipakai AI tool): filter ke 1 cabang itu.
+  // - KDC tanpa override (perilaku lama dashboard): null → mode agregat semua cabang.
+  const targetCabang = !isKDC ? user.cabang : cabangOverride || null;
+
+  let branchFilter = "";
+  let params;
+
+  if (targetCabang) {
+    branchFilter = "AND h.inv_cab = ?";
+    params = [excludePattern, today, today, targetCabang];
   } else {
-    const excludePattern = "^K[0-9]{2}\\.(SD|BR|PM|DP|TG|PL|SB)\\.";
-    params = [excludePattern, today, today, user.cabang];
+    branchFilter = "";
+    params = [excludePattern, today, today];
   }
 
   // 1. QUERY UTAMA (Total Agregat)
@@ -69,7 +72,7 @@ const getTodayStats = async (user) => {
   let result = rows[0];
 
   // 2. QUERY TAMBAHAN: BREAKDOWN PER CABANG (Hanya jika KDC)
-  if (isKDC) {
+  if (isKDC && !targetCabang) {
     // Gunakan logika matematika yang SAMA PERSIS dengan query utama
     // tapi dikelompokkan (GROUP BY) berdasarkan Cabang.
     const queryBreakdown = `

@@ -7,7 +7,7 @@ const getInitialData = async (user) => {
     // Jalankan semua query secara bersamaan untuk efisiensi
     const [ukuranRes, jenisKaosRes, tipeRes, lenganRes] = await Promise.all([
       pool.query(
-        'SELECT kode, ukuran FROM tukuran WHERE kategori = "" ORDER BY kode'
+        'SELECT kode, ukuran FROM tukuran WHERE kategori = "" ORDER BY kode',
       ),
       pool.query("SELECT jo_kode, jo_nama FROM tjenisorder ORDER BY jo_nama"),
       pool.query("SELECT Tipe FROM ttipe ORDER BY tipe"),
@@ -24,7 +24,7 @@ const getInitialData = async (user) => {
     // Jika terjadi error, log pesan yang lebih detail di konsol backend
     console.error("Error in getInitialData:", error);
     throw new Error(
-      "Gagal mengambil data inisial. Periksa nama tabel/kolom di service backend."
+      "Gagal mengambil data inisial. Periksa nama tabel/kolom di service backend.",
     );
   }
 };
@@ -47,11 +47,11 @@ const getForEdit = async (kode) => {
 
   const [variants] = await pool.query(
     "SELECT * FROM tbarangdc_dtl WHERE brgd_kode = ?",
-    [kode]
+    [kode],
   );
   const [priceHistory] = await pool.query(
     "SELECT * FROM tharga WHERE kode = ? ORDER BY tanggal DESC",
-    [kode]
+    [kode],
   );
 
   const imagePath = path.join(
@@ -59,7 +59,7 @@ const getForEdit = async (kode) => {
     "public",
     "images",
     "barang_dc",
-    `${kode}.jpg`
+    `${kode}.jpg`,
   );
   try {
     await fs.access(imagePath);
@@ -87,16 +87,19 @@ const save = async (payload, user) => {
         header.jenisKainKode
       }-${header.warnaKode}`;
       const query =
-        'SELECT IFNULL(MAX(RIGHT(brg_kode, 3)), 0) + 1 AS next_num FROM tbarangdc WHERE brg_ktg="" AND LEFT(brg_kode, 12)=?';
+        'SELECT IFNULL(MAX(RIGHT(brg_kode, 3)), 0) + 1 AS next_num FROM tbarangdc WHERE brg_ktg="" AND LEFT(brg_kode, 12)=? FOR UPDATE';
       const [rows] = await connection.query(query, [prefix]);
       kodeBarang = `${prefix}-${rows[0].next_num.toString().padStart(3, "0")}`;
       header.kode = kodeBarang;
 
       // Generate BCD ID baru (meniru getbcdid)
+      // [FIX] Tambah FOR UPDATE — cegah race condition kalau 2 barang baru
+      // disimpan hampir bersamaan, sebelumnya bisa dapat bcdId sama persis
+      // (efeknya barcode kembar antar produk beda, lihat kasus MRUN-004 vs PUTH-007).
       const year = new Date().getFullYear().toString();
       const [bcdRows] = await connection.query(
-        'SELECT IFNULL(MAX(brg_bcdid), 0) + 1 AS next_id FROM tbarangdc WHERE DATE_FORMAT(date_create, "%Y") = ?',
-        [year]
+        'SELECT IFNULL(MAX(brg_bcdid), 0) + 1 AS next_id FROM tbarangdc WHERE DATE_FORMAT(date_create, "%Y") = ? FOR UPDATE',
+        [year],
       );
       header.bcdId = bcdRows[0].next_id;
 
@@ -115,7 +118,7 @@ const save = async (payload, user) => {
           header.bcdId,
           header.logStok,
           user.kode,
-        ]
+        ],
       );
     } else {
       await connection.query(
@@ -126,18 +129,43 @@ const save = async (payload, user) => {
           header.logStok,
           user.kode,
           kodeBarang,
-        ]
+        ],
       );
     }
+
+    // [FIX] Cek dulu apakah produk ini SUDAH punya barcode di ukuran lain —
+    // kalau ada, prefix (tahun+bcdId) HARUS ikut yang sudah ada, supaya
+    // konsisten dan tidak collide dengan produk lain yang dibuat tahun ini
+    // dengan bcdId yang sama secara kebetulan (numbering bcdId reset tiap
+    // tahun, jadi bcdId lama TIDAK BOLEH ditempeli tahun sekarang).
+    const [existingBarcodeRows] = await connection.query(
+      `SELECT brgd_barcode FROM tbarangdc_dtl 
+       WHERE brgd_kode = ? AND brgd_barcode IS NOT NULL AND brgd_barcode <> '' 
+       LIMIT 1`,
+      [kodeBarang],
+    );
+    const existingPrefix =
+      existingBarcodeRows.length > 0 &&
+      existingBarcodeRows[0].brgd_barcode.length >= 6
+        ? existingBarcodeRows[0].brgd_barcode.substring(0, 6) // yearYY(2) + bcdId(4)
+        : null;
 
     // Simpan/Update Varian Ukuran
     for (const variant of variants.filter((v) => v.aktif)) {
       let barcode = variant.barcode;
       // Generate barcode baru jika belum ada (meniru getbarcode)
       if (!barcode && header.bcdId) {
-        const yearYY = new Date().getFullYear().toString().substring(2);
-        const bcdIdPadded = header.bcdId.toString().padStart(4, "0");
-        barcode = `${yearYY}${bcdIdPadded}${variant.no}`; // 'no' adalah kode ukuran 2 digit
+        let prefix;
+        if (existingPrefix) {
+          // Produk lama yang nambah ukuran baru — pakai prefix yang SUDAH ADA
+          prefix = existingPrefix;
+        } else {
+          // Produk benar-benar baru — belum ada barcode sama sekali, pakai tahun sekarang
+          const yearYY = new Date().getFullYear().toString().substring(2);
+          const bcdIdPadded = header.bcdId.toString().padStart(4, "0");
+          prefix = `${yearYY}${bcdIdPadded}`;
+        }
+        barcode = `${prefix}${variant.no}`;
       }
 
       await connection.query(
@@ -156,7 +184,7 @@ const save = async (payload, user) => {
           variant.stokmax,
           variant.stokmindc,
           variant.stokmaxdc,
-        ]
+        ],
       );
     }
 
@@ -182,7 +210,7 @@ const uploadImage = async (kode, file) => {
       process.cwd(),
       "public",
       "images",
-      "barang_dc"
+      "barang_dc",
     );
     await fs.mkdir(uploadPath, { recursive: true });
 
@@ -262,7 +290,7 @@ const getNextBcdId = async () => {
   const year = new Date().getFullYear().toString();
   const [rows] = await pool.query(
     'SELECT IFNULL(MAX(brg_bcdid), 0) + 1 AS next_id FROM tbarangdc WHERE DATE_FORMAT(date_create, "%Y") = ?',
-    [year]
+    [year],
   );
   return rows[0].next_id;
 };
