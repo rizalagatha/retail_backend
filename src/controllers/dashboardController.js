@@ -503,6 +503,25 @@ const getRealStockList = async (req, res, next) => {
   }
 };
 
+const getStokKosongFastMoving = async (req, res) => {
+  try {
+    const filters = {
+      cabang: req.query.cabang || "ALL",
+      page: req.query.page || 1,
+      limit: req.query.limit || 50,
+      exportAll: req.query.export === "true",
+    };
+    const data = await dashboardService.getStokKosongFastMoving(
+      req.user,
+      filters,
+    );
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error("Error in getStokKosongFastMoving:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -542,4 +561,5 @@ module.exports = {
   getSpkPendingApproval,
   getAutoMintaAnalytics,
   getRealStockList,
+  getStokKosongFastMoving,
 };

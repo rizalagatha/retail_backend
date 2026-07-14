@@ -131,9 +131,20 @@ const saveData = async (payload, user) => {
     const safeDate = (val) =>
       val === "" || val === undefined || val === null ? null : val;
 
-    const tglTransfer = safeDate(header.tanggalTransfer);
-    const tglGiro = safeDate(header.tanggalGiro);
-    const tglTempoGiro = safeDate(header.tanggalJatuhTempo);
+    // [BARU] Paksa null-kan field yang tidak relevan dengan jenis setoran,
+    // apapun yang dikirim frontend (guard terakhir di backend, bukan cuma
+    // mengandalkan form frontend selalu bersih reset field saat ganti jenis).
+    const isTransferLike = ["TRANSFER", "QRIS"].includes(header.jenisSetor);
+    const isGiro = header.jenisSetor === "GIRO";
+
+    const akunKode = isTransferLike ? header.akun?.kode || null : null;
+    const akunRekening = isTransferLike ? header.akun?.rekening || null : null;
+    const tglTransfer = isTransferLike
+      ? safeDate(header.tanggalTransfer)
+      : null;
+    const nomorGiro = isGiro ? header.nomorGiro || null : null;
+    const tglGiro = isGiro ? safeDate(header.tanggalGiro) : null;
+    const tglTempoGiro = isGiro ? safeDate(header.tanggalJatuhTempo) : null;
 
     if (isNew) {
       // ===== MODE BARU (INSERT) =====
@@ -154,17 +165,17 @@ const saveData = async (payload, user) => {
         header.tanggal,
         jenisMap[header.jenisSetor],
         header.nominal,
-        header.akun?.kode,
-        header.akun?.rekening,
+        akunKode,
+        akunRekening,
         tglTransfer,
-        header.nomorGiro,
+        nomorGiro,
         tglGiro,
         tglTempoGiro,
         finalKeterangan,
         header.nomorSo || "",
         user.cabang,
         activeSesiId,
-        user.kode, // [BARU]
+        user.kode,
       ]);
 
       if (header.nomorSo) {
@@ -186,12 +197,12 @@ const saveData = async (payload, user) => {
       await connection.query(updateHeaderSql, [
         jenisMap[header.jenisSetor],
         header.nominal,
-        header.akun?.kode,
-        header.akun?.rekening,
-        tglTransfer, // <-- Gunakan variabel aman
-        header.nomorGiro || "",
-        tglGiro, // <-- Gunakan variabel aman
-        tglTempoGiro, // <-- Gunakan variabel aman
+        akunKode,
+        akunRekening,
+        tglTransfer,
+        nomorGiro,
+        tglGiro,
+        tglTempoGiro,
         finalKeterangan,
         user.kode,
         shNomor,

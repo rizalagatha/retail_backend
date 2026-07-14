@@ -84,19 +84,19 @@ const saveTshirtType = async (data) => {
   }, {});
 
   const query = `
-        INSERT INTO tjeniskaos (
-            jk_Jenis, jk_custom, 
-            jk_s, jk_m, jk_l, jk_xl, jk_2xl, jk_3xl, jk_4xl, jk_5xl
-            jk_6xl, jk_7xl, jk_8xl, jk_9xl, jk_10xl, jk_oversize, jk_jumbo
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE
-            jk_s = VALUES(jk_s), jk_m = VALUES(jk_m), jk_l = VALUES(jk_l),
-            jk_xl = VALUES(jk_xl), jk_2xl = VALUES(jk_2xl), jk_3xl = VALUES(jk_3xl),
-            jk_4xl = VALUES(jk_4xl), jk_5xl = VALUES(jk_5xl),
-            jk_6xl = VALUES(jk_6xl), jk_7xl = VALUES(jk_7xl), jk_8xl = VALUES(jk_8xl),
-            jk_9xl = VALUES(jk_9xl), jk_10xl = VALUES(jk_10xl),
-            jk_oversize = VALUES(jk_oversize), jk_jumbo = VALUES(jk_jumbo)
-    `;
+    INSERT INTO tjeniskaos (
+      jk_Jenis, jk_custom, 
+      jk_s, jk_m, jk_l, jk_xl, jk_2xl, jk_3xl, jk_4xl, jk_5xl,
+      jk_6xl, jk_7xl, jk_8xl, jk_9xl, jk_10xl, jk_oversize, jk_jumbo
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      jk_s = VALUES(jk_s), jk_m = VALUES(jk_m), jk_l = VALUES(jk_l),
+      jk_xl = VALUES(jk_xl), jk_2xl = VALUES(jk_2xl), jk_3xl = VALUES(jk_3xl),
+      jk_4xl = VALUES(jk_4xl), jk_5xl = VALUES(jk_5xl),
+      jk_6xl = VALUES(jk_6xl), jk_7xl = VALUES(jk_7xl), jk_8xl = VALUES(jk_8xl),
+      jk_9xl = VALUES(jk_9xl), jk_10xl = VALUES(jk_10xl),
+      jk_oversize = VALUES(jk_oversize), jk_jumbo = VALUES(jk_jumbo)
+  `;
 
   const params = [
     jenisKaos,

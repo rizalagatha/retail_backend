@@ -201,4 +201,10 @@ router.get(
 
 router.get("/real-stock", verifyToken, dashboardController.getRealStockList);
 
+router.get(
+  "/stok-kosong-fast-moving",
+  verifyToken,
+  dashboardController.getStokKosongFastMoving,
+);
+
 module.exports = router;

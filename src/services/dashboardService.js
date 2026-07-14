@@ -336,9 +336,15 @@ const getPendingActions = async (user) => {
   }
 };
 
-const getTopSellingProducts = async (user, branchFilter = "") => {
-  const startDate = format(startOfMonth(new Date()), "yyyy-MM-dd");
-  const endDate = format(endOfMonth(new Date()), "yyyy-MM-dd");
+const getTopSellingProducts = async (
+  user,
+  branchFilter = "",
+  dateRange = null,
+) => {
+  const startDate =
+    dateRange?.startDate || format(startOfMonth(new Date()), "yyyy-MM-dd");
+  const endDate =
+    dateRange?.endDate || format(endOfMonth(new Date()), "yyyy-MM-dd");
 
   let targetCabang = null;
 
@@ -2761,6 +2767,100 @@ const getRealStockList = async (user, filters = {}) => {
   return rows;
 };
 
+// =========================================================================
+// FITUR BARU: Stok Kosong dari Barang Fast Moving
+// (Barang yang terakhir diterima ≤6 bulan lalu, tapi stok sekarang 0/habis)
+// =========================================================================
+const getStokKosongFastMoving = async (user, filters = {}) => {
+  const { cabang = "ALL", page = 1, limit = 50, exportAll = false } = filters;
+
+  let branchFilterStok = "";
+  let branchFilterRecv = "";
+  const params = [];
+
+  if (user.cabang !== "KDC") {
+    branchFilterStok = "AND m.mst_cab = ?";
+    branchFilterRecv = "AND b.cab = ?";
+    params.push(user.cabang, user.cabang);
+  } else if (cabang !== "ALL") {
+    branchFilterStok = "AND m.mst_cab = ?";
+    branchFilterRecv = "AND b.cab = ?";
+    params.push(cabang, cabang);
+  }
+
+  // [BARU] Tambah LIMIT/OFFSET kecuali saat export (ambil semua)
+  let paginationSql = "";
+  if (!exportAll) {
+    const offset = (Number(page) - 1) * Number(limit);
+    paginationSql = `LIMIT ${Number(limit)} OFFSET ${offset}`;
+    params.push(); // tidak perlu push apapun, LIMIT/OFFSET langsung di-inject sebagai number aman
+  }
+
+  const query = `
+    WITH received AS (
+      SELECT LEFT(tjd_nomor, 3) AS cab,
+             tjd_kode AS kode,
+             tjd_ukuran AS ukuran,
+             MAX(tj_tanggal) AS last_tstbj
+      FROM ttrm_sj_hdr
+      INNER JOIN ttrm_sj_dtl ON tjd_nomor = tj_nomor
+      GROUP BY 1, 2, 3
+
+      UNION ALL
+
+      SELECT 'KDC' AS cab,
+             tsd_kode AS kode,
+             tsd_ukuran AS ukuran,
+             MAX(ts_tanggal) AS last_tstbj
+      FROM tdc_stbj_hdr
+      INNER JOIN tdc_stbj_dtl ON tsd_nomor = ts_nomor
+      GROUP BY 1, 2, 3
+    ),
+    current_stock AS (
+      SELECT mst_brg_kode, mst_ukuran, mst_cab,
+        SUM(mst_stok_in - mst_stok_out) AS stok
+      FROM (
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_aktif
+        FROM tmasterstok
+        UNION ALL
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_aktif
+        FROM tmasterstokso
+      ) m
+      WHERE m.mst_aktif = 'Y' ${branchFilterStok}
+      GROUP BY mst_brg_kode, mst_ukuran, mst_cab
+    )
+    SELECT
+      b.cab AS cabang,
+      IFNULL(g.gdg_nama, b.cab) AS nama_cabang,
+      b.kode,
+      TRIM(CONCAT(a.brg_jeniskaos,' ',a.brg_tipe,' ',a.brg_lengan,' ',a.brg_jeniskain,' ',a.brg_warna)) AS nama,
+      b.ukuran,
+      b.last_tstbj,
+      FLOOR(DATEDIFF(CURDATE(), b.last_tstbj) / 30) AS umur_bulan,
+      IFNULL(cs.stok, 0) AS stok_sekarang
+    FROM received b
+    LEFT JOIN current_stock cs
+      ON cs.mst_brg_kode = b.kode
+      AND cs.mst_ukuran = b.ukuran
+      AND cs.mst_cab = b.cab
+    LEFT JOIN tbarangdc a ON a.brg_kode = b.kode
+    LEFT JOIN tgudang g ON g.gdg_kode = b.cab
+    WHERE FLOOR(DATEDIFF(CURDATE(), b.last_tstbj) / 30) <= 6
+      AND IFNULL(cs.stok, 0) <= 0
+      AND a.brg_aktif = 0
+      AND a.brg_logstok = 'Y'
+      AND a.brg_warna NOT LIKE '%STICKER%'
+      AND a.brg_warna NOT LIKE '%STIKER%'
+      AND a.brg_kode NOT LIKE 'JASA%'
+      ${branchFilterRecv}
+    ORDER BY b.last_tstbj DESC
+    ${paginationSql}
+  `;
+
+  const [rows] = await pool.query(query, params);
+  return rows;
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -2799,4 +2899,5 @@ module.exports = {
   getSpkPendingApproval,
   getAutoMintaAnalytics,
   getRealStockList,
+  getStokKosongFastMoving,
 };

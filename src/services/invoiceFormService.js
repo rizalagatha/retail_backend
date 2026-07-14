@@ -122,6 +122,23 @@ const getKprItemDiscount = (namaBarang, kategori) => {
 // PROMO GRAND OPENING K12 — Free Item Tracker & Tier Diskon
 // =========================================================================
 
+// [BARU] Mirror dari frontend src/constants/promoConfig.ts (PROMO_GRAND_OPENING_K12).
+// WAJIB disinkronkan manual kalau nilainya berubah — backend tidak baca file frontend.
+const FREE_ITEM_PROMO_RULES = {
+  "PRO-2025-004": {
+    minBelanja: 40000,
+  },
+};
+
+// [REVISI] Subtotal pemicu minimal belanja sekarang dari SEMUA barang di
+// keranjang, tidak dibatasi kategori/nama tertentu — konsisten dengan
+// aturan frontend (calcFreeGiftEligibleSubtotal di promoConfig.ts).
+const calcFreeGiftEligibleSubtotal = (items) => {
+  return items.reduce((sum, item) => {
+    if (!item.kode || item.isFreeGift) return sum;
+    return sum + (Number(item.harga) || 0) * (Number(item.jumlah) || 0);
+  }, 0);
+};
 /**
  * Cek apakah customer masih berhak dapat item gratis untuk promo tertentu.
  * Dipakai frontend untuk menampilkan/menyembunyikan tombol "+ Tambah Hadiah Gratis".
@@ -172,10 +189,20 @@ const reserveFreeItemSlot = async (
   kodeBarangGratis,
   customerHp = "", // [BARU] opsional, untuk referensi/tampilan
   customerNama = "", // [BARU] opsional, untuk referensi/tampilan
+  eligibleSubtotal = null, // [BARU] subtotal item eligible di keranjang, untuk cek minimal belanja
 ) => {
   if ((customerNama || "").toUpperCase().includes("RETAIL")) {
     throw new Error(
       "Customer RETAIL tidak berhak atas hadiah gratis promo ini.",
+    );
+  }
+
+  // [BARU] Validasi minimal belanja server-side — pertahanan kedua,
+  // backend tidak boleh percaya begitu saja gate yang sudah dilewati frontend.
+  const rule = FREE_ITEM_PROMO_RULES[proNomor];
+  if (rule && eligibleSubtotal !== null && eligibleSubtotal < rule.minBelanja) {
+    throw new Error(
+      `Syarat minimal belanja Rp${rule.minBelanja.toLocaleString("id-ID")} untuk hadiah gratis belum terpenuhi.`,
     );
   }
 
@@ -223,7 +250,7 @@ const reserveFreeItemSlot = async (
  */
 const getTierDiskonByPromo = async (proNomor) => {
   const [rows] = await pool.query(
-    `SELECT ptd_prioritas, ptd_tipe_match, ptd_kata_kunci, ptd_persen
+    `SELECT ptd_prioritas, ptd_tipe_match, ptd_kata_kunci, ptd_exclude_kata_kunci, ptd_persen, ptd_min_belanja
      FROM tpromo_tier_diskon
      WHERE ptd_pro_nomor = ?
      ORDER BY ptd_prioritas ASC`,
@@ -1521,6 +1548,17 @@ const saveData = async (payload, user) => {
     // Dipanggil di sini (dalam transaction yang sama) agar atomic:
     // kalau invoice gagal simpan, slot tidak ikut "terbakar" (rollback otomatis).
     // =========================================================================
+    const hasFreeGiftItem = validItems.some((item) => item.isFreeGift);
+    let freeGiftEligibleSubtotal = null;
+
+    if (hasFreeGiftItem) {
+      const proNomorFreeItem = header.proNomorFreeItem || header.nomorPromo;
+      const rule = FREE_ITEM_PROMO_RULES[proNomorFreeItem];
+      if (rule) {
+        freeGiftEligibleSubtotal = calcFreeGiftEligibleSubtotal(validItems);
+      }
+    }
+
     for (const item of validItems) {
       if (item.isFreeGift) {
         const proNomorFreeItem = header.proNomorFreeItem || header.nomorPromo;
@@ -1537,6 +1575,7 @@ const saveData = async (payload, user) => {
           item.kode,
           header.customer.telp || "",
           header.customer.nama || "",
+          freeGiftEligibleSubtotal,
         );
       }
     }

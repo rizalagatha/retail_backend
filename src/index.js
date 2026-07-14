@@ -16,6 +16,7 @@ console.log("Rounding Policy:", global.ROUNDING_POLICY);
 
 // Impor file rute
 const dashboardRoutes = require("./routes/dashboardRoutes");
+const aiRoutes = require("./routes/aiRoutes");
 const healthRoutes = require("./routes/healthRoutes");
 const auditRoutes = require("./routes/auditRoutes");
 const userActivityRoutes = require("./routes/userActivityRoutes");
@@ -406,6 +407,7 @@ cron.schedule(
 // Menggunakan Rute
 app.use("/api/auth", clientCertAuth, authRoutes);
 app.use("/api/dashboard", clientCertAuth, dashboardRoutes);
+app.use("/api/ai", clientCertAuth, aiRoutes);
 app.use("/api/health-check", clientCertAuth, healthRoutes);
 app.use("/api/audit-logs", clientCertAuth, auditRoutes);
 app.use("/api/activity", clientCertAuth, userActivityRoutes);
