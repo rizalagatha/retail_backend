@@ -128,6 +128,50 @@ const aiFormatters = {
       .join("\n");
     return `Ranking performa cabang bulan ini (dari yang tertinggi):\n\n${lines}`;
   },
+
+  get_sales_chart: (args, result) => {
+    if (!Array.isArray(result) || result.length === 0) {
+      return "Tidak ada data penjualan untuk rentang waktu tersebut.";
+    }
+
+    const totalAll = result.reduce((sum, r) => sum + (Number(r.total) || 0), 0);
+    const groupBy = args.groupBy || "day";
+
+    const formatTanggal = (val) => {
+      if (!val) return "-";
+      const d = new Date(val);
+      if (isNaN(d.getTime())) return String(val);
+      if (groupBy === "month") {
+        return d.toLocaleDateString("id-ID", {
+          month: "long",
+          year: "numeric",
+        });
+      }
+      if (groupBy === "week") {
+        return `Minggu ${d.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })}`;
+      }
+      return d.toLocaleDateString("id-ID", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      });
+    };
+
+    // Batasi baris yang ditampilkan supaya jawaban tidak kepanjangan untuk
+    // rentang tanggal yang lebar (mis. groupBy=day selama beberapa bulan)
+    const MAX_ROWS = 31;
+    const rows = result.slice(0, MAX_ROWS);
+    const lines = rows
+      .map((r) => `- ${formatTanggal(r.tanggal)}: ${formatRupiah(r.total)}`)
+      .join("\n");
+
+    const extraNote =
+      result.length > MAX_ROWS
+        ? `\n\n(menampilkan ${MAX_ROWS} dari ${result.length} baris; total di atas sudah mencakup semuanya)`
+        : "";
+
+    return `Total penjualan periode ini: ${formatRupiah(totalAll)}\n\nRincian:\n${lines}${extraNote}`;
+  },
 };
 
 module.exports = aiFormatters;

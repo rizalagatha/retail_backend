@@ -21,6 +21,7 @@ const ENABLED_TOOLS = [
   "get_piutang_total",
   "get_sales_target",
   "get_branch_performance",
+  "get_sales_chart",
 ];
 
 // --- Resolusi rentang tanggal relatif -> tanggal aktual ---
