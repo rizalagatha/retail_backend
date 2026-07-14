@@ -8,13 +8,50 @@ const { format } = require("date-fns");
 
 const MAX_TOOL_ROUNDS = 2;
 
+// [BARU] Sapaan sederhana dijawab langsung dari kode — tidak perlu antri
+// atau panggil LLM sama sekali. Selain jauh lebih cepat, ini juga menjamin
+// bahasanya selalu Indonesia (model kecil kadang tidak konsisten untuk
+// prompt super pendek tanpa konteks).
+const GREETING_PATTERNS = [
+  "halo",
+  "hai",
+  "hi",
+  "hello",
+  "hey",
+  "tes",
+  "test",
+  "p",
+];
+
+const isSimpleGreeting = (text) => {
+  const clean = (text || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[!?.,]/g, "");
+  return GREETING_PATTERNS.includes(clean);
+};
+
 const processMessage = async (incomingMessages, user) => {
   const { waitingCount } = aiQueueService.getQueueStatus();
   const queuedAtStart = waitingCount; // posisi antrian SEBELUM slot didapat
 
-  await aiQueueService.acquireSlot(); // nunggu di sini kalau 3 slot lagi penuh
+  if (queuedAtStart > 0) {
+    console.log(
+      `[AI QUEUE] Ada ${queuedAtStart} request lain menunggu giliran di depan ini.`,
+    );
+  }
+
+  await aiQueueService.acquireSlot(); // nunggu di sini kalau slot lagi penuh
 
   try {
+    // [BARU] Bypass total untuk sapaan sederhana — skip antrian & LLM sepenuhnya
+    const lastUserMsg = [...incomingMessages]
+      .reverse()
+      .find((m) => m.role === "user");
+    if (lastUserMsg && isSimpleGreeting(lastUserMsg.content)) {
+      return "Halo! Saya Kaosan AI, siap bantu cek data toko — coba tanya soal penjualan, stok, atau piutang hari ini.";
+    }
+
     // 1. Ambil daftar cabang dari DB (bukan hardcode) untuk enum parameter tool
     const cabangOptions = await dashboardService.getCabangOptions(user);
     const { tools, executors } = buildTools(user, cabangOptions);

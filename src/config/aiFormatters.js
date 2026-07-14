@@ -13,7 +13,8 @@ const formatRupiah = (val) => {
 const aiFormatters = {
   get_today_sales: (args, result) => {
     const { todaySales, todayQty, todayTransactions, salesBreakdown } = result;
-    let text = `Penjualan hari ini: ${formatRupiah(todaySales)}, terjual ${Number(
+    const cabangLabel = args.cabang ? ` cabang ${args.cabang}` : "";
+    let text = `Penjualan${cabangLabel} hari ini: ${formatRupiah(todaySales)}, terjual ${Number(
       todayQty || 0,
     ).toLocaleString("id-ID")} pcs dari ${Number(
       todayTransactions || 0,
@@ -30,9 +31,36 @@ const aiFormatters = {
   },
 
   get_top_selling_products: (args, result) => {
+    // [FIX] Susun keterangan cabang & periode dari argumen yang dikirim
+    // model, supaya jawaban menegaskan konteks datanya (sebelumnya cuma
+    // "Barang paling laris:" tanpa menyebut cabang/periode sama sekali).
+    const cabangLabel =
+      args.cabang && args.cabang !== "ALL" ? ` di cabang ${args.cabang}` : "";
+
+    const periodLabelMap = {
+      today: "hari ini",
+      yesterday: "kemarin",
+      this_week: "minggu ini",
+      last_week: "minggu lalu",
+      this_month: "bulan ini",
+      last_month: "bulan lalu",
+      last_7_days: "7 hari terakhir",
+      last_30_days: "30 hari terakhir",
+      custom:
+        args.startDate && args.endDate
+          ? `${args.startDate} s/d ${args.endDate}`
+          : "",
+    };
+    const periodLabel = args.period
+      ? periodLabelMap[args.period] || ""
+      : "bulan ini";
+
+    const contextLabel = [periodLabel, cabangLabel].filter(Boolean).join("");
+
     if (!Array.isArray(result) || result.length === 0) {
-      return "Belum ada data penjualan barang laris untuk periode ini.";
+      return `Belum ada data penjualan barang laris${cabangLabel} untuk periode ini.`;
     }
+
     const list = result
       .map(
         (p, i) =>
@@ -41,7 +69,8 @@ const aiFormatters = {
           ).toLocaleString("id-ID")} pcs`,
       )
       .join("\n");
-    return `Barang paling laris:\n\n${list}`;
+
+    return `Barang paling laris${contextLabel ? ` ${contextLabel}` : ""}:\n\n${list}`;
   },
 
   get_stok_kosong: (args, result) => {
