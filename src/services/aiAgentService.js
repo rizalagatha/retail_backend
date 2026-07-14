@@ -54,7 +54,11 @@ const processMessage = async (incomingMessages, user) => {
 
     // 1. Ambil daftar cabang dari DB (bukan hardcode) untuk enum parameter tool
     const cabangOptions = await dashboardService.getCabangOptions(user);
-    const { tools, executors } = buildTools(user, cabangOptions);
+    const { tools, executors } = buildTools(
+      user,
+      cabangOptions,
+      lastUserMsg?.content || "",
+    );
 
     // 2. Bangun system prompt dinamis: tanggal hari ini + konteks user yang login
     const todayStr = format(new Date(), "yyyy-MM-dd (EEEE)");

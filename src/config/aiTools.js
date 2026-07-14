@@ -88,8 +88,44 @@ const PERIOD_ENUM = [
 const PERIOD_DESC =
   "Rentang waktu relatif. Gunakan 'custom' + startDate/endDate (format YYYY-MM-DD) jika user menyebut tanggal spesifik.";
 
+// [BARU] Cocokkan nama cabang dari kalimat ASLI user secara deterministik
+// (substring match), bukan mengandalkan model 3B memilih dari daftar enum
+// panjang — model kecil kadang salah pilih kode cabang yang mirip.
+const resolveCabangFromText = (rawText, cabangOptions) => {
+  if (!rawText) return null;
+
+  // Alias manual dicek duluan (lebih presisi, sengaja hardcode untuk kasus ambigu)
+  const aliasHit = resolveCabangAlias(rawText);
+  if (aliasHit) return aliasHit;
+
+  const textUp = rawText.toUpperCase();
+  const matches = cabangOptions.filter(
+    (c) => c.nama && c.nama.length > 2 && textUp.includes(c.nama.toUpperCase()),
+  );
+  return matches.length === 1 ? matches[0].kode : null;
+};
+
+// [BARU] Alias manual untuk nama kota/panggilan umum yang TIDAK bisa
+// dicocokkan otomatis dari kolom gdg_nama/gdg_inv_kota — karena ada
+// brand berbeda yang kebetulan di kota sama (RESZO SBY vs KAOSAN SBY,
+// keduanya "Surabaya"), matching otomatis via kota jadi ambigu.
+// Tambah manual di sini kalau nemu kasus baru yang serupa.
+const CABANG_ALIAS = {
+  SURABAYA: "K05", // KAOSAN SBY — RESZO SBY (K04) beda brand, sengaja tidak dialiaskan
+};
+
+const resolveCabangAlias = (rawText) => {
+  if (!rawText) return null;
+  const textUp = rawText.toUpperCase();
+  const found = Object.keys(CABANG_ALIAS).find((alias) =>
+    textUp.includes(alias),
+  );
+  return found ? CABANG_ALIAS[found] : null;
+};
+
 // --- Bangun daftar tool + eksekutornya, disesuaikan konteks user yang bertanya ---
-const buildTools = (user, cabangOptions) => {
+const buildTools = (user, cabangOptions, rawQuestion = "") => {
+  const cabangOverride = resolveCabangFromText(rawQuestion, cabangOptions);
   const cabangEnum = cabangOptions.map((c) => c.kode);
   const cabangDesc = `Kode cabang. Pilihan: ${cabangOptions
     .map((c) => `${c.kode} (${c.nama})`)
@@ -180,7 +216,7 @@ const buildTools = (user, cabangOptions) => {
               description: "Wajib jika period='custom'.",
             },
           },
-          required: [],
+          required: ["period"],
         },
       },
     },
@@ -353,18 +389,22 @@ const buildTools = (user, cabangOptions) => {
   // --- Eksekutor: banyak fungsi dashboardService SUDAH self-scoping
   // (cek user.cabang === "KDC" sendiri di dalam), jadi cukup teruskan argumen apa adanya.
   const executors = {
-    get_today_sales: async (args) =>
-      dashboardService.getTodayStats(user, args.cabang || null),
+    get_today_sales: async (args) => {
+      const cabang = cabangOverride || args.cabang;
+      return dashboardService.getTodayStats(user, cabang || null);
+    },
 
     get_sales_chart: async (args) => {
-      const { period, startDate, endDate, cabang, groupBy = "day" } = args;
+      const cabang = cabangOverride || args.cabang;
+      const { period, startDate, endDate, groupBy = "day" } = args;
       const range = resolveDateRange(period, startDate, endDate);
       const filters = { ...range, cabang: cabang || "ALL", groupBy };
       return dashboardService.getSalesChartData(filters, user);
     },
 
     get_top_selling_products: async (args) => {
-      const { cabang, period, startDate, endDate } = args;
+      const cabang = cabangOverride || args.cabang;
+      const { period, startDate, endDate } = args;
       const branchFilter = cabang && cabang !== "ALL" ? cabang : "";
       const dateRange =
         period && period !== "this_month"
@@ -390,7 +430,8 @@ const buildTools = (user, cabangOptions) => {
     },
 
     get_stok_kosong: async (args) => {
-      const { cabang, search } = args;
+      const cabang = cabangOverride || args.cabang;
+      const { search } = args;
       const result = await dashboardService.getStokKosongReguler(
         user,
         search || "",
@@ -403,7 +444,7 @@ const buildTools = (user, cabangOptions) => {
     },
 
     get_stok_kosong_fast_moving: async (args) => {
-      const { cabang } = args;
+      const cabang = cabangOverride || args.cabang;
       return dashboardService.getStokKosongFastMoving(user, {
         cabang: cabang || "ALL",
         page: 1,
