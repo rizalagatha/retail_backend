@@ -204,6 +204,21 @@ const saveOffer = async (data) => {
     }
 
     let nomorPenawaran = header.nomor;
+
+    // --- CEK ANTI-DOBEL: Validasi Status SO ---
+    if (!isNew) {
+      const [existingSo] = await connection.query(
+        "SELECT so_nomor FROM tso_hdr WHERE so_pen_nomor = ?",
+        [nomorPenawaran],
+      );
+
+      if (existingSo.length > 0) {
+        throw new Error(
+          `Penawaran ${nomorPenawaran} sudah pernah dibuatkan SO (${existingSo[0].so_nomor}).`,
+        );
+      }
+    }
+
     let idrec;
 
     // 1. Tentukan nomor & simpan/update data Header
@@ -689,16 +704,24 @@ const getOfferForEdit = async (nomor) => {
           WHERE v.clh_cus_kode = h.pen_cus_kode 
           ORDER BY v.clh_tanggal DESC LIMIT 1
         ) AS xlevel,
-        g.gdg_kode, g.gdg_nama
+        g.gdg_kode, g.gdg_nama,
+        h.user_create,
+        u.user_nama
       FROM tpenawaran_hdr h
       LEFT JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
       LEFT JOIN tgudang g ON g.gdg_kode = h.pen_cab
+      LEFT JOIN tuser u ON u.user_kode = h.user_create
       WHERE h.pen_nomor = ?;
     `;
     const [headerRows] = await connection.query(headerQuery, [nomor]);
     if (headerRows.length === 0) throw new Error("Penawaran tidak ditemukan.");
 
     const h = headerRows[0];
+
+    const displayUser = h.user_nama
+      ? `${h.user_create} - ${h.user_nama}`
+      : h.user_create;
+
     const headerData = {
       nomor: h.nomor,
       tanggal: format(new Date(h.tanggal), "yyyy-MM-dd"),
@@ -716,11 +739,11 @@ const getOfferForEdit = async (nomor) => {
       tempo: format(addDays(new Date(h.tanggal), h.top), "yyyy-MM-dd"),
       ppnPersen: h.ppnPersen,
       keterangan: h.keterangan,
-      // Tambahkan kolom jenis order
       jenisOrderKode: h.pen_jenis_order_kode,
       jenisOrderNama: h.pen_jenis_order_nama,
       namaDtf: h.pen_nama_dtf,
       nomorPromo: h.pen_promo_nomor,
+      userCreate: displayUser,
     };
 
     // 2. Ambil data Detail (Items) - Perbaiki Nama untuk item CUSTOM
