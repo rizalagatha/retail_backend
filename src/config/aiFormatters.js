@@ -156,9 +156,37 @@ const aiFormatters = {
   get_sales_target: (args, result) => {
     const { nominal, target } = result;
     const pct = target > 0 ? ((nominal / target) * 100).toFixed(1) : "0";
-    return `Realisasi penjualan bulan ini: ${formatRupiah(nominal)} dari target ${formatRupiah(
+
+    const periodLabelMap = {
+      today: "hari ini",
+      yesterday: "kemarin",
+      this_week: "minggu ini",
+      last_week: "minggu lalu",
+      this_month: "bulan ini",
+      last_month: "bulan lalu",
+      last_7_days: "7 hari terakhir",
+      last_30_days: "30 hari terakhir",
+    };
+    const periodLabel = args.monthLabel
+      ? args.monthLabel
+      : args.period && periodLabelMap[args.period]
+        ? periodLabelMap[args.period]
+        : "bulan ini";
+
+    const cabangLabel = args.cabang ? ` cabang ${args.cabang}` : "";
+
+    let text = `Realisasi penjualan${cabangLabel} ${periodLabel}: ${formatRupiah(nominal)} dari target ${formatRupiah(
       target,
     )} (${pct}% tercapai).`;
+
+    const isFullMonth =
+      !args.period || args.period === "this_month" || args.monthLabel;
+    if (!isFullMonth) {
+      text +=
+        "\n\n(Catatan: target memakai target BULANAN, bukan diprorata ke periode ini.)";
+    }
+
+    return text;
   },
 
   get_branch_performance: (args, result) => {
@@ -270,6 +298,17 @@ const aiFormatters = {
   },
 
   get_total_stock: (args, result) => {
+    if (result?.message) return result.message;
+
+    // [BARU] Hasil filter ke 1 cabang spesifik — struktur datanya beda
+    // (tidak ada reservedStock/todayStokIn/Out karena diambil dari
+    // breakdown, bukan getTotalStock asli).
+    if (result?.cabangSpecific) {
+      return `Total stok cabang ${result.cabangNama} (${result.cabangKode}) saat ini: ${Number(
+        result.totalStock || 0,
+      ).toLocaleString("id-ID")} pcs.`;
+    }
+
     const { totalStock, reservedStock, todayStokIn, todayStokOut } = result;
     let text = `Total stok saat ini: ${Number(totalStock || 0).toLocaleString("id-ID")} pcs`;
     if (reservedStock) {

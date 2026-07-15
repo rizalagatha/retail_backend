@@ -397,16 +397,54 @@ const getTopSellingProducts = async (
   return rows;
 };
 
-const getSalesTargetSummary = async (user) => {
-  const tahun = new Date().getFullYear();
-  const bulan = new Date().getMonth() + 1;
+const getSalesTargetSummary = async (
+  user,
+  cabangOverride = null,
+  dateRange = null,
+) => {
+  // [BARU] Terima cabang & rentang tanggal opsional (mis. "target Jember
+  // Januari 2026"). Target (kpi.ttarget_kaosan) tetap per BULAN — kalau
+  // dateRange bukan 1 bulan penuh, target/ach tetap pakai target bulan
+  // tempat startDate berada (sama seperti pola getBranchPerformance).
+  const now = new Date();
+  let startDate, endDate, tahun, bulan;
 
-  let branchFilter = "AND h.inv_cab = ?";
-  let params = [tahun, bulan, user.cabang];
+  if (dateRange && dateRange.startDate && dateRange.endDate) {
+    startDate = dateRange.startDate;
+    endDate = dateRange.endDate;
+    const refDate = new Date(startDate);
+    tahun = refDate.getFullYear();
+    bulan = refDate.getMonth() + 1;
+  } else {
+    tahun = now.getFullYear();
+    bulan = now.getMonth() + 1;
+    startDate = format(new Date(tahun, bulan - 1, 1), "yyyy-MM-dd");
+    endDate = format(now, "yyyy-MM-dd");
+  }
 
-  if (user.cabang === "KDC") {
-    branchFilter = ""; // KDC melihat total semua cabang
-    params = [tahun, bulan];
+  // Cabang eksplisit menang; kalau tidak ada dan user bukan KDC, otomatis
+  // pakai cabang sendiri (perilaku lama tidak berubah). KDC tanpa cabang
+  // spesifik = gabungan semua cabang (perilaku lama juga tidak berubah).
+  const effectiveCabang =
+    cabangOverride || (user.cabang !== "KDC" ? user.cabang : null);
+
+  let targetCabangSql = "";
+  let branchFilterSql = "";
+  const params = [];
+
+  // Placeholder target (muncul lebih dulu secara TEKSTUAL di query, di
+  // dalam SELECT — jadi harus di-push lebih dulu di params juga)
+  params.push(tahun, bulan);
+  if (effectiveCabang) {
+    targetCabangSql = "AND t.kode_gudang = ?";
+    params.push(effectiveCabang);
+  }
+
+  // Placeholder penjualan (muncul di WHERE, setelah SELECT secara tekstual)
+  params.push(startDate, endDate);
+  if (effectiveCabang) {
+    branchFilterSql = "AND h.inv_cab = ?";
+    params.push(effectiveCabang);
   }
 
   const query = `
@@ -417,21 +455,12 @@ const getSalesTargetSummary = async (user) => {
             IFNULL((
                 SELECT SUM(t.target_omset) 
                 FROM kpi.ttarget_kaosan t 
-                WHERE t.tahun = ? AND t.bulan = ? ${
-                  user.cabang !== "KDC" ? "AND t.kode_gudang = ?" : ""
-                }
+                WHERE t.tahun = ? AND t.bulan = ? ${targetCabangSql}
             ), 0) AS target
         FROM tinv_hdr h
-        WHERE h.inv_sts_pro = 0 AND YEAR(h.inv_tanggal) = ? AND MONTH(h.inv_tanggal) = ?
-        ${branchFilter};
+        WHERE h.inv_sts_pro = 0 AND h.inv_tanggal BETWEEN ? AND ?
+        ${branchFilterSql};
     `;
-
-  // Sesuaikan parameter untuk query target
-  if (user.cabang !== "KDC") {
-    params.unshift(user.cabang);
-  }
-  params.unshift(bulan);
-  params.unshift(tahun);
 
   const [rows] = await pool.query(query, params);
   return rows[0];

@@ -85,8 +85,6 @@ const sendChat = async (messages, options = {}) => {
     console.error(err.response?.data || err.message);
     console.error("================================================");
 
-    // [BARU] Deteksi rate limit dari HTTP status (lebih pasti daripada cuma
-    // cocokin teks pesan error), sertakan retry-after kalau Groq kasih tahu.
     if (err.response?.status === 429) {
       const retryAfter = err.response.headers?.["retry-after"];
       const waitMsg = retryAfter ? ` Coba lagi dalam ${retryAfter} detik.` : "";
@@ -95,6 +93,18 @@ const sendChat = async (messages, options = {}) => {
       );
       rateLimitError.isRateLimit = true;
       throw rateLimitError;
+    }
+
+    // [BARU] Model kadang salah format penutup tag function call sendiri
+    // (mis. "<function>" bukan "</function>") — bug generasi model, bukan
+    // salah skema/parameter kita. Tandai eksplisit supaya caller bisa retry
+    // otomatis, karena percobaan ulang biasanya langsung berhasil.
+    if (err.response?.data?.error?.code === "tool_use_failed") {
+      const toolFormatError = new Error(
+        "TOOL_FORMAT_ERROR: Groq gagal parse tool call.",
+      );
+      toolFormatError.isToolFormatError = true;
+      throw toolFormatError;
     }
 
     throw new Error(err.response?.data?.error?.message || err.message);

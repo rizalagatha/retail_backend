@@ -309,7 +309,7 @@ const TOOL_KEYWORDS = {
     "pelanggan piutang",
     "terbanyak",
   ],
-  get_sales_target: ["target"],
+  get_sales_target: ["target", "capai target", "pencapaian"],
   get_branch_performance: [
     "performa",
     "ranking cabang",
@@ -471,8 +471,18 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
       function: {
         name: "get_total_stock",
         description:
-          "Ambil total stok (pcs) di rak untuk cabang user yang login, atau total semua cabang jika user Pusat (KDC).",
-        parameters: { type: "object", properties: {}, required: [] },
+          "Ambil total stok (pcs) di rak. Bisa difilter ke 1 cabang spesifik lewat parameter cabang (khusus berguna untuk user Pusat/KDC). Kalau cabang dikosongkan, hasilnya total cabang user sendiri, atau gabungan semua cabang jika KDC.",
+        parameters: {
+          type: "object",
+          properties: {
+            cabang: {
+              type: "string",
+              enum: cabangEnum,
+              description: cabangDesc,
+            },
+          },
+          required: [],
+        },
       },
     },
     {
@@ -610,8 +620,31 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
       function: {
         name: "get_sales_target",
         description:
-          "Ambil pencapaian target penjualan bulan berjalan (nominal realisasi vs target) untuk cabang user yang login, atau total semua cabang jika KDC.",
-        parameters: { type: "object", properties: {}, required: [] },
+          "Ambil pencapaian target penjualan (nominal realisasi vs target). Default bulan berjalan, cabang user yang login (atau total semua cabang jika KDC). Bisa difilter cabang dan/atau periode spesifik (mis. 'target Jember Januari 2026').",
+        parameters: {
+          type: "object",
+          properties: {
+            cabang: {
+              type: "string",
+              enum: cabangEnum,
+              description: cabangDesc,
+            },
+            period: {
+              type: "string",
+              enum: PERIOD_ENUM,
+              description: `${PERIOD_DESC} Default 'this_month'.`,
+            },
+            startDate: {
+              type: "string",
+              description: "Wajib jika period='custom'.",
+            },
+            endDate: {
+              type: "string",
+              description: "Wajib jika period='custom'.",
+            },
+          },
+          required: [],
+        },
       },
     },
     {
@@ -762,7 +795,30 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
       return data.slice(0, safeLimit);
     },
 
-    get_total_stock: async () => dashboardService.getTotalStock(user),
+    get_total_stock: async (args) => {
+      const cabang = cabangOverride || args.cabang;
+
+      // [BARU] Kalau cabang spesifik disebut, ambil dari breakdown per
+      // cabang (getStockPerCabang) dan filter — getTotalStock sendiri
+      // tidak punya parameter cabang sama sekali.
+      if (cabang) {
+        if (user.cabang !== "KDC" && cabang !== user.cabang) {
+          return {
+            message: "Anda hanya bisa melihat data stok cabang sendiri.",
+          };
+        }
+        const breakdown = await dashboardService.getStockPerCabang();
+        const found = breakdown.find((r) => r.kode_cabang === cabang);
+        return {
+          totalStock: found ? found.totalStock : 0,
+          cabangSpecific: true,
+          cabangKode: cabang,
+          cabangNama: found ? found.nama_cabang : cabang,
+        };
+      }
+
+      return dashboardService.getTotalStock(user);
+    },
 
     // Fungsi ini TIDAK menerima param user & tidak self-scoping — jadi wajib
     // di-gate manual di sini supaya user store tidak bisa lihat data cabang lain.
@@ -850,7 +906,26 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
       return list.slice(0, safeLimit);
     },
 
-    get_sales_target: async () => dashboardService.getSalesTargetSummary(user),
+    get_sales_target: async (args) => {
+      const cabang = cabangOverride || args.cabang;
+
+      let dateRange = null;
+      if (monthOverride) {
+        dateRange = {
+          startDate: monthOverride.startDate,
+          endDate: monthOverride.endDate,
+        };
+        args.monthLabel = monthOverride.label;
+      } else if (args.period && args.period !== "this_month") {
+        dateRange = resolveDateRange(args.period, args.startDate, args.endDate);
+      }
+
+      return dashboardService.getSalesTargetSummary(
+        user,
+        cabang || null,
+        dateRange,
+      );
+    },
 
     get_branch_performance: async (args) => {
       let dateRange = null;

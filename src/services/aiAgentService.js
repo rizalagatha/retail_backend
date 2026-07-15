@@ -102,7 +102,8 @@ Konteks tambahan:
 - WAJIB hanya memanggil parameter yang benar-benar terdaftar di skema tool. JANGAN pernah menambah parameter yang tidak ada di skema (contoh: jangan kirim "search" ke tool yang skemanya tidak punya parameter search).
 - Jika tidak ada tool yang relevan (user cuma menyapa, atau bertanya di luar topik sistem), jawab langsung tanpa memanggil tool.
 - PENTING soal parameter cabang: baris "User yang bertanya: cabang ${user.cabang}" di atas HANYA informasi siapa yang login — JANGAN pernah pakai nilai itu sebagai filter cabang kecuali user secara eksplisit memintanya. Pertanyaan tanpa sebutan cabang (mis. "customer piutang terbanyak?", "penjualan hari ini?") artinya mencakup SEMUA cabang, kosongkan parameter cabang di tool.
-- Istilah baku produk Kaosan (koreksi typo user ke ejaan ini sebelum memanggil tool pencarian barang): COMBED 24S, COMBED 30S, KATUN AIR, HOODIE FLEECE, JAKET FLEECE, KERAH POLO, KAOS OBLONG (KO), KAOS KERAH (KK).
+- PENTING soal follow-up: kalau pertanyaan user melanjutkan/menegaskan topik dari pesan SEBELUMNYA di percakapan ini (mis. "yang paling laku yang mana?", "capai target dong berarti?", "kalau dibandingkan gimana?"), PERTAHANKAN cabang DAN periode yang sama dari pertanyaan sebelumnya — JANGAN reset ke semua cabang/KDC atau bulan berjalan kecuali user eksplisit menyebut cabang/periode - PENTING soal follow-up: kalau pertanyaan user melanjutkan/menegaskan topik dari pesan SEBELUMNYA di percakapan ini (mis. "yang paling laku yang mana?", "capai target dong berarti?", "kalau dibandingkan gimana?"), PERTAHANKAN cabang DAN periode yang sama dari pertanyaan sebelumnya — JANGAN reset ke semua cabang/KDC atau bulan berjalan kecuali user eksplisit menyebut cabang/periode baru.
+- PENTING: kalau pertanyaan user cuma meminta KONFIRMASI/INTERPRETASI dari angka yang SUDAH ada di jawaban Anda sebelumnya (contoh: "berarti tidak capai target dong?", "artinya rugi ya?", "berarti stoknya cukup?"), JANGAN panggil tool lagi — cukup jawab langsung berdasarkan angka yang sudah Anda sebutkan di pesan sebelumnya di percakapan ini.
 - Jika user minta BANDINGKAN 2 periode/bulan berbeda, panggil tool yang sama DUA KALI dalam satu balasan (satu per periode), masing-masing dengan period='custom' + startDate/endDate yang sesuai bulan itu.`;
 
     // 3. Riwayat percakapan dari frontend (sudah dibatasi 6 pesan terakhir di sana)
@@ -116,13 +117,28 @@ Konteks tambahan:
       const t0 = Date.now();
       const isLastRound = round === MAX_TOOL_ROUNDS - 1;
       console.log(`[AI] Round ${round + 1}/${MAX_TOOL_ROUNDS}...`);
-      const assistantMessage = await aiService.sendChat(conversation, {
-        temperature: 0.2,
-        // [BARU] Round terakhir: JANGAN kirim tools lagi — paksa model
-        // kasih jawaban teks final (hemat token skema, dan cegah loop
-        // "mau manggil tool lagi" yang berakhir di fallback kompleks).
-        tools: isLastRound ? [] : tools,
-      });
+      let assistantMessage;
+      try {
+        assistantMessage = await aiService.sendChat(conversation, {
+          temperature: 0.2,
+          // [BARU] Round terakhir: JANGAN kirim tools lagi — paksa model
+          // kasih jawaban teks final (hemat token skema, dan cegah loop
+          // "mau manggil tool lagi" yang berakhir di fallback kompleks).
+          tools: isLastRound ? [] : tools,
+        });
+      } catch (err) {
+        if (err.isToolFormatError) {
+          // [BARU] Retry SEKALI — biasanya cukup, karena ini glitch acak
+          // model saat menutup tag function call, bukan kesalahan logic.
+          console.warn("[AI] Tool format error, retry 1x...");
+          assistantMessage = await aiService.sendChat(conversation, {
+            temperature: 0.2,
+            tools: isLastRound ? [] : tools,
+          });
+        } else {
+          throw err;
+        }
+      }
       console.log(
         `[AI] Round ${round + 1} selesai dalam ${((Date.now() - t0) / 1000).toFixed(1)}s. Tool calls:`,
         assistantMessage.tool_calls?.length || 0,
