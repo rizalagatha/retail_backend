@@ -399,11 +399,12 @@ const getRealTimeStockExport = async (filters) => {
           WHERE z.StatusFinal = 'OPEN'
         ),
         pesanan_booked_summary AS (
-          SELECT d.sod_kode AS kode, SUM(d.sod_jumlah - IFNULL(d.sod_scanned, 0)) AS booked
+          SELECT d.sod_kode AS kode, d.sod_ukuran AS ukuran,
+                 SUM(d.sod_jumlah - IFNULL(d.sod_scanned, 0)) AS booked
           FROM open_so os
           JOIN tso_dtl d ON d.sod_so_nomor = os.Nomor
           WHERE d.sod_jumlah > IFNULL(d.sod_scanned, 0)
-          GROUP BY d.sod_kode
+          GROUP BY d.sod_kode, d.sod_ukuran
         )
       `;
       pesananParamsPre.push(gudang);
@@ -413,12 +414,17 @@ const getRealTimeStockExport = async (filters) => {
         , IFNULL((
             SELECT SUM(mso.mst_stok_in - mso.mst_stok_out)
             FROM tmasterstokso mso
-            WHERE mso.mst_brg_kode = a.brg_kode AND mso.mst_cab = ? AND mso.mst_aktif = 'Y'
+            WHERE mso.mst_brg_kode = a.brg_kode
+              AND mso.mst_ukuran = b.brgd_ukuran
+              AND mso.mst_cab = ? AND mso.mst_aktif = 'Y'
           ), 0) AS PESANAN_READY
       `;
       pesananParamsSelect.push(gudang);
 
-      pesananJoinSql = `LEFT JOIN pesanan_booked_summary pb ON pb.kode = a.brg_kode`;
+      // [FIX] Join sekarang per (kode, ukuran) — sebelumnya cuma per kode,
+      // jadi total booked/ready kode itu "ditempel" sama di semua baris
+      // ukuran (bug: angka totalnya nempel di setiap size, bukan dipecah).
+      pesananJoinSql = `LEFT JOIN pesanan_booked_summary pb ON pb.kode = a.brg_kode AND pb.ukuran = b.brgd_ukuran`;
     }
 
     let stockSourceTable = "";
@@ -620,10 +626,41 @@ const getPesananBookedDetail = async (kode, cabang) => {
   }
 };
 
+// Detail per-SO dari stok yang SUDAH FISIK ADA di toko dan direservasi
+// untuk SO tertentu (tmasterstokso) — pasangan dari getPesananBookedDetail
+// yang sudah ada, tapi sumbernya beda (stok riil, bukan sisa outstanding SO).
+const getPesananReadyDetail = async (kode, cabang) => {
+  const connection = await pool.getConnection();
+  try {
+    const query = `
+      SELECT 
+        mso.mst_nomor_so AS soNomor,
+        h.so_tanggal AS tanggal,
+        IFNULL(c.cus_nama, '-') AS customer,
+        mso.mst_ukuran AS ukuran,
+        SUM(mso.mst_stok_in - mso.mst_stok_out) AS qty
+      FROM tmasterstokso mso
+      LEFT JOIN tso_hdr h ON h.so_nomor = mso.mst_nomor_so
+      LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
+      WHERE mso.mst_brg_kode = ?
+        AND mso.mst_cab = ?
+        AND mso.mst_aktif = 'Y'
+      GROUP BY mso.mst_nomor_so, h.so_tanggal, c.cus_nama, mso.mst_ukuran
+      HAVING qty <> 0
+      ORDER BY h.so_tanggal DESC;
+    `;
+    const [rows] = await connection.query(query, [kode, cabang]);
+    return rows;
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   getRealTimeStock,
   getGudangOptions,
   getLowStock,
   getRealTimeStockExport,
   getPesananBookedDetail,
+  getPesananReadyDetail,
 };

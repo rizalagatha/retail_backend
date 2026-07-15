@@ -26,7 +26,7 @@ router.get(
   verifyToken,
   laporanStokController.getRealTimeStockExport,
 );
-// routes
 router.get("/pesanan-booked-detail", laporanStokController.pesananBookedDetail);
+router.get("/pesanan-ready-detail", laporanStokController.pesananReadyDetail);
 
 module.exports = router;
