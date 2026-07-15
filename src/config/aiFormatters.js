@@ -206,10 +206,8 @@ const aiFormatters = {
     if (!Array.isArray(result) || result.length === 0) {
       return "Tidak ada data penjualan untuk rentang waktu tersebut.";
     }
-
     const totalAll = result.reduce((sum, r) => sum + (Number(r.total) || 0), 0);
     const groupBy = args.groupBy || "day";
-
     const formatTanggal = (val) => {
       if (!val) return "-";
       const d = new Date(val);
@@ -229,7 +227,6 @@ const aiFormatters = {
         year: "numeric",
       });
     };
-
     // Batasi baris yang ditampilkan supaya jawaban tidak kepanjangan untuk
     // rentang tanggal yang lebar (mis. groupBy=day selama beberapa bulan)
     const MAX_ROWS = 31;
@@ -237,15 +234,41 @@ const aiFormatters = {
     const lines = rows
       .map((r) => `- ${formatTanggal(r.tanggal)}: ${formatRupiah(r.total)}`)
       .join("\n");
-
     const extraNote =
       result.length > MAX_ROWS
         ? `\n\n(menampilkan ${MAX_ROWS} dari ${result.length} baris; total di atas sudah mencakup semuanya)`
         : "";
 
-    const periodLabel = args.monthLabel ? ` (${args.monthLabel})` : "";
-    return `Total penjualan periode ini${periodLabel}: ${formatRupiah(totalAll)}\n\nRincian:\n${lines}${extraNote}`;
+    // [FIX] Sebelumnya cuma cek args.monthLabel, jadi period seperti
+    // "yesterday"/"last_week" tidak pernah tercermin di teks jawaban
+    // (selalu jatuh ke "periode ini" generik). Tambahkan pemetaan period
+    // sama seperti formatter get_top_selling_products/get_branch_performance.
+    const periodLabelMap = {
+      today: "hari ini",
+      yesterday: "kemarin",
+      this_week: "minggu ini",
+      last_week: "minggu lalu",
+      this_month: "bulan ini",
+      last_month: "bulan lalu",
+      last_7_days: "7 hari terakhir",
+      last_30_days: "30 hari terakhir",
+      custom:
+        args.startDate && args.endDate
+          ? `${args.startDate} s/d ${args.endDate}`
+          : "",
+    };
+    const periodLabel = args.monthLabel
+      ? args.monthLabel
+      : args.period && periodLabelMap[args.period]
+        ? periodLabelMap[args.period]
+        : "";
+
+    const cabangLabel =
+      args.cabang && args.cabang !== "ALL" ? ` cabang ${args.cabang}` : "";
+
+    return `Total penjualan${periodLabel ? ` ${periodLabel}` : " periode ini"}${cabangLabel}: ${formatRupiah(totalAll)}\n\nRincian:\n${lines}${extraNote}`;
   },
+
   get_total_stock: (args, result) => {
     const { totalStock, reservedStock, todayStokIn, todayStokOut } = result;
     let text = `Total stok saat ini: ${Number(totalStock || 0).toLocaleString("id-ID")} pcs`;

@@ -205,6 +205,48 @@ const resolveMonthOverride = (rawText) => {
   return null;
 };
 
+// [BARU] Deteksi pola "N hari/minggu/bulan (yang) lalu" dari kalimat asli
+// — enum PERIOD_ENUM cuma punya kata kunci tetap (yesterday, last_week,
+// dst), tidak ada opsi angka bebas. Tanpa ini, model kepaksa "mengarang"
+// value yang tidak ada di enum ("last_2_weeks") dan Groq menolak validasi,
+// atau model salah pilih opsi terdekat yang tersedia.
+const relativeUnitToDays = { hari: 1, minggu: 7, bulan: 30 };
+
+const resolveRelativeOverride = (rawText) => {
+  if (!rawText) return null;
+  const textLower = rawText.toLowerCase();
+
+  const match = textLower.match(/(\d+)\s*(hari|minggu|bulan)\s*(yang\s+)?lalu/);
+  if (!match) return null;
+
+  const n = parseInt(match[1], 10);
+  const unit = match[2];
+  if (!n || n <= 0) return null;
+
+  const daysPerUnit = relativeUnitToDays[unit];
+  const now = new Date();
+  const fmt = (d) => format(d, "yyyy-MM-dd");
+
+  if (unit === "hari") {
+    // "2 hari lalu" = 1 titik hari spesifik (H-2), bukan rentang
+    const target = subDays(now, n);
+    return {
+      startDate: fmt(target),
+      endDate: fmt(target),
+      label: `${n} hari lalu`,
+    };
+  }
+
+  // "2 minggu lalu" / "3 bulan lalu" = rentang N unit terakhir sampai hari ini
+  const totalDays = n * daysPerUnit;
+  const start = subDays(now, totalDays - 1);
+  return {
+    startDate: fmt(start),
+    endDate: fmt(now),
+    label: `${n} ${unit} terakhir`,
+  };
+};
+
 // [BARU] Pemetaan kata kunci -> tool relevan. Dipakai buat NARROWING skema
 // tool yang dikirim ke Groq (bukan pengganti tool-calling) — soalnya kirim
 // 16 skema tool sekaligus tiap request itu SENDIRIAN udah kelebihan kuota
@@ -319,7 +361,10 @@ const selectRelevantTools = (rawText, availableNames) => {
 // --- Bangun daftar tool + eksekutornya, disesuaikan konteks user yang bertanya ---
 const buildTools = (user, cabangOptions, rawQuestion = "") => {
   const cabangOverride = resolveCabangFromText(rawQuestion, cabangOptions);
-  const monthOverride = resolveMonthOverride(rawQuestion);
+  // Nama bulan spesifik ("Januari") menang lebih dulu; kalau tidak ada,
+  // baru cek pola relatif ("2 minggu lalu").
+  const monthOverride =
+    resolveMonthOverride(rawQuestion) || resolveRelativeOverride(rawQuestion);
   const cabangEnum = cabangOptions.map((c) => c.kode);
   // [SINGKAT] Daftar kode+nama cabang sudah ada di system prompt (1x),
   // jadi di sini cukup instruksi singkat — hemat token krusial karena
@@ -730,11 +775,15 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
 
     get_stok_kosong: async (args) => {
       const cabang = cabangOverride || args.cabang;
+      // [FIX] Kalau user bukan KDC dan cabang tidak disebut, WAJIB pakai
+      // user.cabang sendiri secara eksplisit — sebelumnya kirim string kosong
+      // yang bikin subquery nama_cabang di backend jatuh ke NULL (bug "cabang null").
+      const targetCabang = cabang || (user.cabang !== "KDC" ? user.cabang : "");
       const { search } = args;
       const result = await dashboardService.getStokKosongReguler(
         user,
         search || "",
-        cabang || "",
+        targetCabang,
         false,
         1,
         10,
