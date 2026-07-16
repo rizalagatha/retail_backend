@@ -184,6 +184,7 @@ const laporanLostOrderRoutes = require("./routes/laporanLostOrderRoutes");
 const customerVisitRoutes = require("./routes/customerVisitRoutes");
 const approvalMobileRoutes = require("./routes/approvalMobileRoutes");
 const perencanaanProduksiRoutes = require("./routes/perencanaanProduksiRoutes");
+const laporanProduktivitasRoutes = require("./routes/laporanProduktivitasRoutes");
 
 const app = express();
 const port = process.env.PORT || 8000;
@@ -627,6 +628,11 @@ app.use("/api/laporan/lost-order", clientCertAuth, laporanLostOrderRoutes);
 app.use("/api/customer-visit", clientCertAuth, customerVisitRoutes);
 app.use("/api/tools/approval-mobile", clientCertAuth, approvalMobileRoutes);
 app.use("/api/dc-planning", clientCertAuth, perencanaanProduksiRoutes);
+app.use(
+  "/api/laporan-produktivitas",
+  clientCertAuth,
+  laporanProduktivitasRoutes,
+);
 
 // Menjalankan Server
 app.listen(port, () => {

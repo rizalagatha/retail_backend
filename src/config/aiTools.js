@@ -544,14 +544,19 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
       function: {
         name: "get_real_stock",
         description:
-          "Cek stok REAL (jumlah pcs saat ini) untuk barang tertentu, boleh difilter cabang. Gunakan ini untuk pertanyaan seperti 'stok combed 24s hitam di boyolali berapa', 'berapa stok barang X'. Kata kunci pencarian barang WAJIB diisi.",
+          "Cek stok REAL (jumlah pcs saat ini) untuk barang tertentu, boleh difilter cabang dan/atau ukuran spesifik. Gunakan ini untuk pertanyaan seperti 'stok combed 24s hitam di boyolali berapa', 'berapa stok barang X ukuran L'. Kata kunci pencarian barang WAJIB diisi.",
         parameters: {
           type: "object",
           properties: {
             search: {
               type: "string",
               description:
-                "Kata kunci nama barang, WAJIB diisi. Nama barang Kaosan tersusun tetap: {JenisKaos} {Tipe} {Lengan} {JenisKain} {Warna} — contoh: 'KO POLOS PENDEK COMBED 24S HITAM'. Susun kata kunci mengikuti urutan ini.",
+                "Kata kunci nama barang, WAJIB diisi. Nama barang Kaosan tersusun tetap: {JenisKaos} {Tipe} {Lengan} {JenisKain} {Warna} — contoh: 'KO POLOS PENDEK COMBED 24S HITAM'. JANGAN masukkan ukuran (S/M/L/XL/dst) ke sini — ukuran punya parameter sendiri.",
+            },
+            ukuran: {
+              type: "string",
+              description:
+                "Ukuran spesifik jika disebut user (mis. 'XL', '2XL', 'M'). Kosongkan jika user tidak sebut ukuran tertentu (tampilkan semua ukuran).",
             },
             cabang: {
               type: "string",
@@ -861,6 +866,7 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
       const result = await dashboardService.getRealStockList(user, {
         cabang: cabang || "ALL",
         search: args.search || "",
+        ukuran: args.ukuran || "",
         page: 1,
         limit: 15,
       });

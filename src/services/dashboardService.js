@@ -2475,8 +2475,13 @@ const getAutoMintaAnalytics = async (user, filters = {}) => {
 // =========================================================================
 const getRealStockList = async (user, filters = {}) => {
   // Tangkap parameter page dan limit untuk infinite scroll (default: page 1, limit 50)
-  const { cabang = "ALL", search = "", page = 1, limit = 50 } = filters;
-
+  const {
+    cabang = "ALL",
+    search = "",
+    ukuran = "",
+    page = 1,
+    limit = 50,
+  } = filters;
   let branchFilter = "";
   let params = [];
 
@@ -2524,7 +2529,15 @@ const getRealStockList = async (user, filters = {}) => {
     searchFilter += likeParts.join(" AND ");
     searchFilter += ")";
   }
-
+  // [BARU] Filter ukuran spesifik — dipisah dari searchFilter karena ukuran
+  // bukan bagian dari nama barang gabungan (jeniskaos+tipe+lengan+jeniskain+warna),
+  // dia field kolom tersendiri (mst_ukuran). Kalau digabung ke search, query
+  // LIKE tidak akan pernah match apapun.
+  let ukuranFilter = "";
+  if (ukuran && ukuran.trim() !== "") {
+    ukuranFilter = "AND m.mst_ukuran = ?";
+    params.push(ukuran.trim().toUpperCase());
+  }
   // 3. Setup Kalkulasi Offset untuk Pagination/Infinite Scroll
   const pageNum = parseInt(page) || 1;
   const limitNum = parseInt(limit) || 50;
@@ -2826,6 +2839,7 @@ const getRealStockList = async (user, filters = {}) => {
     WHERE 1=1
       ${branchFilter}
       ${searchFilter}
+      ${ukuranFilter}
       AND a.brg_aktif = 0
       AND a.brg_logstok = 'Y'
       AND a.brg_kode NOT LIKE 'JASA%'

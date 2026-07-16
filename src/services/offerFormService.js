@@ -718,6 +718,12 @@ const getOfferForEdit = async (nomor) => {
 
     const h = headerRows[0];
 
+    const [soRows] = await connection.query(
+      "SELECT so_nomor FROM tso_hdr WHERE so_pen_nomor = ? AND so_aktif = 'Y' LIMIT 1",
+      [nomor],
+    );
+    const existingSoNomor = soRows.length > 0 ? soRows[0].so_nomor : null;
+
     const displayUser = h.user_nama
       ? `${h.user_create} - ${h.user_nama}`
       : h.user_create;
@@ -744,6 +750,7 @@ const getOfferForEdit = async (nomor) => {
       namaDtf: h.pen_nama_dtf,
       nomorPromo: h.pen_promo_nomor,
       userCreate: displayUser,
+      existingSoNomor,
     };
 
     // 2. Ambil data Detail (Items) - Perbaiki Nama untuk item CUSTOM
