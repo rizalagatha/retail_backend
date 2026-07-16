@@ -28,8 +28,19 @@ const getKategoriOptions = async (req, res) => {
   }
 };
 
+// [BARU] Fungsi khusus untuk export Multi-Sheet Per Cabang
+const getExportDetailPerCabang = async (req, res) => {
+  try {
+    const data = await service.getDataForPerCabangExport(req.query);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getList,
   getCabangOptions,
   getKategoriOptions,
+  getExportDetailPerCabang,
 };

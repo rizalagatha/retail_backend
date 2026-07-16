@@ -80,8 +80,8 @@ const getList = async (filters) => {
             WHEN y.DipakaiDTF = 'Y' AND y.Belum = 0 THEN 'CLOSE'
             WHEN y.sts = 2 THEN "DICLOSE"
             WHEN y.StatusKirim = "TERKIRIM" THEN "CLOSE"
-            WHEN y.StatusKirim = "BELUM" AND y.keluar = 0 AND y.minta = "" AND y.pesan = 0 THEN "OPEN"
-            WHEN y.StatusKirim = "BELUM" AND y.QtySO = y.pesan THEN "JADI"
+            WHEN y.StatusKirim = "BELUM" AND y.pesan = 0 THEN "OPEN"
+            WHEN y.StatusKirim = "BELUM" AND y.QtySOFisik > 0 AND y.QtySOFisik = y.pesan THEN "JADI"
             ELSE "PROSES"
         END) AS Status
     FROM (
@@ -105,10 +105,44 @@ const getList = async (filters) => {
                 LIMIT 1
             ), "") AS minta,
 
-            IFNULL((
+            IFNULL(GREATEST(
+              IFNULL((
                 SELECT SUM(m.mst_stok_in - m.mst_stok_out)
                 FROM tmasterstokso m
-                WHERE m.mst_aktif = "Y" AND m.mst_nomor_so = x.Nomor
+                WHERE m.mst_aktif = 'Y' AND m.mst_nomor_so = x.Nomor
+                  AND EXISTS (
+                    SELECT 1 FROM tso_dtl dd
+                    WHERE dd.sod_so_nomor = x.Nomor
+                      AND dd.sod_kode = m.mst_brg_kode
+                      AND dd.sod_ukuran = m.mst_ukuran
+                      AND NOT (
+                        UPPER(dd.sod_kode) LIKE 'JASA%'
+                        OR UPPER(dd.sod_kode) LIKE 'JS%'
+                        OR dd.sod_kode = 'CUSTOM'
+                        OR dd.sod_custom = 'Y'
+                        OR (dd.sod_sd_nomor IS NOT NULL AND dd.sod_sd_nomor <> '')
+                      )
+                  )
+              ), 0),
+              IFNULL((
+                SELECT SUM(md.mid_jumlah)
+                FROM tmutasiin_dtl md
+                JOIN tmutasiin_hdr mh ON mh.mi_nomor = md.mid_nomor
+                WHERE mh.mi_so_nomor = x.Nomor
+                  AND EXISTS (
+                    SELECT 1 FROM tso_dtl dd
+                    WHERE dd.sod_so_nomor = x.Nomor
+                      AND dd.sod_kode = md.mid_kode
+                      AND dd.sod_ukuran = md.mid_ukuran
+                      AND NOT (
+                        UPPER(dd.sod_kode) LIKE 'JASA%'
+                        OR UPPER(dd.sod_kode) LIKE 'JS%'
+                        OR dd.sod_kode = 'CUSTOM'
+                        OR dd.sod_custom = 'Y'
+                        OR (dd.sod_sd_nomor IS NOT NULL AND dd.sod_sd_nomor <> '')
+                      )
+                  )
+              ), 0)
             ), 0) AS pesan
         FROM (
             SELECT 
@@ -129,7 +163,32 @@ const getList = async (filters) => {
                 h.so_mp_nomor_pesanan AS MpPesanan,
                 h.so_mp_resi AS MpResi,
 
-                (SELECT MAX(date_create) FROM tmutasistok_hdr WHERE mso_so_nomor = h.so_nomor) AS TglJadi,
+                (
+                  CASE
+                    WHEN NOT EXISTS (
+                      SELECT 1
+                      FROM tso_dtl dd
+                      WHERE dd.sod_so_nomor = h.so_nomor
+                        AND NOT (
+                          UPPER(dd.sod_kode) LIKE 'JASA%'
+                          OR UPPER(dd.sod_kode) LIKE 'JS%'
+                          OR dd.sod_kode = 'CUSTOM'
+                          OR dd.sod_custom = 'Y'
+                          OR (dd.sod_sd_nomor IS NOT NULL AND dd.sod_sd_nomor <> '')
+                        )
+                        AND dd.sod_jumlah > IFNULL((
+                          SELECT SUM(m.mst_stok_in)
+                          FROM tmasterstokso m
+                          WHERE m.mst_aktif = 'Y'
+                            AND m.mst_nomor_so = h.so_nomor
+                            AND m.mst_brg_kode = dd.sod_kode
+                            AND m.mst_ukuran = dd.sod_ukuran
+                        ), 0)
+                    )
+                    THEN (SELECT MAX(date_create) FROM tmutasistok_hdr WHERE mso_so_nomor = h.so_nomor)
+                    ELSE NULL
+                  END
+                ) AS TglJadi,
 
                 IFNULL((
                     SELECT GROUP_CONCAT(spk_nomor SEPARATOR ', ')
@@ -148,6 +207,19 @@ const getList = async (filters) => {
                 WHERE hh.so_nomor = h.so_nomor) AS Nominal,
 
                 IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
+
+                IFNULL((
+                    SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd 
+                    WHERE dd.sod_so_nomor = h.so_nomor
+                      AND NOT (
+                        UPPER(dd.sod_kode) LIKE 'JASA%'
+                        OR UPPER(dd.sod_kode) LIKE 'JS%'
+                        OR dd.sod_kode = 'CUSTOM'
+                        OR dd.sod_custom = 'Y'
+                        OR (dd.sod_sd_nomor IS NOT NULL AND dd.sod_sd_nomor <> '')
+                      )
+                ), 0) AS QtySOFisik,
+
                 IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor AND dd.invd_kode NOT IN (SELECT brg_kode FROM kencanaprint.tgarmen_brg WHERE brg_jenis IN ('ACCESORIES','OBAT'))), 0) AS QtyInv,
 
                 (IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0)

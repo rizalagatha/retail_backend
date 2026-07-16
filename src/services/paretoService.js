@@ -1,4 +1,5 @@
 const pool = require("../config/database");
+const { get } = require("../routes/soRoutes");
 
 /**
  * Mengambil data Laporan Pareto Barang Terjual.
@@ -199,9 +200,131 @@ const getKategoriOptions = async () => {
   return ["ALL", ...rows.map((r) => r.brg_ktgp)];
 };
 
+/**
+ * Mengambil data khusus untuk kebutuhan Export Excel multi-sheet Per Cabang.
+ * Mengambil Top N Gabungan (Unik), Breakdown penjualannya per cabang untuk sheet 1,
+ * dan Top 10 barang terlaris per cabang untuk sheet tambahan.
+ */
+const getDataForPerCabangExport = async (filters) => {
+  const { startDate, endDate, kategori, search } = filters;
+  const limit = parseInt(filters.limit, 10) || 50;
+
+  // 1. Ambil Data Pareto Gabungan (Top N Barang Unik) untuk basis Sheet 1
+  // Gunakan fungsi getList asli dengan Cab='ALL'
+  const combinedPareto = await getList({
+    startDate,
+    endDate,
+    cabang: "ALL",
+    kategori,
+    limit,
+    search,
+    isExport: false,
+  });
+
+  if (combinedPareto.length === 0)
+    return { sheet1Data: [], perBranchTopSheets: [] };
+
+  // Ambil list Kode Barang unik yang masuk Pareto
+  const paretoItemKodes = combinedPareto.map((item) => item.KODE);
+
+  let paramsDetail = [startDate, endDate, ...paretoItemKodes];
+  let catFilter = "";
+  if (kategori !== "ALL") {
+    catFilter = "AND a.brg_ktgp = ?";
+    paramsDetail.push(kategori);
+  }
+
+  // 2. Ambil DETAIL Penjualan per Cabang HANYA untuk barang-barang yang masuk combinedPareto
+  // Ini untuk breakdown Sheet 1
+  const queryBreakdown = `
+    SELECT
+        LEFT(x.inv_nomor, 3) AS Cab,
+        x.KODE,
+        x.KTGPRODUK,
+        x.NAMA,
+        SUM(x.qty) AS QTY_CABANG,
+        SUM(x.netto_baris) AS NOMINAL_CABANG
+    FROM (
+        SELECT 
+            h.inv_nomor,
+            d.invd_kode AS KODE,
+            a.brg_ktgp AS KTGPRODUK,
+            TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), " ", IFNULL(a.brg_tipe,''), " ", IFNULL(a.brg_lengan,''), " ", IFNULL(a.brg_jeniskain,''), " ", IFNULL(a.brg_warna,''))) AS NAMA,
+            d.invd_jumlah AS qty,
+            ((IFNULL(d.invd_harga, 0) - IFNULL(d.invd_diskon, 0)) * IFNULL(d.invd_jumlah, 0)) AS netto_baris
+        FROM tinv_hdr h
+        INNER JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+        INNER JOIN tbarangdc a ON a.brg_kode = d.invd_kode
+        WHERE h.inv_sts_pro = 0 
+          AND h.inv_tanggal BETWEEN ? AND ?
+          AND d.invd_kode IN (${paretoItemKodes.map(() => "?").join(",")}) -- Filter barang unik
+          AND a.brg_logstok = "Y"
+          AND a.brg_kode != '2500053'
+          ${catFilter}
+    ) AS x
+    GROUP BY Cab, x.KODE, x.NAMA, x.KTGPRODUK
+  `;
+
+  const [breakdownRows] = await pool.query(queryBreakdown, paramsDetail);
+
+  // Map hasil combinedPareto dengan breakdown per cabang untuk Sheet 1
+  const sheet1Data = [];
+  breakdownRows.forEach((bd) => {
+    // Cari stok pareto & real dari combined data (data total barang unik)
+    const totalData = combinedPareto.find((cp) => cp.KODE === bd.KODE);
+    sheet1Data.push({
+      Cab: bd.Cab,
+      KODE: bd.KODE,
+      KTGPRODUK: bd.KTGPRODUK,
+      NAMA: bd.NAMA,
+      TOTAL: bd.QTY_CABANG, // Qty terjual di cabang ini
+      NOMINAL_SALES: bd.NOMINAL_CABANG, // Nominal di cabang ini
+      StokPareto: totalData ? totalData.StokPareto : 0, // Stok total global
+      StokReal: totalData ? totalData.StokReal : 0, // Stok total real global
+    });
+  });
+  // Sort Sheet 1: Cabang (ASC), lalu Qty (DESC)
+  sheet1Data.sort((a, b) => {
+    if (a.Cab !== b.Cab) return a.Cab.localeCompare(b.Cab);
+    return Number(b.TOTAL) - Number(a.TOTAL);
+  });
+
+  // 3. Ambil Data TOP 20 Barang Terlaris Masing-Masing Cabang (Untuk Sheet Tambahan)
+  // Ambil opsi cabang DC=0 (bukan DC)
+  const [cabangRows] = await pool.query(
+    "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_dc = 0 ORDER BY gdg_kode",
+  );
+
+  const perBranchTopSheets = [];
+
+  for (const branch of cabangRows) {
+    // Panggil getList asli untuk cabang spesifik, limit Top 20
+    const topItems = await getList({
+      startDate,
+      endDate,
+      cabang: branch.kode,
+      kategori,
+      limit: 20, // Ambil Top 20 per cabang
+      search: "", // Kosongkan search agar murni terlaris
+      isExport: false,
+    });
+
+    if (topItems.length > 0) {
+      perBranchTopSheets.push({
+        kode_cabang: branch.kode,
+        nama_cabang: branch.nama,
+        data: topItems,
+      });
+    }
+  }
+
+  return { sheet1Data, perBranchTopSheets };
+};
+
 module.exports = {
   getList,
   getListPerCabang,
   getCabangOptions,
   getKategoriOptions,
+  getDataForPerCabangExport,
 };

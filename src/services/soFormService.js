@@ -493,15 +493,25 @@ const getSoForEdit = async (nomor) => {
   SELECT 
       h.*, d.*, 
       d.sod_scanned AS scannedQty,
-      IFNULL((
-        SELECT SUM(m.mst_stok_in - m.mst_stok_out)
-        FROM tmasterstokso m 
-        WHERE m.mst_aktif='Y' 
-          AND m.mst_cab = h.so_cab
-          AND m.mst_brg_kode = d.sod_kode 
-          AND m.mst_ukuran = d.sod_ukuran
-          AND m.mst_nomor_so = h.so_nomor
-      ), 0) AS mutatedQty,
+      GREATEST(
+        IFNULL((
+          SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+          FROM tmasterstokso m 
+          WHERE m.mst_aktif='Y' 
+            AND m.mst_cab = h.so_cab
+            AND m.mst_brg_kode = d.sod_kode 
+            AND m.mst_ukuran = d.sod_ukuran
+            AND m.mst_nomor_so = h.so_nomor
+        ), 0),
+        IFNULL((
+          SELECT SUM(md.mid_jumlah)
+          FROM tmutasiin_dtl md
+          JOIN tmutasiin_hdr mh ON mh.mi_nomor = md.mid_nomor
+          WHERE mh.mi_so_nomor = h.so_nomor
+            AND md.mid_kode = d.sod_kode
+            AND md.mid_ukuran = d.sod_ukuran
+        ), 0)
+      ) AS mutatedQty,
       h.so_pro_nomor, 
       h.so_pro_nama,
       c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,

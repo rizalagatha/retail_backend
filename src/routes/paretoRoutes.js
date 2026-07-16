@@ -1,17 +1,33 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const controller = require('../controllers/paretoController');
-const { verifyToken, checkPermission } = require('../middleware/authMiddleware');
+const controller = require("../controllers/paretoController");
+const {
+  verifyToken,
+  checkPermission,
+} = require("../middleware/authMiddleware");
 
-const MENU_ID = '511';
+const MENU_ID = "511";
 
 // Rute utama untuk mengambil data laporan
-router.get('/', verifyToken, checkPermission(MENU_ID, 'view'), controller.getList);
+router.get(
+  "/",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getList,
+);
+
+// [BARU] Rute khusus untuk export Excel multi-sheet per cabang
+router.get(
+  "/export-detail-percabang",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getExportDetailPerCabang,
+);
 
 // Rute untuk mengisi dropdown filter cabang
-router.get('/cabang-options', verifyToken, controller.getCabangOptions);
+router.get("/cabang-options", verifyToken, controller.getCabangOptions);
 
 // Rute untuk mengisi dropdown filter kategori
-router.get('/kategori-options', verifyToken, controller.getKategoriOptions);
+router.get("/kategori-options", verifyToken, controller.getKategoriOptions);
 
 module.exports = router;
