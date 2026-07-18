@@ -1,6 +1,7 @@
 const offerFormService = require("../services/offerFormService");
 const auditService = require("../services/auditService"); // Import Audit
 const pool = require("../config/database"); // Import Pool untuk Snapshot
+const invoiceFormService = require("../services/invoiceFormService");
 
 const getNextNumber = async (req, res) => {
   try {
@@ -227,6 +228,19 @@ const getByBarcode = async (req, res) => {
   }
 };
 
+const getFreeItemQuota = async (req, res) => {
+  try {
+    const { proNomor, cusKode } = req.query;
+    const result = await invoiceFormService.checkFreeItemQuota(
+      proNomor,
+      cusKode,
+    );
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getNextNumber,
   searchCustomers,
@@ -243,4 +257,5 @@ module.exports = {
   getPriceProposalDetails,
   getPrintData,
   getByBarcode,
+  getFreeItemQuota,
 };

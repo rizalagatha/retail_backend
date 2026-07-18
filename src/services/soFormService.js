@@ -328,8 +328,8 @@ const save = async (data, user) => {
 
       await connection.query(
         `INSERT INTO tso_dtl 
-        (sod_idrec, sod_so_nomor, sod_kode, sod_ph_nomor, sod_sd_nomor, sod_ukuran, sod_jumlah, sod_scanned, sod_harga, sod_disc, sod_diskon, sod_nourut, sod_custom, sod_custom_nama, sod_custom_data)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (sod_idrec, sod_so_nomor, sod_kode, sod_ph_nomor, sod_sd_nomor, sod_ukuran, sod_jumlah, sod_scanned, sod_harga, sod_disc, sod_diskon, sod_nourut, sod_custom, sod_custom_nama, sod_custom_data, sod_is_free_gift)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           sodIdrec,
           soNomor,
@@ -338,7 +338,7 @@ const save = async (data, user) => {
           item.noSoDtf || "",
           item.ukuran || "",
           item.jumlah || 0,
-          pureScanned, // 👈 GUNAKAN PURE SCANNED YANG SUDAH DISTRIBUSI
+          pureScanned,
           item.harga || 0,
           item.diskonPersen || 0,
           item.diskonRp || 0,
@@ -346,6 +346,7 @@ const save = async (data, user) => {
           isCustom,
           item.sod_custom_nama || item.nama || null,
           customData,
+          item.isFreeGift ? "Y" : "N", // [BARU]
         ],
       );
     }
@@ -493,6 +494,7 @@ const getSoForEdit = async (nomor) => {
   SELECT 
       h.*, d.*, 
       d.sod_scanned AS scannedQty,
+      d.sod_is_free_gift AS isFreeGiftRaw,
       GREATEST(
         IFNULL((
           SELECT SUM(m.mst_stok_in - m.mst_stok_out)
@@ -685,6 +687,7 @@ const getSoForEdit = async (nomor) => {
         kategori: row.brg_ktgp || "",
         sod_custom: row.sod_custom,
         sod_custom_data: row.sod_custom_data,
+        isFreeGift: row.sod_is_free_gift === "Y",
       };
       return item;
     });

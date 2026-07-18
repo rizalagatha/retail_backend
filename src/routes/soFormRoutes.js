@@ -49,6 +49,12 @@ router.get(
   checkPermission(MENU_ID, "view"),
   soFormController.searchJenisOrder,
 );
+router.get(
+  "/lookup/free-item-quota",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  soFormController.getFreeItemQuota,
+);
 router.post(
   "/hitung-harga",
   verifyToken,

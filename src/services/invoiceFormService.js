@@ -497,6 +497,7 @@ const getSoDetailsForGrid = async (soNomor, user) => {
     d.sod_disc AS diskonPersen,
     d.sod_ph_nomor AS noPengajuanHarga,
     d.sod_sd_nomor AS noSoDtf,
+    d.sod_is_free_gift AS isFreeGiftRaw,
     a.brg_ktgp AS kategori,
     b.brgd_hpp AS hpp,
     a.brg_logstok AS logstok,
@@ -722,6 +723,7 @@ const loadForEdit = async (nomor, user) => {
   const itemsQuery = `
     SELECT 
         d.*,
+        d.invd_is_free_gift AS isFreeGiftRaw,
 
         /* Nama barang */
         COALESCE(
@@ -834,6 +836,7 @@ const loadForEdit = async (nomor, user) => {
       nourut: row.invd_nourut,
 
       terhitungPromo: (diskRp > 0 || discPersen > 0) && !!header.inv_pro_nomor,
+      isFreeGift: row.isFreeGiftRaw === "Y",
     };
   });
 
@@ -1458,7 +1461,7 @@ const saveData = async (payload, user) => {
           invd_jumlah,
           invd_mstpesan, invd_mststok,
           invd_harga, invd_hpp, invd_disc, invd_diskon,
-          invd_sd_nomor, invd_nourut
+          invd_sd_nomor, invd_nourut, invd_is_free_gift
         ) VALUES ?
       `;
 
@@ -1537,6 +1540,7 @@ const saveData = async (payload, user) => {
           diskonRp,
           item.noSoDtf || "",
           index + 1,
+          item.isFreeGift ? "Y" : "N",
         ]);
       }
 

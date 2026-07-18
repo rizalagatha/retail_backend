@@ -111,6 +111,12 @@ router.get(
   checkPermission(OFFER_MENU_ID, "view"),
   offerFormController.getPriceProposalDetails,
 );
+router.get(
+  "/lookup/free-item-quota",
+  verifyToken,
+  checkPermission(OFFER_MENU_ID, "view"),
+  offerFormController.getFreeItemQuota,
+);
 
 // Endpoint: GET /api/products/by-barcode/12345?gudang=KDC
 router.get(

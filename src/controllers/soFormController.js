@@ -1,6 +1,7 @@
 const soFormService = require("../services/soFormService");
 const { format } = require("date-fns");
 const mutasiStokService = require("../services/mutasiStokFormService");
+const invoiceFormService = require("../services/invoiceFormService");
 
 const getForEdit = async (req, res) => {
   try {
@@ -193,6 +194,19 @@ const autoMutasiScan = async (req, res) => {
   }
 };
 
+const getFreeItemQuota = async (req, res) => {
+  try {
+    const { proNomor, cusKode } = req.query;
+    const result = await invoiceFormService.checkFreeItemQuota(
+      proNomor,
+      cusKode,
+    );
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getForEdit,
   save,
@@ -210,4 +224,5 @@ module.exports = {
   deleteDp,
   checkLhkStatus,
   autoMutasiScan,
+  getFreeItemQuota,
 };

@@ -360,17 +360,16 @@ const saveOffer = async (data) => {
         INSERT INTO tpenawaran_dtl
         (pend_idrec, pend_nomor, pend_kode, pend_ph_nomor, pend_sd_nomor, pend_ukuran, 
         pend_jumlah, pend_harga, pend_disc, pend_diskon, pend_nourut,
-        pend_custom, pend_custom_nama, pend_custom_data)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        pend_custom, pend_custom_nama, pend_custom_data, pend_is_free_gift)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
-
       await connection.query(insertDetailQuery, [
         idrec,
         nomorPenawaran,
         item.kode,
         item.noPengajuanHarga || "",
         item.noSoDtf || "",
-        displayUkuran, // Gunakan hasil ekstrak tadi agar kolom pend_ukuran terisi
+        displayUkuran,
         item.jumlah,
         item.harga,
         item.diskonPersen || 0,
@@ -383,6 +382,7 @@ const saveOffer = async (data) => {
             ? JSON.stringify(item.sod_custom_data)
             : item.sod_custom_data
           : null,
+        item.isFreeGift ? "Y" : "N", // [BARU]
       ]);
     }
 
@@ -757,9 +757,8 @@ const getOfferForEdit = async (nomor) => {
     const itemsQuery = `
       SELECT 
         d.pend_kode AS kode, IFNULL(b.brgd_barcode, "") AS barcode,
-        -- Jika custom, ambil dari pend_custom_nama
         IF(d.pend_custom = 'Y', d.pend_custom_nama, 
-           IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), "")
+          IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), "")
         ) AS nama,
         d.pend_ukuran AS ukuran,
         IFNULL(stok.Stok, 0) as stok,
@@ -768,8 +767,8 @@ const getOfferForEdit = async (nomor) => {
         (d.pend_jumlah * (d.pend_harga - d.pend_diskon)) as total,
         d.pend_ph_nomor as noPengajuanHarga,
         d.pend_sd_nomor as noSoDtf,
-        -- Tambahkan kolom custom detail
         d.pend_custom, d.pend_custom_nama, d.pend_custom_data,
+        d.pend_is_free_gift AS isFreeGift,
         IFNULL(a.brg_ktgp, '') AS kategori
       FROM tpenawaran_dtl d
       LEFT JOIN tbarangdc a ON a.brg_kode = d.pend_kode
