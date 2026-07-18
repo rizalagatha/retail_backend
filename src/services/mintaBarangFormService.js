@@ -813,40 +813,126 @@ const generateAutomasiMintaBarang = async (user) => {
       [activeCabangs],
     );
 
-    // B. Ambil Stok Fisik Seluruh Toko
-    const [stokToko] = await connection.query(`
+    // B. Ambil Stok Fisik Seluruh Toko (Dipersempit ke activeCabangs agar query lebih cepat)
+    const [stokToko] = await connection.query(
+      `
       SELECT mst_cab AS cabang, mst_brg_kode AS kode, mst_ukuran AS ukuran, SUM(mst_stok_in - mst_stok_out) AS stok
       FROM tmasterstok 
-      WHERE mst_aktif = 'Y' AND mst_cab <> 'KDC'
+      WHERE mst_aktif = 'Y' AND mst_cab IN (?)
       GROUP BY mst_cab, mst_brg_kode, mst_ukuran
-    `);
+    `,
+      [activeCabangs],
+    );
+
+    // [BARU] B1. Ambil Pesanan Ready (Telah di-set fisik ke SO)
+    const [stokReady] = await connection.query(
+      `
+      SELECT mst_cab AS cabang, mst_brg_kode AS kode, mst_ukuran AS ukuran, SUM(mst_stok_in - mst_stok_out) AS qty
+      FROM tmasterstokso
+      WHERE mst_aktif = 'Y' AND mst_cab IN (?)
+      GROUP BY mst_cab, mst_brg_kode, mst_ukuran
+      HAVING qty > 0
+    `,
+      [activeCabangs],
+    );
+
+    // [BARU] B2. Ambil Pesanan Booked (SO Open Menggantung)
+    const [stokBooked] = await connection.query(
+      `
+      WITH open_so AS (
+        SELECT Nomor
+        FROM (
+          SELECT
+            y.Nomor,
+            CASE
+              WHEN y.sts <> 0 THEN 'DICLOSE'
+              WHEN y.StatusKirim = 'TERKIRIM' THEN 'CLOSE'
+              WHEN y.StatusKirim = 'BELUM' AND y.keluar = 0 AND y.minta = '' AND y.pesan = 0 THEN 'OPEN'
+              ELSE 'PROSES'
+            END AS StatusFinal
+          FROM (
+            SELECT
+              x.*,
+              IF(x.QtyInv = 0, 'BELUM', IF(x.QtyInv >= x.QtySO, 'TERKIRIM', 'SEBAGIAN')) AS StatusKirim,
+              IFNULL((
+                SELECT SUM(m.mst_stok_out)
+                FROM tmasterstok m
+                WHERE m.mst_noreferensi IN (
+                  SELECT o.mo_nomor FROM tmutasiout_hdr o WHERE o.mo_so_nomor = x.Nomor
+                )
+              ), 0) AS keluar,
+              IFNULL((
+                SELECT mt_nomor FROM tmintabarang_hdr WHERE mt_so = x.Nomor LIMIT 1
+              ), '') AS minta,
+              IFNULL((
+                SELECT SUM(mst_stok_in - mst_stok_out)
+                FROM tmasterstokso
+                WHERE mst_aktif = 'Y' AND mst_nomor_so = x.Nomor
+              ), 0) AS pesan
+            FROM (
+              SELECT
+                h.so_nomor AS Nomor,
+                h.so_close AS sts,
+                IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
+                IFNULL((
+                  SELECT SUM(dd.invd_jumlah)
+                  FROM tinv_hdr hh
+                  JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor
+                  WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor
+                ), 0) AS QtyInv
+              FROM tso_hdr h
+              WHERE h.so_close = 0 AND h.so_aktif = 'Y' AND h.so_cab IN (?)
+            ) x
+          ) y
+        ) z
+        WHERE z.StatusFinal = 'OPEN'
+      )
+      SELECT h.so_cab AS cabang, d.sod_kode AS kode, d.sod_ukuran AS ukuran, SUM(d.sod_jumlah - IFNULL(d.sod_scanned, 0)) AS qty
+      FROM open_so os
+      JOIN tso_hdr h ON h.so_nomor = os.Nomor
+      JOIN tso_dtl d ON d.sod_so_nomor = os.Nomor
+      WHERE d.sod_jumlah > IFNULL(d.sod_scanned, 0)
+      GROUP BY h.so_cab, d.sod_kode, d.sod_ukuran
+    `,
+      [activeCabangs],
+    );
 
     // C. Ambil Permintaan Gantung
-    const [sudahMinta] = await connection.query(`
+    const [sudahMinta] = await connection.query(
+      `
       SELECT mth.mt_cab AS cabang, mtd.mtd_kode AS kode, mtd.mtd_ukuran AS ukuran, SUM(mtd.mtd_jumlah) AS qty
       FROM tmintabarang_hdr mth
       JOIN tmintabarang_dtl mtd ON mtd.mtd_nomor = mth.mt_nomor
       WHERE mth.mt_closing = 'N' AND mth.mt_nomor NOT IN (SELECT sj_mt_nomor FROM tdc_sj_hdr WHERE sj_mt_nomor <> '')
+        AND mth.mt_cab IN (?)
       GROUP BY mth.mt_cab, mtd.mtd_kode, mtd.mtd_ukuran
-    `);
+    `,
+      [activeCabangs],
+    );
 
     // D. Ambil Packing List Gantung
-    const [plGantung] = await connection.query(`
+    const [plGantung] = await connection.query(
+      `
       SELECT plh.pl_cab_tujuan AS cabang, pld.pld_kode AS kode, pld.pld_ukuran AS ukuran, SUM(pld.pld_jumlah) AS qty
       FROM tpacking_list_hdr plh
       JOIN tpacking_list_dtl pld ON pld.pld_nomor = plh.pl_nomor
-      WHERE plh.pl_status = 'O'
+      WHERE plh.pl_status = 'O' AND plh.pl_cab_tujuan IN (?)
       GROUP BY plh.pl_cab_tujuan, pld.pld_kode, pld.pld_ukuran
-    `);
+    `,
+      [activeCabangs],
+    );
 
     // E. Ambil Surat Jalan Gantung
-    const [sjGantung] = await connection.query(`
+    const [sjGantung] = await connection.query(
+      `
       SELECT sjh.sj_kecab AS cabang, sjd.sjd_kode AS kode, sjd.sjd_ukuran AS ukuran, SUM(sjd.sjd_jumlah) AS qty
       FROM tdc_sj_hdr sjh
       JOIN tdc_sj_dtl sjd ON sjd.sjd_nomor = sjh.sj_nomor
-      WHERE sjh.sj_noterima = '' AND sjh.sj_mt_nomor = ''
+      WHERE sjh.sj_noterima = '' AND sjh.sj_mt_nomor = '' AND sjh.sj_kecab IN (?)
       GROUP BY sjh.sj_kecab, sjd.sjd_kode, sjd.sjd_ukuran
-    `);
+    `,
+      [activeCabangs],
+    );
 
     // F. Ambil Stok DC (Pusat)
     const [stokDc] = await connection.query(`
@@ -875,6 +961,20 @@ const generateAutomasiMintaBarang = async (user) => {
         Number(r.stok),
       ]),
     );
+    // [BARU] Map Pesanan
+    const mapReady = new Map(
+      stokReady.map((r) => [
+        makeKey(r.cabang, r.kode, r.ukuran),
+        Number(r.qty),
+      ]),
+    );
+    const mapBooked = new Map(
+      stokBooked.map((r) => [
+        makeKey(r.cabang, r.kode, r.ukuran),
+        Number(r.qty),
+      ]),
+    );
+
     const mapMinta = new Map(
       sudahMinta.map((r) => [
         makeKey(r.cabang, r.kode, r.ukuran),
@@ -912,7 +1012,16 @@ const generateAutomasiMintaBarang = async (user) => {
 
     for (const buf of storeBuffers) {
       const k = makeKey(buf.cabang, buf.kode, buf.ukuran);
-      const stokFisik = mapStokToko.get(k) || 0;
+
+      // [PERBAIKAN PERHITUNGAN STOK]
+      // Fisik Murni - Booked/Ready
+      const stokFisikKotor = mapStokToko.get(k) || 0;
+      const ready = mapReady.get(k) || 0;
+      const booked = mapBooked.get(k) || 0;
+
+      // Stok Real yang bisa dikurangkan. Pakai Math.max agar tidak minus bila data SO rancu
+      const stokFisik = Math.max(0, stokFisikKotor - ready - booked);
+
       const minta = mapMinta.get(k) || 0;
       const pl = mapPl.get(k) || 0;
       const sj = mapSj.get(k) || 0;
@@ -921,7 +1030,9 @@ const generateAutomasiMintaBarang = async (user) => {
 
       // Hanya isi jika total stok (termasuk yang dlm perjalanan) di bawah Minimal Buffer
       if (stokEfektif < buf.stokmin && buf.stokmin > 0) {
-        const mino = buf.stokmin - stokFisik;
+        // [PERBAIKAN] MINO dihitung dari Buffer - Stok Efektif, bukan Stok Fisik saja
+        // agar barang yang sedang dikirim tidak diminta lagi!
+        const mino = buf.stokmin - stokEfektif;
 
         if (mino > 0) {
           const dcKey = makeKeyDc(buf.kode, buf.ukuran);
