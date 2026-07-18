@@ -327,11 +327,19 @@ const saveOffer = async (data) => {
       nomorPenawaran,
     ]);
 
+    // [BARU] Helper untuk membersihkan karakter 4-byte (emoji) agar tidak crash di MySQL utf8mb3
+    const stripEmojis = (str) => {
+      if (typeof str !== "string" || !str) return str;
+      return str.replace(/[\u{10000}-\u{10FFFF}]/gu, "");
+    };
+
     for (const [index, item] of details.entries()) {
       const isCustom =
         item.sod_custom === "Y" || item.kode === "CUSTOM" || item.isCustomOrder;
 
       let displayUkuran = item.ukuran || "";
+      let rawCustomData = null; // [BARU] Tampung raw custom data
+
       if (isCustom && item.sod_custom_data) {
         try {
           const customData =
@@ -340,19 +348,23 @@ const saveOffer = async (data) => {
               : item.sod_custom_data;
 
           if (customData.ukuranKaos && Array.isArray(customData.ukuranKaos)) {
-            // 1. Gabungkan tanpa spasi agar lebih hemat karakter (misal: "S,M,L,XL,2XL")
             displayUkuran = [
               ...new Set(customData.ukuranKaos.map((u) => u.ukuran)),
             ].join(",");
 
-            // 2. Potong paksa jika masih melebihi batas database (Asumsi batasnya 15 karakter)
-            // Sesuaikan angka 15 dengan lebar VARCHAR di database Anda jika berbeda.
             if (displayUkuran.length > 15) {
               displayUkuran = displayUkuran.substring(0, 15);
             }
           }
+
+          // [BARU] Format kembali menjadi string
+          rawCustomData = JSON.stringify(customData);
         } catch (e) {
           console.error("Gagal parse ukuran custom:", e);
+          rawCustomData =
+            typeof item.sod_custom_data === "string"
+              ? item.sod_custom_data
+              : JSON.stringify(item.sod_custom_data);
         }
       }
 
@@ -363,6 +375,7 @@ const saveOffer = async (data) => {
         pend_custom, pend_custom_nama, pend_custom_data, pend_is_free_gift)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
+
       await connection.query(insertDetailQuery, [
         idrec,
         nomorPenawaran,
@@ -376,13 +389,9 @@ const saveOffer = async (data) => {
         item.diskonRp || 0,
         index + 1,
         isCustom ? "Y" : "N",
-        isCustom ? item.nama : null,
-        isCustom && item.sod_custom_data
-          ? typeof item.sod_custom_data === "object"
-            ? JSON.stringify(item.sod_custom_data)
-            : item.sod_custom_data
-          : null,
-        item.isFreeGift ? "Y" : "N", // [BARU]
+        isCustom ? stripEmojis(item.nama) : null, // [PERBAIKAN] Bersihkan emoji dari nama
+        stripEmojis(rawCustomData), // [PERBAIKAN] Bersihkan emoji dari JSON data
+        item.isFreeGift ? "Y" : "N",
       ]);
     }
 
