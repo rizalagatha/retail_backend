@@ -270,6 +270,12 @@ const save = async (data, user) => {
       soNomor,
     ]);
 
+    // [PENTING] Helper untuk membersihkan karakter 4-byte (emoji) agar MySQL tidak crash
+    const stripEmojis = (str) => {
+      if (typeof str !== "string" || !str) return str;
+      return str.replace(/[\u{10000}-\u{10FFFF}]/gu, "");
+    };
+
     // AMBIL SEMUA TOTAL MUTASI IN DI AWAL (Biar cepat dan adil)
     const miTracker = {};
     const [miRowsTotal] = await connection.query(
@@ -344,9 +350,9 @@ const save = async (data, user) => {
           item.diskonRp || 0,
           index + 1,
           isCustom,
-          item.sod_custom_nama || item.nama || null,
-          customData,
-          item.isFreeGift ? "Y" : "N", // [BARU]
+          stripEmojis(item.sod_custom_nama || item.nama || null), // [PERBAIKAN] Bersihkan emoji dari nama
+          stripEmojis(customData), // [PERBAIKAN] Bersihkan emoji dari data JSON
+          item.isFreeGift ? "Y" : "N",
         ],
       );
     }
