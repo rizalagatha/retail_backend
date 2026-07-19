@@ -133,21 +133,25 @@ const save = async (payload, user) => {
       );
     }
 
-    // [FIX] Cek dulu apakah produk ini SUDAH punya barcode di ukuran lain —
-    // kalau ada, prefix (tahun+bcdId) HARUS ikut yang sudah ada, supaya
-    // konsisten dan tidak collide dengan produk lain yang dibuat tahun ini
-    // dengan bcdId yang sama secara kebetulan (numbering bcdId reset tiap
-    // tahun, jadi bcdId lama TIDAK BOLEH ditempeli tahun sekarang).
+    // [FIX] Ambil prefix dari barcode LAMA yang sudah ada di produk ini — apa pun
+    // panjang/formatnya (barang lama bisa saja bcdId-nya bukan 4 digit, atau
+    // polanya beda sama sekali dari sistem Delphi lama). Kita cuma buang 2
+    // karakter TERAKHIR (nomor urut ukuran/variant.no), sisanya dianggap prefix
+    // yang harus tetap dipakai — bukan nebak posisi potong yang kaku (6 karakter).
     const [existingBarcodeRows] = await connection.query(
       `SELECT brgd_barcode FROM tbarangdc_dtl 
-       WHERE brgd_kode = ? AND brgd_barcode IS NOT NULL AND brgd_barcode <> '' 
+        WHERE brgd_kode = ? AND brgd_barcode IS NOT NULL AND brgd_barcode <> '' 
+       ORDER BY brgd_barcode ASC 
        LIMIT 1`,
       [kodeBarang],
     );
     const existingPrefix =
       existingBarcodeRows.length > 0 &&
-      existingBarcodeRows[0].brgd_barcode.length >= 6
-        ? existingBarcodeRows[0].brgd_barcode.substring(0, 6) // yearYY(2) + bcdId(4)
+      existingBarcodeRows[0].brgd_barcode.length > 2
+        ? existingBarcodeRows[0].brgd_barcode.substring(
+            0,
+            existingBarcodeRows[0].brgd_barcode.length - 2,
+          )
         : null;
 
     // Simpan/Update Varian Ukuran
@@ -157,10 +161,8 @@ const save = async (payload, user) => {
       if (!barcode && header.bcdId) {
         let prefix;
         if (existingPrefix) {
-          // Produk lama yang nambah ukuran baru — pakai prefix yang SUDAH ADA
-          prefix = existingPrefix;
+          prefix = existingPrefix; // sekarang selalu ke-detect dengan benar
         } else {
-          // Produk benar-benar baru — belum ada barcode sama sekali, pakai tahun sekarang
           const yearYY = new Date().getFullYear().toString().substring(2);
           const bcdIdPadded = header.bcdId.toString().padStart(4, "0");
           prefix = `${yearYY}${bcdIdPadded}`;
