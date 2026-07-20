@@ -75,6 +75,7 @@ const getList = async (filters) => {
         y.Disc1, y.Disc2, y.Promo, y.Ppn, y.Bkrm,
         y.NoSPK,
         y.TglJadi,
+        y.UserModified, y.DateModified,
 
         (CASE
             WHEN y.DipakaiDTF = 'Y' AND y.Belum = 0 THEN 'CLOSE'
