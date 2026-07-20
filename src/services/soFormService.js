@@ -25,7 +25,8 @@ const generateNewSoNumber = async (connection, cabang, tanggal) => {
  */
 // Fungsi utama untuk menyimpan data
 const save = async (data, user) => {
-  const { header, footer, details, dps, isNew, tipeKunjungan } = data;
+  const { header, footer, details, dps, isNew, tipeKunjungan, adjustmentLogs } =
+    data;
   // --- VALIDASI TANGGAL SERVER (SO) ---
   if (isNew) {
     const serverDate = format(new Date(), "yyyy-MM-dd");
@@ -350,8 +351,8 @@ const save = async (data, user) => {
           item.diskonRp || 0,
           index + 1,
           isCustom,
-          stripEmojis(item.sod_custom_nama || item.nama || null), // [PERBAIKAN] Bersihkan emoji dari nama
-          stripEmojis(customData), // [PERBAIKAN] Bersihkan emoji dari data JSON
+          stripEmojis(item.sod_custom_nama || item.nama || null),
+          stripEmojis(customData),
           item.isFreeGift ? "Y" : "N",
         ],
       );
@@ -467,6 +468,27 @@ const save = async (data, user) => {
         "UPDATE tsetor_hdr SET sh_so_nomor = ? WHERE sh_nomor IN (?)",
         [soNomor, noSetoran],
       );
+    }
+
+    // ========================================================================
+    // --- SIMPAN ADJUSMENT LOG (RIWAYAT QTY) ---
+    // ========================================================================
+    if (adjustmentLogs && adjustmentLogs.length > 0) {
+      for (const log of adjustmentLogs) {
+        await connection.query(
+          `INSERT INTO tso_adj_log (adj_so_nomor, adj_kode, adj_ukuran, adj_qty, adj_type, adj_user, adj_reason, adj_date)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+          [
+            soNomor,
+            log.kode,
+            log.ukuran,
+            log.qty,
+            log.type,
+            user.kode,
+            log.reason,
+          ],
+        );
+      }
     }
 
     await connection.commit();
@@ -602,6 +624,25 @@ const getSoForEdit = async (nomor) => {
         `;
     const [dpRows] = await connection.query(dpQuery, [nomor]);
 
+    // Ambil riwayat log qty
+    const logQuery = `
+        SELECT 
+            l.adj_id AS id,
+            l.adj_kode AS kode,
+            l.adj_ukuran AS ukuran,
+            l.adj_qty AS qty,
+            l.adj_type AS type,
+            l.adj_user AS user,
+            l.adj_reason AS reason,
+            DATE_FORMAT(l.adj_date, '%Y-%m-%d %H:%i:%s') AS timestamp,
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama
+        FROM tso_adj_log l
+        LEFT JOIN tbarangdc a ON a.brg_kode = l.adj_kode
+        WHERE l.adj_so_nomor = ?
+        ORDER BY l.adj_date DESC
+    `;
+    const [logRows] = await connection.query(logQuery, [nomor]);
+
     const firstRow = mainRows[0];
 
     // Format tanggal dengan proper handling
@@ -710,6 +751,7 @@ const getSoForEdit = async (nomor) => {
       itemsData,
       dpItemsData: dpRows,
       footerData,
+      adjustmentLogsData: logRows,
     };
 
     return responseData;

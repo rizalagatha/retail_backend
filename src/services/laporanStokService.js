@@ -656,6 +656,29 @@ const getPesananReadyDetail = async (kode, cabang) => {
   }
 };
 
+const getPackingListDetail = async (kode) => {
+  const connection = await pool.getConnection();
+  try {
+    const query = `
+      SELECT
+        plh.pl_nomor AS plNomor,
+        plh.pl_tanggal AS tanggal,
+        IFNULL(g.gdg_nama, plh.pl_cab_tujuan) AS tujuan,
+        pld.pld_ukuran AS ukuran,
+        pld.pld_jumlah AS qty
+      FROM tpacking_list_dtl pld
+      JOIN tpacking_list_hdr plh ON pld.pld_nomor = plh.pl_nomor
+      LEFT JOIN tgudang g ON g.gdg_kode = plh.pl_cab_tujuan
+      WHERE pld.pld_kode = ? AND plh.pl_status = 'O'
+      ORDER BY plh.pl_tanggal DESC;
+    `;
+    const [rows] = await connection.query(query, [kode]);
+    return rows;
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   getRealTimeStock,
   getGudangOptions,
@@ -663,4 +686,5 @@ module.exports = {
   getRealTimeStockExport,
   getPesananBookedDetail,
   getPesananReadyDetail,
+  getPackingListDetail,
 };

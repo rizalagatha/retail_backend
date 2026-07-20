@@ -28,5 +28,6 @@ router.get(
 );
 router.get("/pesanan-booked-detail", laporanStokController.pesananBookedDetail);
 router.get("/pesanan-ready-detail", laporanStokController.pesananReadyDetail);
+router.get("/packing-list-detail", laporanStokController.packingListDetail);
 
 module.exports = router;

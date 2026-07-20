@@ -88,6 +88,19 @@ const pesananReadyDetail = async (req, res) => {
   }
 };
 
+const packingListDetail = async (req, res) => {
+  try {
+    const { kode } = req.query;
+    if (!kode) {
+      return res.status(400).json({ message: "Parameter kode wajib diisi." });
+    }
+    const data = await laporanStokService.getPackingListDetail(kode);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getRealTimeStock,
   getGudangOptions,
@@ -95,4 +108,5 @@ module.exports = {
   getRealTimeStockExport,
   pesananBookedDetail,
   pesananReadyDetail,
+  packingListDetail,
 };
