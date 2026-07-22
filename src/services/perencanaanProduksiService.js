@@ -87,7 +87,7 @@ const getPriorityData = async (filters) => {
         AND a.brg_logstok = 'Y' 
         AND UPPER(a.brg_warna) NOT LIKE '%STICKER%'
         AND UPPER(a.brg_warna) NOT LIKE '%EMBLEM%'
-        AND b.brgd_ukuran NOT IN ('ALLSIZE', 'XS', '4XL', '5XL', '6XL', '7XL', '8XL', '9XL', '10XL', 'OVERSIZE', 'JUMBO')
+        AND b.brgd_ukuran NOT IN ('ALLSIZE', '4XL', '5XL', '6XL', '7XL', '8XL', '9XL', '10XL', 'OVERSIZE', 'JUMBO')
         ${kategoriFilter}
         ${searchFilter}
     `;
