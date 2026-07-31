@@ -48,14 +48,11 @@ const getList = async (filters) => {
 
   let branchFilter = "";
   if (cabang === "ALL") {
-    // Jika ALL, jangan pakai filter cabang sama sekali (Tampilkan Semua)
     branchFilter = "";
   } else if (cabang === "KDC") {
-    // Jika KDC (Default), tampilkan gudang milik DC saja
     branchFilter =
       "AND h.so_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc = 1)";
   } else if (cabang) {
-    // Jika cabang spesifik (misal K01, K02)
     branchFilter = "AND h.so_cab = ?";
     params.push(cabang);
   }
@@ -76,6 +73,19 @@ const getList = async (filters) => {
         y.NoSPK,
         y.TglJadi,
         y.UserModified, y.DateModified,
+
+        -- [BARU] Basis pengecekan DP minimal
+        y.Netto,
+        y.HasCustomOrDtf,
+        ROUND((CASE WHEN y.HasCustomOrDtf = 1 THEN 0.5 ELSE 0.3 END) * IFNULL(y.Netto, 0)) AS MinimalDp,
+
+        -- [BARU] Flag DP kurang — pasif & di-close dianggap tidak relevan (selalu 'N')
+        (CASE
+            WHEN y.Aktif = 'N' THEN 'N'
+            WHEN y.sts = 2 THEN 'N'
+            WHEN y.Dp >= ROUND((CASE WHEN y.HasCustomOrDtf = 1 THEN 0.5 ELSE 0.3 END) * IFNULL(y.Netto, 0)) THEN 'N'
+            ELSE 'Y'
+        END) AS DpKurang,
 
         (CASE
             WHEN y.DipakaiDTF = 'Y' AND y.Belum = 0 THEN 'CLOSE'
@@ -207,6 +217,21 @@ const getList = async (filters) => {
                 JOIN tso_hdr hh ON hh.so_nomor = dd.sod_so_nomor 
                 WHERE hh.so_nomor = h.so_nomor) AS Nominal,
 
+                -- [BARU] Netto = subtotal item dikurangi diskon faktur (basis 30%/50% minimal DP)
+                (SELECT ROUND(
+                    SUM(dd.sod_jumlah * (dd.sod_harga - dd.sod_diskon)) - hh.so_disc
+                )
+                FROM tso_dtl dd 
+                JOIN tso_hdr hh ON hh.so_nomor = dd.sod_so_nomor 
+                WHERE hh.so_nomor = h.so_nomor) AS Netto,
+
+                -- [BARU] Flag ada item custom order / SO DTF (menentukan 50% vs 30%)
+                (SELECT IF(EXISTS(
+                    SELECT 1 FROM tso_dtl dd2
+                    WHERE dd2.sod_so_nomor = h.so_nomor
+                      AND (dd2.sod_custom = 'Y' OR (dd2.sod_sd_nomor IS NOT NULL AND dd2.sod_sd_nomor <> ''))
+                ), 1, 0)) AS HasCustomOrDtf,
+
                 IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
 
                 IFNULL((
@@ -269,7 +294,6 @@ const getList = async (filters) => {
       datelineObj = addRegularDays(row.Tanggal, 14);
     }
 
-    // Format menjadi string agar aman dibaca Vue
     row.DatelinePelayanan = datelineObj
       ? format(datelineObj, "yyyy-MM-dd")
       : null;
@@ -313,7 +337,6 @@ const getDetails = async (nomor) => {
             IFNULL(b.brgd_barcode, "") AS Barcode,
             h.so_nomor AS Nomor,
             
-            -- Urutan prioritas nama: Barang DC → DTF → Custom
             COALESCE(
               TRIM(CONCAT(
                 a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna
@@ -334,7 +357,35 @@ const getDetails = async (nomor) => {
                 AND i.invd_kode = d.sod_kode 
                 AND i.invd_ukuran = d.sod_ukuran
                 AND i.invd_kode NOT IN (SELECT brg_kode FROM kencanaprint.tgarmen_brg WHERE brg_jenis IN ('ACCESORIES','OBAT'))
-          ), 0) AS QtyInvoice
+          ), 0) AS QtyInvoice,
+
+          -- [BARU] 0 = barang reguler/kaos, 1 = custom order / SO DTF — dipakai buat urutan tampil
+          (IF(
+              d.sod_custom = 'Y' OR (d.sod_sd_nomor IS NOT NULL AND d.sod_sd_nomor <> ''),
+              1, 0
+          )) AS UrutanKategori,
+
+          -- [BARU] Urutan size chart standar; ukuran yang nggak ada di daftar ditaruh paling akhir
+          (CASE UPPER(TRIM(d.sod_ukuran))
+              WHEN 'XS' THEN 1
+              WHEN 'S' THEN 2
+              WHEN 'M' THEN 3
+              WHEN 'L' THEN 4
+              WHEN 'XL' THEN 5
+              WHEN '2XL' THEN 6
+              WHEN '3XL' THEN 7
+              WHEN '4XL' THEN 8
+              WHEN '5XL' THEN 9
+              WHEN '6XL' THEN 10
+              WHEN '7XL' THEN 11
+              WHEN '8XL' THEN 12
+              WHEN '9XL' THEN 13
+              WHEN '10XL' THEN 14
+              WHEN 'JUMBO' THEN 15
+              WHEN 'OVERSIZE' THEN 16
+              ELSE 99
+          END) AS UrutanUkuran
+
         FROM tso_dtl d
         JOIN tso_hdr h ON h.so_nomor = d.sod_so_nomor
         LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
@@ -342,7 +393,7 @@ const getDetails = async (nomor) => {
         LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_kode
         WHERE d.sod_so_nomor = ?
     ) x
-    ORDER BY x.Kode, x.Ukuran
+    ORDER BY x.UrutanKategori, x.Kode, x.UrutanUkuran
   `;
   const [rows] = await pool.query(query, [nomor]);
   return rows;

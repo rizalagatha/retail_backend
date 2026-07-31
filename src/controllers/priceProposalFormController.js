@@ -136,20 +136,135 @@ const getForEdit = async (req, res) => {
   }
 };
 
+const uploadAccCustomerProof = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "Tidak ada file yang diunggah." });
+    }
+    const { nomor } = req.params;
+    if (!nomor) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ message: "Nomor pengajuan diperlukan." });
+    }
+
+    await priceProposalFormService.renameAccCustomerProof(req.file.path, nomor);
+
+    const cabang = nomor.substring(0, 3);
+    const imageUrl = `/images/${cabang}/acc-customer/${nomor}${path.extname(
+      req.file.originalname,
+    )}?t=${Date.now()}`;
+
+    res
+      .status(200)
+      .json({ message: "Bukti Acc Customer berhasil diunggah.", imageUrl });
+  } catch (error) {
+    console.error("Upload Acc Customer Proof Error:", error);
+    if (req.file && req.file.path) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (e) {}
+    }
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getSublimKainOptions = async (req, res) => {
+  try {
+    res.json(await priceProposalFormService.getSublimKainOptions());
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getSublimJenisJerseyOptions = async (req, res) => {
+  try {
+    const { kain } = req.query;
+    if (!kain) return res.status(400).json({ message: "kain diperlukan." });
+    res.json(await priceProposalFormService.getSublimJenisJerseyOptions(kain));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getSublimKatalog = async (req, res) => {
+  try {
+    res.json(await priceProposalFormService.getSublimKatalog());
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const previewSublimHarga = async (req, res) => {
+  try {
+    res.json(await priceProposalFormService.previewSublimHarga(req.body));
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+const getSublimKatalogByKategori = async (req, res) => {
+  try {
+    const { jeniskaos, lengan } = req.query;
+    if (!jeniskaos || !lengan)
+      return res
+        .status(400)
+        .json({ message: "jeniskaos dan lengan diperlukan." });
+    res.json(
+      await priceProposalFormService.getSublimKatalogByKategori(
+        jeniskaos,
+        lengan,
+      ),
+    );
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * Upload gambar desain sublim custom (bukan pilih dari katalog). Reuse pola
+ * upload gambar existing (multer + rename by nomor), disimpan terpisah
+ * dengan suffix -sublim biar gak nabrak file gambar utama header.
+ */
+const uploadSublimDesign = async (req, res) => {
+  try {
+    if (!req.file)
+      return res.status(400).json({ message: "Tidak ada file yang diunggah." });
+    const { nomor } = req.params;
+    const cabang = nomor.substring(0, 3);
+    const path = require("path");
+    const fs = require("fs");
+
+    const folderPath = path.join(
+      process.cwd(),
+      "public",
+      "images",
+      cabang,
+      "sublim-custom",
+    );
+    fs.mkdirSync(folderPath, { recursive: true });
+    const finalFileName = `${nomor}${path.extname(req.file.originalname)}`;
+    const finalPath = path.join(folderPath, finalFileName);
+
+    fs.renameSync(req.file.path, finalPath);
+    const imageUrl = `/images/${cabang}/sublim-custom/${finalFileName}?t=${Date.now()}`;
+
+    res.json({ message: "Desain custom berhasil diunggah.", imageUrl });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // [AUDIT TRAIL DITERAPKAN DI SINI]
 const save = async (req, res) => {
   try {
     const payload = req.body;
-
-    // Inject user info ke payload
     payload.user = req.user;
 
-    // Langsung eksekusi simpan tanpa log aktivitas
     const result = await priceProposalFormService.saveProposal(payload);
 
     res.status(payload.isNew ? 201 : 200).json(result);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(400).json({ message: error.message });
   }
 };
 
@@ -162,5 +277,12 @@ module.exports = {
   searchProductsByType,
   searchAdditionalCosts,
   getForEdit,
+  uploadAccCustomerProof,
+  getSublimKainOptions,
+  getSublimJenisJerseyOptions,
+  getSublimKatalog,
+  previewSublimHarga,
+  getSublimKatalogByKategori,
+  uploadSublimDesign,
   save,
 };

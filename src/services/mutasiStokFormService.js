@@ -134,8 +134,7 @@ const loadFromSo = async (nomorSo, user) => {
     FROM tso_dtl d
     JOIN tbarangdc a ON a.brg_kode = d.sod_kode AND a.brg_logstok="Y"
     LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
-    WHERE d.sod_so_nomor = ? 
-      AND d.sod_scanned > 0; -- 👈 FIX: Hanya ambil yang sudah Ready
+    WHERE d.sod_so_nomor = ?;
   `;
 
   const [rows] = await pool.query(query, [
@@ -157,7 +156,7 @@ const loadFromSo = async (nomorSo, user) => {
       produksi,
       ready,
       kurang,
-      jumlah: item.scanned, // 👈 Otomatis isi Qty Mutasi dengan hasil Scan di SO
+      jumlah: item.scanned, // tetap default Qty Mutasi = scanned (0 kalau belum di-scan, user bisa edit manual)
     };
   });
 };
@@ -388,6 +387,8 @@ const getExportDetails = async (filters) => {
   return rows;
 };
 
+const STICKER_DTF_LOCKED_KODE = ["2500053", "2500060"]; // Reguler & Premium
+
 /**
  * @description Menyimpan mutasi stok secara otomatis via Scan Barcode (Showroom -> Pesanan)
  * DENGAN LOGIKA PENCEGAH DOUBLE MUTASI (SMART SYNC)
@@ -431,7 +432,7 @@ const autoMutasiScan = async (payload, user) => {
 
     const sod_jumlah = itemSo[0].sod_jumlah;
     const sod_scanned = itemSo[0].sod_scanned;
-    const total_mutasi = itemSo[0].total_mutasi; // Jumlah stok yg SUDAH ada di SO ini (Manual/Auto)
+    const total_mutasi = itemSo[0].total_mutasi;
 
     const new_scanned = sod_scanned + qty;
 
@@ -452,17 +453,33 @@ const autoMutasiScan = async (payload, user) => {
     // =======================================================================
     // 3. HITUNG BERAPA YANG PERLU DIMUTASI (Cegah Double Mutasi)
     // =======================================================================
-    // Logika: Kita hanya mutasi jika total yang di-scan MELEBIHI jumlah yang
-    // sudah dimutasi sebelumnya.
-    // Contoh: Pesan 5. Dimutasi manual 3 (total_mutasi = 3).
-    // Scan ke-1 -> new_scanned = 1. qty_to_mutate = 1 - 3 = -2 (Jadi 0, skip mutasi)
-    // Scan ke-4 -> new_scanned = 4. qty_to_mutate = 4 - 3 = 1  (Sistem otomatis mutasi 1)
-
     const qty_to_mutate = Math.max(0, new_scanned - total_mutasi);
+
+    // =======================================================================
+    // [BARU] 3.5. VALIDASI STOK FISIK — KHUSUS STICKER DTF, WAJIB CUKUP
+    // =======================================================================
+    if (qty_to_mutate > 0 && STICKER_DTF_LOCKED_KODE.includes(kode_barang)) {
+      const [stokRows] = await connection.query(
+        `SELECT IFNULL(SUM(m.mst_stok_in - m.mst_stok_out), 0) AS stok_fisik
+         FROM tmasterstok m
+         WHERE m.mst_aktif = 'Y' 
+           AND m.mst_cab = ? 
+           AND m.mst_brg_kode = ? 
+           AND m.mst_ukuran = ?
+         FOR UPDATE`,
+        [cabang, kode_barang, ukuran],
+      );
+      const stokFisik = Number(stokRows[0]?.stok_fisik || 0);
+
+      if (stokFisik < qty_to_mutate) {
+        throw new Error(
+          `Stok Sticker DTF tidak mencukupi. Sisa stok fisik: ${stokFisik}, dibutuhkan: ${qty_to_mutate}. Mutasi dibatalkan.`,
+        );
+      }
+    }
 
     let msoNomor = null;
 
-    // Jika butuh dimutasi, baru jalankan blok Mutasi Stok
     if (qty_to_mutate > 0) {
       const [existingMso] = await connection.query(
         `SELECT mso_nomor, mso_idrec FROM tmutasistok_hdr 
@@ -503,7 +520,7 @@ const autoMutasiScan = async (payload, user) => {
 
       if (existingDetail.length > 0) {
         const currentQty = existingDetail[0].msod_jumlah;
-        const newQty = currentQty + qty_to_mutate; // 👈 PENTING: Gunakan qty_to_mutate
+        const newQty = currentQty + qty_to_mutate;
         const msodNomorIn = existingDetail[0].msod_nomorin;
         const nourut = existingDetail[0].msod_nourut;
 
@@ -547,7 +564,7 @@ const autoMutasiScan = async (payload, user) => {
             ukuran,
             qty_to_mutate,
             nextUrut,
-          ], // 👈 PENTING: Gunakan qty_to_mutate
+          ],
         );
       }
     }

@@ -241,6 +241,19 @@ const getFreeItemQuota = async (req, res) => {
   }
 };
 
+const uploadReviewProof = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "Tidak ada file yang diunggah." });
+    }
+    const { nomor } = req.params;
+    await offerFormService.renameReviewProofImage(req.file.path, nomor);
+    res.json({ message: "Bukti ulasan berhasil diunggah." });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getNextNumber,
   searchCustomers,
@@ -258,4 +271,5 @@ module.exports = {
   getPrintData,
   getByBarcode,
   getFreeItemQuota,
+  uploadReviewProof,
 };

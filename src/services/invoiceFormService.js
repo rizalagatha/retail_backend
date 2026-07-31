@@ -39,8 +39,29 @@ async function getSisaStokSO(connection, nomorSO, kodeBarang, ukuran) {
   return Number(rows?.[0]?.sisa || 0);
 }
 
+// [BARU] Aturan diskon khusus PER CUSTOMER (di luar aturan umum getKprItemDiscount).
+// Dipakai untuk customer franchise/prioritas yang punya kesepakatan sendiri,
+// beda dari tiering diskon KPR umum.
+const CUSTOMER_SPECIFIC_DISCOUNT_RULES = {
+  "K-00011": {
+    defaultDiscountPersen: 5, // semua item TANPA harga khusus otomatis kena ini
+    noDiscountKeywords: ["PENDEK ANAK", "PANJANG ANAK"], // 0% — tidak ikut default 5% ataupun tiering umum
+  },
+};
+
+const getCustomerSpecificDiscount = (cusKode, namaBarang) => {
+  const rule = CUSTOMER_SPECIFIC_DISCOUNT_RULES[cusKode];
+  if (!rule) return null; // tidak ada rule khusus, biarkan fallback ke getKprItemDiscount umum
+
+  const nama = (namaBarang || "").toUpperCase();
+  if (rule.noDiscountKeywords.some((k) => nama.includes(k))) {
+    return 0;
+  }
+  return rule.defaultDiscountPersen;
+};
+
 // --- HELPER DISKON PRIORITAS KPR ---
-const getKprItemDiscount = (namaBarang, kategori) => {
+const getKprItemDiscount = (namaBarang, kategori, cusKode = "") => {
   const nama = (namaBarang || "").toUpperCase();
   const kat = (kategori || "").toUpperCase();
 
@@ -52,58 +73,40 @@ const getKprItemDiscount = (namaBarang, kategori) => {
     nama.includes("LL POLOS PANJANG JAKET RUNNING BIRU MUDA") ||
     nama.includes("LL POLOS PANJANG JAKET RUNNING HITAM")
   ) {
-    return 5; // <--- Diskon 5% untuk New Arrival
+    return 5;
   }
 
   // ==============================================================================
   // PRIORITAS 1: PENGECEKAN BAHAN SPESIFIK (Tidak peduli Reguler atau Sesional)
   // ==============================================================================
 
-  // KATUN AIR: 10%
   if (nama.includes("KATUN AIR")) return 10;
-
-  // CARLOS: 5%
   if (nama.includes("CARLOS")) return 5;
-
-  // DBF: 5%
   if (nama.includes("DBF")) return 5;
-
-  // JERSEY: 5%
   if (nama.includes("JERSEY")) return 5;
-
-  // SWEATER: 5%
   if (nama.includes("SWEATER")) return 5;
-
-  // CROPTOP / CROP: 5%
   if (nama.includes("CROPTOP") || nama.includes("CROP ")) return 5;
-
-  // BATWING: 5%
   if (nama.includes("BATWING")) return 5;
 
   // ==============================================================================
-  // PRIORITAS 2: PENGECEKAN KATEGORI / JENIS TERTENTU (15%)
+  // PRIORITAS 2: PENGECEKAN KATEGORI / JENIS TERTENTU (15%, atau 12,5% khusus KPR00022)
   // ==============================================================================
 
-  // Pastikan BUKAN SESIONAL agar bisa mendapat hak diskon 15%
   if (kat !== "SESIONAL" && kat !== "SESSIONAL") {
-    // 1. KAOS REGULER COMBED 24S/30S
-    if (
-      kat === "REGULER" &&
-      nama.includes("COMBED") &&
-      (nama.includes("24S") || nama.includes("30S"))
-    ) {
-      return 15;
-    }
-
-    // 2. PENDEK ANAK, PANJANG ANAK, ANAK, TUNIK, HOODIE, POLO
-    if (
+    const isEligible15 =
+      (kat === "REGULER" &&
+        nama.includes("COMBED") &&
+        (nama.includes("24S") || nama.includes("30S"))) ||
       nama.includes("PENDEK ANAK") ||
       nama.includes("PANJANG ANAK") ||
       /\bANAK\b/.test(nama) ||
       nama.includes("TUNIK") ||
       nama.includes("HOODIE") ||
-      /\bPOLO\b/.test(nama)
-    ) {
+      /\bPOLO\b/.test(nama);
+
+    if (isEligible15) {
+      // [BARU] Customer KPR00022 dapat rate khusus 12,5% menggantikan 15% umum
+      if (cusKode === "KPR00022") return 12.5;
       return 15;
     }
   }
@@ -111,11 +114,48 @@ const getKprItemDiscount = (namaBarang, kategori) => {
   // ==============================================================================
   // PRIORITAS 3: DEFAULT SESIONAL
   // ==============================================================================
-  // Semua yang berkategori Sesional dan lolos dari Prioritas 1 akan bermuara di sini
   if (kat === "SESIONAL" || kat === "SESSIONAL") return 10;
 
-  // Default jika tidak masuk daftar diskon priority sama sekali
   return 0;
+};
+
+// [BARU] Satu titik keputusan diskon per item — dipakai baik saat load SJ
+// pertama kali, MAUPUN saat customer diganti belakangan (recalc).
+const computeItemDiscount = (cusKode, namaBarang, kategori, harga, cabang) => {
+  const customDiscount = getCustomerSpecificDiscount(cusKode, namaBarang);
+  if (customDiscount !== null) {
+    return {
+      disc: customDiscount,
+      diskon: customDiscount > 0 ? (harga * customDiscount) / 100 : 0,
+    };
+  }
+
+  if (cabang === "KPR") {
+    const kprDiscountPersen = getKprItemDiscount(namaBarang, kategori, cusKode);
+    if (kprDiscountPersen > 0) {
+      return {
+        disc: kprDiscountPersen,
+        diskon: (harga * kprDiscountPersen) / 100,
+      };
+    }
+  }
+
+  return { disc: 0, diskon: 0 };
+};
+
+// [BARU] Hitung ulang diskon untuk sekumpulan item — dipanggil frontend
+// setiap kali customer dipilih/diganti SETELAH grid sudah terisi dari SJ.
+const recalcKprDiscountForItems = (cusKode, items, cabang) => {
+  return items.map((item) => {
+    const { disc, diskon } = computeItemDiscount(
+      cusKode,
+      item.nama,
+      item.kategori,
+      item.harga,
+      cabang,
+    );
+    return { kode: item.kode, ukuran: item.ukuran, disc, diskon };
+  });
 };
 
 // =========================================================================
@@ -2154,6 +2194,46 @@ const saveData = async (payload, user) => {
       ]);
     }
 
+    // Tutup pengajuan harga terkait, kalau SO asal Invoice ini punya item yang
+    // berasal dari Pengajuan Harga. [FIX v2] SELALU query ulang ke tso_dtl
+    // (sumber kebenaran, lokal, tanpa cross-db) berdasarkan header.nomorSo —
+    // tidak lagi bergantung pada field noPengajuanHarga dari payload frontend,
+    // yang ternyata tidak selalu lengkap terkirim per item.
+    if (header.nomorSo && header.nomorSo !== "") {
+      const [sodRows] = await connection.query(
+        "SELECT DISTINCT sod_ph_nomor FROM tso_dtl WHERE sod_so_nomor = ? AND sod_ph_nomor IS NOT NULL AND sod_ph_nomor <> ''",
+        [header.nomorSo],
+      );
+
+      for (const row of sodRows) {
+        const phNomor = row.sod_ph_nomor;
+        const [updResult] = await connection.query(
+          `UPDATE tpengajuanharga
+            SET ph_status = 'CLOSED', ph_status_updated = NOW(), ph_ref_invoice = ?
+           WHERE ph_nomor = ? AND ph_status = 'READY_STORE'`,
+          [invNomor, phNomor],
+        );
+
+        if (updResult.affectedRows > 0) {
+          await connection.query(
+            `INSERT INTO tpengajuanharga_status_log
+              (phl_nomor, phl_status_from, phl_status_to, phl_user, phl_source_system, phl_ref_nomor, phl_keterangan)
+             VALUES (?, 'READY_STORE', 'CLOSED', ?, 'KAOSAN', ?, ?)`,
+            [
+              phNomor,
+              user.kode,
+              invNomor,
+              `Invoice ${invNomor} terbit, closing Pengajuan Harga`,
+            ],
+          );
+        } else {
+          console.warn(
+            `[PH-SYNC] PH ${phNomor} tidak di-close (status saat ini bukan READY_STORE).`,
+          );
+        }
+      }
+    }
+
     await connection.commit();
     return {
       message: `Invoice ${invNomor} berhasil disimpan.`,
@@ -2394,6 +2474,8 @@ const getPrintData = async (nomor) => {
       DATE_ADD(h.inv_tanggal, INTERVAL h.inv_top DAY) AS tempo,
       c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
       d.invd_kode, d.invd_ukuran, d.invd_jumlah, d.invd_harga, d.invd_diskon,
+      f.sd_nomor AS dtf_nomor,           
+      g.brg_jenis AS aksesoris_jenis,    
       COALESCE(
         NULLIF(TRIM(CONCAT(
           IFNULL(a.brg_jeniskaos,''), ' ',
@@ -2449,10 +2531,23 @@ const getPrintData = async (nomor) => {
     invd_harga: row.invd_harga,
     invd_diskon: row.invd_diskon,
     total: row.total, // Ini adalah Net Total per baris
+    _kategoriUrutan:
+      row.aksesoris_jenis === "ACCESORIES" || row.aksesoris_jenis === "OBAT"
+        ? 2
+        : row.invd_kode === "CUSTOM" || row.dtf_nomor
+          ? 1
+          : 0,
   }));
 
-  // 2. LOGIKA SORTING JAVASCRIPT (Nama Barang ASC -> Ukuran ASC)
+  // 2. LOGIKA SORTING JAVASCRIPT
+  // Urutan utama: Kategori (Kaos > Custom/DTF > Packaging)
+  // Urutan kedua: Nama Barang ASC
+  // Urutan ketiga: Ukuran ASC (size rank)
   details.sort((a, b) => {
+    if (a._kategoriUrutan !== b._kategoriUrutan) {
+      return a._kategoriUrutan - b._kategoriUrutan;
+    }
+
     const nameA = a.nama_barang.toUpperCase();
     const nameB = b.nama_barang.toUpperCase();
     if (nameA < nameB) return -1;
@@ -2462,6 +2557,9 @@ const getPrintData = async (nomor) => {
     const rankB = getSizeRank(b.invd_ukuran);
     return rankA - rankB;
   });
+
+  // [BARU] Bersihkan field internal sebelum dikirim ke frontend
+  details.forEach((d) => delete d._kategoriUrutan);
 
   // =============== FIX PEMBAYARAN ===============
 
@@ -3426,7 +3524,6 @@ const getDataForSjPrint = async (nomorInvoice) => {
 
 const getActivePromos = async (filters, user) => {
   const { tanggal, cabang } = filters;
-
   const [promos] = await pool.query(
     `
     SELECT 
@@ -3442,14 +3539,13 @@ const getActivePromos = async (filters, user) => {
       p.pro_f1,
       p.pro_tanggal1,
       p.pro_tanggal2,
-      -- [BARU]
       p.pro_basis,
       p.pro_exclude_kode,
       p.pro_include_kata,
       p.pro_mode_barang,
       p.pro_no_maps,
       p.pro_no_disc_member,
-      -- Level exclude sebagai JSON array
+      p.pro_wajib_review,
       (
         SELECT JSON_ARRAYAGG(ple_level)
         FROM tpromo_level_exclude
@@ -3463,12 +3559,12 @@ const getActivePromos = async (filters, user) => {
   `,
     [cabang, tanggal],
   );
-
   return promos.map((p) => ({
     ...p,
     level_exclude: p.level_exclude ? JSON.parse(p.level_exclude) : [],
     pro_no_maps: p.pro_no_maps === 1,
     pro_no_disc_member: p.pro_no_disc_member === 1,
+    pro_wajib_review: p.pro_wajib_review === 1 ? "Y" : "N",
   }));
 };
 
@@ -3708,6 +3804,7 @@ const getSjDetails = async (nomor, user, currentInvNomor = "") => {
         ifnull(j.so_sc,"") as sc, ifnull(j.so_nodp,0) as nodp, ifnull(j.so_dp,0) as rpdp, 
         ifnull(j.so_top,0) as top, ifnull(j.so_disc,0) as so_disc, ifnull(j.so_disc1,0) as so_disc1, 
         ifnull(j.so_ppn,0) as ppn,
+        c.cus_franchise, -- [BARU] buat referensi/audit, bukan filter wajib
         (SELECT clh_level FROM tcustomer_level_history WHERE clh_cus_kode=c.cus_kode ORDER BY clh_tanggal DESC LIMIT 1) as nlevel,
         (SELECT level_nama FROM tcustomer_level_history INNER JOIN tcustomer_level ON level_kode=clh_level 
          WHERE clh_cus_kode=c.cus_kode ORDER BY clh_tanggal DESC LIMIT 1) as clevel
@@ -3727,21 +3824,22 @@ const getSjDetails = async (nomor, user, currentInvNomor = "") => {
 
     const header = headerRows[0];
 
-    // Validasi: SJ harus sudah diterima di sistem KPR
     if (!header.sj_noterima || header.sj_noterima === "") {
       throw new Error(
         "SJ tersebut belum diterima. Silakan proses penerimaan SJ terlebih dahulu.",
       );
     }
 
-    // 2. Ambil Items & Stok
+    // 2. Ambil Items & Stok — [FIX] JOIN harga khusus customer (franchise)
     const itemsQuery = `
       SELECT d.sjd_kode as kode, d.sjd_ukuran as ukuran, d.sjd_jumlah,
         ifnull(trim(concat(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)), f.sd_nama) as nama_barang,
         b.brgd_barcode as barcode, 
-        b.brgd_harga AS harga, 
+        -- [BARU] Kalau ada harga khusus utk customer ini, itu yang menang — final, sudah net
+        COALESCE(chk.chk_harga, b.brgd_harga) AS harga,
+        (chk.chk_harga IS NOT NULL) AS isHargaKhusus, -- [BARU]
         b.brgd_hpp AS hpp,     
-        a.brg_ktgp as kategori, -- KATEGORI DIAMBIL DARI SINI
+        a.brg_ktgp as kategori,
         IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
                 FROM tmasterstok m 
                 WHERE m.mst_aktif="Y" 
@@ -3753,34 +3851,39 @@ const getSjDetails = async (nomor, user, currentInvNomor = "") => {
       LEFT JOIN tbarangdc a ON a.brg_kode = d.sjd_kode
       LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sjd_kode
       LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sjd_kode AND b.brgd_ukuran = d.sjd_ukuran
+      -- [BARU] Match harga khusus berdasar customer SJ ini + kode barang + ukuran
+      LEFT JOIN tcustomer_harga_khusus chk 
+        ON chk.chk_cus_kode = ? 
+        AND chk.chk_brg_kode = d.sjd_kode 
+        AND chk.chk_ukuran = d.sjd_ukuran 
+        AND chk.chk_aktif = 1
       WHERE d.sjd_nomor = ?
     `;
     const [itemRows] = await connection.query(itemsQuery, [
       user.cabang,
       currentInvNomor,
+      header.mt_cus, // [BARU] dipakai buat JOIN harga khusus
       nomor,
     ]);
 
     // 3. PROSES INJEKSI DISKON PER ITEM
     const processedItems = itemRows.map((item) => {
-      // Nilai default diskon jika cabang bukan KPR
-      item.disc = 0; // Ini akan di-map jadi diskonPersen di Frontend
-      item.diskon = 0; // Ini akan di-map jadi diskonRp di Frontend
+      item.disc = 0;
+      item.diskon = 0;
 
-      // Jika cabang yang request adalah KPR, hitung diskon otomatis
-      if (user.cabang === "KPR") {
-        // Panggil helper evaluasi nama_barang dan kategori per baris!
-        const kprDiscountPersen = getKprItemDiscount(
-          item.nama_barang,
-          item.kategori,
-        );
-
-        if (kprDiscountPersen > 0) {
-          item.disc = kprDiscountPersen;
-          // Hitung potongan nominal (Rupiah) = Harga * (Persen / 100)
-          item.diskon = (item.harga * kprDiscountPersen) / 100;
-        }
+      if (item.isHargaKhusus) {
+        return item;
       }
+
+      const { disc, diskon } = computeItemDiscount(
+        header.mt_cus,
+        item.nama_barang,
+        item.kategori,
+        item.harga,
+        user.cabang,
+      );
+      item.disc = disc;
+      item.diskon = diskon;
 
       return item;
     });
@@ -3790,7 +3893,6 @@ const getSjDetails = async (nomor, user, currentInvNomor = "") => {
     connection.release();
   }
 };
-
 /**
  * Menghitung total sisa piutang berjalan milik customer
  */
@@ -3838,6 +3940,62 @@ const getPackagingOptions = async (cabang) => {
   return rows;
 };
 
+/**
+ * Rename file bukti ulasan Google Maps (promo wajib review) dari lokasi
+ * temp multer ke folder permanen, dinamai sesuai nomor Invoice — pola sama
+ * dengan renameProposalImage di priceProposalFormService / offerFormService.
+ */
+const renameReviewProofImage = async (tempFilePath, nomor) => {
+  return new Promise((resolve, reject) => {
+    const fs = require("fs");
+    const path = require("path");
+    if (!fs.existsSync(tempFilePath)) {
+      console.error("Source file does not exist:", tempFilePath);
+      return reject(new Error("File sumber tidak ditemukan."));
+    }
+    const finalFileName = `${nomor}${path.extname(tempFilePath)}`;
+    const folderPath = path.join(
+      process.cwd(),
+      "public",
+      "images",
+      "review-proof",
+    );
+    try {
+      fs.mkdirSync(folderPath, { recursive: true });
+    } catch (mkdirError) {
+      console.error("Error creating directory:", mkdirError);
+      return reject(new Error("Gagal membuat direktori bukti ulasan."));
+    }
+    const finalPath = path.join(folderPath, finalFileName);
+    fs.rename(tempFilePath, finalPath, (err) => {
+      if (err) {
+        fs.copyFile(tempFilePath, finalPath, (copyErr) => {
+          if (copyErr) {
+            console.error("Gagal copy file:", copyErr);
+            return reject(
+              new Error("Gagal memproses file bukti: " + copyErr.message),
+            );
+          }
+          fs.unlink(tempFilePath, () => {});
+          resolve(finalPath);
+        });
+      } else {
+        resolve(finalPath);
+      }
+    });
+  });
+};
+
+const getHargaKhususList = async (cusKode) => {
+  const [rows] = await pool.query(
+    `SELECT chk_brg_kode AS kode, chk_ukuran AS ukuran, chk_harga AS harga 
+     FROM tcustomer_harga_khusus 
+     WHERE chk_cus_kode = ? AND chk_aktif = 1`,
+    [cusKode],
+  );
+  return rows;
+};
+
 module.exports = {
   searchSo,
   getSoDetailsForGrid,
@@ -3875,4 +4033,7 @@ module.exports = {
   getPackagingOptions,
   checkFreeItemQuota,
   getTierDiskonByPromo,
+  renameReviewProofImage,
+  getHargaKhususList,
+  recalcKprDiscountForItems,
 };

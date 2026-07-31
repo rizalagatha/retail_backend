@@ -503,6 +503,43 @@ const getTierDiskonByPromo = async (req, res) => {
   }
 };
 
+const uploadReviewProof = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "Tidak ada file yang diunggah." });
+    }
+    const { nomor } = req.params;
+    await service.renameReviewProofImage(req.file.path, nomor);
+    res.json({ message: "Bukti ulasan berhasil diunggah." });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getHargaKhusus = async (req, res) => {
+  try {
+    const { cusKode } = req.params;
+    const data = await service.getHargaKhususList(cusKode);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const recalcKprDiscount = async (req, res) => {
+  try {
+    const { cusKode, items } = req.body;
+    const result = service.recalcKprDiscountForItems(
+      cusKode,
+      items || [],
+      req.user.cabang,
+    );
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   loadForEdit,
   getPackagingOptions,
@@ -540,4 +577,7 @@ module.exports = {
   getCustomerDebt,
   checkFreeItemQuota,
   getTierDiskonByPromo,
+  uploadReviewProof,
+  getHargaKhusus,
+  recalcKprDiscount,
 };

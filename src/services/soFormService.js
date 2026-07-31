@@ -521,6 +521,7 @@ const getSoForEdit = async (nomor) => {
     const mainQuery = `
   SELECT 
       h.*, d.*, 
+      d.sod_idrec AS dbLineId,
       d.sod_scanned AS scannedQty,
       d.sod_is_free_gift AS isFreeGiftRaw,
       GREATEST(
@@ -856,7 +857,8 @@ const getPenawaranDetailsForSo = async (nomor, cabang) => {
     const [detailRows] = await connection.query(
       `
       SELECT d.*, 
-             IF(d.pend_custom = 'Y', d.pend_custom_nama, 
+             d.pend_ph_nomor AS noPengajuanHarga,
+             IF(d.pend_custom = 'Y', d.pend_custom_nama,
                 TRIM(CONCAT(
                   COALESCE(a.brg_jeniskaos,''),' ',COALESCE(a.brg_tipe,''),' ',
                   COALESCE(a.brg_lengan,''),' ',COALESCE(a.brg_jeniskain,''),' ',
@@ -1260,6 +1262,52 @@ const saveNewDp = async (dpData, user) => {
 };
 
 /**
+ * Rename file bukti ulasan Google Maps (promo wajib review) dari lokasi
+ * temp multer ke folder permanen, dinamai sesuai nomor SO — pola sama
+ * dengan renameProposalImage di priceProposalFormService.
+ */
+const renameReviewProofImage = async (tempFilePath, nomor) => {
+  return new Promise((resolve, reject) => {
+    const fs = require("fs");
+    const path = require("path");
+    if (!fs.existsSync(tempFilePath)) {
+      console.error("Source file does not exist:", tempFilePath);
+      return reject(new Error("File sumber tidak ditemukan."));
+    }
+    const finalFileName = `${nomor}${path.extname(tempFilePath)}`;
+    const folderPath = path.join(
+      process.cwd(),
+      "public",
+      "images",
+      "review-proof",
+    );
+    try {
+      fs.mkdirSync(folderPath, { recursive: true });
+    } catch (mkdirError) {
+      console.error("Error creating directory:", mkdirError);
+      return reject(new Error("Gagal membuat direktori bukti ulasan."));
+    }
+    const finalPath = path.join(folderPath, finalFileName);
+    fs.rename(tempFilePath, finalPath, (err) => {
+      if (err) {
+        fs.copyFile(tempFilePath, finalPath, (copyErr) => {
+          if (copyErr) {
+            console.error("Gagal copy file:", copyErr);
+            return reject(
+              new Error("Gagal memproses file bukti: " + copyErr.message),
+            );
+          }
+          fs.unlink(tempFilePath, () => {});
+          resolve(finalPath);
+        });
+      } else {
+        resolve(finalPath);
+      }
+    });
+  });
+};
+
+/**
  * @description Mencari rekening bank yang tersedia untuk cabang tertentu.
  */
 const searchRekening = async (filters) => {
@@ -1572,6 +1620,7 @@ module.exports = {
   searchAvailableSetoran,
   generateNewDpNumber,
   saveNewDp,
+  renameReviewProofImage,
   searchRekening,
   getDataForDpPrint,
   findByBarcode,

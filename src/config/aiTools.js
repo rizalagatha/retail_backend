@@ -9,6 +9,8 @@ const {
   subWeeks,
   subMonths,
 } = require("date-fns");
+const natural = require("natural");
+const TfIdf = natural.TfIdf;
 
 const ENABLED_TOOLS = [
   "get_today_sales",
@@ -29,6 +31,7 @@ const ENABLED_TOOLS = [
   "get_cashflow_summary",
   "get_shipment_schedules",
   "get_agenda_dateline",
+  "get_seasonal_sales",
 ];
 
 // --- Resolusi rentang tanggal relatif -> tanggal aktual ---
@@ -93,7 +96,7 @@ const PERIOD_ENUM = [
   "custom",
 ];
 const PERIOD_DESC =
-  "Rentang waktu relatif. Gunakan 'custom' + startDate/endDate (format YYYY-MM-DD) jika user menyebut tanggal spesifik.";
+  "Rentang waktu relatif. WAJIB HANYA memilih dari opsi enum yang tersedia. JANGAN PERNAH mengarang nilai baru (seperti 'last_3_days' atau 'last_5_days'). Jika user meminta rentang waktu yang tidak ada di daftar (misal '5 hari terakhir' atau '3 hari lalu'), WAJIB pilih 'custom' dan isi startDate/endDate secukupnya (sistem akan otomatis mengoreksi akurasi tanggalnya nanti).";
 
 // [BARU] Cocokkan nama cabang dari kalimat ASLI user secara deterministik
 // (substring match), bukan mengandalkan model 3B memilih dari daftar enum
@@ -120,7 +123,25 @@ const resolveCabangFromText = (rawText, cabangOptions) => {
   const namaMatches = cabangOptions.filter(
     (c) => c.nama && c.nama.length > 2 && textUp.includes(c.nama.toUpperCase()),
   );
-  return namaMatches.length === 1 ? namaMatches[0].kode : null;
+
+  // Jika cuma 1 yang cocok, langsung pakai
+  if (namaMatches.length === 1) {
+    return namaMatches[0].kode;
+  }
+
+  // --- TAMBAHAN BARU ---
+  // Jika ada lebih dari 1 cabang dengan nama yang mirip (misal K06 dan W01 sama-sama ada kata Boyolali),
+  // prioritaskan cabang reguler/toko (kode berawalan "K").
+  if (namaMatches.length > 1) {
+    const tokoOnly = namaMatches.filter(
+      (c) => c.kode && c.kode.startsWith("K"),
+    );
+    if (tokoOnly.length === 1) {
+      return tokoOnly[0].kode;
+    }
+  }
+
+  return null;
 };
 
 // [BARU] Alias manual untuk nama kota/panggilan umum yang TIDAK bisa
@@ -129,7 +150,8 @@ const resolveCabangFromText = (rawText, cabangOptions) => {
 // keduanya "Surabaya"), matching otomatis via kota jadi ambigu.
 // Tambah manual di sini kalau nemu kasus baru yang serupa.
 const CABANG_ALIAS = {
-  SURABAYA: "K05", // KAOSAN SBY — RESZO SBY (K04) beda brand, sengaja tidak dialiaskan
+  SURABAYA: "K05",
+  BOYOLALI: "K06",
 };
 
 const resolveCabangAlias = (rawText) => {
@@ -165,10 +187,12 @@ const resolveMonthOverride = (rawText) => {
   if (!rawText) return null;
   const textLower = rawText.toLowerCase();
 
-  // [FIX] Kalau user sebut LEBIH DARI 1 bulan berbeda (pertanyaan
-  // perbandingan), JANGAN paksa override — biarkan model isi period='custom'
-  // sendiri per tool call, supaya masing-masing panggilan bisa dapat bulan
-  // yang berbeda. Override cuma aman dipakai kalau cuma 1 bulan disebut.
+  // [FIX CUSTOM DATE] Jika user menyebut tanggal/angka spesifik (misal: "tanggal 1", "1 dan 5"),
+  // matikan override! Biarkan Claude yang mengisi startDate & endDate secara mandiri.
+  if (textLower.match(/(tanggal|tgl)\s*\d+/)) return null;
+  if (textLower.match(/\b\d{1,2}\b\s*(dan|sampai|s\/d|-|s\.d)\s*\b\d{1,2}\b/))
+    return null;
+
   const distinctMonthsFound = BULAN_NAMA.filter((nama) =>
     textLower.includes(nama),
   );
@@ -216,19 +240,23 @@ const resolveRelativeOverride = (rawText) => {
   if (!rawText) return null;
   const textLower = rawText.toLowerCase();
 
-  const match = textLower.match(/(\d+)\s*(hari|minggu|bulan)\s*(yang\s+)?lalu/);
+  // [UPDATE] Tambahkan deteksi kata "terakhir" di regex
+  const match = textLower.match(
+    /(\d+)\s*(hari|minggu|bulan)\s*(yang\s+)?(lalu|terakhir)/,
+  );
   if (!match) return null;
 
   const n = parseInt(match[1], 10);
   const unit = match[2];
+  const tipe = match[4]; // menangkap kata "lalu" atau "terakhir"
   if (!n || n <= 0) return null;
 
   const daysPerUnit = relativeUnitToDays[unit];
   const now = new Date();
   const fmt = (d) => format(d, "yyyy-MM-dd");
 
-  if (unit === "hari") {
-    // "2 hari lalu" = 1 titik hari spesifik (H-2), bukan rentang
+  // Jika "hari" dan user bilang "lalu" (misal: "5 hari lalu"), ambil 1 HARI SPESIFIK tersebut
+  if (unit === "hari" && tipe === "lalu") {
     const target = subDays(now, n);
     return {
       startDate: fmt(target),
@@ -237,13 +265,14 @@ const resolveRelativeOverride = (rawText) => {
     };
   }
 
-  // "2 minggu lalu" / "3 bulan lalu" = rentang N unit terakhir sampai hari ini
+  // Jika "terakhir" (misal: "5 hari terakhir"), atau menggunakan unit minggu/bulan, jadikan RENTANG/RANGE
   const totalDays = n * daysPerUnit;
-  const start = subDays(now, totalDays - 1);
+  const start = subDays(now, totalDays - 1); // dikurangi 1 agar rentangnya pas N hari termasuk hari ini
+
   return {
     startDate: fmt(start),
     endDate: fmt(now),
-    label: `${n} ${unit} terakhir`,
+    label: `${n} ${unit} ${tipe}`, // otomatis menjadi "5 hari terakhir" dsb.
   };
 };
 
@@ -278,6 +307,10 @@ const TOOL_KEYWORDS = {
     "top barang",
     "best seller",
     "paling laku",
+    "lagi",
+    "tambah",
+    "selanjutnya",
+    "berikutnya",
   ],
   get_total_stock: ["total stok", "stok total", "berapa stok semua"],
   get_stock_breakdown_per_branch: [
@@ -286,7 +319,15 @@ const TOOL_KEYWORDS = {
     "stok semua cabang",
     "stok masing",
   ],
-  get_stok_kosong: ["stok kosong", "kosong", "habis"],
+  get_stok_kosong: [
+    "stok kosong",
+    "kosong",
+    "habis",
+    "lagi",
+    "tambah",
+    "selanjutnya",
+    "berikutnya",
+  ],
   get_stok_kosong_fast_moving: ["fast moving"],
   get_real_stock: [
     "stok real",
@@ -295,6 +336,14 @@ const TOOL_KEYWORDS = {
     "sisa stok",
     "stok barang",
     "stok combed",
+    "warna",
+    "selain",
+    "lagi",
+    "tambah",
+    "selanjutnya",
+    "berikutnya",
+    "size",
+    "ukuran",
   ],
   get_piutang_total: ["piutang", "tagihan", "nunggak", "utang"],
   get_piutang_per_cabang: [
@@ -312,10 +361,12 @@ const TOOL_KEYWORDS = {
   get_sales_target: ["target", "capai target", "pencapaian"],
   get_branch_performance: [
     "performa",
-    "ranking cabang",
-    "peringkat cabang",
-    "cabang terbaik",
-    "cabang terbagus",
+    "ranking",
+    "peringkat",
+    "terbaik",
+    "terbagus",
+    "kinerja",
+    "pencapaian",
   ],
   get_stagnant_stock_value: ["stagnan"],
   get_dead_stock_summary: ["dead stock", "mati", "tidak bergerak"],
@@ -327,6 +378,13 @@ const TOOL_KEYWORDS = {
     "surat jalan",
   ],
   get_agenda_dateline: ["deadline", "dateline", "jatuh tempo"],
+  get_seasonal_sales: [
+    "seasonal",
+    "sesional",
+    "new arrival",
+    "barang baru",
+    "musiman",
+  ],
 };
 
 // Kalau tidak ada keyword yang cocok sama sekali, jatuh ke set default ini
@@ -343,23 +401,49 @@ const MAX_TOOLS_PER_REQUEST = 6;
 
 const selectRelevantTools = (rawText, availableNames) => {
   const textLower = (rawText || "").toLowerCase();
-  const matched = availableNames.filter((name) => {
+
+  // Inisialisasi mesin TF-IDF
+  const tfidf = new TfIdf();
+
+  // 1. Daftarkan keywords tiap tool sebagai "dokumen" terpisah
+  availableNames.forEach((name) => {
     const keywords = TOOL_KEYWORDS[name] || [];
-    return keywords.some((kw) => textLower.includes(kw));
+    // Gabungkan array keyword jadi satu paragraf agar mudah dianalisa mesin
+    tfidf.addDocument(keywords.join(" "));
   });
 
+  const scored = [];
+
+  // 2. Hitung kecocokan (measure) kalimat user terhadap masing-masing tool
+  // TF-IDF otomatis memecah kata dan menghitung bobotnya. Kata yang jarang
+  // (unik) akan punya bobot lebih tinggi dari kata umum.
+  tfidf.tfidfs(textLower, (i, measure) => {
+    if (measure > 0) {
+      scored.push({ name: availableNames[i], score: measure });
+    }
+  });
+
+  // 3. Urutkan dari yang skor kemiripannya paling tinggi
+  scored.sort((a, b) => b.score - a.score);
+
   let selected =
-    matched.length > 0
-      ? matched
+    scored.length > 0
+      ? scored.map((t) => t.name)
       : DEFAULT_FALLBACK_TOOLS.filter((n) => availableNames.includes(n));
 
-  if (selected.length === 0) selected = availableNames; // last resort
+  if (selected.length === 0) selected = availableNames;
 
+  // Batasi hanya mengirim skema tool yang relevan untuk hemat token Groq
   return selected.slice(0, MAX_TOOLS_PER_REQUEST);
 };
 
 // --- Bangun daftar tool + eksekutornya, disesuaikan konteks user yang bertanya ---
-const buildTools = (user, cabangOptions, rawQuestion = "") => {
+const buildTools = (
+  user,
+  cabangOptions,
+  rawQuestion = "",
+  activeTool = null,
+) => {
   const cabangOverride = resolveCabangFromText(rawQuestion, cabangOptions);
   // Nama bulan spesifik ("Januari") menang lebih dulu; kalau tidak ada,
   // baru cek pola relatif ("2 minggu lalu").
@@ -370,7 +454,7 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
   // jadi di sini cukup instruksi singkat — hemat token krusial karena
   // deskripsi ini di-reuse di banyak tool tiap request.
   const cabangDesc =
-    "Kode cabang. WAJIB dikosongkan kecuali user secara EKSPLISIT menyebut nama/kode cabang tertentu di kalimatnya. JANGAN diisi otomatis dengan cabang milik user yang sedang login — pertanyaan umum tanpa sebutan cabang berarti mencakup SEMUA cabang, bukan cabang user sendiri.";
+    "Kode cabang. Dikosongkan secara default, KECUALI user menyebut cabang tertentu, ATAU jika melanjutkan konteks cabang dari pertanyaan sebelumnya. JANGAN diisi otomatis dengan cabang user yang login jika tidak diminta.";
 
   const tools = [
     {
@@ -403,7 +487,6 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
           properties: {
             period: {
               type: "string",
-              enum: PERIOD_ENUM,
               description: PERIOD_DESC,
             },
             startDate: {
@@ -429,12 +512,13 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
         },
       },
     },
+    // di dalam tools array, definisi get_top_selling_products
     {
       type: "function",
       function: {
         name: "get_top_selling_products",
         description:
-          "Ambil daftar barang paling laris (terjual terbanyak). Default bulan ini, bisa juga rentang tanggal custom. Default menampilkan 10 barang teratas, sesuaikan parameter limit kalau user minta jumlah spesifik (mis. 'top 5', 'top 20').",
+          "Ambil daftar barang paling laris (terjual terbanyak). Default bulan ini, bisa juga rentang tanggal custom. Default menampilkan 10 barang teratas, sesuaikan parameter limit kalau user minta jumlah spesifik (mis. 'top 5', 'top 20'). Gunakan parameter search kalau user minta laris untuk KATEGORI/JENIS/WARNA barang tertentu (mis. 'warna hitam paling laris apa', 'combed 24s paling laris'), TERMASUK kalau kategori itu disebut di pesan SEBELUMNYA dalam percakapan ini dan pertanyaan sekarang jelas melanjutkan konteks itu.",
         parameters: {
           type: "object",
           properties: {
@@ -460,6 +544,22 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
               type: "number",
               description:
                 "Jumlah barang yang ditampilkan. Default 10 kalau tidak disebut user. Maksimal 30.",
+            },
+            // [BARU]
+            search: {
+              type: "string",
+              description:
+                "Kata kunci filter nama barang. Susunan standar: {JenisKaos} {Tipe} {Lengan} {JenisKain} {Warna}. Contoh oblong: 'KO POLOS PENDEK COMBED 24S HITAM'. Contoh polo/kerah: 'KK POLOS PENDEK POLO LACOS CVC'. PENTING: Jangan paksa awalan 'KO' jika user mencari 'polo'. Jangan ubah 'polo' jadi 'polos'. Cukup ekstrak berurutan, misal 'POLO LACOS CVC HITAM'. ATURAN PENGECUALIAN: KOSONGKAN parameter ini jika kata kunci tersebut dimaksudkan untuk DITOLAK (diawali 'selain', 'kecuali', 'tanpa'). JANGAN pernah memasukkan kata yang ditolak (seperti 'kecuali dtf' atau 'selain combed 24s') ke parameter ini, gunakan parameter 'exclude' untuk itu.",
+            },
+            exclude: {
+              type: "string",
+              description:
+                "Kata kunci barang yang TIDAK BOLEH disertakan. Isi parameter ini JIKA DAN HANYA JIKA user menggunakan kata 'kecuali', 'selain', atau 'tanpa'. Contoh: jika kalimatnya 'selain combed 24s', maka isi parameter ini HANYA dengan 'combed 24s' (sedangkan parameter search biarkan kosong jika tidak ada kriteria pencarian lain).",
+            },
+            page: {
+              type: "number",
+              description:
+                "Nomor halaman untuk melihat data selanjutnya. Default 1. PENTING: Jika user meminta 'lagi', 'tambah', 'selanjutnya', atau 'berikutnya' dari list sebelumnya, WAJIB naikkan angka ini (misal dari 1 menjadi 2, lalu 3, dst) dan PERTAHANKAN parameter pencarian sebelumnya.",
             },
           },
           required: ["period"],
@@ -515,6 +615,11 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
               description:
                 "Kata kunci nama barang, opsional. PENTING: nama barang Kaosan selalu tersusun dengan urutan tetap: {JenisKaos} {Tipe} {Lengan} {JenisKain} {Warna} — contoh: 'KO POLOS PENDEK COMBED 30S MARUN'. Susun kata kunci pencarian mengikuti urutan ini (bukan urutan sesuai kalimat user), dan boleh pakai sebagian saja (mis. hanya 'COMBED 30S MARUN') asalkan urutan relatifnya tetap benar.",
             },
+            page: {
+              type: "number",
+              description:
+                "Nomor halaman untuk melihat data selanjutnya. Default 1. PENTING: Jika user meminta 'lagi', 'tambah', 'selanjutnya', atau 'berikutnya' dari list sebelumnya, WAJIB naikkan angka ini (misal dari 1 menjadi 2, lalu 3, dst) dan PERTAHANKAN parameter pencarian sebelumnya.",
+            },
           },
           required: [],
         },
@@ -551,7 +656,12 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
             search: {
               type: "string",
               description:
-                "Kata kunci nama barang, WAJIB diisi. Nama barang Kaosan tersusun tetap: {JenisKaos} {Tipe} {Lengan} {JenisKain} {Warna} — contoh: 'KO POLOS PENDEK COMBED 24S HITAM'. JANGAN masukkan ukuran (S/M/L/XL/dst) ke sini — ukuran punya parameter sendiri.",
+                "Kata kunci pencarian nama barang, WAJIB diisi. Susunan standar: {JenisKaos} {Tipe} {Lengan} {JenisKain} {Warna}. Contoh oblong: 'KO POLOS PENDEK COMBED 24S HITAM'. Contoh polo/kerah: 'KK POLOS PENDEK POLO LACOS CVC'. PENTING: Jangan paksa awalan 'KO' jika user mencari 'polo' dan jangan ubah 'polo' jadi 'polos'. JANGAN masukkan ukuran (S/M/L/XL/dst) ke sini — ukuran punya parameter sendiri. PENTING UNTUK FOLLOW-UP: Jika user memfilter lanjutan (misal 'selain putih'), kamu WAJIB MEMPERTAHANKAN kata kunci dari pertanyaan sebelumnya (misal 'katun air') di parameter ini. JANGAN dikosongkan jika ada konteks sebelumnya. Jangan pernah memasukkan kata 'selain', 'kecuali', atau 'tanpa' ke parameter ini.",
+            },
+            exclude: {
+              type: "string",
+              description:
+                "Kata kunci barang yang TIDAK BOLEH disertakan. Isi jika user menggunakan kata 'kecuali', 'selain', atau 'tanpa' (misal: 'putih').",
             },
             ukuran: {
               type: "string",
@@ -562,6 +672,11 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
               type: "string",
               enum: [...cabangEnum, "ALL"],
               description: cabangDesc,
+            },
+            page: {
+              type: "number",
+              description:
+                "Nomor halaman untuk melihat data selanjutnya. Default 1. PENTING: Jika user meminta 'lagi', 'tambah', 'selanjutnya', atau 'berikutnya' dari list sebelumnya, WAJIB naikkan angka ini (misal dari 1 menjadi 2, lalu 3, dst) dan PERTAHANKAN parameter pencarian sebelumnya.",
             },
           },
           required: ["search"],
@@ -657,7 +772,7 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
       function: {
         name: "get_branch_performance",
         description:
-          "Ambil ranking performa (omset, target, pencapaian %) semua cabang untuk periode tertentu. Default bulan berjalan. Bisa juga periode lain (mis. 'minggu lalu') — untuk periode bukan bulan penuh, ranking OMSET tetap akurat, tapi persentase pencapaian memakai target bulanan (bukan diprorata). Hanya untuk user Pusat (KDC).",
+          "HANYA gunakan tool ini jika user SECARA EKSPLISIT menanyakan 'ranking', 'performa', 'target', atau 'achievement'. JANGAN PERNAH gunakan tool ini jika user sedang mencari atau melakukan follow-up tentang 'barang terlaris', 'penjualan', atau 'stok'.",
         parameters: {
           type: "object",
           properties: {
@@ -744,6 +859,32 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
         parameters: { type: "object", properties: {}, required: [] },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "get_seasonal_sales",
+        description:
+          "Ambil laporan penjualan khusus barang-barang NEW ARRIVAL atau SEASONAL.",
+        parameters: {
+          type: "object",
+          properties: {
+            cabang: { type: "string", enum: [...cabangEnum, "ALL"] },
+            period: { type: "string", enum: ["1w", "2w", "1m", "2m"] },
+            // [FIX] Tambahkan 2 parameter ini:
+            page: {
+              type: "number",
+              description:
+                "Nomor halaman. Default 1. WAJIB naikkan angka ini menjadi 2, 3, dst jika user minta 'lagi', '10 barang lainnya', atau 'berikutnya'.",
+            },
+            limit: {
+              type: "number",
+              description: "Jumlah data. Default 10.",
+            },
+          },
+          required: [],
+        },
+      },
+    },
   ];
 
   // --- Eksekutor: banyak fungsi dashboardService SUDAH self-scoping
@@ -775,18 +916,16 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
 
     get_top_selling_products: async (args) => {
       const cabang = cabangOverride || args.cabang;
-      const { period, startDate, endDate, limit } = args;
+      const { period, startDate, endDate, limit, search, exclude, page } = args;
       const branchFilter = cabang && cabang !== "ALL" ? cabang : "";
 
       let dateRange = null;
       if (monthOverride) {
-        // [FIX] Nama bulan disebut eksplisit — menang mutlak, apapun period
-        // yang dipilih model.
         dateRange = {
           startDate: monthOverride.startDate,
           endDate: monthOverride.endDate,
         };
-        args.monthLabel = monthOverride.label; // dipakai formatter buat label jawaban
+        args.monthLabel = monthOverride.label;
       } else if (period && period !== "this_month") {
         dateRange = resolveDateRange(period, startDate, endDate);
       }
@@ -795,9 +934,17 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
         user,
         branchFilter,
         dateRange,
+        search || "",
+        exclude || "",
       );
-      const safeLimit = Math.min(30, Math.max(1, Number(limit) || 10));
-      return data.slice(0, safeLimit);
+
+      // --- LOGIKA PAGINATION MANUAL ---
+      const pageNum = Number(page) || 1;
+      const limitNum = Math.min(30, Math.max(1, Number(limit) || 10));
+      const startIndex = (pageNum - 1) * limitNum;
+      const endIndex = startIndex + limitNum;
+
+      return data.slice(startIndex, endIndex);
     },
 
     get_total_stock: async (args) => {
@@ -836,17 +983,17 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
 
     get_stok_kosong: async (args) => {
       const cabang = cabangOverride || args.cabang;
-      // [FIX] Kalau user bukan KDC dan cabang tidak disebut, WAJIB pakai
-      // user.cabang sendiri secara eksplisit — sebelumnya kirim string kosong
-      // yang bikin subquery nama_cabang di backend jatuh ke NULL (bug "cabang null").
       const targetCabang = cabang || (user.cabang !== "KDC" ? user.cabang : "");
-      const { search } = args;
+      const { search, page } = args;
+
+      const pageNum = Number(page) || 1;
+
       const result = await dashboardService.getStokKosongReguler(
         user,
         search || "",
         targetCabang,
         false,
-        1,
+        pageNum,
         10,
       );
       return result.data;
@@ -863,12 +1010,17 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
 
     get_real_stock: async (args) => {
       const cabang = cabangOverride || args.cabang;
+      const { search, exclude, ukuran, page } = args;
+
+      const pageNum = Number(page) || 1;
+
       const result = await dashboardService.getRealStockList(user, {
         cabang: cabang || "ALL",
-        search: args.search || "",
-        ukuran: args.ukuran || "",
-        page: 1,
-        limit: 15,
+        search: search || "",
+        exclude: exclude || "",
+        ukuran: ukuran || "",
+        page: pageNum,
+        limit: 10,
       });
       return result;
     },
@@ -967,6 +1119,16 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
       const data = await dashboardService.getAgendaDateline(user);
       return data.slice(0, 15);
     },
+
+    get_seasonal_sales: async (args) => {
+      const cabang = cabangOverride || args.cabang;
+      return dashboardService.getSeasonalSales(user, {
+        cabang: cabang || "ALL",
+        period: args.period || "1m",
+        page: args.page || 1, // Teruskan page
+        limit: args.limit || 10, // Teruskan limit
+      });
+    },
   };
 
   const filteredTools = tools.filter((t) =>
@@ -976,14 +1138,16 @@ const buildTools = (user, cabangOptions, rawQuestion = "") => {
     Object.entries(executors).filter(([name]) => ENABLED_TOOLS.includes(name)),
   );
 
-  // [BARU] Persempit lagi jadi maksimal 6 tool paling relevan berdasarkan
-  // kata kunci di pertanyaan — executors TETAP lengkap (nggak makan token,
-  // cuma dipakai internal), yang dikecilkan cuma skema tool yang beneran
-  // dikirim ke Groq.
   const relevantNames = selectRelevantTools(
     rawQuestion,
     filteredTools.map((t) => t.function.name),
   );
+
+  // [FIX] PAKSA MASUKKAN TOOL AKTIF (Mencegah amnesia saat follow-up)
+  if (activeTool && !relevantNames.includes(activeTool)) {
+    relevantNames.push(activeTool);
+  }
+
   const finalTools = filteredTools.filter((t) =>
     relevantNames.includes(t.function.name),
   );

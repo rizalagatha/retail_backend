@@ -5,6 +5,7 @@ const { SYSTEM_PROMPT } = require("../config/aiPrompt");
 const aiFormatters = require("../config/aiFormatters");
 const aiQueueService = require("./aiQueueService");
 const { format } = require("date-fns");
+const { correctUserTypo } = require("../config/typoCorrector");
 
 const MAX_TOOL_ROUNDS = 2;
 
@@ -55,6 +56,14 @@ const processMessage = async (incomingMessages, user) => {
     // 1. Ambil daftar cabang dari DB (bukan hardcode) untuk enum parameter tool
     const cabangOptionsRaw = await dashboardService.getCabangOptions(user);
 
+    // [BARU] Ambil daftar warna valid dari tabel twarna
+    const daftarWarnaRaw = await dashboardService.getDaftarWarna();
+    // Gabungkan menjadi satu kalimat dipisahkan koma
+    const warnaLegend =
+      daftarWarnaRaw.length > 0
+        ? daftarWarnaRaw.join(", ")
+        : "Tidak ada data warna";
+
     // [BARU] Channel penjualan tambahan (bukan toko fisik K01-K12) — cuma
     // relevan untuk konteks AI (laporan piutang/penjualan lintas channel),
     // sengaja tidak disuntik ke getCabangOptions supaya tidak mengubah
@@ -69,16 +78,19 @@ const processMessage = async (incomingMessages, user) => {
       ...EXTRA_CABANG_AI.filter((c) => !existingKodes.has(c.kode)),
     ];
 
-    // [FIX] Cari sinyal cabang dari SELURUH histori user (bukan cuma pesan
-    // terakhir) — supaya follow-up seperti "selain 10 itu ada lagi?" tetap
-    // "ingat" cabang yang disebut di pertanyaan sebelumnya dalam sesi ini.
-    const allUserText = incomingMessages
+    // Cari sinyal cabang dari SELURUH histori user
+    const recentUserMessages = incomingMessages
       .filter((m) => m.role === "user")
-      .map((m) => m.content)
-      .join(" ");
+      .slice(-3);
 
-    const { tools, executors } = buildTools(user, cabangOptions, allUserText);
+    // --- TAMBAHKAN KOREKSI TYPO DI SINI ---
+    const rawUserText = recentUserMessages.map((m) => m.content).join(" ");
+    const allUserText = correctUserTypo(rawUserText);
 
+    console.log(
+      `[TYPO CHECK] Asli: "${rawUserText}" | Koreksi: "${allUserText}"`,
+    );
+    // --------------------------------------
     // [BARU] Legend cabang disebut SEKALI di system prompt — sebelumnya
     // daftar 12 cabang ini di-copy ke deskripsi parameter di 5 tool
     // berbeda, boros token per request (relevan untuk kuota Groq 6000 tok/menit).
@@ -86,7 +98,9 @@ const processMessage = async (incomingMessages, user) => {
       .map((c) => `${c.kode}=${c.nama}`)
       .join(", ");
 
-    // 2. Bangun system prompt dinamis: tanggal hari ini + konteks user yang login
+    // Cukup panggil begini saja:
+    const { tools, executors } = buildTools(user, cabangOptions, allUserText);
+
     const todayStr = format(new Date(), "yyyy-MM-dd (EEEE)");
     const systemPrompt = `${SYSTEM_PROMPT}
 
@@ -98,19 +112,21 @@ Konteks tambahan:
         : " (Store, hanya bisa lihat data cabangnya sendiri)"
     }
 - Daftar kode cabang: ${cabangLegend}
-- Jika tidak ada tool yang relevan (user cuma menyapa, atau bertanya di luar topik sistem), jawab langsung tanpa memanggil tool.
-- WAJIB hanya memanggil parameter yang benar-benar terdaftar di skema tool. JANGAN pernah menambah parameter yang tidak ada di skema (contoh: jangan kirim "search" ke tool yang skemanya tidak punya parameter search).
-- Jika tidak ada tool yang relevan (user cuma menyapa, atau bertanya di luar topik sistem), jawab langsung tanpa memanggil tool.
-- PENTING soal parameter cabang: baris "User yang bertanya: cabang ${user.cabang}" di atas HANYA informasi siapa yang login — JANGAN pernah pakai nilai itu sebagai filter cabang kecuali user secara eksplisit memintanya. Pertanyaan tanpa sebutan cabang (mis. "customer piutang terbanyak?", "penjualan hari ini?") artinya mencakup SEMUA cabang, kosongkan parameter cabang di tool.
-- PENTING soal follow-up: kalau pertanyaan user melanjutkan/menegaskan topik dari pesan SEBELUMNYA di percakapan ini (mis. "yang paling laku yang mana?", "capai target dong berarti?", "kalau dibandingkan gimana?"), PERTAHANKAN cabang DAN periode yang sama dari pertanyaan sebelumnya — JANGAN reset ke semua cabang/KDC atau bulan berjalan kecuali user eksplisit menyebut cabang/periode - PENTING soal follow-up: kalau pertanyaan user melanjutkan/menegaskan topik dari pesan SEBELUMNYA di percakapan ini (mis. "yang paling laku yang mana?", "capai target dong berarti?", "kalau dibandingkan gimana?"), PERTAHANKAN cabang DAN periode yang sama dari pertanyaan sebelumnya — JANGAN reset ke semua cabang/KDC atau bulan berjalan kecuali user eksplisit menyebut cabang/periode baru.
-- PENTING: kalau pertanyaan user cuma meminta KONFIRMASI/INTERPRETASI dari angka yang SUDAH ada di jawaban Anda sebelumnya (contoh: "berarti tidak capai target dong?", "artinya rugi ya?", "berarti stoknya cukup?"), JANGAN panggil tool lagi — cukup jawab langsung berdasarkan angka yang sudah Anda sebutkan di pesan sebelumnya di percakapan ini.
-- Jika user minta BANDINGKAN 2 periode/bulan berbeda, panggil tool yang sama DUA KALI dalam satu balasan (satu per periode), masing-masing dengan period='custom' + startDate/endDate yang sesuai bulan itu.`;
+- DAFTAR WARNA VALID DI DATABASE: ${warnaLegend}
+`;
 
     // 3. Riwayat percakapan dari frontend (sudah dibatasi 6 pesan terakhir di sana)
     let conversation = [
       { role: "system", content: systemPrompt },
       ...incomingMessages,
     ];
+
+    const lastUserIndex = conversation.findLastIndex((m) => m.role === "user");
+    if (lastUserIndex !== -1) {
+      conversation[lastUserIndex].content = correctUserTypo(
+        conversation[lastUserIndex].content,
+      );
+    }
 
     // 4. Loop tool-calling
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -145,21 +161,13 @@ Konteks tambahan:
       );
 
       const toolCalls = assistantMessage.tool_calls;
-
       if (!toolCalls || toolCalls.length === 0) {
-        if (!assistantMessage.content) {
-          console.warn(
-            "[AI] Model tidak balikin tool_calls maupun content. Raw:",
-            JSON.stringify(assistantMessage),
-          );
-        }
         return (
           assistantMessage.content || "Maaf, saya tidak bisa menjawab itu."
         );
       }
 
       conversation.push(assistantMessage);
-
       const executedResults = [];
 
       for (const call of toolCalls) {
@@ -183,28 +191,28 @@ Konteks tambahan:
             resultContent = await executor(args);
           }
         } catch (err) {
-          console.error(`[AI TOOL ERROR] ${fnName}:`, err.message);
           resultContent = { error: `Gagal mengambil data: ${err.message}` };
         }
 
         conversation.push({
           role: "tool",
-          tool_call_id: call.id, // [FIX WAJIB] Groq (beda dari Ollama) mewajibkan ini,
-          // kalau tidak ada, SEMUA request yang butuh Round 2 pasti gagal.
+          tool_call_id: call.id,
           name: fnName,
           content: JSON.stringify(resultContent),
         });
         executedResults.push({ fnName, args, resultContent });
       }
 
-      // [OPTIMASI] Kalau cuma 1 tool dipanggil di putaran ini dan ada formatter
-      // siap pakai, susun jawaban langsung di kode — skip 1 putaran LLM penuh
-      // (hemat ~50s di setup CPU-only). Fallback ke LLM kalau formatter gagal
-      // atau tool-nya belum punya template.
       if (executedResults.length === 1) {
         const { fnName, args, resultContent } = executedResults[0];
         const formatter = aiFormatters[fnName];
-        if (formatter && !resultContent?.error) {
+
+        const isDataEmpty =
+          !resultContent ||
+          (Array.isArray(resultContent) && resultContent.length === 0) ||
+          (resultContent.data && resultContent.data.length === 0);
+
+        if (formatter && !resultContent?.error && !isDataEmpty) {
           try {
             return formatter(args, resultContent);
           } catch (fmtErr) {
@@ -214,20 +222,16 @@ Konteks tambahan:
       }
     }
 
-    return "Maaf, permintaan ini terlalu kompleks untuk saya proses saat ini. Coba tanya lebih spesifik.";
+    return "Maaf, permintaan ini terlalu kompleks untuk saya proses saat ini.";
   } catch (error) {
-    console.error("[AI AGENT] Error processing message:", error);
-    // [BARU] Pakai flag isRateLimit (lebih pasti) — sekalian tampilkan
-    // detik tunggu asli dari Groq kalau tersedia, bukan angka tebakan.
+    console.error("[AI AGENT] Error:", error);
     if (error.isRateLimit) {
       return error.message.replace("RATE_LIMIT: ", "");
     }
-    return "Maaf, sistem AI sedang mengalami gangguan saat mengambil data. Silakan coba lagi nanti.";
+    return "Maaf, sistem AI sedang mengalami gangguan saat mengambil data.";
   } finally {
     aiQueueService.releaseSlot();
   }
 };
 
-module.exports = {
-  processMessage,
-};
+module.exports = { processMessage };

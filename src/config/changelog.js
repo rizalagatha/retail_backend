@@ -1,4 +1,22 @@
 const changelogs = {
+  "1.5.3": {
+    date: "2026-07-31",
+    changes: [
+      {
+        title: "Pembaruan dan Perbaikan:",
+        items: [
+          "Kaosan AI Assistant (versi beta), Membantu Anda untuk Mendapatkan berbagai Data Terkait Kaosan (Sementara Baru Tersedia untuk User Pusat)",
+          "Update untuk Promo bulan Agustus, Wajib Melampirkan Screenshot Ulasan Maps untuk dapat Klaim Promo",
+          "Format Baru Pengajuan Harga, Termasuk untuk Pengajuan Harga Sublim",
+          "Otomatis Menambahkan Detail SO DTF ke Surat Pesanan yang Dipanggil saat Buat SO DTF baru, jadi Tidak Perlu Dipanggil Ulang di Surat Pesanan",
+          "Validasi DP pada Saat Buat SO DTF Baru, jika DP Customer Kurang dari Ketentuan saat SO DTF Dibuat maka Tidak Bisa Disimpan",
+          "Stok Sticker DTF dan Sticker DTF Premium tidak Bisa Minus, Mohon untuk Dicek Stoknya Terlebih Dahulu Sebelum Invoice atau Scan Ready Pesanan",
+          "Update Harga Bordir Mengikuti Ketentuan Terbaru per 1 Agustus 2026",
+          "Pembelian di atas Rp500.000 tidak boleh menggunakan customer Retail, harus dibuatkan customer baru",
+        ],
+      },
+    ],
+  },
   "1.5.2": {
     date: "2026-06-22",
     changes: [

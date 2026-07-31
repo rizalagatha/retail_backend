@@ -45,7 +45,8 @@ const getForEdit = async (nomor) => {
        pro_include_kata,
        pro_mode_barang,
        pro_no_maps,
-       pro_no_disc_member
+       pro_no_disc_member,
+       pro_wajib_review
      FROM tpromo
      WHERE pro_nomor = ?`,
     [nomor],
@@ -147,7 +148,7 @@ const save = async (payload, user) => {
            pro_lipat, pro_generate, pro_f1,
            pro_jenis_kupon, pro_cetak_kupon,
            pro_keterangan, pro_note,
-           pro_basis, pro_exclude_kode, pro_include_kata, pro_mode_barang, pro_no_maps, pro_no_disc_member,
+           pro_basis, pro_exclude_kode, pro_include_kata, pro_mode_barang, pro_no_maps, pro_no_disc_member, pro_wajib_review,
            user_create, date_create
          ) VALUES (
            ?, ?, ?, ?,
@@ -156,7 +157,7 @@ const save = async (payload, user) => {
            ?, ?, ?,
            ?, ?,
            ?, ?,
-           ?, ?, ?, ?, ?, ?,
+           ?, ?, ?, ?, ?, ?, ?,
            ?, NOW()
          )`,
         [
@@ -177,13 +178,13 @@ const save = async (payload, user) => {
           header.cetakKupon || "N",
           header.keterangan || "",
           header.note || "",
-          // [BARU]
           header.basis || "ALL",
           header.excludeKode || "",
           header.includeKata || "",
           header.modeBarang || "TRIGGER",
           header.noMaps ? 1 : 0,
           header.noDiscMember ? 1 : 0,
+          header.wajibReview ? 1 : 0, // [BARU]
           user.kode,
         ],
       );
@@ -196,7 +197,7 @@ const save = async (payload, user) => {
            pro_lipat=?, pro_generate=?, pro_f1=?,
            pro_jenis_kupon=?, pro_cetak_kupon=?,
            pro_keterangan=?, pro_note=?,
-           pro_basis=?, pro_exclude_kode=?, pro_include_kata=?, pro_mode_barang=?, pro_no_maps=?, pro_no_disc_member=?,
+           pro_basis=?, pro_exclude_kode=?, pro_include_kata=?, pro_mode_barang=?, pro_no_maps=?, pro_no_disc_member=?, pro_wajib_review=?,
            user_modified=?, date_modified=NOW()
          WHERE pro_nomor=?`,
         [
@@ -216,13 +217,13 @@ const save = async (payload, user) => {
           header.cetakKupon || "N",
           header.keterangan || "",
           header.note || "",
-          // [BARU]
           header.basis || "ALL",
           header.excludeKode || "",
           header.includeKata || "",
           header.modeBarang || "TRIGGER",
           header.noMaps ? 1 : 0,
           header.noDiscMember ? 1 : 0,
+          header.wajibReview ? 1 : 0, // [BARU]
           user.kode,
           nomorDokumen,
         ],

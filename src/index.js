@@ -9,6 +9,7 @@ const terimaSjService = require("./services/terimaSjService");
 const terimaReturService = require("./services/terimaReturService");
 const mintaBarangFormService = require("./services/mintaBarangFormService");
 const bufferPanelService = require("./services/bufferPanelService");
+const { initTypoCorrector } = require("./config/typoCorrector");
 require("dotenv/config"); // Memuat variabel dari .env
 // === Global Rounding Policy ===
 global.ROUNDING_POLICY = process.env.ROUNDING_POLICY || "ROUND_1";
@@ -185,6 +186,7 @@ const customerVisitRoutes = require("./routes/customerVisitRoutes");
 const approvalMobileRoutes = require("./routes/approvalMobileRoutes");
 const perencanaanProduksiRoutes = require("./routes/perencanaanProduksiRoutes");
 const laporanProduktivitasRoutes = require("./routes/laporanProduktivitasRoutes");
+const soManksiViewRoutes = require("./routes/soManksiViewRoutes");
 
 const app = express();
 const port = process.env.PORT || 8000;
@@ -628,6 +630,7 @@ app.use("/api/laporan/lost-order", clientCertAuth, laporanLostOrderRoutes);
 app.use("/api/customer-visit", clientCertAuth, customerVisitRoutes);
 app.use("/api/tools/approval-mobile", clientCertAuth, approvalMobileRoutes);
 app.use("/api/dc-planning", clientCertAuth, perencanaanProduksiRoutes);
+app.use("/api/so-manksi", clientCertAuth, soManksiViewRoutes);
 app.use(
   "/api/laporan-produktivitas",
   clientCertAuth,
@@ -635,6 +638,9 @@ app.use(
 );
 
 // Menjalankan Server
-app.listen(port, () => {
+app.listen(port, async () => {
   console.log(`⚡️[server]: Server berjalan di http://localhost:${port}`);
+
+  // Load master data untuk AI (Fuzzy Matching) saat server pertama kali hidup
+  await initTypoCorrector();
 });

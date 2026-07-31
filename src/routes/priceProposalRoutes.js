@@ -1,18 +1,99 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const priceProposalController = require('../controllers/priceProposalController');
-const { verifyToken, checkPermission } = require('../middleware/authMiddleware');
+const priceProposalController = require("../controllers/priceProposalController");
+const {
+  verifyToken,
+  checkPermission,
+} = require("../middleware/authMiddleware");
 
-// Definisikan ID Menu untuk Pengajuan Harga
 const PRICE_PROPOSAL_MENU_ID = 38;
 
-// GET /api/price-proposals -> Membutuhkan hak 'view' untuk melihat daftar
-router.get('/', verifyToken, checkPermission(PRICE_PROPOSAL_MENU_ID, 'view'), priceProposalController.getAll);
+router.get(
+  "/",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "view"),
+  priceProposalController.getAll,
+);
+router.get(
+  "/so-dateline-range",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "view"),
+  priceProposalController.getDatelineRange,
+);
+router.get(
+  "/:nomor/size-details",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "view"),
+  priceProposalController.getSizeDetails,
+);
+router.get(
+  "/:nomor",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "view"),
+  priceProposalController.getDetails,
+);
+router.get(
+  "/:nomor/status-history",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "view"),
+  priceProposalController.getStatusHistory,
+);
 
-// Rute untuk mendapatkan detail penawaran (membutuhkan hak 'view')
-router.get('/:nomor', verifyToken, checkPermission(PRICE_PROPOSAL_MENU_ID, 'view'), priceProposalController.getDetails);
+router.patch(
+  "/:nomor/approve-customer",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "edit"),
+  priceProposalController.approveCustomer,
+);
+router.patch(
+  "/:nomor/approve-finance",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "edit"),
+  priceProposalController.approveFinance,
+);
+router.patch(
+  "/:nomor/approve-dc",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "edit"),
+  priceProposalController.approveDc,
+);
+router.patch(
+  "/:nomor/reject",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "edit"),
+  priceProposalController.reject,
+);
+router.patch(
+  "/:nomor/ready-store",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "edit"),
+  priceProposalController.markReadyStore,
+);
 
-// Rute untuk menghapus penawaran (membutuhkan hak 'delete')
-router.delete('/:nomor', verifyToken, checkPermission(PRICE_PROPOSAL_MENU_ID, 'delete'), priceProposalController.remove);
+router.get(
+  "/:nomor/so-eligibility",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "view"),
+  priceProposalController.getSoEligibility,
+);
+router.get(
+  "/:nomor/so-prefill",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "edit"),
+  priceProposalController.getSoPrefill,
+);
+router.post(
+  "/:nomor/generate-so",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "edit"),
+  priceProposalController.generateSalesOrder,
+);
+
+router.delete(
+  "/:nomor",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "delete"),
+  priceProposalController.remove,
+);
 
 module.exports = router;

@@ -343,6 +343,8 @@ const getTopSellingProducts = async (
   user,
   branchFilter = "",
   dateRange = null,
+  search = "",
+  exclude = "",
 ) => {
   const startDate =
     dateRange?.startDate || format(startOfMonth(new Date()), "yyyy-MM-dd");
@@ -386,11 +388,21 @@ const getTopSellingProducts = async (
     params.push(targetCabang);
   }
 
+  if (search) {
+    query += ` AND TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) LIKE ? `;
+    params.push(`%${search}%`);
+  }
+
+  if (exclude) {
+    query += ` AND TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) NOT LIKE ? `;
+    params.push(`%${exclude}%`);
+  }
+
   // GROUPING & SORTING
   query += `
         GROUP BY d.invd_kode, NAMA, d.invd_ukuran
         ORDER BY TOTAL DESC
-        LIMIT 10;
+        LIMIT 30; 
     `;
 
   const [rows] = await pool.query(query, params);
@@ -1811,7 +1823,14 @@ const getLowStockSales = async (user, filters = {}) => {
 // FITUR BARU 2: Analitik Penjualan Barang Sesional (New Arrival) PER STORE
 // =========================================================================
 const getSeasonalSales = async (user, filters = {}) => {
-  const { period = "1m", cabang = "ALL", isExport = false } = filters;
+  // [FIX] Tambahkan parameter page dan limit
+  const {
+    period = "1m",
+    cabang = "ALL",
+    isExport = false,
+    page = 1,
+    limit = 10,
+  } = filters;
 
   let startDate;
   const endDate = format(new Date(), "yyyy-MM-dd");
@@ -1843,7 +1862,12 @@ const getSeasonalSales = async (user, filters = {}) => {
     params.push(cabang);
   }
 
-  const limitClause = isExport ? "" : "LIMIT 20";
+  // [FIX PAGINATION] Logika perhitungan halaman
+  const pageNum = Number(page) || 1;
+  const limitNum = Number(limit) || 10;
+  const offset = (pageNum - 1) * limitNum;
+
+  const limitClause = isExport ? "" : `LIMIT ${limitNum} OFFSET ${offset}`;
 
   const query = `
     SELECT 
@@ -1965,10 +1989,6 @@ const getAgendaDateline = async (user) => {
     SELECT * FROM (
       SELECT * FROM (${query}) AS combined_agenda
       WHERE is_completed = 0
-        -- Buang deadline yang sudah lewat lebih dari 7 hari — kemungkinan
-        -- besar data lama yang tidak pernah ditutup (so_close tetap 0),
-        -- bukan "deadline terdekat" yang beneran perlu ditindaklanjuti hari ini.
-        AND dateline >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
     ) AS filtered_agenda
     ORDER BY dateline ASC;
   `;
@@ -2478,6 +2498,7 @@ const getRealStockList = async (user, filters = {}) => {
   const {
     cabang = "ALL",
     search = "",
+    exclude = "",
     ukuran = "",
     page = 1,
     limit = 50,
@@ -2538,6 +2559,19 @@ const getRealStockList = async (user, filters = {}) => {
     ukuranFilter = "AND m.mst_ukuran = ?";
     params.push(ukuran.trim().toUpperCase());
   }
+
+  let excludeFilter = "";
+  if (exclude && exclude.trim() !== "") {
+    excludeFilter = ` AND TRIM(CONCAT(
+      IFNULL(a.brg_jeniskaos,''), ' ', 
+      IFNULL(a.brg_tipe,''), ' ', 
+      IFNULL(a.brg_lengan,''), ' ', 
+      IFNULL(a.brg_jeniskain,''), ' ', 
+      IFNULL(a.brg_warna,'')
+    )) NOT LIKE ? `;
+    params.push(`%${exclude.trim()}%`);
+  }
+
   // 3. Setup Kalkulasi Offset untuk Pagination/Infinite Scroll
   const pageNum = parseInt(page) || 1;
   const limitNum = parseInt(limit) || 50;
@@ -2840,6 +2874,7 @@ const getRealStockList = async (user, filters = {}) => {
       ${branchFilter}
       ${searchFilter}
       ${ukuranFilter}
+      ${excludeFilter}
       AND a.brg_aktif = 0
       AND a.brg_logstok = 'Y'
       AND a.brg_kode NOT LIKE 'JASA%'
@@ -2963,6 +2998,22 @@ const getStokKosongFastMoving = async (user, filters = {}) => {
   return rows;
 };
 
+const getDaftarWarna = async () => {
+  try {
+    // Ambil semua warna dan urutkan sesuai abjad
+    const query = `SELECT warna FROM twarna ORDER BY warna ASC`;
+
+    // Sesuaikan 'db.query' dengan koneksi database yang Kakak gunakan (misal pool.query)
+    const [rows] = await pool.query(query);
+
+    // Extract hanya nilai warnanya menjadi array string
+    return rows.map((r) => r.warna);
+  } catch (error) {
+    console.error("[DB ERROR] Gagal mengambil daftar warna:", error.message);
+    return []; // Fallback ke array kosong jika database error
+  }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -3002,4 +3053,5 @@ module.exports = {
   getAutoMintaAnalytics,
   getRealStockList,
   getStokKosongFastMoving,
+  getDaftarWarna,
 };

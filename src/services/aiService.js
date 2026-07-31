@@ -50,61 +50,130 @@
 
 const axios = require("axios");
 
-const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-const API_KEY = process.env.GROQ_API_KEY;
-// Menggunakan model Llama 3 70B yang super pintar dan cepat
-const MODEL = "llama-3.1-8b-instant";
+// Gunakan URL dan model Claude yang valid
+const CLAUDE_URL = "https://api.anthropic.com/v1/messages";
+const API_KEY = process.env.CLAUDE_API_KEY;
+const MODEL = "claude-haiku-4-5-20251001"; // Versi Haiku terbaru
 
 const sendChat = async (messages, options = {}) => {
   try {
+    // 1. Ekstrak System Prompt (Claude mewajibkan system prompt dipisah)
+    const systemMessage =
+      messages.find((m) => m.role === "system")?.content || "";
+
+    // 2. Mapping format pesan OpenAI -> Anthropic
+    const chatMessages = messages
+      .filter((m) => m.role !== "system")
+      .map((msg) => {
+        // Mapping balasan eksekusi tool
+        if (msg.role === "tool") {
+          return {
+            role: "user", // Di Claude, hasil tool dikirim sebagai role "user"
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: msg.tool_call_id,
+                content: msg.content,
+              },
+            ],
+          };
+        }
+
+        // Mapping AI yang memanggil tool di histori sebelumnya
+        if (msg.role === "assistant" && msg.tool_calls) {
+          const content = [];
+          if (msg.content) content.push({ type: "text", text: msg.content });
+
+          msg.tool_calls.forEach((call) => {
+            content.push({
+              type: "tool_use",
+              id: call.id,
+              name: call.function.name,
+              input:
+                typeof call.function.arguments === "string"
+                  ? JSON.parse(call.function.arguments)
+                  : call.function.arguments,
+            });
+          });
+          return { role: "assistant", content };
+        }
+
+        // Pesan teks biasa
+        return { role: msg.role, content: msg.content };
+      });
+
+    // 3. Mapping format skema Tool (parameters -> input_schema)
+    const claudeTools = options.tools
+      ? options.tools.map((t) => ({
+          name: t.function.name,
+          description: t.function.description,
+          input_schema: t.function.parameters,
+        }))
+      : undefined;
+
     const payload = {
       model: options.model || MODEL,
-      stream: false,
-      messages,
+      system: [
+        {
+          type: "text",
+          text: systemMessage,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+      messages: chatMessages,
+      max_tokens: 1500,
       temperature: options.temperature ?? 0.2,
-      // [BARU] Batasi output — jawaban kita selalu pendek (beberapa kalimat/list
-      // ≤10 baris), nggak perlu jatah token besar. Ini juga jaga-jaga model
-      // nggak "ngoceh" panjang dan boros kuota 6000 tok/menit.
-      max_tokens: 500,
     };
 
-    if (options.tools && options.tools.length > 0) {
-      payload.tools = options.tools;
+    if (claudeTools && claudeTools.length > 0) {
+      payload.tools = claudeTools;
     }
 
-    const { data } = await axios.post(GROQ_URL, payload, {
+    // 4. Hit API Claude
+    const { data } = await axios.post(CLAUDE_URL, payload, {
       headers: {
-        Authorization: `Bearer ${API_KEY}`,
-        "Content-Type": "application/json",
+        "x-api-key": API_KEY,
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": "prompt-caching-2024-07-31",
+        "content-type": "application/json",
       },
     });
 
-    return data.choices[0].message;
+    // 5. Mapping balik response Claude -> format OpenAI (agar aiAgentService.js aman)
+    const assistantMessage = { role: "assistant", content: "" };
+    const toolCalls = [];
+
+    data.content.forEach((block) => {
+      if (block.type === "text") {
+        assistantMessage.content += block.text;
+      } else if (block.type === "tool_use") {
+        toolCalls.push({
+          id: block.id,
+          type: "function",
+          function: {
+            name: block.name,
+            arguments: JSON.stringify(block.input), // Kembalikan ke format stringified JSON
+          },
+        });
+      }
+    });
+
+    if (toolCalls.length > 0) {
+      assistantMessage.tool_calls = toolCalls;
+    }
+
+    return assistantMessage;
   } catch (err) {
-    console.error("================ GROQ API ERROR ================");
-    console.error(err.response?.data || err.message);
-    console.error("================================================");
+    console.error("================ CLAUDE API ERROR ================");
+    console.error(err.response?.data?.error?.message || err.message);
+    console.error("==================================================");
 
     if (err.response?.status === 429) {
-      const retryAfter = err.response.headers?.["retry-after"];
-      const waitMsg = retryAfter ? ` Coba lagi dalam ${retryAfter} detik.` : "";
       const rateLimitError = new Error(
-        `RATE_LIMIT: Kuota Groq per menit habis.${waitMsg}`,
+        "RATE_LIMIT: Kuota Claude per menit habis.",
       );
       rateLimitError.isRateLimit = true;
       throw rateLimitError;
-    }
-
-    // [BARU] Model kadang salah format penutup tag function call sendiri
-    // (mis. "<function>" bukan "</function>") — bug generasi model, bukan
-    // salah skema/parameter kita. Tandai eksplisit supaya caller bisa retry
-    // otomatis, karena percobaan ulang biasanya langsung berhasil.
-    if (err.response?.data?.error?.code === "tool_use_failed") {
-      const toolFormatError = new Error(
-        "TOOL_FORMAT_ERROR: Groq gagal parse tool call.",
-      );
-      toolFormatError.isToolFormatError = true;
-      throw toolFormatError;
     }
 
     throw new Error(err.response?.data?.error?.message || err.message);

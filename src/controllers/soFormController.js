@@ -93,6 +93,19 @@ const saveDp = async (req, res) => {
   }
 };
 
+const uploadReviewProof = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "Tidak ada file yang diunggah." });
+    }
+    const { nomor } = req.params;
+    await soFormService.renameReviewProofImage(req.file.path, nomor);
+    res.json({ message: "Bukti ulasan berhasil diunggah." });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const searchRekening = async (req, res) => {
   try {
     const data = await soFormService.searchRekening(req.query);
@@ -214,6 +227,7 @@ module.exports = {
   getPenawaranDetails,
   getDefaultDiscount,
   searchSetoran,
+  uploadReviewProof,
   saveDp,
   searchRekening,
   getDpPrintData,

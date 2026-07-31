@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const upload = require("../middleware/uploadMiddleware");
 const soFormController = require("../controllers/soFormController");
 const {
   verifyToken,
@@ -101,6 +102,14 @@ router.post(
   verifyToken,
   checkPermission(MENU_ID, "insert"),
   soFormController.saveDp,
+);
+
+router.post(
+  "/upload-review-proof/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  upload.single("image"),
+  soFormController.uploadReviewProof,
 );
 
 router.post(

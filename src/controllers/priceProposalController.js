@@ -1,16 +1,33 @@
 const priceProposalService = require("../services/priceProposalService");
-const auditService = require("../services/auditService"); // Import Audit
-const pool = require("../config/database"); // Import Pool untuk Snapshot
+const auditService = require("../services/auditService");
+const pool = require("../config/database");
+const priceProposalFormService = require("../services/priceProposalFormService");
+const priceProposalSoService = require("../services/priceProposalSoService");
 
 const getAll = async (req, res) => {
   try {
-    // Ambil filter dari query string
+    // [BARU] Jalankan semua sync status otomatis sebelum ambil data browse.
+    // Masing-masing dibungkus try-catch terpisah — kalau satu gagal (misal
+    // ada tabel yang belum ada), sync lain & browse tetap jalan.
+    for (const syncFn of [
+      priceProposalService.syncDcApprovalStatus,
+      priceProposalService.syncProduksiStatus,
+      priceProposalService.syncBarangDiterimaDcStatus,
+      priceProposalService.syncReadyStoreStatus,
+    ]) {
+      try {
+        await syncFn();
+      } catch (syncError) {
+        console.error("Gagal sync status pengajuan harga:", syncError.message);
+      }
+    }
+
     const filters = {
       startDate: req.query.startDate,
       endDate: req.query.endDate,
       cabang: req.query.cabang,
-      // Ubah string 'true'/'false' menjadi boolean
       belumApproval: req.query.belumApproval === "true",
+      status: req.query.status || null,
     };
 
     if (!filters.startDate || !filters.endDate || !filters.cabang) {
@@ -27,6 +44,16 @@ const getAll = async (req, res) => {
   }
 };
 
+const getSizeDetails = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const data = await priceProposalService.getSizeDetails(nomor);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const getDetails = async (req, res) => {
   try {
     const { nomor } = req.params;
@@ -37,15 +64,89 @@ const getDetails = async (req, res) => {
   }
 };
 
-// [AUDIT TRAIL DITERAPKAN DI SINI]
+const getStatusHistory = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const history = await priceProposalService.getStatusHistory(nomor);
+    res.json(history);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Helper generic buat 4 endpoint approve/reject di bawah
+const handleStatusAction = (serviceFn, actionLabel) => async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const { keterangan } = req.body;
+    const user = req.user?.username || "UNKNOWN";
+
+    const oldData = await priceProposalService
+      .getProposalDetails(nomor)
+      .catch(() => null);
+
+    const result = await serviceFn(nomor, user, keterangan);
+
+    auditService.logActivity(
+      req,
+      "UPDATE_STATUS",
+      "PENGAJUAN_HARGA",
+      nomor,
+      oldData ? { ph_status: result.statusFrom } : null,
+      { ph_status: result.statusTo },
+      `${actionLabel} pengajuan harga ${nomor}${keterangan ? ` - ${keterangan}` : ""}`,
+    );
+
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+const approveCustomer = handleStatusAction(
+  priceProposalService.approveCustomer,
+  "Acc Customer",
+);
+const approveFinance = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const result = await priceProposalFormService.approveFinance(
+      nomor,
+      req.user,
+    );
+
+    auditService.logActivity(
+      req,
+      "UPDATE_STATUS",
+      "PENGAJUAN_HARGA",
+      nomor,
+      { ph_status: result.statusFrom },
+      { ph_status: result.statusTo, finalKode: result.finalKode },
+      `Acc Finance pengajuan harga ${nomor}${result.finalKode ? ` - Kode Final: ${result.finalKode}` : ""}`,
+    );
+
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+const approveDc = handleStatusAction(priceProposalService.approveDc, "Acc DC");
+const reject = handleStatusAction(
+  priceProposalService.rejectProposal,
+  "Reject",
+);
+
+const markReadyStore = handleStatusAction(
+  priceProposalService.markReadyStore,
+  "Ready di Store",
+);
+
 const remove = async (req, res) => {
   try {
     const { nomor } = req.params;
 
-    // 1. SNAPSHOT: Ambil data lama LENGKAP (Header + 4 Detail)
     let oldData = null;
     try {
-      // A. Ambil Header
       const [headerRows] = await pool.query(
         "SELECT * FROM tpengajuanharga WHERE ph_nomor = ?",
         [nomor],
@@ -53,32 +154,23 @@ const remove = async (req, res) => {
 
       if (headerRows.length > 0) {
         const header = headerRows[0];
-
-        // B. Ambil Detail Bordir
         const [bordirRows] = await pool.query(
           "SELECT * FROM tpengajuanharga_bordir WHERE phb_nomor = ?",
           [nomor],
         );
-
-        // C. Ambil Detail DTF
         const [dtfRows] = await pool.query(
           "SELECT * FROM tpengajuanharga_dtf WHERE phd_nomor = ?",
           [nomor],
         );
-
-        // D. Ambil Detail Size
         const [sizeRows] = await pool.query(
           "SELECT * FROM tpengajuanharga_size WHERE phs_nomor = ?",
           [nomor],
         );
-
-        // E. Ambil Detail Tambahan
         const [tambahanRows] = await pool.query(
           "SELECT * FROM tpengajuanharga_tambahan WHERE pht_nomor = ?",
           [nomor],
         );
 
-        // F. Gabungkan
         oldData = {
           ...header,
           bordir: bordirRows,
@@ -91,30 +183,102 @@ const remove = async (req, res) => {
       console.warn("Gagal snapshot oldData remove price proposal:", e.message);
     }
 
-    // 2. PROSES: Jalankan service remove
     const result = await priceProposalService.deleteProposal(nomor);
 
-    // 3. AUDIT: Catat Log
     if (oldData) {
       auditService.logActivity(
         req,
-        "DELETE", // Action
-        "PENGAJUAN_HARGA", // Module
-        nomor, // Target ID
-        oldData, // Data Lama (Header + All Details)
-        null, // Data Baru (Null)
+        "DELETE",
+        "PENGAJUAN_HARGA",
+        nomor,
+        oldData,
+        null,
         `Menghapus Pengajuan Harga Customer: ${oldData.ph_kd_cus || "Unknown"}`,
       );
     }
 
     res.json(result);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(400).json({ message: error.message });
+  }
+};
+
+const getSoEligibility = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const data = await priceProposalSoService.checkSoEligibility(nomor);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+const getSoPrefill = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const data = await priceProposalSoService.getSoPrefill(nomor);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+const getDatelineRange = async (req, res) => {
+  try {
+    const { kepentingan, joKode } = req.query;
+    if (!kepentingan || !joKode) {
+      return res
+        .status(400)
+        .json({ message: "kepentingan dan joKode diperlukan." });
+    }
+    const data = await priceProposalSoService.getDatelineRange(
+      kepentingan,
+      joKode,
+    );
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+const generateSalesOrder = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const result = await priceProposalSoService.generateSalesOrder(
+      nomor,
+      req.body,
+      req.user,
+    );
+
+    auditService.logActivity(
+      req,
+      "GENERATE_SO",
+      "PENGAJUAN_HARGA",
+      nomor,
+      null,
+      { soNomor: result.soNomor },
+      `Generate SO MANKSI dari Pengajuan Harga ${nomor}: ${result.soNomor}`,
+    );
+
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
   }
 };
 
 module.exports = {
   getAll,
+  getSizeDetails,
   getDetails,
+  getStatusHistory,
+  approveCustomer,
+  approveFinance,
+  approveDc,
+  reject,
+  markReadyStore,
+  getSoEligibility,
+  getSoPrefill,
+  getDatelineRange,
+  generateSalesOrder,
   remove,
 };

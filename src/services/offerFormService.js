@@ -22,11 +22,9 @@ const generateNewOfferNumber = async (connection, cabang, tanggal) => {
 
   const [rows] = await connection.query(query, [cabang, prefix]);
 
-  // Pastikan hasil query adalah NUMBER
   const maxNum = parseInt(rows[0].maxNum, 10) || 0;
   const nextNum = maxNum + 1;
 
-  // Validasi: Jika nextNum > 9999, throw error
   if (nextNum > 9999) {
     throw new Error(
       `Nomor penawaran untuk periode ${datePrefix} sudah mencapai maksimum (9999).`,
@@ -36,36 +34,27 @@ const generateNewOfferNumber = async (connection, cabang, tanggal) => {
   return `${prefix}${String(nextNum).padStart(4, "0")}`;
 };
 
-// Meniru F1 untuk pencarian customer
 const searchCustomers = async (term, gudang, page, itemsPerPage, isInvoice) => {
   const offset = (page - 1) * itemsPerPage;
   const searchTerm = `%${term}%`;
 
-  // 1. Inisialisasi parameter kosong
   let params = [];
 
-  // 2. Tentukan logic Retailer
   let retailerFilter = "";
   if (String(isInvoice) === "1") {
-    // Jika dari Invoice: JANGAN BLOKIR "RETAIL%".
-    // Kita ijinkan semua customer umum + customer khusus cabang ini (cus_cab)
     retailerFilter = ` AND (c.cus_nama NOT LIKE "RETAIL%" OR c.cus_cab = ? OR c.cus_nama LIKE "RETAILER%")`;
     params.push(gudang);
   } else {
-    // Jika dari Penawaran/SO: Tetap blokir agar tidak salah pilih
     retailerFilter = ' AND c.cus_nama NOT LIKE "RETAIL%"';
   }
 
-  // 3. Filter Franchise (Tanpa tanda tanya)
   let franchiseFilter =
     gudang === "KPR" ? ' AND c.cus_franchise="Y"' : ' AND c.cus_franchise="N"';
 
-  // 4. Filter Search (Term)
   let searchFilter = "";
   if (term) {
-    // Bersihkan inputan dari spasi dan strip khusus untuk no HP
     const cleanPhoneTerm = `%${term.replace(/[\s-]/g, "")}%`;
-    const searchTerm = `%${term}%`; // (Atau gunakan variabel searchTerm yang sudah kamu definisikan di atas)
+    const searchTerm = `%${term}%`;
 
     searchFilter = `
       AND (
@@ -74,11 +63,9 @@ const searchCustomers = async (term, gudang, page, itemsPerPage, isInvoice) => {
         OR REPLACE(REPLACE(c.cus_telp, ' ', ''), '-', '') LIKE ?
       )
     `;
-    // Masukkan parameter secara berurutan
     params.push(searchTerm, searchTerm, cleanPhoneTerm);
   }
 
-  // Gabungkan ke Base Query
   const baseQuery = `
         FROM tcustomer c 
         WHERE c.cus_aktif = 0 
@@ -88,14 +75,12 @@ const searchCustomers = async (term, gudang, page, itemsPerPage, isInvoice) => {
     `;
 
   try {
-    // Eksekusi Count (Gunakan params yang sudah disusun berurutan)
     const [countRows] = await pool.query(
       `SELECT COUNT(*) as total ${baseQuery}`,
       params,
     );
     const total = countRows[0].total;
 
-    // Eksekusi Data Query
     const dataQuery = `
         SELECT 
           c.cus_kode AS kode,
@@ -126,7 +111,6 @@ const searchCustomers = async (term, gudang, page, itemsPerPage, isInvoice) => {
         LIMIT ? OFFSET ?
     `;
 
-    // Tambahkan Limit dan Offset di akhir params (Sangat Penting!)
     const finalParams = [...params, itemsPerPage, offset];
     const [items] = await pool.query(dataQuery, finalParams);
 
@@ -137,7 +121,6 @@ const searchCustomers = async (term, gudang, page, itemsPerPage, isInvoice) => {
   }
 };
 
-// Meniru edtCusExit untuk mengambil detail customer
 const getCustomerDetails = async (kode, gudang) => {
   const query = `
         SELECT 
@@ -161,7 +144,6 @@ const getCustomerDetails = async (kode, gudang) => {
 
   const customer = rows[0];
 
-  // --- Migrasi Logika Validasi dari Delphi ---
   if (!customer.xlevel) {
     throw new Error("Level Customer tersebut belum di-setting.");
   }
@@ -172,7 +154,6 @@ const getCustomerDetails = async (kode, gudang) => {
     throw new Error("Customer Prioritas hanya bisa transaksi di Store KPR.");
   }
 
-  // Jika semua validasi lolos, kembalikan data lengkap
   return {
     kode: customer.cus_kode,
     nama: customer.cus_nama,
@@ -198,14 +179,12 @@ const saveOffer = async (data) => {
   await connection.beginTransaction();
 
   try {
-    // Validasi data backend
     if (!header || !header.tanggal) {
       throw new Error("Tanggal penawaran tidak boleh kosong.");
     }
 
     let nomorPenawaran = header.nomor;
 
-    // --- CEK ANTI-DOBEL: Validasi Status SO ---
     if (!isNew) {
       const [existingSo] = await connection.query(
         "SELECT so_nomor FROM tso_hdr WHERE so_pen_nomor = ?",
@@ -221,7 +200,6 @@ const saveOffer = async (data) => {
 
     let idrec;
 
-    // 1. Tentukan nomor & simpan/update data Header
     if (isNew) {
       nomorPenawaran = await generateNewOfferNumber(
         connection,
@@ -293,13 +271,11 @@ const saveOffer = async (data) => {
       ]);
     }
 
-    // [BARU] CATAT KUNJUNGAN CUSTOMER (Mencegah Duplikasi)
     if (
       tipeKunjungan &&
       (tipeKunjungan === "STORE" || tipeKunjungan === "WA")
     ) {
       try {
-        // Gunakan INSERT IGNORE agar jika sudah ada di hari yang sama, dia tidak error tapi dilewati saja
         await connection.query(
           `INSERT IGNORE INTO tkunjungan_customer 
            (tanggal, cabang, cus_kode, tipe_kunjungan, sumber_dokumen, nomor_dokumen, user_create) 
@@ -322,12 +298,10 @@ const saveOffer = async (data) => {
       }
     }
 
-    // 2. SIMPAN DETAIL (Dukungan Item Custom)
     await connection.query("DELETE FROM tpenawaran_dtl WHERE pend_nomor = ?", [
       nomorPenawaran,
     ]);
 
-    // [BARU] Helper untuk membersihkan karakter 4-byte (emoji) agar tidak crash di MySQL utf8mb3
     const stripEmojis = (str) => {
       if (typeof str !== "string" || !str) return str;
       return str.replace(/[\u{10000}-\u{10FFFF}]/gu, "");
@@ -338,7 +312,7 @@ const saveOffer = async (data) => {
         item.sod_custom === "Y" || item.kode === "CUSTOM" || item.isCustomOrder;
 
       let displayUkuran = item.ukuran || "";
-      let rawCustomData = null; // [BARU] Tampung raw custom data
+      let rawCustomData = null;
 
       if (isCustom && item.sod_custom_data) {
         try {
@@ -357,7 +331,6 @@ const saveOffer = async (data) => {
             }
           }
 
-          // [BARU] Format kembali menjadi string
           rawCustomData = JSON.stringify(customData);
         } catch (e) {
           console.error("Gagal parse ukuran custom:", e);
@@ -389,45 +362,36 @@ const saveOffer = async (data) => {
         item.diskonRp || 0,
         index + 1,
         isCustom ? "Y" : "N",
-        isCustom ? stripEmojis(item.nama) : null, // [PERBAIKAN] Bersihkan emoji dari nama
-        stripEmojis(rawCustomData), // [PERBAIKAN] Bersihkan emoji dari JSON data
+        isCustom ? stripEmojis(item.nama) : null,
+        stripEmojis(rawCustomData),
         item.isFreeGift ? "Y" : "N",
       ]);
     }
 
-    // 3. SIMPAN LINK DP (Uang Muka)
-    // [FIX] Ubah penNomor menjadi nomorPenawaran agar sesuai dengan deklarasi di atas
     if (dps && dps.length > 0) {
-      // Bersihkan link lama jika mode update
       await connection.query(
         "DELETE FROM tpenawaran_dp WHERE pnd_nomor_pen = ?",
-        [nomorPenawaran], // <-- Perbaikan di sini
+        [nomorPenawaran],
       );
 
       for (const dp of dps) {
         await connection.query(
           "INSERT INTO tpenawaran_dp (pnd_nomor_pen, pnd_nomor_dp) VALUES (?, ?)",
-          [nomorPenawaran, dp.nomor], // <-- Perbaikan di sini
+          [nomorPenawaran, dp.nomor],
         );
 
-        // Update juga agar DP tahu dia milik penawaran ini
         await connection.query(
           "UPDATE tsetor_hdr SET sh_so_nomor = ? WHERE sh_nomor = ?",
-          [nomorPenawaran, dp.nomor], // <-- Perbaikan di sini
+          [nomorPenawaran, dp.nomor],
         );
       }
     }
 
-    // [TAMBAHKAN INI] 3.5. Hapus data otorisasi lama untuk penawaran ini sebelum simpan ulang
-    // Ini mencegah error Duplicate Entry saat mode EDIT
     await connection.query(
       "DELETE FROM totorisasi WHERE o_nomor = ? AND o_transaksi = ?",
-      [nomorPenawaran, nomorPenawaran], // Gunakan nomor penawaran untuk kedua parameter
+      [nomorPenawaran, nomorPenawaran],
     );
 
-    // ========================================================================
-    // [BARU] 3.6. UPDATE TRANSAKSI RIIL PADA AUTH DARI HP MANAGER
-    // ========================================================================
     const authNomorRef = header.nomorAuth || header.referensiAuth;
     if (authNomorRef && authNomorRef.includes("AUTH")) {
       await connection.query(
@@ -436,17 +400,15 @@ const saveOffer = async (data) => {
       );
     }
 
-    // 4. Simpan Otorisasi Per ITEM (Manual PIN)
     const processedBarcodes = new Set();
     for (const item of details) {
-      // Pastikan pin ada dan belum diproses untuk barcode ini
       if (item.pin && !processedBarcodes.has(item.barcode)) {
         const pinItemQuery =
           'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_nominal) VALUES (?, ?, "DISKON ITEM", ?, NOW(), ?, ?)';
         await connection.query(pinItemQuery, [
           nomorPenawaran,
-          nomorPenawaran, // o_transaksi diisi nomor riil
-          item.barcode || "", // Pastikan tidak null jika kolom adalah PK
+          nomorPenawaran,
+          item.barcode || "",
           item.pin,
           item.diskonPersen,
         ]);
@@ -454,7 +416,6 @@ const saveOffer = async (data) => {
       }
     }
 
-    // 5. Simpan Otorisasi DISKON FAKTUR 1 (Manual PIN)
     if (footer.pinDiskon1) {
       await connection.query(
         'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_nominal) VALUES (?, ?, "DISKON FAKTUR", "", NOW(), ?, ?)',
@@ -467,7 +428,6 @@ const saveOffer = async (data) => {
       );
     }
 
-    // 6. Simpan Otorisasi DISKON FAKTUR 2 (Manual PIN)
     if (footer.pinDiskon2) {
       await connection.query(
         'INSERT INTO totorisasi (o_nomor, o_transaksi, o_jenis, o_barcode, o_created, o_pin, o_nominal) VALUES (?, ?, "DISKON FAKTUR 2", "", NOW(), ?, ?)',
@@ -495,10 +455,6 @@ const saveOffer = async (data) => {
   }
 };
 
-/**
- * @description Menyimpan data DP baru khusus Penawaran.
- * Mengikuti pola saveNewDp milik SO.
- */
 const saveOfferDp = async (dpData, user) => {
   const {
     customerKode,
@@ -508,7 +464,7 @@ const saveOfferDp = async (dpData, user) => {
     keterangan,
     bankData,
     giroData,
-    nomorSo, // Ini berisi nomor Penawaran saat dipanggil dari Offer module
+    nomorSo,
   } = dpData;
 
   const connection = await pool.getConnection();
@@ -517,7 +473,6 @@ const saveOfferDp = async (dpData, user) => {
   try {
     const cabang = user.cabang;
 
-    // 1. Buat nomor setoran: K06.STR.2512.0001
     const datePrefix = format(new Date(tanggal), "yyMM");
     const prefix = `${cabang}.STR.${datePrefix}`;
 
@@ -532,10 +487,8 @@ const saveOfferDp = async (dpData, user) => {
     const nextNum = (parseInt(maxRows[0].maxNum, 10) || 0) + 1;
     const dpNomor = `${prefix}.${String(nextNum).padStart(4, "0")}`;
 
-    // 2. Siapkan sh_idrec (K06SHyyyymmdd...)
     const idrec = `${cabang}SH${format(new Date(), "yyyyMMddHHmmssSSS")}`;
 
-    // 3. Tentukan jenis (TUNAI: 0, TRANSFER: 1, GIRO: 2)
     const jenisNum = jenis === "TUNAI" ? 0 : jenis === "TRANSFER" ? 1 : 2;
 
     let query, params;
@@ -643,7 +596,6 @@ const getDpPrintData = async (nomor) => {
   const [rows] = await pool.query(query, [nomor]);
   if (rows.length === 0) return null;
 
-  // Tambahkan logika terbilang di sini atau kirim angka mentah
   return rows[0];
 };
 
@@ -651,18 +603,14 @@ const getDefaultDiscount = async (level, total, gudang) => {
   let discount = 0;
   const numericTotal = Number(total) || 0;
 
-  // 1. [PENTING] Jika Total 0 atau minus, diskon PASTI 0.
-  // Ini mencegah logic db berjalan jika belum belanja.
   if (numericTotal <= 0) {
     return { discount: 0 };
   }
 
-  // 2. Cek Gudang Khusus (KPR)
   if (gudang === "KPR") {
     return { discount: 15 };
   }
 
-  // 3. Ambil Rule dari Database
   const query =
     "SELECT * FROM tcustomer_level WHERE level_kode = ? OR level_nama = ?";
   const [levelRows] = await pool.query(query, [level, level]);
@@ -670,21 +618,14 @@ const getDefaultDiscount = async (level, total, gudang) => {
   if (levelRows.length > 0) {
     const levelData = levelRows[0];
 
-    // Pastikan dikonversi ke Number
-    const nominal1 = Number(levelData.level_nominal) || 0; // High Tier (5 Juta)
-    const nominal2 = Number(levelData.level_nominal2) || 0; // Low Tier (500 Ribu)
-
-    // --- LOGIKA TIERING (BERTINGKAT) ---
+    const nominal1 = Number(levelData.level_nominal) || 0;
+    const nominal2 = Number(levelData.level_nominal2) || 0;
 
     if (numericTotal >= nominal1) {
-      // TIER 1: Lolos batas atas (misal >= 5jt) -> 10%
       discount = levelData.level_diskon;
     } else if (numericTotal >= nominal2) {
-      // TIER 2: Gagal batas atas, tapi lolos batas bawah (misal >= 500rb) -> 5%
       discount = levelData.level_diskon2;
     } else {
-      // TIER 3: Tidak lolos keduanya (misal < 500rb) -> 0%
-      // [FIX] Ini yang sebelumnya terlewat, sehingga retailer dapet 5%
       discount = 0;
     }
   }
@@ -692,13 +633,9 @@ const getDefaultDiscount = async (level, total, gudang) => {
   return { discount };
 };
 
-/**
- * Mengambil semua data yang diperlukan untuk mode "Ubah Penawaran".
- */
 const getOfferForEdit = async (nomor) => {
   const connection = await pool.getConnection();
   try {
-    // 1. Ambil data Header (Tambah kolom jenis order & diskon nominal)
     const headerQuery = `
       SELECT 
         h.pen_nomor AS nomor, h.pen_tanggal AS tanggal, h.pen_top AS top, 
@@ -762,12 +699,14 @@ const getOfferForEdit = async (nomor) => {
       existingSoNomor,
     };
 
-    // 2. Ambil data Detail (Items) - Perbaiki Nama untuk item CUSTOM
     const itemsQuery = `
       SELECT 
         d.pend_kode AS kode, IFNULL(b.brgd_barcode, "") AS barcode,
         IF(d.pend_custom = 'Y', d.pend_custom_nama, 
-          IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), "")
+          IFNULL(
+            NULLIF(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), ""),
+            pbd.pbd_deskripsi
+          )
         ) AS nama,
         d.pend_ukuran AS ukuran,
         IFNULL(stok.Stok, 0) as stok,
@@ -782,6 +721,7 @@ const getOfferForEdit = async (nomor) => {
       FROM tpenawaran_dtl d
       LEFT JOIN tbarangdc a ON a.brg_kode = d.pend_kode
       LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.pend_kode AND b.brgd_ukuran = d.pend_ukuran
+      LEFT JOIN tpengajuanharga_barang_draft pbd ON pbd.pbd_kode_barang_draft = d.pend_kode
       LEFT JOIN (
         SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_in - mst_stok_out) AS Stok 
         FROM tmasterstok WHERE mst_aktif = "Y" AND mst_cab = ? GROUP BY mst_brg_kode, mst_ukuran
@@ -790,7 +730,6 @@ const getOfferForEdit = async (nomor) => {
     `;
     const [itemsData] = await connection.query(itemsQuery, [h.gdg_kode, nomor]);
 
-    // 3. Ambil data DP
     const dpQuery = `
       SELECT sk.sh_nomor AS nomor, 
              IF(sk.sh_jenis=0, 'TUNAI', IF(sk.sh_jenis=1, 'TRANSFER', 'GIRO')) AS jenis,
@@ -801,7 +740,6 @@ const getOfferForEdit = async (nomor) => {
     `;
     const [dpItemsData] = await connection.query(dpQuery, [nomor]);
 
-    // 4. Ambil data Footer
     const footerData = {
       diskonPersen1: h.pen_disc1 || 0,
       diskonPersen2: h.pen_disc2 || 0,
@@ -815,9 +753,6 @@ const getOfferForEdit = async (nomor) => {
   }
 };
 
-/**
- * @description Mencari SO DTF yang belum dipakai untuk Penawaran.
- */
 const searchAvailableSoDtf = async (filters) => {
   const { cabang, customerKode, term } = filters;
   const searchTerm = `%${term}%`;
@@ -848,9 +783,6 @@ const searchAvailableSoDtf = async (filters) => {
   return rows;
 };
 
-/**
- * @description Mengambil semua detail dari SO DTF untuk diimpor.
- */
 const getSoDtfDetailsForSo = async (nomor) => {
   const query = `
         SELECT 
@@ -870,28 +802,53 @@ const getSoDtfDetailsForSo = async (nomor) => {
 };
 
 /**
- * @description Mencari Pengajuan Harga yang sudah disetujui.
+ * @description Mencari Pengajuan Harga yang bisa ditarik ke Penawaran.
+ * [DIUBAH] Sebelumnya filter `ph_apv <> ""` (baru keisi saat Acc Finance),
+ * tapi tahap approval itu belum diimplementasikan — jadi selama ini nggak ada
+ * satupun yang bisa ketarik. Sesuai lampiran flow (No.3-4), Penawaran memang
+ * ditarik dari Pengajuan Harga yang MASIH DRAFT, sebelum approval customer/
+ * finance. Filter diganti ke ph_status.
+ *
+ * `allowedStatuses` dibuat parameter (bukan hardcode) supaya gampang diperluas
+ * nanti kalau status lanjutan (ACC_CUSTOMER, dst) juga boleh ditarik.
  */
 const searchApprovedPriceProposals = async (params) => {
-  const { cabang, customerKode, term } = params;
+  const { cabang, customerKode, term, statuses, onlyCustom } = params;
   const searchTerm = `%${term}%`;
+
+  // [FIX] Default tetap DRAFT (perilaku lama, dipakai Offer) — tapi sekarang
+  // bisa di-override lewat query param `statuses` (comma-separated), dipakai
+  // SO yang butuh nyari pengajuan yang SUDAH disetujui (ACC_FINANCE).
+  const allowedStatuses = statuses ? statuses.split(",") : ["DRAFT"];
+  const statusPlaceholders = allowedStatuses.map(() => "?").join(", ");
+
+  // [BARU] Filter opsional khusus Custom — barang Stok sudah jadi barang
+  // riil di tbarangdc sejak disimpan, biasanya dicari lewat F1/F2 barang
+  // biasa di SO, bukan lewat modal Pengajuan Harga ini.
+  const customFilter = onlyCustom === "Y" ? "AND h.ph_custom = 'Y'" : "";
+
   const query = `
         SELECT 
             h.ph_nomor AS nomor,
             h.ph_tanggal AS tanggal,
             c.cus_nama AS customer,
             h.ph_jenis AS jenisKaos,
-            h.ph_ket AS keterangan
+            h.ph_ket AS keterangan,
+            h.ph_status AS status,
+            h.ph_custom AS isCustom,
+            h.ph_kode_barang_draft AS kodeBarangDraft
         FROM tpengajuanharga h
         LEFT JOIN tcustomer c ON c.cus_kode = h.ph_kd_cus
         WHERE h.ph_kd_cus = ?
-          AND h.ph_apv <> ""
+          AND h.ph_status IN (${statusPlaceholders})
           AND h.ph_cab = ?
+          ${customFilter}
           AND (h.ph_nomor LIKE ? OR h.ph_ket LIKE ?)
         ORDER BY h.ph_nomor DESC
     `;
   const [rows] = await pool.query(query, [
     customerKode,
+    ...allowedStatuses,
     cabang,
     searchTerm,
     searchTerm,
@@ -901,25 +858,28 @@ const searchApprovedPriceProposals = async (params) => {
 
 /**
  * @description Mengambil semua detail dari Pengajuan Harga untuk diimpor.
+ * [DIUBAH] Tambah fallback nama untuk item Custom yang kode barangnya masih
+ * Draft (belum ada di tbarangdc sampai Acc Finance) — pakai deskripsi hasil
+ * generate dari tpengajuanharga_barang_draft.
  */
 const getPriceProposalDetailsForSo = async (nomor) => {
-  // [PERBAIKAN KUNCI 1]: Ambil 3 huruf pertama dari nomor untuk dijadikan kode cabang (Misal: 'K05')
   const cabang = nomor ? nomor.substring(0, 3) : "";
 
-  // 1. Ambil Header
   const [headerRows] = await pool.query(
-    "SELECT * FROM tpengajuanharga WHERE ph_nomor = ?",
+    "SELECT *, ph_nomor AS nomor FROM tpengajuanharga WHERE ph_nomor = ?",
     [nomor],
   );
   if (headerRows.length === 0)
     throw new Error("Data Pengajuan Harga tidak ditemukan.");
 
-  // 2. Ambil Detail
   const detailQuery = `
         SELECT 
             d.phs_kode AS kode,
             b.brgd_barcode as barcode,
-            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+            IFNULL(
+              NULLIF(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), ""),
+              pbd.pbd_deskripsi
+            ) AS nama,
             d.phs_size AS ukuran,
             d.phs_jumlah AS jumlah,
             (d.phs_harga + IFNULL(t.tambahan, 0) + IFNULL(brd.bordir, 0) + IFNULL(dt.dtf, 0)) AS harga,
@@ -930,6 +890,7 @@ const getPriceProposalDetailsForSo = async (nomor) => {
         LEFT JOIN tpengajuanharga h ON h.ph_nomor = d.phs_nomor
         LEFT JOIN tbarangdc a ON a.brg_kode = d.phs_kode
         LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.phs_kode AND b.brgd_ukuran = d.phs_size
+        LEFT JOIN tpengajuanharga_barang_draft pbd ON pbd.pbd_nomor = d.phs_nomor AND pbd.pbd_kode_barang_draft = d.phs_kode
         LEFT JOIN (SELECT pht_nomor, SUM(pht_harga) AS tambahan FROM tpengajuanharga_tambahan GROUP BY pht_nomor) t ON t.pht_nomor = d.phs_nomor
         LEFT JOIN (SELECT phb_nomor, phb_rpbordir AS bordir FROM tpengajuanharga_bordir GROUP BY phb_nomor) brd ON brd.phb_nomor = d.phs_nomor
         LEFT JOIN (SELECT phd_nomor, phd_rpdtf AS dtf FROM tpengajuanharga_dtf GROUP BY phd_nomor) dt ON dt.phd_nomor = d.phs_nomor
@@ -942,21 +903,14 @@ const getPriceProposalDetailsForSo = async (nomor) => {
         WHERE d.phs_nomor = ?
     `;
 
-  // [PERBAIKAN KUNCI 2]: Masukkan 'cabang' ke ? pertama, dan 'nomor' ke ? kedua
   const [detailRows] = await pool.query(detailQuery, [cabang, nomor]);
 
   return { headerData: headerRows[0], itemsData: detailRows };
 };
 
-/**
- * @description Mengambil semua data yang diperlukan untuk mencetak satu Penawaran.
- * @param {string} nomor - Nomor Penawaran.
- * @returns {Promise<object|null>} Objek berisi semua data untuk dicetak.
- */
 const getDataForPrint = async (nomor) => {
   const connection = await pool.getConnection();
   try {
-    // 1. Ambil Header + Customer + Info Jenis Order
     const [headerRows] = await connection.query(
       `
         SELECT h.*, c.cus_nama, c.cus_alamat, c.cus_telp,
@@ -971,7 +925,6 @@ const getDataForPrint = async (nomor) => {
     if (headerRows.length === 0) return null;
     const header = headerRows[0];
 
-    // 2. Ambil Info Gudang
     const [gudangRows] = await connection.query(
       `SELECT gdg_inv_nama, gdg_inv_alamat, gdg_inv_kota, gdg_inv_telp, gdg_akun, gdg_transferbank 
        FROM tgudang WHERE gdg_kode = ?`,
@@ -979,7 +932,6 @@ const getDataForPrint = async (nomor) => {
     );
     const gudang = gudangRows[0];
 
-    // 3. Ambil Detail (Query dibersihkan dari JSON_TABLE yang bermasalah)
     const [rawDetails] = await connection.query(
       `
         SELECT 
@@ -987,28 +939,28 @@ const getDataForPrint = async (nomor) => {
             CASE 
                 WHEN d.pend_custom = 'Y' AND NULLIF(d.pend_custom_nama, '') IS NOT NULL 
                     THEN d.pend_custom_nama 
-                ELSE IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), "Jasa Cetak")
+                WHEN f.sd_nama IS NOT NULL 
+                    THEN f.sd_nama
+                ELSE IFNULL(
+                    NULLIF(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), ""),
+                    IFNULL(pbd.pbd_deskripsi, "Jasa Cetak")
+                )
             END AS nama_barang,
-            d.pend_ukuran AS ukuran, 
-            d.pend_jumlah AS qty, 
-            d.pend_harga AS harga,
-            d.pend_diskon AS diskon, 
-            (d.pend_jumlah * (d.pend_harga - d.pend_diskon)) as total,
-            d.pend_custom,
-            d.pend_custom_data -- Ambil raw JSON untuk diproses di JS
+            d.pend_ukuran AS ukuran, d.pend_jumlah AS qty, d.pend_harga AS harga,
+            d.pend_diskon AS diskon, (d.pend_jumlah * (d.pend_harga - d.pend_diskon)) as total
         FROM tpenawaran_dtl d
         LEFT JOIN tbarangdc a ON a.brg_kode = d.pend_kode
+        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.pend_sd_nomor
+        LEFT JOIN tpengajuanharga_barang_draft pbd ON pbd.pbd_kode_barang_draft = d.pend_kode
         WHERE d.pend_nomor = ? 
         ORDER BY d.pend_nourut
     `,
       [nomor],
     );
 
-    // --- LOGIKA BARU: Proses Ukuran Custom di JavaScript ---
     const details = rawDetails.map((item) => {
       let displayUkuran = item.ukuran;
 
-      // Jika ukuran kosong dan ini barang custom, ekstrak dari JSON_DATA
       if (
         (!displayUkuran || displayUkuran === "") &&
         item.pend_custom === "Y" &&
@@ -1021,7 +973,6 @@ const getDataForPrint = async (nomor) => {
               : item.pend_custom_data;
 
           if (customObj.ukuranKaos && Array.isArray(customObj.ukuranKaos)) {
-            // Ambil daftar ukuran unik, misal: "L, XL"
             displayUkuran = [
               ...new Set(customObj.ukuranKaos.map((u) => u.ukuran)),
             ].join(", ");
@@ -1041,7 +992,6 @@ const getDataForPrint = async (nomor) => {
       };
     });
 
-    // 4. Ambil Rincian DP (Uang Muka)
     const [dps] = await connection.query(
       `
         SELECT sk.sh_nomor AS nomor, 
@@ -1054,7 +1004,6 @@ const getDataForPrint = async (nomor) => {
       [nomor],
     );
 
-    // 5. Kalkulasi Total
     const total_bruto = details.reduce(
       (sum, item) => sum + Number(item.total),
       0,
@@ -1095,7 +1044,6 @@ const findByBarcode = async (barcode, gudang) => {
             d.brgd_harga AS harga,
             IFNULL(h.brg_ktgp, '') AS kategori,
             
-            -- Logika perhitungan stok dari Delphi menggunakan tmasterstok --
             IFNULL((
                 SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
                 FROM tmasterstok m 
@@ -1112,13 +1060,58 @@ const findByBarcode = async (barcode, gudang) => {
           AND d.brgd_barcode = ?;
     `;
 
-  // Parameter 'gudang' sekarang digunakan untuk subquery stok
   const [rows] = await pool.query(query, [gudang, barcode]);
 
   if (rows.length === 0) {
     throw new Error("Barcode tidak ditemukan atau barang tidak aktif.");
   }
   return rows[0];
+};
+
+/**
+ * Rename file bukti ulasan Google Maps (promo wajib review) dari lokasi
+ * temp multer ke folder permanen, dinamai sesuai nomor Penawaran — sama
+ * pola dengan renameProposalImage di priceProposalFormService.
+ */
+const renameReviewProofImage = async (tempFilePath, nomor) => {
+  return new Promise((resolve, reject) => {
+    const fs = require("fs");
+    const path = require("path");
+    if (!fs.existsSync(tempFilePath)) {
+      console.error("Source file does not exist:", tempFilePath);
+      return reject(new Error("File sumber tidak ditemukan."));
+    }
+    const finalFileName = `${nomor}${path.extname(tempFilePath)}`;
+    const folderPath = path.join(
+      process.cwd(),
+      "public",
+      "images",
+      "review-proof",
+    );
+    try {
+      fs.mkdirSync(folderPath, { recursive: true });
+    } catch (mkdirError) {
+      console.error("Error creating directory:", mkdirError);
+      return reject(new Error("Gagal membuat direktori bukti ulasan."));
+    }
+    const finalPath = path.join(folderPath, finalFileName);
+    fs.rename(tempFilePath, finalPath, (err) => {
+      if (err) {
+        fs.copyFile(tempFilePath, finalPath, (copyErr) => {
+          if (copyErr) {
+            console.error("Gagal copy file:", copyErr);
+            return reject(
+              new Error("Gagal memproses file bukti: " + copyErr.message),
+            );
+          }
+          fs.unlink(tempFilePath, () => {});
+          resolve(finalPath);
+        });
+      } else {
+        resolve(finalPath);
+      }
+    });
+  });
 };
 
 module.exports = {
@@ -1137,4 +1130,5 @@ module.exports = {
   getPriceProposalDetailsForSo,
   getDataForPrint,
   findByBarcode,
+  renameReviewProofImage,
 };

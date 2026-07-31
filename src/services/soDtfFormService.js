@@ -9,7 +9,7 @@ const findById = async (nomor) => {
   try {
     const headerQuery = `
             SELECT 
-                sd_nomor as nomor, sd_so_nomor AS soNomor, sd_tanggal as tanggal, sd_datekerja as tglPengerjaan,
+                sd_nomor as nomor, sd_so_nomor AS soNomor, sd_so_lineid AS soLineIds, sd_tanggal as tanggal, sd_datekerja as tglPengerjaan,
                 sd_dateline as datelineCustomer, sd_sal_kode as salesKode, sal_nama as salesNama,
                 sd_cus_kode as customerKode, sd_customer as customerNama, cus_alamat as customerAlamat,
                 (SELECT IFNULL(CONCAT(y.clh_level, ' - ', v.level_nama), '') 
@@ -129,11 +129,11 @@ const create = async (data, user) => {
       INSERT INTO tsodtf_hdr (
         sd_idrec, sd_nomor, sd_tanggal, sd_datekerja, sd_dateline,
         sd_cus_kode, sd_customer, sd_sal_kode, sd_jo_kode,
-        sd_so_nomor, sd_nama, sd_kain, sd_finishing,
+        sd_so_nomor, sd_so_lineid, sd_nama, sd_kain, sd_finishing,
         sd_desain, sd_workshop, sd_ket, sd_cab, user_create, date_create,
         sd_trial_ref
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
     `;
     await connection.query(headerQuery, [
       headerIdRec,
@@ -146,15 +146,18 @@ const create = async (data, user) => {
       header.salesKode,
       header.jenisOrderKode,
       header.soNomor,
+      Array.isArray(header.soLineIds) && header.soLineIds.length > 0
+        ? header.soLineIds.join(",")
+        : null,
       header.namaDtf,
       header.kain,
       header.finishing,
       header.desain,
       header.workshopKode,
       header.keterangan,
-      user.cabang,
-      user.kode,
-      header.refTrial || null, // <--- TAMBAH INI (Ambil dari frontend)
+      user.cabang, // sd_cab
+      user.kode, // user_create
+      header.refTrial || null, // sd_trial_ref
     ]);
 
     // 4. Insert Detail Ukuran (Tambahkan sdd_idrec)
@@ -200,23 +203,81 @@ const create = async (data, user) => {
       );
     }
 
-    // Jika ada no SO, update relasi dan tandai sudah dipakai
+    // [FIX] Target baris SPESIFIK via sod_idrec, bukan blast semua custom di SO ini.
+    // Fallback ke perilaku lama (semua custom) HANYA kalau soLineId kosong — jaga
+    // kompatibilitas untuk alur lama/refSo tanpa lineId.
     if (header.soNomor) {
       await connection.query(
-        `UPDATE tso_hdr 
-         SET so_dipakai_dtf = 'Y'
-         WHERE so_nomor = ?`,
+        `UPDATE tso_hdr SET so_dipakai_dtf = 'Y' WHERE so_nomor = ?`,
         [header.soNomor],
       );
 
-      await connection.query(
-        `UPDATE tso_dtl 
-            SET sod_kode = ?, 
-              sod_sd_nomor = ?
-          WHERE sod_so_nomor = ?
-            AND sod_custom = 'Y'`,
-        [newNomor, newNomor, header.soNomor],
-      );
+      // [FIX] soLineIds sekarang array — bisa berisi banyak baris (1 per ukuran)
+      const lineIds = Array.isArray(header.soLineIds)
+        ? header.soLineIds.filter(Boolean)
+        : [];
+
+      if (lineIds.length > 0) {
+        // Link SEMUA baris custom yang sudah ada — TIDAK menimpa sod_jumlah/sod_custom_data
+        // (data per-ukuran di tiap baris sudah benar sejak "Input Jenis Order"), cukup
+        // update kode (jadi nomor SD, bukan literal 'CUSTOM') + sod_sd_nomor.
+        const placeholders = lineIds.map(() => "?").join(",");
+        await connection.query(
+          `UPDATE tso_dtl 
+       SET sod_kode = ?, sod_sd_nomor = ?
+       WHERE sod_idrec IN (${placeholders}) AND sod_so_nomor = ? AND sod_custom = 'Y'`,
+          [newNomor, newNomor, ...lineIds, header.soNomor],
+        );
+      } else {
+        // Tidak ada baris custom sama sekali — tambah baris baru (kasus SO isinya barang reguler polos)
+        const [maxRow] = await connection.query(
+          `SELECT IFNULL(MAX(sod_nourut), 0) AS maxNourut FROM tso_dtl WHERE sod_so_nomor = ?`,
+          [header.soNomor],
+        );
+        let nourut = maxRow[0].maxNourut;
+        const soDtlTimestamp = format(new Date(), "yyyyMMddHHmmssSSS");
+        const cabangSo = header.soNomor.substring(0, 3);
+
+        for (const [idx, detail] of data.detailsUkuran.entries()) {
+          nourut += 1;
+          const sodIdrec = `${cabangSo}SOD${soDtlTimestamp}${idx}`;
+          const customDataJson = JSON.stringify({
+            ukuranKaos: [
+              {
+                ukuran: detail.ukuran,
+                jumlah: detail.jumlah,
+                harga: detail.harga,
+              },
+            ],
+            titikCetak: data.detailsTitik.map((t) => ({
+              keterangan: t.keterangan,
+              sizeCetak: t.sizeCetak,
+              panjang: t.panjang,
+              lebar: t.lebar,
+            })),
+            sourceItems: [],
+          });
+
+          await connection.query(
+            `INSERT INTO tso_dtl
+          (sod_idrec, sod_so_nomor, sod_kode, sod_ukuran, sod_jumlah, sod_harga, sod_disc, sod_diskon, sod_nourut, sod_custom, sod_custom_nama, sod_custom_data, sod_sd_nomor, sod_scanned, sod_is_free_gift)
+         VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, 'Y', ?, ?, ?, 0, 'N')`,
+            // [FIX] sod_kode = newNomor (nomor SD), bukan literal 'CUSTOM'
+            [
+              sodIdrec,
+              header.soNomor,
+              newNomor,
+              detail.ukuran,
+              detail.jumlah,
+              detail.harga,
+              nourut,
+              header.namaDtf,
+              customDataJson,
+              newNomor,
+            ],
+          );
+        }
+      }
     }
 
     await connection.commit();
@@ -256,7 +317,7 @@ const update = async (nomor, data, user) => {
 
     // 1️⃣ Ambil data lama untuk pengecekan Jenis Order & referensi SO
     const [existingRows] = await connection.query(
-      "SELECT sd_jo_kode, sd_so_nomor FROM tsodtf_hdr WHERE sd_nomor = ?",
+      "SELECT sd_jo_kode, sd_so_nomor, sd_so_lineid FROM tsodtf_hdr WHERE sd_nomor = ?",
       [nomor],
     );
 
@@ -265,7 +326,13 @@ const update = async (nomor, data, user) => {
 
     const oldJoKode = existingRows[0].sd_jo_kode;
     const oldSo = existingRows[0].sd_so_nomor;
+    const oldSoLineIds = (existingRows[0].sd_so_lineid || "")
+      .split(",")
+      .filter(Boolean);
     const newSo = header.soNomor || null;
+    const newSoLineIds = Array.isArray(header.soLineIds)
+      ? header.soLineIds.filter(Boolean)
+      : [];
 
     // 2️⃣ Tentukan Nomor Final (Generate baru jika Jenis Order berubah)
     let finalNomor = nomor;
@@ -278,18 +345,18 @@ const update = async (nomor, data, user) => {
 
     // 3️⃣ Update HEADER (Termasuk update sd_nomor jika berubah)
     const headerQuery = `
-      UPDATE tsodtf_hdr SET 
-        sd_nomor = ?, 
-        sd_tanggal = ?, sd_datekerja = ?, sd_dateline = ?, sd_cus_kode = ?, sd_customer = ?, 
-        sd_sal_kode = ?, sd_jo_kode = ?, sd_so_nomor = ?, sd_nama = ?, sd_kain = ?, 
-        sd_finishing = ?, sd_desain = ?, sd_workshop = ?, sd_ket = ?, 
-        user_modified = ?, date_modified = NOW(),
-        sd_trial_ref = ?
-      WHERE sd_nomor = ?
-    `;
+  UPDATE tsodtf_hdr SET 
+    sd_nomor = ?, 
+    sd_tanggal = ?, sd_datekerja = ?, sd_dateline = ?, sd_cus_kode = ?, sd_customer = ?, 
+    sd_sal_kode = ?, sd_jo_kode = ?, sd_so_nomor = ?, sd_so_lineid = ?, sd_nama = ?, sd_kain = ?, -- [FIX] tambah sd_so_lineid
+    sd_finishing = ?, sd_desain = ?, sd_workshop = ?, sd_ket = ?, 
+    user_modified = ?, date_modified = NOW(),
+    sd_trial_ref = ?
+  WHERE sd_nomor = ?
+`;
 
     await connection.query(headerQuery, [
-      finalNomor, // Nomor baru atau tetap lama
+      finalNomor,
       header.tanggal,
       header.tglPengerjaan,
       header.datelineCustomer,
@@ -298,6 +365,7 @@ const update = async (nomor, data, user) => {
       header.salesKode,
       header.jenisOrderKode,
       newSo,
+      newSoLineIds.length > 0 ? newSoLineIds.join(",") : null,
       header.namaDtf,
       header.kain,
       header.finishing,
@@ -306,7 +374,7 @@ const update = async (nomor, data, user) => {
       header.keterangan,
       userKode,
       header.refTrial || null,
-      nomor, // Berdasarkan nomor asli sebelum update
+      nomor,
     ]);
 
     // 4️⃣ Kelola DETAIL (Hapus pakai nomor LAMA, Insert pakai nomor BARU)
@@ -363,22 +431,42 @@ const update = async (nomor, data, user) => {
 
     // 5️⃣ Update Flag & Relasi SO Utama (Logic SO Lama vs Baru)
     // Jika ganti referensi SO atau ganti nomor SO DTF-nya
+    // 5️⃣ Update Flag & Relasi SO Utama (Logic SO Lama vs Baru, presisi per baris)
     if (oldSo && (oldSo !== newSo || isOrderTypeChanged)) {
       await connection.query(
         "UPDATE tso_hdr SET so_dipakai_dtf = 'N' WHERE so_nomor = ?",
         [oldSo],
       );
-      await connection.query(
-        "UPDATE tso_dtl SET sod_sd_nomor = NULL WHERE sod_so_nomor = ? AND sod_custom = 'Y'",
-        [oldSo],
-      );
+
+      if (oldSoLineIds.length > 0) {
+        const ph = oldSoLineIds.map(() => "?").join(",");
+        await connection.query(
+          `UPDATE tso_dtl SET sod_kode = 'CUSTOM', sod_sd_nomor = NULL 
+       WHERE sod_idrec IN (${ph}) AND sod_so_nomor = ? AND sod_custom = 'Y'`,
+          [...oldSoLineIds, oldSo],
+        );
+      } else {
+        await connection.query(
+          "UPDATE tso_dtl SET sod_sd_nomor = NULL WHERE sod_so_nomor = ? AND sod_custom = 'Y'",
+          [oldSo],
+        );
+      }
     }
 
     if (newSo) {
-      await connection.query(
-        `UPDATE tso_dtl SET sod_kode = ?, sod_sd_nomor = ? WHERE sod_so_nomor = ? AND sod_custom = 'Y'`,
-        [finalNomor, finalNomor, newSo],
-      );
+      if (newSoLineIds.length > 0) {
+        const ph = newSoLineIds.map(() => "?").join(",");
+        await connection.query(
+          `UPDATE tso_dtl SET sod_kode = ?, sod_sd_nomor = ? 
+       WHERE sod_idrec IN (${ph}) AND sod_so_nomor = ? AND sod_custom = 'Y'`,
+          [finalNomor, finalNomor, ...newSoLineIds, newSo],
+        );
+      } else {
+        await connection.query(
+          `UPDATE tso_dtl SET sod_kode = ?, sod_sd_nomor = ? WHERE sod_so_nomor = ? AND sod_custom = 'Y'`,
+          [finalNomor, finalNomor, newSo],
+        );
+      }
       await connection.query(
         "UPDATE tso_hdr SET so_dipakai_dtf = 'Y' WHERE so_nomor = ?",
         [newSo],
@@ -836,7 +924,6 @@ const searchSoForDtf = async (term, cabang, page, itemsPerPage) => {
   const offset = (page - 1) * itemsPerPage;
   const searchTerm = `%${term || ""}%`;
 
-  // Query utama
   const dataQuery = `
     SELECT 
       h.so_nomor AS Nomor,
@@ -845,10 +932,8 @@ const searchSoForDtf = async (term, cabang, page, itemsPerPage) => {
       c.cus_alamat AS Alamat,
       c.cus_kota AS Kota,
 
-      -- total bayar
       IFNULL(SUM(s.sh_nominal), 0) AS totalBayar,
 
-      -- total SO: SUM(qty * harga)
       (
         SELECT SUM(d.sod_jumlah * (d.sod_harga - d.sod_diskon))
         FROM tso_dtl d
@@ -859,13 +944,36 @@ const searchSoForDtf = async (term, cabang, page, itemsPerPage) => {
     LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
     LEFT JOIN tsetor_hdr s ON s.sh_so_nomor = h.so_nomor
 
-    -- [PERBAIKAN] Filter so_aktif dan so_dipakai_dtf dihapus agar semua SO muncul
     WHERE h.so_cab = ?
       AND (h.so_nomor LIKE ? OR c.cus_nama LIKE ?)
+      -- [BARU] Sembunyikan SO yang sudah jadi Invoice (belum dibatalkan)
+      AND NOT EXISTS (
+        SELECT 1 FROM tinv_hdr iv 
+        WHERE iv.inv_nomor_so = h.so_nomor AND iv.inv_sts_pro = 0
+      )
 
     GROUP BY h.so_nomor
     ORDER BY h.so_tanggal DESC
     LIMIT ? OFFSET ?
+  `;
+
+  const countQuery = `
+    SELECT COUNT(*) AS total
+    FROM (
+      SELECT h.so_nomor
+      FROM tso_hdr h
+      LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
+      LEFT JOIN tsetor_hdr s ON s.sh_so_nomor = h.so_nomor
+      
+      WHERE h.so_cab = ?
+        AND (h.so_nomor LIKE ? OR c.cus_nama LIKE ?)
+        -- [BARU] samakan filter di count query
+        AND NOT EXISTS (
+          SELECT 1 FROM tinv_hdr iv 
+          WHERE iv.inv_nomor_so = h.so_nomor AND iv.inv_sts_pro = 0
+        )
+      GROUP BY h.so_nomor
+    ) x
   `;
 
   const [rows] = await pool.query(dataQuery, [
@@ -875,23 +983,6 @@ const searchSoForDtf = async (term, cabang, page, itemsPerPage) => {
     itemsPerPage,
     offset,
   ]);
-
-  // Query total
-  const countQuery = `
-    SELECT COUNT(*) AS total
-    FROM (
-      SELECT h.so_nomor
-      FROM tso_hdr h
-      LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
-      LEFT JOIN tsetor_hdr s ON s.sh_so_nomor = h.so_nomor
-      
-      -- [PERBAIKAN] Filter di count query juga harus disamakan
-      WHERE h.so_cab = ?
-        AND (h.so_nomor LIKE ? OR c.cus_nama LIKE ?)
-      GROUP BY h.so_nomor
-    ) x
-  `;
-
   const [[count]] = await pool.query(countQuery, [
     cabang,
     searchTerm,
@@ -925,7 +1016,29 @@ const getSoDetailForDtf = async (nomor) => {
       h.so_aktif AS statusSo,
       h.so_jenisorder AS jenisOrderKode,
       jo.jo_nama AS jenisOrderNama,
-      h.so_namadtf AS namaDtf
+      h.so_namadtf AS namaDtf,
+
+      -- [BARU] Netto = subtotal item dikurangi diskon faktur (basis hitung minimal DP)
+      (SELECT ROUND(
+          SUM(dd.sod_jumlah * (dd.sod_harga - dd.sod_diskon)) - h.so_disc
+      )
+      FROM tso_dtl dd 
+      WHERE dd.sod_so_nomor = h.so_nomor) AS soNetto,
+
+      -- [BARU] Total DP yang sudah masuk untuk SO ini
+      IFNULL((
+        SELECT SUM(sh.sh_nominal) 
+        FROM tsetor_hdr sh 
+        WHERE sh.sh_so_nomor = h.so_nomor AND sh.sh_otomatis = 'N'
+      ), 0) AS soDp,
+
+      -- [BARU] Apakah SO ini SUDAH punya baris custom order / SO DTF (menentukan 50% vs 30%)
+      (SELECT IF(EXISTS(
+          SELECT 1 FROM tso_dtl dd2
+          WHERE dd2.sod_so_nomor = h.so_nomor
+            AND (dd2.sod_custom = 'Y' OR (dd2.sod_sd_nomor IS NOT NULL AND dd2.sod_sd_nomor <> ''))
+      ), 1, 0)) AS soHasCustomOrDtf
+
     FROM tso_hdr h
     LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
     LEFT JOIN tcustomer_level l ON l.level_kode = h.so_cus_level
@@ -939,6 +1052,7 @@ const getSoDetailForDtf = async (nomor) => {
   // === DETAIL ITEM ===
   const itemQuery = `
     SELECT 
+      d.sod_idrec AS id,
       d.sod_kode AS kode,
       CASE
         WHEN d.sod_custom = 'Y' THEN d.sod_custom_nama
@@ -976,7 +1090,7 @@ const getSoDetailForDtf = async (nomor) => {
           isCustomOrder: true,
           ukuranKaos: parsed.ukuranKaos || [],
           titikCetak: parsed.titikCetak || [],
-          sourceItems: parsed.sourceItems || [], // <<--- TAMBAH
+          sourceItems: parsed.sourceItems || [],
         };
       } catch {
         return {

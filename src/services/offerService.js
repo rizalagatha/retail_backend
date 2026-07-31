@@ -88,13 +88,15 @@ const getOfferDetails = async (nomor) => {
     SELECT
         d.pend_kode AS kode,
         IFNULL(b.brgd_barcode, "") AS barcode,
-        -- Prioritaskan nama custom, lalu nama SO DTF, lalu nama barang reguler
         CASE 
             WHEN d.pend_custom = 'Y' AND NULLIF(d.pend_custom_nama, '') IS NOT NULL 
                 THEN d.pend_custom_nama 
             WHEN f.sd_nama IS NOT NULL 
                 THEN f.sd_nama
-            ELSE IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), "Barang Umum")
+            ELSE IFNULL(
+                NULLIF(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), ""),
+                IFNULL(pbd.pbd_deskripsi, "Barang Umum")
+            )
         END AS Nama,
         d.pend_ukuran AS ukuran,
         d.pend_jumlah AS qty,
@@ -107,6 +109,7 @@ const getOfferDetails = async (nomor) => {
     LEFT JOIN tbarangdc a ON a.brg_kode = d.pend_kode
     LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.pend_kode AND b.brgd_ukuran = d.pend_ukuran
     LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.pend_sd_nomor
+    LEFT JOIN tpengajuanharga_barang_draft pbd ON pbd.pbd_kode_barang_draft = d.pend_kode
     WHERE d.pend_nomor = ?
     ORDER BY d.pend_nourut;
   `;
@@ -273,7 +276,7 @@ const getExportDetails = async (startDate, endDate, cabang) => {
                         IFNULL(a.brg_jeniskain,''), ' ',
                         IFNULL(a.brg_warna,'')
                     )), ''),
-                    'Barang Umum'
+                    IFNULL(pbd.pbd_deskripsi, 'Barang Umum')
                 )
             END AS 'Nama',
             d.pend_ukuran AS 'Ukuran',
@@ -291,6 +294,7 @@ const getExportDetails = async (startDate, endDate, cabang) => {
         LEFT JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
         LEFT JOIN tbarangdc a ON a.brg_kode = d.pend_kode
         LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.pend_sd_nomor
+        LEFT JOIN tpengajuanharga_barang_draft pbd ON pbd.pbd_kode_barang_draft = d.pend_kode
         WHERE h.pen_tanggal BETWEEN ? AND ?
         ${branchFilter}
         ORDER BY h.pen_nomor, d.pend_nourut;

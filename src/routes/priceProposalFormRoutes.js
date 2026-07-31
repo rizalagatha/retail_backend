@@ -69,6 +69,52 @@ router.get(
   priceProposalFormController.getNextNumber,
 );
 
+router.post(
+  "/upload-acc-customer/:nomor",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "edit"),
+  upload.single("image"),
+  priceProposalFormController.uploadAccCustomerProof,
+);
+
+router.get(
+  "/sublim/kain-options",
+  verifyToken,
+  checkInsertOrEditPermission(PRICE_PROPOSAL_MENU_ID),
+  priceProposalFormController.getSublimKainOptions,
+);
+router.get(
+  "/sublim/jenis-jersey-options",
+  verifyToken,
+  checkInsertOrEditPermission(PRICE_PROPOSAL_MENU_ID),
+  priceProposalFormController.getSublimJenisJerseyOptions,
+);
+router.get(
+  "/sublim/katalog",
+  verifyToken,
+  checkInsertOrEditPermission(PRICE_PROPOSAL_MENU_ID),
+  priceProposalFormController.getSublimKatalog,
+);
+router.post(
+  "/sublim/preview-harga",
+  verifyToken,
+  checkInsertOrEditPermission(PRICE_PROPOSAL_MENU_ID),
+  priceProposalFormController.previewSublimHarga,
+);
+router.get(
+  "/sublim/katalog-by-kategori",
+  verifyToken,
+  checkInsertOrEditPermission(PRICE_PROPOSAL_MENU_ID),
+  priceProposalFormController.getSublimKatalogByKategori,
+);
+router.post(
+  "/sublim/upload-design/:nomor",
+  verifyToken,
+  checkInsertOrEditPermission(PRICE_PROPOSAL_MENU_ID),
+  upload.single("image"),
+  priceProposalFormController.uploadSublimDesign,
+);
+
 // Hanya butuh hak 'edit' untuk memuat data lama
 router.get(
   "/:nomor",

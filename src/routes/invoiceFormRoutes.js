@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const upload = require("../middleware/uploadMiddleware");
 const controller = require("../controllers/invoiceFormController");
 const {
   verifyToken,
@@ -189,6 +190,14 @@ router.get(
   controller.getVoucherPrintData,
 );
 
+router.post(
+  "/upload-review-proof/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  upload.single("image"),
+  controller.uploadReviewProof,
+);
+
 // Menyimpan data (baru atau yang diubah)
 router.post("/save", verifyToken, checkSavePermission, controller.save);
 
@@ -202,6 +211,20 @@ router.post(
 router.post("/save-satisfaction", verifyToken, controller.saveSatisfaction);
 
 router.post("/validate-voucher", verifyToken, controller.validateVoucher);
+
+router.get(
+  "/lookup/harga-khusus/:cusKode",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getHargaKhusus,
+);
+
+router.post(
+  "/lookup/recalc-kpr-diskon",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.recalcKprDiscount,
+);
 
 // Memuat data Invoice yang sudah ada untuk mode "Ubah"
 router.get(

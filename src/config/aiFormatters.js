@@ -134,19 +134,44 @@ const aiFormatters = {
 
   get_real_stock: (args, result) => {
     if (!Array.isArray(result) || result.length === 0) {
-      return `Tidak ditemukan data stok untuk "${args.search}"${
+      return `Tidak ditemukan data stok untuk pencarian tersebut${
         args.cabang && args.cabang !== "ALL" ? ` di cabang ${args.cabang}` : ""
       }.`;
     }
     const lines = result
       .map((r, i) => {
-        const cabangLabel = r.cabang ? `[${r.cabang}] ` : "";
-        return `${i + 1}. ${cabangLabel}${r.nama} (${r.ukuran}) — stok fisik: ${Number(
-          r.stok_fisik || 0,
-        ).toLocaleString("id-ID")} pcs`;
+        const cabangLabel = r.cabang
+          ? `[${r.cabang}] `
+          : r.nama_cabang
+            ? `[${r.nama_cabang}] `
+            : "";
+        const namaBarang = r.nama_barang || r.nama || r.NAMA || "-";
+
+        // Cek apakah data dari DB berbentuk pivot (kolom S, M, L, XL, TOTAL)
+        if (
+          "s" in r ||
+          "S" in r ||
+          "m" in r ||
+          "M" in r ||
+          "TOTAL" in r ||
+          "total" in r
+        ) {
+          const s = r.s || r.S || 0;
+          const m = r.m || r.M || 0;
+          const l = r.l || r.L || 0;
+          const xl = r.xl || r.XL || 0;
+          const xxl = r.xxl || r.XXL || 0;
+          const total = r.total || r.TOTAL || r.tersedia || 0;
+          return `${i + 1}. ${cabangLabel}${namaBarang}\n   S:${s} | M:${m} | L:${l} | XL:${xl} | XXL:${xxl}  ➡️  Total: ${total} pcs`;
+        } else {
+          // Fallback jika datanya flat/baris biasa
+          const ukuran = r.ukuran || r.UKURAN || "-";
+          const qty = r.stok_fisik || r.stok || r.qty || 0;
+          return `${i + 1}. ${cabangLabel}${namaBarang} (Size: ${ukuran}) — ${Number(qty).toLocaleString("id-ID")} pcs`;
+        }
       })
-      .join("\n");
-    return `Stok real untuk "${args.search}":\n\n${lines}`;
+      .join("\n\n");
+    return `Sisa stok untuk "${args.search}":\n\n${lines}`;
   },
 
   get_piutang_total: (args, result) => {
