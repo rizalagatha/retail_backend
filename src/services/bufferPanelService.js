@@ -684,117 +684,142 @@ const saveSesionalItems = async (cabang, items) => {
 // Tambahkan di bufferPanelService.js
 const generateMonthlyLog = async () => {
   const now = new Date();
-  // Buat string periode YYYY-MM
   const periode = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
-  const connection = await pool.getConnection();
-  try {
-    await connection.beginTransaction();
+  const [cabangRows] = await connection.query(
+    "SELECT gdg_kode FROM tgudang WHERE gdg_kode != 'KDC'",
+  );
 
-    // 1. Ambil semua cabang toko yang aktif (kecuali KDC)
-    const [cabangRows] = await connection.query(
-      "SELECT gdg_kode FROM tgudang WHERE gdg_aktif = 'Y' AND gdg_kode != 'KDC'",
-    );
+  const results = { success: [], failed: [] };
 
-    // 2. Loop hitung toko dan simpan log
-    for (const cab of cabangRows) {
-      const cabang = cab.gdg_kode;
-      const dataToko = await getPreviewData(cabang);
+  // [FIX] Loop per cabang, transaksi terpisah per cabang — bukan 1 transaksi
+  // raksasa yang menahan koneksi selama SELURUH proses berjalan.
+  for (const cab of cabangRows) {
+    const cabang = cab.gdg_kode;
+    const startTime = Date.now();
+    try {
+      console.log(`[BUFFER CRON] Mulai proses cabang ${cabang}...`);
+      const dataToko = await getPreviewData(cabang); // pakai pool, di luar transaksi — read-only aman
 
       if (dataToko && dataToko.length > 0) {
-        // Update tabel master
-        const updateTokoValues = dataToko.map((item) => [
-          cabang,
-          item.kode,
-          item.ukuran,
-          item.min,
-          item.max,
-          "SYS-CRON",
-          now,
-        ]);
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
 
-        await connection.query(
-          `
-          INSERT INTO tbarangdc_dtl2 (brgd_cab, brgd_kode, brgd_ukuran, brgd_min, brgd_max, user_update, date_update)
-          VALUES ? 
-          ON DUPLICATE KEY UPDATE 
-            brgd_min=VALUES(brgd_min), 
-            brgd_max=VALUES(brgd_max), 
-            user_update=VALUES(user_update), 
-            date_update=VALUES(date_update)
-        `,
-          [updateTokoValues],
-        );
+          const updateTokoValues = dataToko.map((item) => [
+            cabang,
+            item.kode,
+            item.ukuran,
+            item.min,
+            item.max,
+            "SYS-CRON",
+            now,
+          ]);
+          await connection.query(
+            `INSERT INTO tbarangdc_dtl2 (brgd_cab, brgd_kode, brgd_ukuran, brgd_min, brgd_max, user_update, date_update)
+             VALUES ? 
+             ON DUPLICATE KEY UPDATE 
+               brgd_min=VALUES(brgd_min), brgd_max=VALUES(brgd_max), 
+               user_update=VALUES(user_update), date_update=VALUES(date_update)`,
+            [updateTokoValues],
+          );
 
-        // Insert log bulan ini
-        const logTokoValues = dataToko.map((item) => [
-          periode,
-          cabang,
-          item.kode,
-          item.ukuran,
-          item.min,
-          item.max,
-          now,
-        ]);
-        await connection.query(
-          `
-          INSERT INTO tbuffer_log_toko (log_periode, log_cabang, log_kode, log_ukuran, log_min, log_max, created_at)
-          VALUES ?
-        `,
-          [logTokoValues],
-        );
+          const logTokoValues = dataToko.map((item) => [
+            periode,
+            cabang,
+            item.kode,
+            item.ukuran,
+            item.min,
+            item.max,
+            now,
+          ]);
+          await connection.query(
+            `INSERT INTO tbuffer_log_toko (log_periode, log_cabang, log_kode, log_ukuran, log_min, log_max, created_at)
+             VALUES ?`,
+            [logTokoValues],
+          );
+
+          await connection.commit();
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+          console.log(
+            `[BUFFER CRON] ✅ Cabang ${cabang} selesai (${elapsed}s, ${dataToko.length} item).`,
+          );
+          results.success.push(cabang);
+        } catch (err) {
+          await connection.rollback();
+          throw err;
+        } finally {
+          connection.release();
+        }
+      } else {
+        console.log(`[BUFFER CRON] Cabang ${cabang} tidak ada data (skip).`);
       }
+    } catch (error) {
+      console.error(
+        `[BUFFER CRON] ❌ Gagal proses cabang ${cabang}:`,
+        error.message,
+      );
+      results.failed.push({ cabang, error: error.message });
+      // [FIX] Lanjut ke cabang berikutnya, jangan hentikan seluruh proses
     }
+  }
 
-    // 3. Kalkulasi KDC setelah semua toko ter-update
+  // KDC — transaksi terpisah lagi, setelah semua toko selesai
+  try {
     const dataKDC = await getPreviewDataKDC();
     if (dataKDC && dataKDC.length > 0) {
-      // [BARU] Reset dulu buffer non-reguler di KDC
-      await connection.query(`
-        UPDATE tbarangdc_dtl b
-        JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
-        SET b.brgd_mindc = 0, b.brgd_maxdc = 0
-        WHERE IFNULL(a.brg_ktgp, '') != 'REGULER'
-      `);
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
 
-      // Update tabel master KDC untuk barang reguler
-      for (const item of dataKDC) {
+        await connection.query(`
+          UPDATE tbarangdc_dtl b
+          JOIN tbarangdc a ON a.brg_kode = b.brgd_kode
+          SET b.brgd_mindc = 0, b.brgd_maxdc = 0
+          WHERE IFNULL(a.brg_ktgp, '') != 'REGULER'
+        `);
+
+        for (const item of dataKDC) {
+          await connection.query(
+            `UPDATE tbarangdc_dtl SET brgd_mindc = ?, brgd_maxdc = ? WHERE brgd_kode = ? AND brgd_ukuran = ?`,
+            [item.min, item.max, item.kode, item.ukuran],
+          );
+        }
+
+        const logKdcValues = dataKDC.map((item) => [
+          periode,
+          item.kode,
+          item.ukuran,
+          item.min,
+          item.max,
+          now,
+        ]);
         await connection.query(
-          `
-          UPDATE tbarangdc_dtl 
-          SET brgd_mindc = ?, brgd_maxdc = ? 
-          WHERE brgd_kode = ? AND brgd_ukuran = ?
-        `,
-          [item.min, item.max, item.kode, item.ukuran],
+          `INSERT INTO tbuffer_log_kdc (log_periode, log_kode, log_ukuran, log_mindc, log_maxdc, created_at) VALUES ?`,
+          [logKdcValues],
         );
+
+        await connection.commit();
+        console.log(`[BUFFER CRON] ✅ KDC selesai (${dataKDC.length} item).`);
+      } catch (err) {
+        await connection.rollback();
+        throw err;
+      } finally {
+        connection.release();
       }
-
-      // Insert log bulan ini KDC
-      const logKdcValues = dataKDC.map((item) => [
-        periode,
-        item.kode,
-        item.ukuran,
-        item.min,
-        item.max,
-        now,
-      ]);
-      await connection.query(
-        `
-        INSERT INTO tbuffer_log_kdc (log_periode, log_kode, log_ukuran, log_mindc, log_maxdc, created_at)
-        VALUES ?
-      `,
-        [logKdcValues],
-      );
     }
-
-    await connection.commit();
-    return { message: "Generate buffer log bulanan berhasil dijalankan." };
   } catch (error) {
-    await connection.rollback();
-    throw error;
-  } finally {
-    connection.release();
+    console.error(`[BUFFER CRON] ❌ Gagal proses KDC:`, error.message);
+    results.failed.push({ cabang: "KDC", error: error.message });
   }
+
+  console.log(
+    `[BUFFER CRON] Selesai. Berhasil: ${results.success.length}, Gagal: ${results.failed.length}.`,
+  );
+  return {
+    message: "Generate buffer log bulanan selesai dijalankan.",
+    ...results,
+  };
 };
 
 module.exports = {

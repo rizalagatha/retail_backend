@@ -19,6 +19,13 @@ const pool = mysql.createPool({
   keepAliveInitialDelay: 10000, // mulai kirim keepalive setelah 10 detik idle
 });
 
+// [BARU] Tangkap error di level pool (mis. koneksi idle diputus paksa oleh
+// firewall/NAT sebelum sempat dipakai ulang) — tanpa listener ini, error
+// semacam ini jadi unhandled di level proses dan bikin seluruh server crash.
+pool.on("error", (err) => {
+  console.error("[MYSQL POOL ERROR]", err.code, err.message);
+});
+
 console.log("🔌 Koneksi ke database MySQL berhasil dibuat.");
 
 module.exports = pool;

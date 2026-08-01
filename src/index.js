@@ -1,3 +1,12 @@
+// [BARU] Safety net — cegah crash diam-diam tanpa log yang jelas.
+// Taruh di paling atas file entry point, sebelum require lain.
+process.on("uncaughtException", (err) => {
+  console.error("[UNCAUGHT EXCEPTION]", err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[UNHANDLED REJECTION]", reason);
+});
+
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
