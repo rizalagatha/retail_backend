@@ -816,15 +816,18 @@ const searchApprovedPriceProposals = async (params) => {
   const { cabang, customerKode, term, statuses, onlyCustom } = params;
   const searchTerm = `%${term}%`;
 
-  // [FIX] Default tetap DRAFT (perilaku lama, dipakai Offer) — tapi sekarang
-  // bisa di-override lewat query param `statuses` (comma-separated), dipakai
-  // SO yang butuh nyari pengajuan yang SUDAH disetujui (ACC_FINANCE).
-  const allowedStatuses = statuses ? statuses.split(",") : ["DRAFT"];
-  const statusPlaceholders = allowedStatuses.map(() => "?").join(", ");
+  let allowedStatuses = statuses ? statuses.split(",") : ["DRAFT"];
 
-  // [BARU] Filter opsional khusus Custom — barang Stok sudah jadi barang
-  // riil di tbarangdc sejak disimpan, biasanya dicari lewat F1/F2 barang
-  // biasa di SO, bukan lewat modal Pengajuan Harga ini.
+  // [FIX] Data lama (dibuat sebelum kolom ph_status ada): ph_status tetap
+  // 'DRAFT' di DB walau sudah pernah di-approve (ph_apv terisi). Kalau SO
+  // minta ACC_FINANCE, sertakan juga kandidat legacy ini — karena secara
+  // bisnis mereka SUDAH final, cuma datanya belum pernah "dimigrasikan"
+  // ke sistem status baru.
+  if (allowedStatuses.includes("ACC_FINANCE")) {
+    allowedStatuses = [...allowedStatuses, "LEGACY_APPROVED"];
+  }
+
+  const statusPlaceholders = allowedStatuses.map(() => "?").join(", ");
   const customFilter = onlyCustom === "Y" ? "AND h.ph_custom = 'Y'" : "";
 
   const query = `
@@ -834,13 +837,27 @@ const searchApprovedPriceProposals = async (params) => {
             c.cus_nama AS customer,
             h.ph_jenis AS jenisKaos,
             h.ph_ket AS keterangan,
-            h.ph_status AS status,
+            -- [FIX] Status ternormalisasi — sama logic dengan browse, supaya
+            -- data legacy approved match saat dicari filter ACC_FINANCE.
+            CASE 
+              WHEN (h.ph_status IS NULL OR h.ph_status = 'DRAFT')
+                AND h.ph_apv IS NOT NULL AND h.ph_apv <> ''
+              THEN 'LEGACY_APPROVED'
+              ELSE IFNULL(h.ph_status, 'DRAFT')
+            END AS status,
             h.ph_custom AS isCustom,
             h.ph_kode_barang_draft AS kodeBarangDraft
         FROM tpengajuanharga h
         LEFT JOIN tcustomer c ON c.cus_kode = h.ph_kd_cus
         WHERE h.ph_kd_cus = ?
-          AND h.ph_status IN (${statusPlaceholders})
+          AND (
+            CASE 
+              WHEN (h.ph_status IS NULL OR h.ph_status = 'DRAFT')
+                AND h.ph_apv IS NOT NULL AND h.ph_apv <> ''
+              THEN 'LEGACY_APPROVED'
+              ELSE IFNULL(h.ph_status, 'DRAFT')
+            END
+          ) IN (${statusPlaceholders})
           AND h.ph_cab = ?
           ${customFilter}
           AND (h.ph_nomor LIKE ? OR h.ph_ket LIKE ?)
