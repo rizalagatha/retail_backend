@@ -4,10 +4,11 @@ const { buildTools } = require("../config/aiTools");
 const { SYSTEM_PROMPT } = require("../config/aiPrompt");
 const aiFormatters = require("../config/aiFormatters");
 const aiQueueService = require("./aiQueueService");
+const aiStateService = require("./aiStateService");
 const { format } = require("date-fns");
 const { correctUserTypo } = require("../config/typoCorrector");
 
-const MAX_TOOL_ROUNDS = 2;
+const MAX_TOOL_ROUNDS = 3;
 
 // [BARU] Sapaan sederhana dijawab langsung dari kode — tidak perlu antri
 // atau panggil LLM sama sekali. Selain jauh lebih cepat, ini juga menjamin
@@ -32,7 +33,7 @@ const isSimpleGreeting = (text) => {
   return GREETING_PATTERNS.includes(clean);
 };
 
-const processMessage = async (incomingMessages, user) => {
+const processMessage = async (incomingMessages, user, sessionId = null) => {
   const { waitingCount } = aiQueueService.getQueueStatus();
   const queuedAtStart = waitingCount; // posisi antrian SEBELUM slot didapat
 
@@ -98,8 +99,14 @@ const processMessage = async (incomingMessages, user) => {
       .map((c) => `${c.kode}=${c.nama}`)
       .join(", ");
 
-    // Cukup panggil begini saja:
-    const { tools, executors } = buildTools(user, cabangOptions, allUserText);
+    // [BARU] Ambil state aktif dari sesi ini (kalau ada) dan susun jadi
+    // kalimat konteks eksplisit — mengurangi beban model buat re-infer
+    // konteks dari histori teks mentah tiap kali user follow-up singkat.
+    const activeState = aiStateService.getActiveState(sessionId);
+    const activeStateDesc = aiStateService.describeActiveState(activeState);
+
+    const cukupPanggil = buildTools(user, cabangOptions, allUserText);
+    const { tools, executors } = cukupPanggil;
 
     const todayStr = format(new Date(), "yyyy-MM-dd (EEEE)");
     const systemPrompt = `${SYSTEM_PROMPT}
@@ -113,6 +120,7 @@ Konteks tambahan:
     }
 - Daftar kode cabang: ${cabangLegend}
 - DAFTAR WARNA VALID DI DATABASE: ${warnaLegend}
+${activeStateDesc ? `- Konteks aktif (topik terakhir yang sedang dibahas): ${activeStateDesc}. Jika pesan user sekarang adalah follow-up singkat (ganti cabang/periode/warna/kata kunci saja, tanpa menyebut topik baru), WAJIB lanjutkan dengan tool yang sama sesuai konteks aktif ini.` : ""}
 `;
 
     // 3. Riwayat percakapan dari frontend (sudah dibatasi 6 pesan terakhir di sana)
@@ -201,6 +209,16 @@ Konteks tambahan:
           content: JSON.stringify(resultContent),
         });
         executedResults.push({ fnName, args, resultContent });
+      }
+
+      // [BARU] Simpan tool call TERAKHIR yang berhasil (bukan yang error)
+      // sebagai state aktif sesi ini, buat dipakai di request berikutnya.
+      const successfulCalls = executedResults.filter(
+        (r) => !r.resultContent?.error,
+      );
+      if (successfulCalls.length > 0) {
+        const last = successfulCalls[successfulCalls.length - 1];
+        aiStateService.setActiveState(sessionId, last.fnName, last.args);
       }
 
       if (executedResults.length === 1) {

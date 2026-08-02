@@ -9,12 +9,10 @@ const chat = async (req, res) => {
     const { messages, sessionId } = req.body;
 
     if (!Array.isArray(messages) || messages.length === 0) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Parameter 'messages' wajib diisi (array).",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Parameter 'messages' wajib diisi (array).",
+      });
     }
 
     const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
@@ -38,7 +36,11 @@ const chat = async (req, res) => {
     }
 
     // 3. Proses jawaban AI seperti biasa (logic tool-calling TIDAK berubah)
-    const answer = await aiAgentService.processMessage(messages, req.user);
+    const answer = await aiAgentService.processMessage(
+      messages,
+      req.user,
+      activeSessionId,
+    );
 
     // 4. Simpan jawaban assistant ke histori
     await aiChatHistoryService.saveMessage(
