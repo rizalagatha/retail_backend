@@ -1,6 +1,6 @@
 const aiService = require("./aiService");
 const dashboardService = require("./dashboardService");
-const { buildTools } = require("../config/aiTools");
+const { buildTools, CABANG_ALIAS } = require("../config/aiTools");
 const { SYSTEM_PROMPT } = require("../config/aiPrompt");
 const aiFormatters = require("../config/aiFormatters");
 const aiQueueService = require("./aiQueueService");
@@ -99,6 +99,14 @@ const processMessage = async (incomingMessages, user, sessionId = null) => {
       .map((c) => `${c.kode}=${c.nama}`)
       .join(", ");
 
+    // [BARU] Catatan disambiguasi eksplisit — supaya Claude milih kode yang
+    // benar dari awal (bukan ngandelin backend override), terutama pas
+    // user sebut >1 cabang sekaligus (misal permintaan perbandingan) di
+    // mana override lama cuma bisa pegang SATU nilai untuk semua tool call.
+    const aliasNotes = Object.entries(CABANG_ALIAS)
+      .map(([kota, kode]) => `"${kota}" (tanpa keterangan lain) = ${kode}`)
+      .join("; ");
+
     // [BARU] Ambil state aktif dari sesi ini (kalau ada) dan susun jadi
     // kalimat konteks eksplisit — mengurangi beban model buat re-infer
     // konteks dari histori teks mentah tiap kali user follow-up singkat.
@@ -119,6 +127,7 @@ Konteks tambahan:
         : " (Store, hanya bisa lihat data cabangnya sendiri)"
     }
 - Daftar kode cabang: ${cabangLegend}
+- Catatan disambiguasi nama kota: ${aliasNotes} (ada 2 brand berbeda di kota yang sama, pastikan pilih kode yang sesuai catatan ini)
 - DAFTAR WARNA VALID DI DATABASE: ${warnaLegend}
 ${activeStateDesc ? `- Konteks aktif (topik terakhir yang sedang dibahas): ${activeStateDesc}. Jika pesan user sekarang adalah follow-up singkat (ganti cabang/periode/warna/kata kunci saja, tanpa menyebut topik baru), WAJIB lanjutkan dengan tool yang sama sesuai konteks aktif ini.` : ""}
 `;
@@ -137,6 +146,7 @@ ${activeStateDesc ? `- Konteks aktif (topik terakhir yang sedang dibahas): ${act
     }
 
     // 4. Loop tool-calling
+    let lastSingleResult = null;
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const t0 = Date.now();
       const isLastRound = round === MAX_TOOL_ROUNDS - 1;
@@ -221,21 +231,34 @@ ${activeStateDesc ? `- Konteks aktif (topik terakhir yang sedang dibahas): ${act
         aiStateService.setActiveState(sessionId, last.fnName, last.args);
       }
 
+      // [UBAH] Formatter TIDAK lagi jadi fast-path yang langsung return.
+      // Biarkan Claude sendiri yang menyusun jawaban di round berikutnya
+      // pakai data tool result yang sudah ada di `conversation` — hasilnya
+      // lebih natural, nggak template. Formatter cuma disimpan sebagai
+      // cadangan (lihat safety net di bawah, setelah loop selesai).
       if (executedResults.length === 1) {
-        const { fnName, args, resultContent } = executedResults[0];
-        const formatter = aiFormatters[fnName];
+        lastSingleResult = executedResults[0];
+      }
+    }
 
-        const isDataEmpty =
-          !resultContent ||
-          (Array.isArray(resultContent) && resultContent.length === 0) ||
-          (resultContent.data && resultContent.data.length === 0);
-
-        if (formatter && !resultContent?.error && !isDataEmpty) {
-          try {
-            return formatter(args, resultContent);
-          } catch (fmtErr) {
-            console.error(`[AI FORMATTER ERROR] ${fnName}:`, fmtErr.message);
-          }
+    // Safety net: kalau semua round habis TANPA jawaban teks sama sekali,
+    // pakai formatter template daripada nampilin pesan generik "terlalu
+    // kompleks" — lebih mendingan data mentah rapi daripada nggak jawab.
+    if (lastSingleResult) {
+      const { fnName, args, resultContent } = lastSingleResult;
+      const formatter = aiFormatters[fnName];
+      const isDataEmpty =
+        !resultContent ||
+        (Array.isArray(resultContent) && resultContent.length === 0) ||
+        (resultContent.data && resultContent.data.length === 0);
+      if (formatter && !resultContent?.error && !isDataEmpty) {
+        try {
+          return formatter(args, resultContent);
+        } catch (fmtErr) {
+          console.error(
+            `[AI FORMATTER FALLBACK ERROR] ${fnName}:`,
+            fmtErr.message,
+          );
         }
       }
     }

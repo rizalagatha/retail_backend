@@ -728,12 +728,12 @@ const buildTools = (
   // (cek user.cabang === "KDC" sendiri di dalam), jadi cukup teruskan argumen apa adanya.
   const executors = {
     get_today_sales: async (args) => {
-      const cabang = cabangOverride || args.cabang;
+      const cabang = args.cabang || cabangOverride;
       return dashboardService.getTodayStats(user, cabang || null);
     },
 
     get_sales_chart: async (args) => {
-      const cabang = cabangOverride || args.cabang;
+      const cabang = args.cabang || cabangOverride;
       const { period, startDate, endDate, groupBy = "day" } = args;
 
       let range;
@@ -752,7 +752,7 @@ const buildTools = (
     },
 
     get_top_selling_products: async (args) => {
-      const cabang = cabangOverride || args.cabang;
+      const cabang = args.cabang || cabangOverride;
       const { period, startDate, endDate, limit, search, exclude, page } = args;
       const branchFilter = cabang && cabang !== "ALL" ? cabang : "";
 
@@ -785,7 +785,7 @@ const buildTools = (
     },
 
     get_total_stock: async (args) => {
-      const cabang = cabangOverride || args.cabang;
+      const cabang = args.cabang || cabangOverride;
 
       // [BARU] Kalau cabang spesifik disebut, ambil dari breakdown per
       // cabang (getStockPerCabang) dan filter — getTotalStock sendiri
@@ -819,7 +819,7 @@ const buildTools = (
     },
 
     get_stok_kosong: async (args) => {
-      const cabang = cabangOverride || args.cabang;
+      const cabang = args.cabang || cabangOverride;
       const targetCabang = cabang || (user.cabang !== "KDC" ? user.cabang : "");
       const { search, page } = args;
 
@@ -837,7 +837,7 @@ const buildTools = (
     },
 
     get_stok_kosong_fast_moving: async (args) => {
-      const cabang = cabangOverride || args.cabang;
+      const cabang = args.cabang || cabangOverride;
       return dashboardService.getStokKosongFastMoving(user, {
         cabang: cabang || "ALL",
         page: 1,
@@ -846,7 +846,7 @@ const buildTools = (
     },
 
     get_real_stock: async (args) => {
-      const cabang = cabangOverride || args.cabang;
+      const cabang = args.cabang || cabangOverride;
       const { search, exclude, ukuran, page } = args;
 
       const pageNum = Number(page) || 1;
@@ -865,7 +865,7 @@ const buildTools = (
     get_piutang_total: async () => dashboardService.getTotalSisaPiutang(user),
 
     get_piutang_per_cabang: async (args) => {
-      const cabang = cabangOverride || args.cabang;
+      const cabang = args.cabang || cabangOverride;
       return dashboardService.getPiutangPerCabang(user, cabang || null);
     },
 
@@ -873,7 +873,7 @@ const buildTools = (
     // "per customer" tersendiri, jadi dihitung ulang di sini dari
     // getPiutangPerInvoice (satu customer bisa punya beberapa invoice).
     get_piutang_customer_summary: async (args) => {
-      const cabang = cabangOverride || args.cabang;
+      const cabang = args.cabang || cabangOverride;
       const rows = await dashboardService.getPiutangPerInvoice(
         user,
         cabang || "ALL",
@@ -902,7 +902,7 @@ const buildTools = (
     },
 
     get_sales_target: async (args) => {
-      const cabang = cabangOverride || args.cabang;
+      const cabang = args.cabang || cabangOverride;
 
       let dateRange = null;
       if (monthOverride) {
@@ -958,7 +958,7 @@ const buildTools = (
     },
 
     get_seasonal_sales: async (args) => {
-      const cabang = cabangOverride || args.cabang;
+      const cabang = args.cabang || cabangOverride;
       return dashboardService.getSeasonalSales(user, {
         cabang: cabang || "ALL",
         period: args.period || "1m",
@@ -985,4 +985,4 @@ const buildTools = (
   return { tools: filteredTools, executors: filteredExecutors };
 };
 
-module.exports = { buildTools, resolveDateRange };
+module.exports = { buildTools, resolveDateRange, CABANG_ALIAS };
