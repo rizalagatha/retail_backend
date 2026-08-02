@@ -490,6 +490,20 @@ const aiFormatters = {
       .join("\n");
     return `Daftar deadline terdekat:\n\n${lines}`;
   },
+
+  get_invoice_backlog_analysis: (args, result) => {
+    if (result.jumlahInvoiceBacklog === 0) {
+      return "Tidak ditemukan indikasi invoice atas SO lama di periode ini — omset kemungkinan besar murni dari transaksi baru.";
+    }
+    const lines = result.detail
+      .slice(0, 10)
+      .map(
+        (r, i) =>
+          `${i + 1}. Invoice ${r.inv_nomor} (${r.tgl_invoice}) — SO asli ${r.tgl_so_asli}, telat ${r.lag_hari} hari, nilai ${formatRupiah(r.nominal)}`,
+      )
+      .join("\n");
+    return `Ditemukan ${result.jumlahInvoiceBacklog} invoice atas SO lama (rata-rata telat ${result.avgLagDays} hari), menyumbang ${formatRupiah(result.totalBacklogNominal)} (${result.backlogPercentage}% dari total omset periode ini).\n\nRincian:\n${lines}`;
+  },
 };
 
 module.exports = aiFormatters;

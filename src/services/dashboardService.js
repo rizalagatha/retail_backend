@@ -3014,6 +3014,97 @@ const getDaftarWarna = async () => {
   }
 };
 
+// =========================================================================
+// FITUR BARU: Deteksi Invoice Backlog (SO lama yang baru di-invoice)
+// Berguna untuk menjelaskan lonjakan omset yang SEBENARNYA bukan dari
+// penjualan baru, tapi dari SO lama yang barangnya sudah diambil customer
+// sejak lama, cuma invoice-nya baru diterbitkan belakangan (keterlambatan
+// admin/proses). Tanpa ini, tool seperti get_top_selling_products akan
+// salah kesan seolah barang tersebut benar-benar "laris" di periode itu.
+// =========================================================================
+const getInvoiceBacklogAnalysis = async (user, filters = {}) => {
+  const { cabang = "ALL", startDate, endDate, lagThresholdDays = 3 } = filters;
+
+  const start = startDate || format(subDays(new Date(), 1), "yyyy-MM-dd");
+  const end = endDate || format(new Date(), "yyyy-MM-dd");
+
+  let branchFilter = "";
+  let params = [start, end];
+
+  if (user.cabang !== "KDC") {
+    branchFilter = "AND h.inv_cab = ?";
+    params.push(user.cabang);
+  } else if (cabang !== "ALL") {
+    branchFilter = "AND h.inv_cab = ?";
+    params.push(cabang);
+  }
+
+  // Nominal pakai formula yang sama persis dengan query lain di file ini
+  // (omset - diskon + ppn), supaya angkanya konsisten dengan laporan lain.
+  const backlogQuery = `
+    SELECT 
+      h.inv_nomor,
+      DATE_FORMAT(h.inv_tanggal, '%Y-%m-%d') AS tgl_invoice,
+      h.inv_nomor_so,
+      DATE_FORMAT(so.so_tanggal, '%Y-%m-%d') AS tgl_so_asli,
+      DATEDIFF(h.inv_tanggal, so.so_tanggal) AS lag_hari,
+      (
+        (SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc + 
+        (h.inv_ppn / 100 * ((SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc))
+      ) AS nominal
+    FROM tinv_hdr h
+    JOIN tso_hdr so ON so.so_nomor = h.inv_nomor_so
+    WHERE h.inv_sts_pro = 0 
+      AND h.inv_tanggal BETWEEN ? AND ?
+      AND h.inv_nomor_so IS NOT NULL AND h.inv_nomor_so <> ''
+      ${branchFilter}
+    HAVING lag_hari >= ?
+    ORDER BY lag_hari DESC
+    LIMIT 30;
+  `;
+  const [backlogRows] = await pool.query(backlogQuery, [
+    ...params,
+    lagThresholdDays,
+  ]);
+
+  // Total omset periode itu (buat hitung persentase kontribusi backlog)
+  const totalQuery = `
+    SELECT SUM(
+        (SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc + 
+        (h.inv_ppn / 100 * ((SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc))
+    ) AS totalOmset
+    FROM tinv_hdr h
+    WHERE h.inv_sts_pro = 0 AND h.inv_tanggal BETWEEN ? AND ? ${branchFilter};
+  `;
+  const [totalRows] = await pool.query(totalQuery, params);
+
+  const totalOmsetPeriode = Number(totalRows[0]?.totalOmset || 0);
+  const totalBacklogNominal = backlogRows.reduce(
+    (acc, r) => acc + Number(r.nominal || 0),
+    0,
+  );
+  const backlogPercentage =
+    totalOmsetPeriode > 0
+      ? Number(((totalBacklogNominal / totalOmsetPeriode) * 100).toFixed(1))
+      : 0;
+  const avgLagDays =
+    backlogRows.length > 0
+      ? Math.round(
+          backlogRows.reduce((acc, r) => acc + Number(r.lag_hari), 0) /
+            backlogRows.length,
+        )
+      : 0;
+
+  return {
+    totalOmsetPeriode,
+    totalBacklogNominal,
+    backlogPercentage,
+    jumlahInvoiceBacklog: backlogRows.length,
+    avgLagDays,
+    detail: backlogRows,
+  };
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -3054,4 +3145,5 @@ module.exports = {
   getRealStockList,
   getStokKosongFastMoving,
   getDaftarWarna,
+  getInvoiceBacklogAnalysis,
 };

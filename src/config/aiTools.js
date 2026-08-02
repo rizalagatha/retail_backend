@@ -32,6 +32,7 @@ const ENABLED_TOOLS = [
   "get_agenda_dateline",
   "get_seasonal_sales",
   "get_sales_forecast",
+  "get_invoice_backlog_analysis",
 ];
 
 // --- Resolusi rentang tanggal relatif -> tanggal aktual ---
@@ -748,6 +749,27 @@ const buildTools = (
         },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "get_invoice_backlog_analysis",
+        description:
+          "Cek apakah lonjakan/tingginya omset di suatu periode itu ASLI dari penjualan baru, atau SEBENARNYA dari invoice atas SO LAMA yang baru diterbitkan belakangan (barang sudah lama diambil customer, invoice-nya menyusul). WAJIB panggil tool ini saat menyelidiki pertanyaan 'kenapa omset naik/tinggi/melonjak' SEBAGAI TAMBAHAN dari get_top_selling_products/get_branch_performance — supaya tidak salah menyimpulkan 'barang X laris' padahal penyebab sebenarnya cuma keterlambatan invoice.",
+        parameters: {
+          type: "object",
+          properties: {
+            cabang: {
+              type: "string",
+              enum: [...cabangEnum, "ALL"],
+              description: cabangDesc,
+            },
+            startDate: { type: "string", description: "Format YYYY-MM-DD." },
+            endDate: { type: "string", description: "Format YYYY-MM-DD." },
+          },
+          required: ["startDate", "endDate"],
+        },
+      },
+    },
   ];
 
   // --- Eksekutor: banyak fungsi dashboardService SUDAH self-scoping
@@ -998,6 +1020,15 @@ const buildTools = (
         period: args.period || "1m",
         page: args.page || 1, // Teruskan page
         limit: args.limit || 10, // Teruskan limit
+      });
+    },
+
+    get_invoice_backlog_analysis: async (args) => {
+      const cabang = args.cabang || cabangOverride;
+      return dashboardService.getInvoiceBacklogAnalysis(user, {
+        cabang: cabang || "ALL",
+        startDate: args.startDate,
+        endDate: args.endDate,
       });
     },
   };
