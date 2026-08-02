@@ -57,50 +57,45 @@ const MODEL = "claude-haiku-4-5-20251001"; // Versi Haiku terbaru
 
 const sendChat = async (messages, options = {}) => {
   try {
-    // 1. Ekstrak System Prompt (Claude mewajibkan system prompt dipisah)
-    const systemMessage =
-      messages.find((m) => m.role === "system")?.content || "";
+    // 2. Mapping format pesan OpenAI -> Anthropic (tidak perlu filter role
+    // "system" lagi karena system sekarang dikirim terpisah lewat options)
+    const chatMessages = messages.map((msg) => {
+      // Mapping balasan eksekusi tool
+      if (msg.role === "tool") {
+        return {
+          role: "user", // Di Claude, hasil tool dikirim sebagai role "user"
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: msg.tool_call_id,
+              content: msg.content,
+            },
+          ],
+        };
+      }
 
-    // 2. Mapping format pesan OpenAI -> Anthropic
-    const chatMessages = messages
-      .filter((m) => m.role !== "system")
-      .map((msg) => {
-        // Mapping balasan eksekusi tool
-        if (msg.role === "tool") {
-          return {
-            role: "user", // Di Claude, hasil tool dikirim sebagai role "user"
-            content: [
-              {
-                type: "tool_result",
-                tool_use_id: msg.tool_call_id,
-                content: msg.content,
-              },
-            ],
-          };
-        }
+      // Mapping AI yang memanggil tool di histori sebelumnya
+      if (msg.role === "assistant" && msg.tool_calls) {
+        const content = [];
+        if (msg.content) content.push({ type: "text", text: msg.content });
 
-        // Mapping AI yang memanggil tool di histori sebelumnya
-        if (msg.role === "assistant" && msg.tool_calls) {
-          const content = [];
-          if (msg.content) content.push({ type: "text", text: msg.content });
-
-          msg.tool_calls.forEach((call) => {
-            content.push({
-              type: "tool_use",
-              id: call.id,
-              name: call.function.name,
-              input:
-                typeof call.function.arguments === "string"
-                  ? JSON.parse(call.function.arguments)
-                  : call.function.arguments,
-            });
+        msg.tool_calls.forEach((call) => {
+          content.push({
+            type: "tool_use",
+            id: call.id,
+            name: call.function.name,
+            input:
+              typeof call.function.arguments === "string"
+                ? JSON.parse(call.function.arguments)
+                : call.function.arguments,
           });
-          return { role: "assistant", content };
-        }
+        });
+        return { role: "assistant", content };
+      }
 
-        // Pesan teks biasa
-        return { role: msg.role, content: msg.content };
-      });
+      // Pesan teks biasa
+      return { role: msg.role, content: msg.content };
+    });
 
     // 3. Mapping format skema Tool (parameters -> input_schema)
     const claudeTools = options.tools
@@ -114,15 +109,31 @@ const sendChat = async (messages, options = {}) => {
         }))
       : undefined;
 
+    // [UBAH] System sekarang array 2 blok: blok stabil di-cache (TTL 1 jam,
+    // karena traffic AI ini kemungkinan tidak sepadat traffic umum — TTL
+    // lebih panjang dari default 5 menit mengurangi resiko cache expired
+    // di antara pertanyaan-pertanyaan user yang jaraknya agak lama),
+    // blok dinamis TIDAK di-cache (percuma di-cache karena isinya emang
+    // beda tiap request, cuma nambah write-premium tanpa manfaat).
+    const systemBlocks = [];
+    if (options.systemStable) {
+      systemBlocks.push({
+        type: "text",
+        text: options.systemStable,
+        cache_control: { type: "ephemeral", ttl: "1h" },
+      });
+    }
+    if (options.systemDynamic) {
+      systemBlocks.push({
+        type: "text",
+        text: options.systemDynamic,
+        // sengaja TANPA cache_control
+      });
+    }
+
     const payload = {
       model: options.model || MODEL,
-      system: [
-        {
-          type: "text",
-          text: systemMessage,
-          cache_control: { type: "ephemeral" },
-        },
-      ],
+      system: systemBlocks,
       messages: chatMessages,
       max_tokens: 1500,
       temperature: options.temperature ?? 0.2,
@@ -137,8 +148,10 @@ const sendChat = async (messages, options = {}) => {
       headers: {
         "x-api-key": API_KEY,
         "anthropic-version": "2023-06-01",
-        "anthropic-beta": "prompt-caching-2024-07-31",
         "content-type": "application/json",
+        // [DIHAPUS] "anthropic-beta": "prompt-caching-2024-07-31" — prompt
+        // caching sekarang didukung langsung lewat cache_control tanpa
+        // beta header, header lama ini kemungkinan cuma jadi no-op.
       },
     });
 

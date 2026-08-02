@@ -91,52 +91,43 @@ const processMessage = async (incomingMessages, user, sessionId = null) => {
     console.log(
       `[TYPO CHECK] Asli: "${rawUserText}" | Koreksi: "${allUserText}"`,
     );
-    // --------------------------------------
-    // [BARU] Legend cabang disebut SEKALI di system prompt — sebelumnya
-    // daftar 12 cabang ini di-copy ke deskripsi parameter di 5 tool
-    // berbeda, boros token per request (relevan untuk kuota Groq 6000 tok/menit).
     const cabangLegend = cabangOptions
       .map((c) => `${c.kode}=${c.nama}`)
       .join(", ");
 
-    // [BARU] Catatan disambiguasi eksplisit — supaya Claude milih kode yang
-    // benar dari awal (bukan ngandelin backend override), terutama pas
-    // user sebut >1 cabang sekaligus (misal permintaan perbandingan) di
-    // mana override lama cuma bisa pegang SATU nilai untuk semua tool call.
     const aliasNotes = Object.entries(CABANG_ALIAS)
       .map(([kota, kode]) => `"${kota}" (tanpa keterangan lain) = ${kode}`)
       .join("; ");
 
-    // [BARU] Ambil state aktif dari sesi ini (kalau ada) dan susun jadi
-    // kalimat konteks eksplisit — mengurangi beban model buat re-infer
-    // konteks dari histori teks mentah tiap kali user follow-up singkat.
     const activeState = aiStateService.getActiveState(sessionId);
     const activeStateDesc = aiStateService.describeActiveState(activeState);
 
-    const cukupPanggil = buildTools(user, cabangOptions, allUserText);
-    const { tools, executors } = cukupPanggil;
+    // [UBAH] Pisah jadi 2 blok: STABIL (di-cache) vs DINAMIS (tidak di-cache).
+    // Ini penting untuk efektivitas prompt caching — kalau digabung jadi 1
+    // string, setiap kali activeStateDesc/todayStr berubah (yaitu HAMPIR
+    // SETIAP request, karena beda sesi/beda state), SELURUH blok termasuk
+    // instruksi besar SYSTEM_PROMPT ikut gagal cache. Dengan dipisah,
+    // bagian besar & jarang berubah tetap ke-cache walau bagian kecil beda.
+    const stableSystemPrompt = `${SYSTEM_PROMPT}
+
+Konteks tetap:
+- Daftar kode cabang: ${cabangLegend}
+- Catatan disambiguasi nama kota: ${aliasNotes} (ada 2 brand berbeda di kota yang sama, pastikan pilih kode yang sesuai catatan ini)
+- DAFTAR WARNA VALID DI DATABASE: ${warnaLegend}
+`;
 
     const todayStr = format(new Date(), "yyyy-MM-dd (EEEE)");
-    const systemPrompt = `${SYSTEM_PROMPT}
-
-Konteks tambahan:
+    const dynamicContext = `Konteks saat ini:
 - Hari ini: ${todayStr}
 - User yang bertanya: cabang ${user.cabang}${
       user.cabang === "KDC"
         ? " (Kantor Pusat, bisa lihat semua cabang)"
         : " (Store, hanya bisa lihat data cabangnya sendiri)"
-    }
-- Daftar kode cabang: ${cabangLegend}
-- Catatan disambiguasi nama kota: ${aliasNotes} (ada 2 brand berbeda di kota yang sama, pastikan pilih kode yang sesuai catatan ini)
-- DAFTAR WARNA VALID DI DATABASE: ${warnaLegend}
-${activeStateDesc ? `- Konteks aktif (topik terakhir yang sedang dibahas): ${activeStateDesc}. Jika pesan user sekarang adalah follow-up singkat (ganti cabang/periode/warna/kata kunci saja, tanpa menyebut topik baru), WAJIB lanjutkan dengan tool yang sama sesuai konteks aktif ini.` : ""}
+    }${activeStateDesc ? `\n- Konteks aktif (topik terakhir yang sedang dibahas): ${activeStateDesc}. Jika pesan user sekarang adalah follow-up singkat (ganti cabang/periode/warna/kata kunci saja, tanpa menyebut topik baru), WAJIB lanjutkan dengan tool yang sama sesuai konteks aktif ini.` : ""}
 `;
 
     // 3. Riwayat percakapan dari frontend (sudah dibatasi 6 pesan terakhir di sana)
-    let conversation = [
-      { role: "system", content: systemPrompt },
-      ...incomingMessages,
-    ];
+    let conversation = [...incomingMessages];
 
     const lastUserIndex = conversation.findLastIndex((m) => m.role === "user");
     if (lastUserIndex !== -1) {
@@ -159,6 +150,8 @@ ${activeStateDesc ? `- Konteks aktif (topik terakhir yang sedang dibahas): ${act
           // kasih jawaban teks final (hemat token skema, dan cegah loop
           // "mau manggil tool lagi" yang berakhir di fallback kompleks).
           tools: isLastRound ? [] : tools,
+          systemStable: stableSystemPrompt,
+          systemDynamic: dynamicContext,
         });
       } catch (err) {
         if (err.isToolFormatError) {
@@ -168,6 +161,8 @@ ${activeStateDesc ? `- Konteks aktif (topik terakhir yang sedang dibahas): ${act
           assistantMessage = await aiService.sendChat(conversation, {
             temperature: 0.2,
             tools: isLastRound ? [] : tools,
+            systemStable: stableSystemPrompt,
+            systemDynamic: dynamicContext,
           });
         } else {
           throw err;
