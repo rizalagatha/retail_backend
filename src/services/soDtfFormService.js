@@ -1057,11 +1057,7 @@ const getSoDetailForDtf = async (nomor) => {
       CASE
         WHEN d.sod_custom = 'Y' THEN d.sod_custom_nama
         ELSE TRIM(CONCAT(
-          b.brg_jeniskaos, ' ',
-          b.brg_tipe, ' ',
-          b.brg_lengan, ' ',
-          b.brg_jeniskain, ' ',
-          b.brg_warna
+          b.brg_jeniskaos, ' ', b.brg_tipe, ' ', b.brg_lengan, ' ', b.brg_jeniskain, ' ', b.brg_warna
         ))
       END AS nama,
       d.sod_ukuran AS ukuran,
@@ -1072,7 +1068,8 @@ const getSoDetailForDtf = async (nomor) => {
       (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS total,
       d.sod_custom,
       d.sod_custom_data,
-      d.sod_custom_nama
+      d.sod_custom_nama,
+      d.sod_sd_nomor AS soDtfLinked  -- [BARU] nomor SO DTF yang sudah pakai baris ini, kalau ada
     FROM tso_dtl d
     LEFT JOIN tbarangdc b ON b.brg_kode = d.sod_kode
     WHERE d.sod_so_nomor = ?
