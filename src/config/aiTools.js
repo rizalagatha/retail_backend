@@ -834,7 +834,8 @@ const buildTools = (
           properties: {
             nomor: {
               type: "string",
-              description: "Nomor dokumen persis seperti disebut user.",
+              description:
+                "Nomor dokumen SALIN PERSIS karakter demi karakter dari pesan user, TERMASUK kode cabang di depannya (contoh: 'K06', 'K08', dll). JANGAN PERNAH menerjemahkan atau mengganti kode cabang dengan nama kota (misal JANGAN ubah 'K06' jadi 'BOYOLALI') meskipun ada catatan disambiguasi nama kota di konteks — catatan itu HANYA berlaku untuk parameter 'cabang' di tool lain, TIDAK berlaku untuk nomor dokumen ini.",
             },
           },
           required: ["nomor"],
