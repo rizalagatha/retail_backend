@@ -1,6 +1,5 @@
 const pool = require("../config/database");
 const { format } = require("date-fns");
-const { get } = require("../routes/soRoutes");
 
 // Helper untuk generate Resi
 const encodeResi = (nomorSo) => {
