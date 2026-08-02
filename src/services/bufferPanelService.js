@@ -687,7 +687,7 @@ const generateMonthlyLog = async () => {
   const periode = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
   const [cabangRows] = await pool.query(
-    "SELECT gdg_kode FROM tgudang WHERE gdg_kode != 'KDC'",
+    "SELECT gdg_kode FROM tgudang WHERE gdg_dc = 0 AND gdg_kode != 'KDC'",
   );
 
   const results = { success: [], failed: [] };
