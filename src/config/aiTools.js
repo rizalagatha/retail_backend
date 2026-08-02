@@ -1,4 +1,6 @@
 const dashboardService = require("../services/dashboardService");
+const forecastService = require("../services/forecastService");
+const aiLookupService = require("../services/aiLookupService");
 const {
   format,
   startOfWeek,
@@ -9,7 +11,6 @@ const {
   subWeeks,
   subMonths,
 } = require("date-fns");
-const forecastService = require("../services/forecastService");
 
 const ENABLED_TOOLS = [
   "get_today_sales",
@@ -33,6 +34,11 @@ const ENABLED_TOOLS = [
   "get_seasonal_sales",
   "get_sales_forecast",
   "get_invoice_backlog_analysis",
+  "get_so_belum_invoice",
+  "get_penawaran_belum_followup",
+  "lookup_document",
+  "get_conversion_funnel",
+  "track_order_timeline",
 ];
 
 // --- Resolusi rentang tanggal relatif -> tanggal aktual ---
@@ -770,6 +776,113 @@ const buildTools = (
         },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "get_so_belum_invoice",
+        description:
+          "Cari SO yang barangnya SUDAH SEPENUHNYA DIAMBIL/DISCAN customer tapi BELUM ADA invoice sama sekali. WAJIB dipakai saat investigasi 'kenapa omset naik/tinggi' SEBAGAI PENCEGAHAN — kalau ada banyak SO di sini, itu tanda ada backlog invoice yang BELUM terjadi tapi berpotensi bikin lonjakan mendadak begitu diinvoice.",
+        parameters: {
+          type: "object",
+          properties: {
+            cabang: {
+              type: "string",
+              enum: [...cabangEnum, "ALL"],
+              description: cabangDesc,
+            },
+            minUmurHari: {
+              type: "number",
+              description:
+                "Minimal umur SO dalam hari sejak so_tanggal. Default 1.",
+            },
+          },
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_penawaran_belum_followup",
+        description:
+          "Cari penawaran yang belum jadi SO dan belum ditolak, sudah lewat sekian hari sejak dibuat — indikasi perlu di-follow-up ke customer.",
+        parameters: {
+          type: "object",
+          properties: {
+            cabang: {
+              type: "string",
+              enum: [...cabangEnum, "ALL"],
+              description: cabangDesc,
+            },
+            minUmurHari: {
+              type: "number",
+              description: "Minimal umur penawaran dalam hari. Default 7.",
+            },
+          },
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "lookup_document",
+        description:
+          "Cari 1 dokumen spesifik (SO, Invoice, atau Penawaran) berdasarkan NOMOR PERSIS yang disebut user, tampilkan detail isinya termasuk barang/qty. Gunakan kalau user sebut nomor dokumen eksplisit (contoh: 'apa isi SO K08.SO.2607.0127').",
+        parameters: {
+          type: "object",
+          properties: {
+            nomor: {
+              type: "string",
+              description: "Nomor dokumen persis seperti disebut user.",
+            },
+          },
+          required: ["nomor"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_conversion_funnel",
+        description:
+          "Ambil statistik konversi Penawaran -> SO -> Invoice (berapa persen penawaran jadi closing, rata-rata berapa hari prosesnya). Gunakan untuk pertanyaan level manajemen soal efektivitas sales/closing.",
+        parameters: {
+          type: "object",
+          properties: {
+            cabang: {
+              type: "string",
+              enum: [...cabangEnum, "ALL"],
+              description: cabangDesc,
+            },
+            startDate: {
+              type: "string",
+              description: "Format YYYY-MM-DD. Default 30 hari terakhir.",
+            },
+            endDate: { type: "string", description: "Format YYYY-MM-DD." },
+          },
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "track_order_timeline",
+        description:
+          "Ambil RIWAYAT LENGKAP perjalanan 1 SO — dari penawaran, pembayaran DP, tahap produksi (potong/jahit/lipat/koli/DTF/bordir), sampai invoice & pelunasan. Gunakan ini (BUKAN lookup_document) kalau user tanya status/progres SO tertentu, sudah sampai mana prosesnya, atau kenapa SO tertentu belum jadi invoice. Butuh nomor SO persis.",
+        parameters: {
+          type: "object",
+          properties: {
+            nomorSO: {
+              type: "string",
+              description: "Nomor SO persis seperti disebut user.",
+            },
+          },
+          required: ["nomorSO"],
+        },
+      },
+    },
   ];
 
   // --- Eksekutor: banyak fungsi dashboardService SUDAH self-scoping
@@ -1031,6 +1144,33 @@ const buildTools = (
         endDate: args.endDate,
       });
     },
+
+    get_so_belum_invoice: async (args) => {
+      const cabang = args.cabang || cabangOverride;
+      return aiLookupService.getSoBelumInvoice(user, {
+        cabang: cabang || "ALL",
+        minUmurHari: args.minUmurHari || 1,
+      });
+    },
+    get_penawaran_belum_followup: async (args) => {
+      const cabang = args.cabang || cabangOverride;
+      return aiLookupService.getPenawaranBelumFollowup(user, {
+        cabang: cabang || "ALL",
+        minUmurHari: args.minUmurHari || 7,
+      });
+    },
+    lookup_document: async (args) =>
+      aiLookupService.lookupDocument(user, args.nomor),
+    get_conversion_funnel: async (args) => {
+      const cabang = args.cabang || cabangOverride;
+      return aiLookupService.getConversionFunnel(user, {
+        cabang: cabang || "ALL",
+        startDate: args.startDate,
+        endDate: args.endDate,
+      });
+    },
+    track_order_timeline: async (args) =>
+      aiLookupService.trackOrderSummary(user, args.nomorSO),
   };
 
   const filteredTools = tools.filter((t) =>
