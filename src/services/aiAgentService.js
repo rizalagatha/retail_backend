@@ -91,6 +91,10 @@ const processMessage = async (incomingMessages, user, sessionId = null) => {
     console.log(
       `[TYPO CHECK] Asli: "${rawUserText}" | Koreksi: "${allUserText}"`,
     );
+
+    // [FIX] Baris ini sempat hilang saat refactor system prompt caching
+    const { tools, executors } = buildTools(user, cabangOptions, allUserText);
+
     const cabangLegend = cabangOptions
       .map((c) => `${c.kode}=${c.nama}`)
       .join(", ");
