@@ -214,6 +214,23 @@ const aiFormatters = {
     return text;
   },
 
+  get_sales_forecast: (args, result) => {
+    if (result?.insufficient) return result.message;
+
+    const cabangLabel =
+      args.cabang && args.cabang !== "ALL" ? ` cabang ${args.cabang}` : "";
+    const lines = result.forecast
+      .map(
+        (f, i) =>
+          `${i + 1}. ${f.tanggal}: ${formatRupiah(f.prediksi)} (kisaran ${formatRupiah(f.rangeBawah)} - ${formatRupiah(f.rangeAtas)})`,
+      )
+      .join("\n");
+
+    let text = `Proyeksi penjualan${cabangLabel} (tren ${result.trendDirection}):\n\n${lines}\n\nTotal proyeksi: ${formatRupiah(result.totalForecast)}\n\n${result.disclaimer}`;
+    if (result.reliabilityNote) text += `\n\n${result.reliabilityNote}`;
+    return text;
+  },
+
   get_branch_performance: (args, result) => {
     if (!Array.isArray(result) || result.length === 0) {
       return "Belum ada data performa cabang untuk periode ini, atau fitur ini memang khusus untuk user Pusat (KDC).";

@@ -9,6 +9,7 @@ const {
   subWeeks,
   subMonths,
 } = require("date-fns");
+const forecastService = require("../services/forecastService");
 
 const ENABLED_TOOLS = [
   "get_today_sales",
@@ -30,6 +31,7 @@ const ENABLED_TOOLS = [
   "get_shipment_schedules",
   "get_agenda_dateline",
   "get_seasonal_sales",
+  "get_sales_forecast",
 ];
 
 // --- Resolusi rentang tanggal relatif -> tanggal aktual ---
@@ -346,6 +348,30 @@ const buildTools = (
             },
           },
           required: ["period"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_sales_forecast",
+        description:
+          "Buat PROYEKSI/PREDIKSI penjualan untuk beberapa hari ke DEPAN (bukan data historis). Gunakan HANYA jika user secara eksplisit minta prediksi/proyeksi/perkiraan masa depan (contoh: 'perkiraan omset minggu depan', 'prediksi penjualan 2 minggu ke depan'). JANGAN gunakan untuk pertanyaan soal data yang SUDAH terjadi.",
+        parameters: {
+          type: "object",
+          properties: {
+            cabang: {
+              type: "string",
+              enum: [...cabangEnum, "ALL"],
+              description: cabangDesc,
+            },
+            horizonDays: {
+              type: "number",
+              description:
+                "Jumlah hari ke depan yang diproyeksikan. Default 7, maksimal 30.",
+            },
+          },
+          required: [],
         },
       },
     },
@@ -749,6 +775,14 @@ const buildTools = (
 
       const filters = { ...range, cabang: cabang || "ALL", groupBy };
       return dashboardService.getSalesChartData(filters, user);
+    },
+
+    get_sales_forecast: async (args) => {
+      const cabang = args.cabang || cabangOverride;
+      return forecastService.forecastSales(user, {
+        cabang: cabang && cabang !== "ALL" ? cabang : null,
+        horizonDays: args.horizonDays || 7,
+      });
     },
 
     get_top_selling_products: async (args) => {
