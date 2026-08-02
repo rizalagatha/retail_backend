@@ -104,10 +104,13 @@ const sendChat = async (messages, options = {}) => {
 
     // 3. Mapping format skema Tool (parameters -> input_schema)
     const claudeTools = options.tools
-      ? options.tools.map((t) => ({
+      ? options.tools.map((t, idx, arr) => ({
           name: t.function.name,
           description: t.function.description,
           input_schema: t.function.parameters,
+          ...(idx === arr.length - 1
+            ? { cache_control: { type: "ephemeral" } }
+            : {}),
         }))
       : undefined;
 

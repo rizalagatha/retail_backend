@@ -9,8 +9,6 @@ const {
   subWeeks,
   subMonths,
 } = require("date-fns");
-const natural = require("natural");
-const TfIdf = natural.TfIdf;
 
 const ENABLED_TOOLS = [
   "get_today_sales",
@@ -274,167 +272,6 @@ const resolveRelativeOverride = (rawText) => {
     endDate: fmt(now),
     label: `${n} ${unit} ${tipe}`, // otomatis menjadi "5 hari terakhir" dsb.
   };
-};
-
-// [BARU] Pemetaan kata kunci -> tool relevan. Dipakai buat NARROWING skema
-// tool yang dikirim ke Groq (bukan pengganti tool-calling) — soalnya kirim
-// 16 skema tool sekaligus tiap request itu SENDIRIAN udah kelebihan kuota
-// 6000 token/menit di free tier (1 request bisa >6600 token). Model tetap
-// yang mutusin argumen & eksekusi tool dari daftar yang sudah dipersempit ini.
-const TOOL_KEYWORDS = {
-  get_today_sales: [
-    "penjualan hari ini",
-    "omset hari ini",
-    "omzet hari ini",
-    "jual hari ini",
-  ],
-  get_sales_chart: [
-    "penjualan",
-    "omset",
-    "omzet",
-    "kemarin",
-    "minggu lalu",
-    "minggu ini",
-    "bulan lalu",
-    "bulan ini",
-    "grafik",
-    "trend",
-  ],
-  get_top_selling_products: [
-    "laris",
-    "terlaris",
-    "top produk",
-    "top barang",
-    "best seller",
-    "paling laku",
-    "lagi",
-    "tambah",
-    "selanjutnya",
-    "berikutnya",
-  ],
-  get_total_stock: ["total stok", "stok total", "berapa stok semua"],
-  get_stock_breakdown_per_branch: [
-    "stok per cabang",
-    "stok tiap cabang",
-    "stok semua cabang",
-    "stok masing",
-  ],
-  get_stok_kosong: [
-    "stok kosong",
-    "kosong",
-    "habis",
-    "lagi",
-    "tambah",
-    "selanjutnya",
-    "berikutnya",
-  ],
-  get_stok_kosong_fast_moving: ["fast moving"],
-  get_real_stock: [
-    "stok real",
-    "stok riil",
-    "berapa stok",
-    "sisa stok",
-    "stok barang",
-    "stok combed",
-    "warna",
-    "selain",
-    "lagi",
-    "tambah",
-    "selanjutnya",
-    "berikutnya",
-    "size",
-    "ukuran",
-  ],
-  get_piutang_total: ["piutang", "tagihan", "nunggak", "utang"],
-  get_piutang_per_cabang: [
-    "piutang cabang",
-    "piutang per cabang",
-    "piutang tiap cabang",
-  ],
-  get_piutang_customer_summary: [
-    "piutang customer",
-    "customer piutang",
-    "siapa yang",
-    "pelanggan piutang",
-    "terbanyak",
-  ],
-  get_sales_target: ["target", "capai target", "pencapaian"],
-  get_branch_performance: [
-    "performa",
-    "ranking",
-    "peringkat",
-    "terbaik",
-    "terbagus",
-    "kinerja",
-    "pencapaian",
-  ],
-  get_stagnant_stock_value: ["stagnan"],
-  get_dead_stock_summary: ["dead stock", "mati", "tidak bergerak"],
-  get_cashflow_summary: ["laba", "rugi", "cashflow", "kas"],
-  get_shipment_schedules: [
-    "kirim",
-    "pengiriman",
-    "jadwal kirim",
-    "surat jalan",
-  ],
-  get_agenda_dateline: ["deadline", "dateline", "jatuh tempo"],
-  get_seasonal_sales: [
-    "seasonal",
-    "sesional",
-    "new arrival",
-    "barang baru",
-    "musiman",
-  ],
-};
-
-// Kalau tidak ada keyword yang cocok sama sekali, jatuh ke set default ini
-// (topik paling sering ditanyakan) — daripada kirim semua 16 tool.
-const DEFAULT_FALLBACK_TOOLS = [
-  "get_today_sales",
-  "get_stok_kosong",
-  "get_real_stock",
-  "get_piutang_total",
-  "get_top_selling_products",
-];
-
-const MAX_TOOLS_PER_REQUEST = 6;
-
-const selectRelevantTools = (rawText, availableNames) => {
-  const textLower = (rawText || "").toLowerCase();
-
-  // Inisialisasi mesin TF-IDF
-  const tfidf = new TfIdf();
-
-  // 1. Daftarkan keywords tiap tool sebagai "dokumen" terpisah
-  availableNames.forEach((name) => {
-    const keywords = TOOL_KEYWORDS[name] || [];
-    // Gabungkan array keyword jadi satu paragraf agar mudah dianalisa mesin
-    tfidf.addDocument(keywords.join(" "));
-  });
-
-  const scored = [];
-
-  // 2. Hitung kecocokan (measure) kalimat user terhadap masing-masing tool
-  // TF-IDF otomatis memecah kata dan menghitung bobotnya. Kata yang jarang
-  // (unik) akan punya bobot lebih tinggi dari kata umum.
-  tfidf.tfidfs(textLower, (i, measure) => {
-    if (measure > 0) {
-      scored.push({ name: availableNames[i], score: measure });
-    }
-  });
-
-  // 3. Urutkan dari yang skor kemiripannya paling tinggi
-  scored.sort((a, b) => b.score - a.score);
-
-  let selected =
-    scored.length > 0
-      ? scored.map((t) => t.name)
-      : DEFAULT_FALLBACK_TOOLS.filter((n) => availableNames.includes(n));
-
-  if (selected.length === 0) selected = availableNames;
-
-  // Batasi hanya mengirim skema tool yang relevan untuk hemat token Groq
-  return selected.slice(0, MAX_TOOLS_PER_REQUEST);
 };
 
 // --- Bangun daftar tool + eksekutornya, disesuaikan konteks user yang bertanya ---
@@ -1138,21 +975,14 @@ const buildTools = (
     Object.entries(executors).filter(([name]) => ENABLED_TOOLS.includes(name)),
   );
 
-  const relevantNames = selectRelevantTools(
-    rawQuestion,
-    filteredTools.map((t) => t.function.name),
-  );
-
-  // [FIX] PAKSA MASUKKAN TOOL AKTIF (Mencegah amnesia saat follow-up)
-  if (activeTool && !relevantNames.includes(activeTool)) {
-    relevantNames.push(activeTool);
-  }
-
-  const finalTools = filteredTools.filter((t) =>
-    relevantNames.includes(t.function.name),
-  );
-
-  return { tools: finalTools, executors: filteredExecutors };
+  // [REMOVED] Narrowing TF-IDF dihapus. Dulu wajib ada untuk hemat kuota
+  // 6000 token/menit Groq free tier, tapi sudah tidak relevan di Claude API
+  // dan terbukti riskan salah skor (kata umum seperti "semua"/"cabang" bisa
+  // menang skor dibanding tool yang benar-benar relevan, contoh kasus:
+  // "penjualan bulan Agustus, semua cabang" -> get_sales_chart ke-skip
+  // karena "semua"+"cabang" match ke get_total_stock/get_piutang_per_cabang).
+  // Sekarang SEMUA tool yang ENABLED dikirim tiap request tanpa filter.
+  return { tools: filteredTools, executors: filteredExecutors };
 };
 
 module.exports = { buildTools, resolveDateRange };
