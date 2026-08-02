@@ -103,8 +103,15 @@ const sendChat = async (messages, options = {}) => {
           name: t.function.name,
           description: t.function.description,
           input_schema: t.function.parameters,
+          // [FIX] TTL harus 1h juga di sini, samakan dengan breakpoint system.
+          // Anthropic memproses breakpoint urut: tools -> system -> messages,
+          // dan TTL wajib non-increasing sepanjang urutan itu — breakpoint
+          // belakangan (system) tidak boleh punya TTL lebih panjang dari
+          // breakpoint sebelumnya (tools). Karena tools sekarang selalu
+          // sama tiap request (narrowing sudah dihapus), TTL 1h di sini
+          // juga masuk akal, bukan cuma buat menghindari error.
           ...(idx === arr.length - 1
-            ? { cache_control: { type: "ephemeral" } }
+            ? { cache_control: { type: "ephemeral", ttl: "1h" } }
             : {}),
         }))
       : undefined;
