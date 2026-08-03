@@ -753,7 +753,7 @@ const generateAutomasiMintaBarang = async (user) => {
       SELECT cabang_kode 
       FROM tmaster_jadwal_rutin 
       WHERE (kiriman_1 = ? OR kiriman_2 = ?)
-        AND cabang_kode IN ('K01', 'K02', 'K03', 'K05', 'K06', 'K07', 'K08', 'K09', 'K10', 'K11')
+        AND cabang_kode IN ('K01', 'K02', 'K03', 'K05', 'K06', 'K07', 'K08', 'K09', 'K10', 'K11', 'K12')
     `,
       [tomorrowDayName, tomorrowDayName],
     );
