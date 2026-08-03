@@ -535,6 +535,20 @@ const aiFormatters = {
       .join("\n");
     return `Status buffer cabang ${result.cabang}:\n\n${lines}`;
   },
+
+  get_product_price: (args, result) => {
+    if (result?.error) return result.error;
+    if (!Array.isArray(result) || result.length === 0) {
+      return `Barang untuk pencarian "${args.search}" tidak ditemukan.`;
+    }
+    const lines = result
+      .map(
+        (r, i) =>
+          `${i + 1}. ${r.nama} (Size ${r.ukuran}) — ${formatRupiah(r.harga)}`,
+      )
+      .join("\n");
+    return `Harga dasar untuk "${args.search}":\n\n${lines}`;
+  },
 };
 
 module.exports = aiFormatters;

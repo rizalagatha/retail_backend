@@ -2905,6 +2905,79 @@ const getRealStockList = async (user, filters = {}) => {
 };
 
 // =========================================================================
+// FITUR BARU: Lookup harga dasar barang (brgd_harga) — untuk AI Assistant
+// Harga TIDAK di-scope per cabang, karena brgd_harga di tbarangdc_dtl
+// bersifat global per SKU (bukan per gudang) — beda dari stok yang memang
+// per cabang.
+// =========================================================================
+const getProductPrice = async (searchTerm, exclude = "") => {
+  const tokens = (searchTerm || "")
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+
+  if (tokens.length === 0) {
+    return { error: "Kata kunci pencarian barang wajib diisi." };
+  }
+
+  let searchFilter = "";
+  const params = [];
+
+  tokens.forEach((t) => {
+    searchFilter += ` AND (
+      a.brg_kode LIKE ?
+      OR TRIM(CONCAT(
+        IFNULL(a.brg_jeniskaos,''), ' ',
+        IFNULL(a.brg_tipe,''), ' ',
+        IFNULL(a.brg_lengan,''), ' ',
+        IFNULL(a.brg_jeniskain,''), ' ',
+        IFNULL(a.brg_warna,'')
+      )) LIKE ?
+    ) `;
+    const like = `%${t}%`;
+    params.push(like, like);
+  });
+
+  let excludeFilter = "";
+  if (exclude && exclude.trim() !== "") {
+    excludeFilter = ` AND TRIM(CONCAT(
+      IFNULL(a.brg_jeniskaos,''), ' ',
+      IFNULL(a.brg_tipe,''), ' ',
+      IFNULL(a.brg_lengan,''), ' ',
+      IFNULL(a.brg_jeniskain,''), ' ',
+      IFNULL(a.brg_warna,'')
+    )) NOT LIKE ? `;
+    params.push(`%${exclude.trim()}%`);
+  }
+
+  const query = `
+    SELECT 
+      a.brg_kode AS kode,
+      TRIM(CONCAT(
+        IFNULL(a.brg_jeniskaos,''), ' ',
+        IFNULL(a.brg_tipe,''), ' ',
+        IFNULL(a.brg_lengan,''), ' ',
+        IFNULL(a.brg_jeniskain,''), ' ',
+        IFNULL(a.brg_warna,'')
+      )) AS nama,
+      b.brgd_ukuran AS ukuran,
+      b.brgd_harga AS harga
+    FROM tbarangdc a
+    JOIN tbarangdc_dtl b ON b.brgd_kode = a.brg_kode
+    WHERE a.brg_aktif = 0 
+      AND a.brg_logstok = 'Y'
+      AND a.brg_kode NOT LIKE 'JASA%'
+      ${searchFilter}
+      ${excludeFilter}
+    ORDER BY nama, b.brgd_ukuran
+    LIMIT 30;
+  `;
+
+  const [rows] = await pool.query(query, params);
+  return rows;
+};
+
+// =========================================================================
 // FITUR BARU: Stok Kosong dari Barang Fast Moving
 // (Barang yang terakhir diterima ≤6 bulan lalu, tapi stok sekarang 0/habis)
 // =========================================================================
@@ -3143,6 +3216,7 @@ module.exports = {
   getSpkPendingApproval,
   getAutoMintaAnalytics,
   getRealStockList,
+  getProductPrice,
   getStokKosongFastMoving,
   getDaftarWarna,
   getInvoiceBacklogAnalysis,

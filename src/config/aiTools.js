@@ -44,6 +44,7 @@ const ENABLED_TOOLS = [
   "track_order_timeline",
   "get_buffer_recommendation",
   "get_current_buffer_status",
+  "get_product_price",
 ];
 
 // --- Resolusi rentang tanggal relatif -> tanggal aktual ---
@@ -940,6 +941,30 @@ const buildTools = (
         },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "get_product_price",
+        description:
+          "Cek HARGA DASAR (brgd_harga) barang berdasarkan nama/kode. Harga ini berlaku sama di semua cabang (bukan per-cabang). Gunakan untuk pertanyaan 'harga combed 24s hitam berapa', 'berapa harga barang X'. TIDAK termasuk harga khusus marketplace atau harga khusus per customer.",
+        parameters: {
+          type: "object",
+          properties: {
+            search: {
+              type: "string",
+              description:
+                "Kata kunci pencarian nama barang, WAJIB diisi. Susunan standar: {JenisKaos} {Tipe} {Lengan} {JenisKain} {Warna}. Contoh: 'KO POLOS PENDEK COMBED 24S HITAM'. Jangan masukkan ukuran ke sini.",
+            },
+            exclude: {
+              type: "string",
+              description:
+                "Kata kunci yang harus DIKECUALIKAN, isi jika user pakai kata 'selain'/'kecuali'/'tanpa'.",
+            },
+          },
+          required: ["search"],
+        },
+      },
+    },
   ];
 
   // --- Eksekutor: banyak fungsi dashboardService SUDAH self-scoping
@@ -1244,6 +1269,9 @@ const buildTools = (
         hanyaPerluMinta: args.hanyaPerluMinta || false,
       });
     },
+
+    get_product_price: async (args) =>
+      dashboardService.getProductPrice(args.search, args.exclude || ""),
   };
 
   const filteredTools = tools.filter((t) =>
