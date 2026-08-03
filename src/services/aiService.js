@@ -138,13 +138,22 @@ const sendChat = async (messages, options = {}) => {
       });
     }
 
+    const resolvedModel = options.model || MODEL;
+
     const payload = {
-      model: options.model || MODEL,
+      model: resolvedModel,
       system: systemBlocks,
       messages: chatMessages,
       max_tokens: 1500,
-      temperature: options.temperature ?? 0.2,
     };
+
+    // [FIX] Parameter `temperature` di-deprecate untuk Sonnet 5 (API menolak
+    // requestnya kalau field ini disertakan). Haiku 4.5 masih menerima
+    // temperature normal, jadi kirim kondisional berdasarkan model yang
+    // dipakai request ini — bukan model default global.
+    if (!resolvedModel.startsWith("claude-sonnet-5")) {
+      payload.temperature = options.temperature ?? 0.2;
+    }
 
     if (claudeTools && claudeTools.length > 0) {
       payload.tools = claudeTools;
