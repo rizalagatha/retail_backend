@@ -442,6 +442,27 @@ const BASE_LENGAN_TRIGGERS = [
   { match: "RAGLAN PER PCS", lengan: "RAGLAN" },
 ];
 
+// [BARU] Deteksi lengan langsung dari NAMA JENIS KAOS yang dipilih (bukan
+// dari Harga Tambahan). Dicek TERPISAH dan urutannya sengaja dari yang
+// PALING SPESIFIK ke PALING UMUM — supaya "PANJANG TUNIK" tidak keburu
+// ke-match sebagai "PANJANG" biasa karena keduanya sama-sama mengandung
+// substring "PANJANG".
+const JENISKAOS_LENGAN_TRIGGERS = [
+  { match: "PANJANG TUNIK", lengan: "PANJANG TUNIK" },
+  { match: "TUNIK PANJANG", lengan: "PANJANG TUNIK" }, // jaga-jaga urutan kata terbalik di master
+  { match: "PANJANG 3/4", lengan: "PANJANG 3/4" },
+  { match: "PANJANG 7/8", lengan: "PANJANG 7/8" },
+  { match: "PANJANG", lengan: "PANJANG" }, // paling umum, WAJIB dicek PALING TERAKHIR
+];
+
+const deriveBaseLenganFromJenisKaos = (jenisKaosNama) => {
+  const upper = (jenisKaosNama || "").toUpperCase();
+  for (const { match, lengan } of JENISKAOS_LENGAN_TRIGGERS) {
+    if (upper.includes(match)) return lengan;
+  }
+  return null;
+};
+
 // Urutan size resmi — dipakai untuk penomoran barcode varian (2 digit, berurutan)
 const SIZE_ORDER = [
   "ALLSIZE",
@@ -479,17 +500,29 @@ const LENGAN_SUFFIX_TRIGGERS = [
   { match: "VARIASI JAHIT LIST LENGAN BAWAH", suffix: "VARIASI" },
 ];
 
-const deriveLenganCombo = (additionalCostItems = []) => {
+const deriveLenganCombo = (additionalCostItems = [], jenisKaosNama = "") => {
   const namesUpper = additionalCostItems.map((item) =>
     (item.tambahan || "").toUpperCase().trim(),
   );
 
   let baseLengan = "PENDEK";
+  let matchedFromAdditional = false;
   for (const { match, lengan } of BASE_LENGAN_TRIGGERS) {
     if (namesUpper.includes(match)) {
       baseLengan = lengan;
+      matchedFromAdditional = true;
       break;
     }
+  }
+
+  // [BARU] Kalau tidak ada trigger eksplisit dari Harga Tambahan, coba
+  // derive dari nama Jenis Kaos yang dipilih. Harga Tambahan tetap MENANG
+  // kalau user secara eksplisit pilihnya (misal kasus jenis kaos reguler
+  // tapi customer minta lengan panjang custom) — ini cuma fallback untuk
+  // kasus jenis kaos yang namanya sudah jelas menyatakan lengannya.
+  if (!matchedFromAdditional) {
+    const fromJenisKaos = deriveBaseLenganFromJenisKaos(jenisKaosNama);
+    if (fromJenisKaos) baseLengan = fromJenisKaos;
   }
 
   const suffixes = [];
@@ -519,7 +552,8 @@ const resolveLenganFinal = async (
 
   if (hasOversizedSize || hasOversizedName) return "OVERSIZED";
 
-  const combo = deriveLenganCombo(additionalCostItems);
+  // [UBAH] Teruskan jenisKaosNama ke deriveLenganCombo
+  const combo = deriveLenganCombo(additionalCostItems, jenisKaosNama);
   const [baseLengan, ...suffixParts] = combo.split(" ");
 
   const isAnak = jenisKaosNama.toUpperCase().includes("ANAK");
