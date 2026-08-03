@@ -27,6 +27,11 @@ const ANALYTICAL_KEYWORDS = [
   "analisa",
   "jelaskan kenapa",
   "kok bisa",
+  "rancang",
+  "rancangkan",
+  "rumuskan",
+  "strategi",
+  "rekomendasi",
 ];
 
 const needsDeepAnalysis = (text) => {

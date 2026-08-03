@@ -47,7 +47,7 @@ const initTypoCorrector = async () => {
     fuseInstance = new Fuse(list, {
       keys: ["term"],
       includeScore: true,
-      threshold: 0.2,
+      threshold: 0.1,
       ignoreLocation: true,
     });
 
@@ -164,6 +164,13 @@ const correctUserTypo = (rawText) => {
     "selanjutnya",
     "lagi",
     "tambah",
+    "store",
+    "start",
+    "awal",
+    "mulai",
+    "toko",
+    "cabang",
+    "semua",
   ];
 
   // 2. Fuzzy Matching untuk salah huruf
@@ -171,19 +178,15 @@ const correctUserTypo = (rawText) => {
   let finalText = [];
 
   for (let word of words) {
-    // Placeholder dokumen juga di-skip di sini (jaga-jaga, meski secara
-    // teori sudah tidak match pola kata manapun karena formatnya unik)
-    if (
-      word.length < 4 ||
-      stopWords.includes(word) ||
-      word.startsWith("__doc")
-    ) {
+    // [UBAH] naikkan batas panjang kata dari 4 ke 5 — kata pendek paling
+    // rawan false-positive match ke istilah pendek di DB (warna/kain)
+    if (word.length < 5 || stopWords.includes(word)) {
       finalText.push(word);
       continue;
     }
 
     const results = fuseInstance.search(word);
-    if (results.length > 0 && results[0].score <= 0.2) {
+    if (results.length > 0 && results[0].score <= 0.1) {
       finalText.push(results[0].item.term.toLowerCase());
     } else {
       finalText.push(word);

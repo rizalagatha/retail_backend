@@ -1,6 +1,7 @@
 const dashboardService = require("../services/dashboardService");
 const forecastService = require("../services/forecastService");
 const aiLookupService = require("../services/aiLookupService");
+const aiBufferService = require("../services/aiBufferService");
 const {
   format,
   startOfWeek,
@@ -39,6 +40,10 @@ const ENABLED_TOOLS = [
   "lookup_document",
   "get_conversion_funnel",
   "track_order_timeline",
+  "get_conversion_funnel",
+  "track_order_timeline",
+  "get_buffer_recommendation",
+  "get_current_buffer_status",
 ];
 
 // --- Resolusi rentang tanggal relatif -> tanggal aktual ---
@@ -884,6 +889,57 @@ const buildTools = (
         },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "get_buffer_recommendation",
+        description:
+          "Hitung REKOMENDASI buffer stok (min/max) ideal untuk barang di 1 cabang, berdasarkan LOGIKA RESMI KAOSAN (tier rata-rata penjualan bulanan per ukuran, plus perlakuan khusus untuk barang pareto/top-seller +20% dari proyeksi). WAJIB panggil tool ini untuk pertanyaan 'buffer ideal berapa', 'rekomendasi buffer', 'mekanisme buffer'. JANGAN PERNAH mengarang rumus statistik generik (Z-score/safety stock akademis) — itu bukan sistem yang dipakai di sini.",
+        parameters: {
+          type: "object",
+          properties: {
+            cabang: {
+              type: "string",
+              description:
+                "Kode cabang, WAJIB diisi (data ini dihitung khusus per cabang, tidak ada mode gabungan). Bisa juga 'KDC' untuk buffer gudang pusat (rumusnya beda: 1.5x total buffer semua toko).",
+            },
+            search: {
+              type: "string",
+              description:
+                "Kata kunci nama barang, opsional. Kosongkan untuk lihat ringkasan semua SKU di cabang itu.",
+            },
+          },
+          required: ["cabang"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_current_buffer_status",
+        description:
+          "Ambil STATUS BUFFER YANG SUDAH TERSIMPAN di sistem saat ini (bukan hitungan baru) — bandingkan Min/Max buffer tersetting vs stok riil, plus status 'Harus Minta'/'Sudah Minta'/'Cukup'. Gunakan untuk pertanyaan 'barang apa yang buffernya kurang/perlu restock', 'status buffer sekarang gimana'. Untuk pertanyaan 'buffer IDEAL/rekomendasi berapa' pakai get_buffer_recommendation, bukan ini.",
+        parameters: {
+          type: "object",
+          properties: {
+            cabang: {
+              type: "string",
+              description: "Kode cabang, WAJIB diisi.",
+            },
+            search: {
+              type: "string",
+              description: "Kata kunci nama barang, opsional.",
+            },
+            hanyaPerluMinta: {
+              type: "boolean",
+              description:
+                "Set true JIKA DAN HANYA JIKA user secara spesifik minta daftar barang yang PERLU DIMINTA/RESTOCK saja.",
+            },
+          },
+          required: ["cabang"],
+        },
+      },
+    },
   ];
 
   // --- Eksekutor: banyak fungsi dashboardService SUDAH self-scoping
@@ -1172,6 +1228,22 @@ const buildTools = (
     },
     track_order_timeline: async (args) =>
       aiLookupService.trackOrderSummary(user, args.nomorSO),
+
+    get_buffer_recommendation: async (args) => {
+      const cabang = args.cabang || cabangOverride;
+      return aiBufferService.getBufferRecommendation(user, {
+        cabang,
+        search: args.search,
+      });
+    },
+    get_current_buffer_status: async (args) => {
+      const cabang = args.cabang || cabangOverride;
+      return aiBufferService.getCurrentBufferStatus(user, {
+        cabang,
+        search: args.search,
+        hanyaPerluMinta: args.hanyaPerluMinta || false,
+      });
+    },
   };
 
   const filteredTools = tools.filter((t) =>

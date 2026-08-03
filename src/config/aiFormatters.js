@@ -504,6 +504,37 @@ const aiFormatters = {
       .join("\n");
     return `Ditemukan ${result.jumlahInvoiceBacklog} invoice atas SO lama (rata-rata telat ${result.avgLagDays} hari), menyumbang ${formatRupiah(result.totalBacklogNominal)} (${result.backlogPercentage}% dari total omset periode ini).\n\nRincian:\n${lines}`;
   },
+
+  get_buffer_recommendation: (args, result) => {
+    if (result.needCabang || result.tooMany) return result.message;
+    if (!result.items || result.items.length === 0)
+      return "Tidak ada data buffer untuk pencarian ini.";
+    const lines = result.items
+      .slice(0, 20)
+      .map(
+        (it, i) =>
+          `${i + 1}. ${it.nama} (${it.ukuran}) — Buffer: ${it.buffer} pcs (Min ${it.min} / Max ${it.max})${it.is_pareto ? " 🔥 Pareto" : ""}`,
+      )
+      .join("\n");
+    return `Rekomendasi buffer cabang ${result.cabang}:\n\n${lines}`;
+  },
+
+  get_current_buffer_status: (args, result) => {
+    if (result.needCabang) return result.message;
+    if (result.tooMany) {
+      return `${result.message}\n\nRingkasan: ${result.summary.harusMinta} harus minta, ${result.summary.sudahMinta} sudah minta, ${result.summary.cukup} cukup.`;
+    }
+    if (!result.items || result.items.length === 0)
+      return "Tidak ada data buffer untuk pencarian ini.";
+    const lines = result.items
+      .slice(0, 20)
+      .map(
+        (it, i) =>
+          `${i + 1}. ${it.Nama} (${it.Ukuran}) — Stok: ${it.Stok}, Min: ${it.MinBuffer}, Status: ${it.Status}`,
+      )
+      .join("\n");
+    return `Status buffer cabang ${result.cabang}:\n\n${lines}`;
+  },
 };
 
 module.exports = aiFormatters;
