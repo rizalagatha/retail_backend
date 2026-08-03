@@ -188,13 +188,39 @@ const trackOrderSummary = async (user, nomorSO) => {
     };
   }
 
-  const trimmedLogs = result.logs.map((l) => ({
-    title: l.title,
-    subtitle: l.subtitle,
-    waktu: l.waktu,
-    detail: l.detail,
-    status: l.status, // DONE/ACTIVE/CANCEL
-  }));
+  // [FIX] Sebelumnya cuma ambil 5 field top-level per entry timeline, jadi
+  // detail tahap produksi (potong/jahit/lipat/koli per komponen) yang
+  // tersimpan di `l.children` (khusus entry SPK, lihat isSpkGroup di
+  // soService.trackOrderTimeline) IKUT TERBUANG sebelum sempat sampai ke
+  // Claude — Claude jadi jujur bilang "tidak tersedia" padahal datanya
+  // ada, cuma terpotong di layer ini. Sekarang children di-flatten masuk
+  // ke urutan log yang sama, ditandai lewat field "tahapProduksi" biar
+  // Claude bisa mengenali ini sebagai sub-tahap dari entry SPK induknya.
+  const trimmedLogs = [];
+  result.logs.forEach((l) => {
+    trimmedLogs.push({
+      title: l.title,
+      subtitle: l.subtitle,
+      waktu: l.waktu,
+      detail: l.detail,
+      status: l.status,
+    });
+
+    if (l.isSpkGroup && Array.isArray(l.children) && l.children.length > 0) {
+      // children sudah terurut ASC (rawDate.getTime()) dari sumbernya —
+      // pertahankan urutan itu apa adanya, jangan di-reverse lagi
+      l.children.forEach((child) => {
+        trimmedLogs.push({
+          title: child.title,
+          subtitle: child.subtitle,
+          waktu: child.waktu,
+          detail: child.detail,
+          status: child.status,
+          tahapProduksi: true, // [BARU] penanda ini sub-tahap dari SPK produksi
+        });
+      });
+    }
+  });
 
   return {
     found: true,
