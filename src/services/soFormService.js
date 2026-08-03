@@ -722,7 +722,7 @@ const getSoForEdit = async (nomor) => {
         ukuran: row.sod_ukuran || "",
         stok: Number(row.Stok || 0),
         jumlah: Number(row.sod_jumlah || 0),
-        sod_scanned: finalScanned, // 👈 HASIL DISTRIBUSI
+        sod_scanned: finalScanned,
         mutatedQty: Number(row.mutatedQty || 0),
         isMutated: Number(row.mutatedQty || 0) > 0,
         harga: Number(row.sod_harga || 0),
@@ -736,6 +736,7 @@ const getSoForEdit = async (nomor) => {
         sod_custom: row.sod_custom,
         sod_custom_data: row.sod_custom_data,
         isFreeGift: row.sod_is_free_gift === "Y",
+        dbLineId: row.dbLineId || "",
       };
       return item;
     });
