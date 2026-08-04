@@ -20,8 +20,10 @@ const findById = async (nomor) => {
                  LIMIT 1) as customerLevel,
                 sd_jo_kode as jenisOrderKode, jo_nama as jenisOrderNama, sd_nama as namaDtf, sd_kain as kain,
                 sd_finishing as finishing, sd_desain as desain, sd_workshop as workshopKode,
-                pab_nama as workshopNama, sd_ket as keterangan, h.user_create as user,
-                sd_trial_ref as refTrial
+                pab_nama as workshopNama, 
+                sd_ket as keterangan, h.user_create as user,
+                sd_trial_ref as refTrial,
+                sd_accdp as dpAuthApprover, sd_auth_nomor as dpAuthNomor
             FROM tsodtf_hdr h
             LEFT JOIN kencanaprint.tsales s ON h.sd_sal_kode = s.sal_kode
             LEFT JOIN tcustomer c ON h.sd_cus_kode = c.cus_kode
@@ -131,9 +133,9 @@ const create = async (data, user) => {
         sd_cus_kode, sd_customer, sd_sal_kode, sd_jo_kode,
         sd_so_nomor, sd_so_lineid, sd_nama, sd_kain, sd_finishing,
         sd_desain, sd_workshop, sd_ket, sd_cab, user_create, date_create,
-        sd_trial_ref
+        sd_trial_ref, sd_accdp, sd_auth_nomor
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?)
     `;
     await connection.query(headerQuery, [
       headerIdRec,
@@ -155,10 +157,24 @@ const create = async (data, user) => {
       header.desain,
       header.workshopKode,
       header.keterangan,
-      user.cabang, // sd_cab
-      user.kode, // user_create
-      header.refTrial || null, // sd_trial_ref
+      user.cabang,
+      user.kode,
+      header.refTrial || null,
+      header.dpAuthApprover || null, // [BARU] sd_accdp
+      header.dpAuthNomor || null, // [BARU] sd_auth_nomor
     ]);
+
+    // [BARU] Link balik request otorisasi ke nomor SD final — sama persis
+    // pola soFormService.save "SKENARIO 1": saat request otorisasi diajukan
+    // (sebelum SO DTF ini punya nomor final), field `transaksi` yang dikirim
+    // ke totorisasi masih placeholder ("DRAFT SO DTF"). Setelah dapat nomor
+    // asli, update o_transaksi supaya audit trail-nya nunjuk ke dokumen yang benar.
+    if (header.dpAuthNomor && header.dpAuthNomor.includes("AUTH")) {
+      await connection.query(
+        `UPDATE totorisasi SET o_transaksi = ? WHERE o_nomor = ?`,
+        [newNomor, header.dpAuthNomor],
+      );
+    }
 
     // 4. Insert Detail Ukuran (Tambahkan sdd_idrec)
     // Format IDREC Detail: CAB + 'DT' + Timestamp + Index (agar unik per baris)
@@ -345,15 +361,15 @@ const update = async (nomor, data, user) => {
 
     // 3️⃣ Update HEADER (Termasuk update sd_nomor jika berubah)
     const headerQuery = `
-  UPDATE tsodtf_hdr SET 
-    sd_nomor = ?, 
-    sd_tanggal = ?, sd_datekerja = ?, sd_dateline = ?, sd_cus_kode = ?, sd_customer = ?, 
-    sd_sal_kode = ?, sd_jo_kode = ?, sd_so_nomor = ?, sd_so_lineid = ?, sd_nama = ?, sd_kain = ?, -- [FIX] tambah sd_so_lineid
-    sd_finishing = ?, sd_desain = ?, sd_workshop = ?, sd_ket = ?, 
-    user_modified = ?, date_modified = NOW(),
-    sd_trial_ref = ?
-  WHERE sd_nomor = ?
-`;
+      UPDATE tsodtf_hdr SET 
+        sd_nomor = ?, 
+        sd_tanggal = ?, sd_datekerja = ?, sd_dateline = ?, sd_cus_kode = ?, sd_customer = ?, 
+        sd_sal_kode = ?, sd_jo_kode = ?, sd_so_nomor = ?, sd_so_lineid = ?, sd_nama = ?, sd_kain = ?,
+        sd_finishing = ?, sd_desain = ?, sd_workshop = ?, sd_ket = ?, 
+        user_modified = ?, date_modified = NOW(),
+        sd_trial_ref = ?, sd_accdp = ?, sd_auth_nomor = ?
+      WHERE sd_nomor = ?
+    `;
 
     await connection.query(headerQuery, [
       finalNomor,
@@ -374,8 +390,19 @@ const update = async (nomor, data, user) => {
       header.keterangan,
       userKode,
       header.refTrial || null,
+      header.dpAuthApprover || null, // [BARU]
+      header.dpAuthNomor || null, // [BARU]
       nomor,
     ]);
+
+    // [BARU] Sama seperti create — link balik ke totorisasi kalau otorisasi
+    // baru diajukan di sesi edit ini (dpAuthNomor masih format AUTH placeholder)
+    if (header.dpAuthNomor && header.dpAuthNomor.includes("AUTH")) {
+      await connection.query(
+        `UPDATE totorisasi SET o_transaksi = ? WHERE o_nomor = ?`,
+        [finalNomor, header.dpAuthNomor],
+      );
+    }
 
     // 4️⃣ Kelola DETAIL (Hapus pakai nomor LAMA, Insert pakai nomor BARU)
     // Hapus detail lama
