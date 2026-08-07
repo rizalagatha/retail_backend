@@ -1453,6 +1453,50 @@ const saveProposal = async (data) => {
       }
     }
 
+    // ========================================================================
+    // [BARU] LOGIKA KUNCI HARGA FINANCE
+    // Orthogonal dari ph_status — hanya mengunci FIELD HARGA, bukan seluruh
+    // form. SC tetap bebas ubah qty/biaya tambahan/dll selama proses normal.
+    // ========================================================================
+    let finalHargaLocked = isCurrentlyLocked ? "Y" : "N";
+    let finalLockedBy = existingLockedBy;
+    let finalLockedAt = existingLockedAt;
+
+    if (!isNew && !isSublim && details && details.length > 0) {
+      const [oldPriceRows] = await connection.query(
+        "SELECT phs_size, phs_harga FROM tpengajuanharga_size WHERE phs_nomor = ?",
+        [nomor],
+      );
+      const oldPriceMap = new Map(
+        oldPriceRows.map((r) => [r.phs_size, Number(r.phs_harga)]),
+      );
+
+      if (!isCurrentlyLocked && user.kode === "DARUL") {
+        // Cek apakah DARUL benar-benar mengubah salah satu harga (bukan
+        // cuma menyimpan ulang tanpa perubahan)
+        const hasPriceChange = details.some((item) => {
+          if (!oldPriceMap.has(item.size)) return false; // baris baru, bukan "perubahan"
+          return Number(item.hargaPcs || 0) !== oldPriceMap.get(item.size);
+        });
+        if (hasPriceChange) {
+          finalHargaLocked = "Y";
+          finalLockedBy = "DARUL";
+          finalLockedAt = new Date();
+        }
+      } else if (isCurrentlyLocked && user.kode !== "DARUL") {
+        // [SAFETY NET] Kalau sudah terkunci dan yang simpan BUKAN DARUL,
+        // paksa kembalikan ke harga lama meskipun payload yang terkirim
+        // beda (jaga-jaga kalau frontend readonly-nya ke-bypass). SC tetap
+        // bisa mengubah qty/data lain di baris yang sama, cuma harganya
+        // yang dipaksa balik.
+        details.forEach((item) => {
+          if (oldPriceMap.has(item.size)) {
+            item.hargaPcs = oldPriceMap.get(item.size);
+          }
+        });
+      }
+    }
+
     if (isNew) {
       const headerQuery = `
         INSERT INTO tpengajuanharga 
@@ -1508,50 +1552,6 @@ const saveProposal = async (data) => {
         user.kode,
         nomor,
       ]);
-    }
-
-    // ========================================================================
-    // [BARU] LOGIKA KUNCI HARGA FINANCE
-    // Orthogonal dari ph_status — hanya mengunci FIELD HARGA, bukan seluruh
-    // form. SC tetap bebas ubah qty/biaya tambahan/dll selama proses normal.
-    // ========================================================================
-    let finalHargaLocked = isCurrentlyLocked ? "Y" : "N";
-    let finalLockedBy = existingLockedBy;
-    let finalLockedAt = existingLockedAt;
-
-    if (!isNew && !isSublim && details && details.length > 0) {
-      const [oldPriceRows] = await connection.query(
-        "SELECT phs_size, phs_harga FROM tpengajuanharga_size WHERE phs_nomor = ?",
-        [nomor],
-      );
-      const oldPriceMap = new Map(
-        oldPriceRows.map((r) => [r.phs_size, Number(r.phs_harga)]),
-      );
-
-      if (!isCurrentlyLocked && user.kode === "DARUL") {
-        // Cek apakah DARUL benar-benar mengubah salah satu harga (bukan
-        // cuma menyimpan ulang tanpa perubahan)
-        const hasPriceChange = details.some((item) => {
-          if (!oldPriceMap.has(item.size)) return false; // baris baru, bukan "perubahan"
-          return Number(item.hargaPcs || 0) !== oldPriceMap.get(item.size);
-        });
-        if (hasPriceChange) {
-          finalHargaLocked = "Y";
-          finalLockedBy = "DARUL";
-          finalLockedAt = new Date();
-        }
-      } else if (isCurrentlyLocked && user.kode !== "DARUL") {
-        // [SAFETY NET] Kalau sudah terkunci dan yang simpan BUKAN DARUL,
-        // paksa kembalikan ke harga lama meskipun payload yang terkirim
-        // beda (jaga-jaga kalau frontend readonly-nya ke-bypass). SC tetap
-        // bisa mengubah qty/data lain di baris yang sama, cuma harganya
-        // yang dipaksa balik.
-        details.forEach((item) => {
-          if (oldPriceMap.has(item.size)) {
-            item.hargaPcs = oldPriceMap.get(item.size);
-          }
-        });
-      }
     }
 
     await connection.query(
