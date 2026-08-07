@@ -32,7 +32,7 @@ const generateSoNomor = async (connection, perushKode, joKode) => {
   const prefix = `SO-${perushKode}-${joKode}-`;
   const [rows] = await connection.query(
     `SELECT IFNULL(MAX(CAST(SUBSTR(so_nomor, ?, 6) AS UNSIGNED)), 0) AS jumlah
-     FROM kencanaprintnew.tsalesorder
+     FROM kencanaprint.tsalesorder
      WHERE so_perush_kode = ? AND so_jo_kode = ? AND so_nomor LIKE ?
      FOR UPDATE`,
     [prefix.length + 1, perushKode, joKode, `${prefix}%`],
@@ -236,7 +236,7 @@ const checkSoEligibility = async (phNomor) => {
 /**
  * Data prefill untuk dialog "Generate SO" — SC review/koreksi Sales &
  * Kepentingan sebelum submit. Sales di-cocokkan best-effort dari nama SC
- * (user_create Pengajuan Harga) ke kencanaprintnew.tsales; kalau nggak ketemu,
+ * (user_create Pengajuan Harga) ke kencanaprint.tsales; kalau nggak ketemu,
  * matchedSales null dan SC WAJIB pilih manual di frontend.
  */
 const getSoPrefill = async (phNomor) => {
@@ -279,14 +279,14 @@ const getSoPrefill = async (phNomor) => {
   let matchedSales = null;
   if (ph.user_nama) {
     const [exact] = await pool.query(
-      "SELECT sal_kode, sal_nama FROM kencanaprintnew.tsales WHERE sal_nama = ? LIMIT 1",
+      "SELECT sal_kode, sal_nama FROM kencanaprint.tsales WHERE sal_nama = ? LIMIT 1",
       [ph.user_nama],
     );
     if (exact.length > 0) {
       matchedSales = exact[0];
     } else {
       const [like] = await pool.query(
-        "SELECT sal_kode, sal_nama FROM kencanaprintnew.tsales WHERE sal_nama LIKE ? LIMIT 1",
+        "SELECT sal_kode, sal_nama FROM kencanaprint.tsales WHERE sal_nama LIKE ? LIMIT 1",
         [`%${ph.user_nama}%`],
       );
       if (like.length > 0) matchedSales = like[0];
@@ -294,7 +294,7 @@ const getSoPrefill = async (phNomor) => {
   }
 
   const [kepentinganRows] = await pool.query(
-    "SELECT DISTINCT kepentingan FROM kencanaprintnew.tspk_kepentingan ORDER BY kepentingan",
+    "SELECT DISTINCT kepentingan FROM kencanaprint.tspk_kepentingan ORDER BY kepentingan",
   );
 
   return {
@@ -315,7 +315,7 @@ const getSoPrefill = async (phNomor) => {
 };
 
 /**
- * Generate SO Draft cross-db ke kencanaprintnew.tsalesorder. Berhasil generate
+ * Generate SO Draft cross-db ke kencanaprint.tsalesorder. Berhasil generate
  * akan naikkan status Pengajuan Harga ACC_FINANCE -> ACC_DC, dengan
  * ph_ref_so_spk menyimpan nomor SO baru. Referensi balik (SO -> PH) disimpan
  * di kolom so_invdc (repurposed, sesuai keputusan kalian).
@@ -386,7 +386,7 @@ const generateSalesOrder = async (phNomor, payload, user) => {
 
     // 1. Header SO — so_invdc = nomor Pengajuan Harga
     await connection.query(
-      `INSERT INTO kencanaprintnew.tsalesorder (
+      `INSERT INTO kencanaprint.tsalesorder (
          so_nomor, so_tanggal, so_dateline, so_perush_kode, so_cus_kode, so_cus_kaosan, so_sal_kode,
          so_jo_kode, so_divisi, so_nama, so_nama2, so_jumlah,
          so_ukuran, so_kain, so_finishing, so_gramasi,
@@ -440,7 +440,7 @@ const generateSalesOrder = async (phNomor, payload, user) => {
         const kodeBaris =
           ph.ph_custom === "Y" ? representative.kode : row.phs_kode;
         await connection.query(
-          `INSERT INTO kencanaprintnew.tsalesorder_kaosan (sok_so_nomor, sok_kode, sok_ukuran, sok_qtyorder)
+          `INSERT INTO kencanaprint.tsalesorder_kaosan (sok_so_nomor, sok_kode, sok_ukuran, sok_qtyorder)
            VALUES (?, ?, ?, ?)`,
           [soNomor, kodeBaris, row.phs_size, row.phs_jumlah],
         );
@@ -466,7 +466,7 @@ const generateSalesOrder = async (phNomor, payload, user) => {
       if (Number(row.phs_jumlah) > 0) {
         const d = standarMap[row.phs_size] || {};
         await connection.query(
-          `INSERT INTO kencanaprintnew.tsalesorder_size
+          `INSERT INTO kencanaprint.tsalesorder_size
             (sos_so_nomor, sos_size, sos_qty,
              sos_ld, sos_pb, sos_pl_pendek, sos_pl_panjang, sos_p_bahu,
              sos_l_lengan, sos_l_manset, sos_l_pinggang, sos_p_celana,

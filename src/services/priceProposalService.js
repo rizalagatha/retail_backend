@@ -379,7 +379,7 @@ const markClosed = (nomor, user, refInvoice) =>
 
 /**
  * Sinkronisasi status MENUNGGU_DC -> ACC_DC berdasarkan kolom so_cmo di
- * kencanaprintnew.tsalesorder (satu server MariaDB yang sama, jadi cukup
+ * kencanaprint.tsalesorder (satu server MariaDB yang sama, jadi cukup
  * query cross-db langsung tanpa perlu HTTP call ke MANKSI). Dipanggil
  * otomatis tiap kali browse di-fetch, supaya status selalu up-to-date
  * tanpa perlu tombol manual.
@@ -388,7 +388,7 @@ const syncDcApprovalStatus = async () => {
   const [rows] = await pool.query(
     `SELECT h.ph_nomor, h.ph_ref_so_spk, s.so_cmo
      FROM tpengajuanharga h
-     JOIN kencanaprintnew.tsalesorder s ON s.so_nomor = h.ph_ref_so_spk
+     JOIN kencanaprint.tsalesorder s ON s.so_nomor = h.ph_ref_so_spk
      WHERE h.ph_status = 'MENUNGGU_DC' AND s.so_cmo IS NOT NULL AND s.so_cmo <> ''`,
   );
 
@@ -493,7 +493,7 @@ const applySyncTransition = async ({
 };
 
 /**
- * Sync ACC_DC -> PRODUKSI: dicek dari kencanaprintnew.tspk, apakah SO ini
+ * Sync ACC_DC -> PRODUKSI: dicek dari kencanaprint.tspk, apakah SO ini
  * (ph_ref_so_spk) sudah dibuatkan SPK PPIC (spk_is_so = 0, spk_so_ref = SO
  * kita). SPK PPIC-nya sendiri punya nomor terpisah (format SPK-{perush}-{jo}-
  * xxxxxx), disimpan sekalian buat keperluan matching STBJ di tahap berikutnya.
@@ -502,7 +502,7 @@ const syncProduksiStatus = async () => {
   const [rows] = await pool.query(`
     SELECT h.ph_nomor, h.ph_ref_so_spk, s.spk_nomor AS spkPpicNomor
     FROM tpengajuanharga h
-    JOIN kencanaprintnew.tspk s ON s.spk_so_ref = h.ph_ref_so_spk AND s.spk_is_so = 0
+    JOIN kencanaprint.tspk s ON s.spk_so_ref = h.ph_ref_so_spk AND s.spk_is_so = 0
     WHERE h.ph_status IN ('MENUNGGU_DC', 'ACC_DC')
       AND h.ph_ref_so_spk IS NOT NULL AND h.ph_ref_so_spk <> ''
   `);
@@ -524,7 +524,7 @@ const syncProduksiStatus = async () => {
 /**
  * Sync PRODUKSI -> BARANG_DITERIMA_DC. STBJ (tdc_stbj_dtl.tsd_spk_nomor)
  * mereferensikan NOMOR SPK PPIC, bukan nomor SO langsung — jadi perlu 1 join
- * tambahan lewat kencanaprintnew.tspk (spk_so_ref = ph_ref_so_spk) buat
+ * tambahan lewat kencanaprint.tspk (spk_so_ref = ph_ref_so_spk) buat
  * nerjemahin SO -> SPK PPIC dulu, baru match kode barangnya.
  */
 const syncBarangDiterimaDcStatus = async () => {
@@ -543,7 +543,7 @@ const syncBarangDiterimaDcStatus = async () => {
     ) x
     WHERE x.kodeBarang IS NOT NULL AND EXISTS (
       SELECT 1 FROM tdc_stbj_dtl d
-      JOIN kencanaprintnew.tspk s ON s.spk_nomor = d.tsd_spk_nomor
+      JOIN kencanaprint.tspk s ON s.spk_nomor = d.tsd_spk_nomor
       WHERE s.spk_so_ref = x.ph_ref_so_spk AND s.spk_is_so = 0 AND d.tsd_kode = x.kodeBarang
     )
   `);

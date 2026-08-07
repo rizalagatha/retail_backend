@@ -53,10 +53,10 @@ const getSoManksiDetail = async (soNomor) => {
         s.so_warna_badan, s.so_warna_lengan, s.so_warna_lain,
         s.so_keterangan, s.so_aktif, s.so_close, s.so_cmo,
         s.so_invdc AS refPengajuanHarga
-     FROM kencanaprintnew.tsalesorder s
-     LEFT JOIN kencanaprintnew.tperusahaan p ON p.perush_kode = s.so_perush_kode
-     LEFT JOIN kencanaprintnew.tsales sal ON sal.sal_kode = s.so_sal_kode
-     LEFT JOIN kencanaprintnew.tjenisorder jo ON jo.jo_kode = s.so_jo_kode
+     FROM kencanaprint.tsalesorder s
+     LEFT JOIN kencanaprint.tperusahaan p ON p.perush_kode = s.so_perush_kode
+     LEFT JOIN kencanaprint.tsales sal ON sal.sal_kode = s.so_sal_kode
+     LEFT JOIN kencanaprint.tjenisorder jo ON jo.jo_kode = s.so_jo_kode
      WHERE s.so_nomor = ?`,
     [soNomor],
   );
@@ -83,7 +83,7 @@ const getSoManksiDetail = async (soNomor) => {
         TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) AS nama,
         k.sok_ukuran AS ukuran,
         k.sok_qtyorder AS qty
-     FROM kencanaprintnew.tsalesorder_kaosan k
+     FROM kencanaprint.tsalesorder_kaosan k
      LEFT JOIN tbarangdc a ON a.brg_kode = k.sok_kode
      WHERE k.sok_so_nomor = ?`,
     [soNomor],
@@ -99,7 +99,7 @@ const getSoManksiDetail = async (soNomor) => {
         sos_l_pinggang AS lPinggang, sos_p_celana AS pCelana,
         sos_l_panggul AS lPanggul, sos_l_paha AS lPaha,
         sos_pesak AS pesak, sos_l_lutut AS lLutut, sos_l_bawah AS lBawah
-     FROM kencanaprintnew.tsalesorder_size
+     FROM kencanaprint.tsalesorder_size
      WHERE sos_so_nomor = ?`,
     [soNomor],
   );
