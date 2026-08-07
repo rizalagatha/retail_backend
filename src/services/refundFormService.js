@@ -99,7 +99,7 @@ const getInvoiceLookup = async (cabang) => {
             WHERE LEFT(h.inv_nomor, 3) = ?
         ) X
         -- [PERBAIKAN] Gunakan BETWEEN agar sisa yang ribuan tidak ikut masuk
-        WHERE ABS(X.Nominal - X.Bayar) >= 1
+        WHERE (X.Nominal - X.Bayar) <= -500
           AND (X.Nominal - X.Bayar) <> 0
         ORDER BY X.Nomor;
     `;
