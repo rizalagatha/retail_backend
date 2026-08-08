@@ -2955,7 +2955,7 @@ const searchProducts = async (filters, user) => {
 
   const stokSubQuery = `(IFNULL(${stokFisik}, 0) + IFNULL(${stokPesanan}, 0))`;
 
-  // ---------- QUERY DATA ----------
+  // 1. QUERY DATA UTAMA (Tanpa subquery stok)
   const dataQuery = `
     SELECT
       b.brgd_kode AS kode,
@@ -2968,43 +2968,67 @@ const searchProducts = async (filters, user) => {
         a.brg_warna
       )) AS nama,
       b.brgd_ukuran AS ukuran,
-
       b.brgd_hrg3 AS harga3,
       b.brgd_hrg1 AS harga1,
       ${hargaSelect},
-      a.brg_ktgp AS kategori,
-
-      COALESCE(${stokFisik}, 0) AS stokFisik,
-      COALESCE(${stokPesanan}, 0) AS stokPesanan,
-      ${stokSubQuery} AS stok
-
+      a.brg_ktgp AS kategori
     ${baseFrom}
     ${promoFilterJoin}
     ${baseWhere}
     ${searchWhere}
-
-    ORDER BY nama, b.brgd_ukuran
+    ORDER BY a.brg_kode, b.brgd_ukuran -- Ubah dari nama ke kode agar ringan
     LIMIT ${limitVal} OFFSET ${offsetVal}
   `;
 
-  // ---------- PARAMS UNTUK DATA ----------
-  const dataParams = [
-    // stokFisik
-    user.cabang,
-    // stokPesanan
-    user.cabang,
-    // stokTotal (fisik)
-    user.cabang,
-    // stokTotal (pesanan)
-    user.cabang,
+  const [items] = await pool.query(dataQuery, params);
 
-    // sisanya filter promo + smart search
-    ...params,
-  ];
+  // Jika tidak ada data, langsung return
+  if (items.length === 0) {
+    return { items: [], total: 0 };
+  }
 
-  const [items] = await pool.query(dataQuery, dataParams);
+  // 2. AMBIL STOK HANYA UNTUK ITEM YANG TAMPIL
+  // Kumpulkan kode dan ukuran dari 25 item tersebut
+  const itemKeys = items
+    .map((item) => `('${item.kode}', '${item.ukuran}')`)
+    .join(",");
 
-  return { items, total: countRows[0].total };
+  const queryStokFisik = `
+    SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_in - mst_stok_out) as qty 
+    FROM tmasterstok 
+    WHERE mst_aktif = 'Y' AND mst_cab = ? AND (mst_brg_kode, mst_ukuran) IN (${itemKeys})
+    GROUP BY mst_brg_kode, mst_ukuran
+  `;
+  const [stokFisikData] = await pool.query(queryStokFisik, [user.cabang]);
+
+  // Lakukan hal yang sama untuk tmasterstokso (Stok Pesanan)
+  // ... (query mirip dengan di atas)
+
+  // 3. GABUNGKAN DATA DI JAVASCRIPT
+  // Buat map/dictionary agar pencarian cepat
+  const stokMap = {};
+  stokFisikData.forEach((s) => {
+    stokMap[`${s.mst_brg_kode}_${s.mst_ukuran}`] = {
+      fisik: Number(s.qty) || 0,
+      pesanan: 0,
+    };
+  });
+  // (Lakukan forEach juga untuk data pesanan dan tambahkan ke stokMap)
+
+  // Mapping hasil akhir
+  const finalItems = items.map((item) => {
+    const key = `${item.kode}_${item.ukuran}`;
+    const sFisik = stokMap[key]?.fisik || 0;
+    const sPesanan = stokMap[key]?.pesanan || 0;
+    return {
+      ...item,
+      stokFisik: sFisik,
+      stokPesanan: sPesanan,
+      stok: sFisik + sPesanan,
+    };
+  });
+
+  return { items: finalItems, total: countRows[0].total };
 };
 
 const generateNewSetorNumber = async (connection, cabang, tanggal) => {

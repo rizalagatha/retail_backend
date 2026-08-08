@@ -1915,7 +1915,7 @@ const getAgendaDateline = async (user) => {
         c.cus_nama as customer,
         
         -- Cek apakah sudah jadi invoice
-        IF(EXISTS(SELECT 1 FROM tinv_hdr WHERE inv_nomor_so = h.so_nomor AND inv_sts_pro = 0), 1, 0) AS is_completed,
+        0 AS is_completed,
         
         -- Cek scan ready
         IFNULL((
@@ -1945,6 +1945,7 @@ const getAgendaDateline = async (user) => {
       AND h.so_dateline IS NOT NULL 
       AND h.so_cab <> 'KPR'
       ${filterSo}
+      AND NOT EXISTS (SELECT 1 FROM tinv_hdr WHERE inv_nomor_so = h.so_nomor AND inv_sts_pro = 0)
     
     -- Wajib di-group per SO karena kita pakai GROUP_CONCAT di atas
     GROUP BY h.so_nomor, h.so_dateline, c.cus_nama
@@ -1967,7 +1968,6 @@ const getAgendaDateline = async (user) => {
         
         -- Ambil status pengerjaan riil sebagai rincian (Dari bawah ke atas)
         CASE
-            WHEN EXISTS(SELECT 1 FROM tdc_stbj_dtl WHERE tsd_spk_nomor = spk_nomor) THEN 'Selesai (Diterima DC)'
             WHEN EXISTS(SELECT 1 FROM kencanaprint.tstbj_dtl WHERE stbjd_spk_nomor = spk_nomor) THEN 'Dikirim ke DC (STBJ)'
             WHEN EXISTS(SELECT 1 FROM kencanaprint.tmutasiproduksi_hdr WHERE mph_spk_nomor = spk_nomor AND mph_gdgasal = 'GP013') THEN 'Barang Jadi (Koli)'
             WHEN EXISTS(SELECT 1 FROM kencanaprint.tmutasiproduksi_hdr WHERE mph_spk_nomor = spk_nomor AND mph_gdgasal = 'GP004') THEN 'Proses Lipat'
@@ -1982,15 +1982,13 @@ const getAgendaDateline = async (user) => {
       WHERE spk_divisi = 3 
         AND spk_close = 0 
         AND spk_dateline IS NOT NULL 
+        AND NOT EXISTS (SELECT 1 FROM tdc_stbj_dtl WHERE tsd_spk_nomor = spk_nomor)
     `;
   }
 
   const finalQuery = `
-    SELECT * FROM (
-      SELECT * FROM (${query}) AS combined_agenda
-      WHERE is_completed = 0
-    ) AS filtered_agenda
-    ORDER BY dateline ASC;
+    ${query}
+    ORDER BY dateline ASC
   `;
 
   const [rows] = await pool.query(finalQuery, params);
