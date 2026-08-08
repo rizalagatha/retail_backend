@@ -3,15 +3,15 @@ const { format } = require("date-fns");
 
 // --- Helper: generate nomor SO format MANKSI: SO-{perush}-{jo}-000001 ---
 const generateSpkNomorSo = async (connection, perushKode, joKode) => {
-  const prefix = `${perushKode}-${joKode}-`;
+  const prefix = `SO-${perushKode}-${joKode}-`;
   const [rows] = await connection.query(
-    `SELECT IFNULL(MAX(CAST(SUBSTR(spk_nomor, ?, 6) AS UNSIGNED)), 0) AS jumlah
-     FROM kencanaprint.tspk
-     WHERE spk_perush_kode = ? AND spk_jo_kode = ? AND spk_nomor LIKE ?
+    `SELECT IFNULL(MAX(CAST(SUBSTR(so_nomor, ?, 6) AS UNSIGNED)), 0) AS jumlah
+     FROM kencanaprint.tsalesorder
+     WHERE so_perush_kode = ? AND so_jo_kode = ? AND so_nomor LIKE ?
      FOR UPDATE`,
     [prefix.length + 1, perushKode, joKode, `${prefix}%`],
   );
-  const nextVal = Number(rows[0].jumlah) + 1; // wajib Number() — cegah bug string concat
+  const nextVal = Number(rows[0].jumlah) + 1;
   return `${prefix}${String(nextVal).padStart(6, "0")}`;
 };
 
@@ -573,7 +573,6 @@ const generateBulkSpk = async (items, user) => {
 
     const today = format(new Date(), "yyyy-MM-dd");
 
-    // Kelompokkan per kode barang — satu SO, banyak ukuran
     const grouped = new Map();
     for (const item of items) {
       if (!item.rekomendasi_spk || item.rekomendasi_spk <= 0) continue;
@@ -591,7 +590,8 @@ const generateBulkSpk = async (items, user) => {
     for (const [kode, group] of grouped) {
       const { representative, sizes } = group;
       const joKode = determineJoKode(representative, kode);
-      const spkNomor = await generateSpkNomorSo(
+      // [UBAH] generateSpkNomorSo perlu diarahkan ke tsalesorder (lihat catatan di bawah)
+      const soNomor = await generateSpkNomorSo(
         connection,
         PERUSH_KODE_DC,
         joKode,
@@ -603,16 +603,11 @@ const generateBulkSpk = async (items, user) => {
       const kepentingan = representative.kepentingan || "NORMAL";
       const dateline = representative.dateline || today;
 
-      // Tentukan varian ukuran dari brg_lengan (PENDEK/PANJANG)
       const lenganUpper = String(representative.brg_lengan || "").toUpperCase();
       const varianUkuran = lenganUpper.includes("PANJANG")
         ? "LENGAN_PANJANG"
         : "LENGAN_PENDEK";
 
-      // --- VALIDASI (replikasi logika SO divisi 3) ---
-      // sumKaosan (total qty per SO) harus sama dengan qtyPesan (spk_jumlah).
-      // Karena totalQty dihitung dari items yang sama dengan sizes, ini otomatis sama —
-      // dipertahankan sebagai pengaman jika logika berubah di masa depan.
       const sumKaosan = sizes.reduce((acc, s) => acc + Number(s.qty || 0), 0);
       if (sumKaosan === 0) {
         console.warn(`[generateBulkSpk] Qty 0 untuk kode=${kode}, dilewati.`);
@@ -624,21 +619,23 @@ const generateBulkSpk = async (items, user) => {
         );
       }
 
-      // 1. Header SO
+      // 1. Header SO — [UBAH] target tsalesorder, hapus spk_is_so/spk_so_ref
+      // (itu cuma workaround buat "SO palsu" di tabel tspk legacy, gak perlu
+      // lagi karena tsalesorder tabelnya sendiri). so_acc_customer/so_acc_tanggal
+      // SENGAJA TIDAK diisi — divisi 3/Kaosan tidak mensyaratkan acc customer.
       await connection.query(
-        `INSERT INTO kencanaprint.tspk (
-           spk_nomor, spk_is_so, spk_so_ref,
-           spk_tanggal, spk_cus_kode, spk_cus_kaosan, spk_sal_kode,
-           spk_jo_kode, spk_divisi, spk_nama, spk_jumlah,
-           spk_ukuran, spk_kain, spk_finishing, spk_nomor_po,
-           spk_dateline, spk_cab, spk_cabkaos, spk_tipe, spk_statuskerja,
-           spk_standar_ukuran, spk_varian_ukuran,
-           spk_perush_kode, spk_ketbeli, spk_keterangan,
-           spk_aktif, spk_close,
+        `INSERT INTO kencanaprint.tsalesorder (
+           so_nomor, so_tanggal, so_cus_kode, so_cus_kaosan, so_sal_kode,
+           so_jo_kode, so_divisi, so_nama, so_jumlah,
+           so_ukuran, so_kain, so_finishing, so_nomor_po,
+           so_dateline, so_cab, so_cabkaos, so_tipe, so_statuskerja,
+           so_standar_ukuran, so_varian_ukuran,
+           so_perush_kode, so_ketbeli, so_keterangan,
+           so_aktif, so_close,
            user_create, date_create
-         ) VALUES (?, 1, NULL, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Y', 0, ?, NOW())`,
+         ) VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Y', 0, ?, NOW())`,
         [
-          spkNomor,
+          soNomor,
           today,
           CUS_KODE_DC,
           SAL_KODE_DC,
@@ -653,10 +650,10 @@ const generateBulkSpk = async (items, user) => {
           dateline,
           CAB_KODE_DC,
           CAB_KODE_DC,
-          "Premium", // [FIX] spk_tipe — sebelumnya literal '' kosong, tidak pernah terisi
+          "Premium",
           kepentingan,
-          "KENCANA", // spk_standar_ukuran
-          varianUkuran, // spk_varian_ukuran
+          "KENCANA",
+          varianUkuran,
           PERUSH_KODE_DC,
           "Rekomendasi otomatis Perencanaan Produksi (DC Planning)",
           formatSpkKeterangan(representative, kode),
@@ -664,18 +661,14 @@ const generateBulkSpk = async (items, user) => {
         ],
       );
 
-      // 2. Detail Kaosan (tspk_dc) — WAJIB untuk divisi 3
-      // Karena jo_kode di sini selalu barang fisik (KO/KK/LL/JK, bukan jasa BR/SB/SD/PL/DP/TG/PM),
-      // kodeItem = kode barang asli (item.kode), bukan nomor SPK
+      // 2. Detail Kaosan — [UBAH] tsalesorder_kaosan (kolom sok_*, bukan spkd_*)
       for (const s of sizes) {
         await connection.query(
-          `INSERT INTO kencanaprint.tspk_dc (spkd_nomor, spkd_kode, spkd_ukuran, spkd_qtyorder)
+          `INSERT INTO kencanaprint.tsalesorder_kaosan (sok_so_nomor, sok_kode, sok_ukuran, sok_qtyorder)
            VALUES (?, ?, ?, ?)`,
-          [spkNomor, kode, s.ukuran, s.qty],
+          [soNomor, kode, s.ukuran, s.qty],
         );
 
-        // Sinkronisasi ke tbarangdc_dtl (Ignore if exist) — kode & ukuran sudah pasti ada
-        // karena SKU ini memang berasal dari tbarangdc_dtl (data DC Planning)
         await connection.query(
           `INSERT IGNORE INTO tbarangdc_dtl (brgd_kode, brgd_ukuran, brgd_hrg1)
            VALUES (?, ?, 0)`,
@@ -683,19 +676,19 @@ const generateBulkSpk = async (items, user) => {
         );
       }
 
-      // 3. Detail Size (tspk_size) — ukuran badan, standar Kencana sementara
+      // 3. Detail Size — [UBAH] tsalesorder_size (kolom sos_*, bukan spks_*)
       const standarMap = await getStandarUkuranKencana(joKode);
       for (const s of sizes) {
         const d = standarMap[s.ukuran] || {};
         await connection.query(
-          `INSERT INTO kencanaprint.tspk_size
-            (spks_nomor, spks_size, spks_qty,
-             spks_ld, spks_pl_pendek, spks_pl_panjang, spks_p_bahu,
-             spks_l_lengan, spks_l_manset, spks_l_pinggang, spks_p_celana,
-             spks_l_panggul, spks_l_paha, spks_pesak, spks_l_lutut, spks_l_bawah)
+          `INSERT INTO kencanaprint.tsalesorder_size
+            (sos_so_nomor, sos_size, sos_qty,
+             sos_ld, sos_pl_pendek, sos_pl_panjang, sos_p_bahu,
+             sos_l_lengan, sos_l_manset, sos_l_pinggang, sos_p_celana,
+             sos_l_panggul, sos_l_paha, sos_pesak, sos_l_lutut, sos_l_bawah)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            spkNomor,
+            soNomor,
             s.ukuran,
             s.qty,
             Number(d.ts_ld) || 0,
@@ -715,7 +708,10 @@ const generateBulkSpk = async (items, user) => {
         );
       }
 
-      // --- Log audit: catat bahwa SO ini hasil auto-generate dari DC Planning ---
+      // Log audit — nomor kolom log_spk_nomor DIPERTAHANKAN apa adanya
+      // (nama kolomnya masih "spk" secara historis, tapi isinya sekarang
+      // nomor tsalesorder — kemungkinan tidak masalah karena sifatnya cuma
+      // referensi string, bukan foreign key ke tspk). Lihat catatan di bawah.
       const ukuranDetailLog = sizes
         .map((s) => `${s.ukuran}=${s.qty}`)
         .join(",");
@@ -726,7 +722,7 @@ const generateBulkSpk = async (items, user) => {
             user_create, date_create)
          VALUES (?, 'DC_PLANNING', ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
-          spkNomor,
+          soNomor,
           kode,
           ukuranDetailLog,
           totalQty,
