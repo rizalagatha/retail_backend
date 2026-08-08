@@ -1038,32 +1038,34 @@ const getStockAlerts = async (user) => {
   let paramsPiutangOverdue = [];
 
   if (cabang === "KDC") {
-    // Mode KDC: Perhitungan dilakukan dengan standar JOIN + HAVING
-    // Filter tanggal dilakukan terlebih dahulu agar jumlah baris yang di JOIN sedikit
+    // Mode KDC: Gunakan Correlated Subquery untuk menghindari GROUP BY dan Temporary Table
     queryPiutangOverdue = `
       SELECT COUNT(*) AS total
-      FROM (
-        SELECT u.ph_nomor
-        FROM tpiutang_hdr u
-        JOIN tpiutang_dtl d ON u.ph_nomor = d.pd_ph_nomor
-        WHERE DATE_ADD(u.ph_tanggal, INTERVAL u.ph_top DAY) < CURDATE()
-        GROUP BY u.ph_nomor
-        HAVING (SUM(d.pd_debet) - SUM(d.pd_kredit)) > 100
-      ) AS overdue_invoices
+      FROM tpiutang_hdr u
+      WHERE DATEDIFF(CURDATE(), u.ph_tanggal) > u.ph_top
+        -- [KRUSIAL] Jika tabel tpiutang_hdr memiliki kolom status lunas atau sisa piutang,
+        -- wajib tambahkan di sini agar tidak scan nota bertahun-tahun lalu yang sudah lunas.
+        -- Contoh: AND u.ph_lunas = 0  ATAU  AND u.ph_sisa > 0
+        AND (
+          SELECT IFNULL(SUM(pd_debet) - SUM(pd_kredit), 0)
+          FROM tpiutang_dtl d
+          WHERE d.pd_ph_nomor = u.ph_nomor
+        ) > 100
     `;
   } else {
-    // Mode Cabang: Sama, filter cabang dan tanggal dulu, baru gabung dan cek selisihnya
+    // Mode Cabang
     queryPiutangOverdue = `
       SELECT COUNT(*) AS total
-      FROM (
-        SELECT u.ph_nomor
-        FROM tpiutang_hdr u
-        JOIN tpiutang_dtl d ON u.ph_nomor = d.pd_ph_nomor
-        WHERE u.ph_cab = ?
-          AND DATE_ADD(u.ph_tanggal, INTERVAL u.ph_top DAY) < CURDATE()
-        GROUP BY u.ph_nomor
-        HAVING (SUM(d.pd_debet) - SUM(d.pd_kredit)) > 100
-      ) AS overdue_invoices
+      FROM tpiutang_hdr u
+      WHERE u.ph_cab = ?
+        AND DATEDIFF(CURDATE(), u.ph_tanggal) > u.ph_top
+        -- [KRUSIAL] Sama seperti di atas, tambahkan filter lunas jika ada.
+        -- Contoh: AND u.ph_lunas = 0
+        AND (
+          SELECT IFNULL(SUM(pd_debet) - SUM(pd_kredit), 0)
+          FROM tpiutang_dtl d
+          WHERE d.pd_ph_nomor = u.ph_nomor
+        ) > 100
     `;
     paramsPiutangOverdue.push(cabang);
   }
@@ -2575,323 +2577,122 @@ const getRealStockList = async (user, filters = {}) => {
   const limitNum = parseInt(limit) || 50;
   const offset = (pageNum - 1) * limitNum;
 
-  // 4. Query Pengambilan Stok Real
+  // 4. Query Pengambilan Stok Real (Dioptimalkan)
   const query = `
-    WITH open_so AS (
-      SELECT Nomor
+    -- 1. BASE FILTER: Saring data utama terlebih dahulu agar proses selanjutnya sangat ringan
+    WITH base_filtered AS (
+      SELECT 
+        m.mst_cab, 
+        a.brg_kode, 
+        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+        m.mst_ukuran,
+        SUM(CASE WHEN m.sumber='RAK' THEN (m.mst_stok_in-m.mst_stok_out) ELSE 0 END) AS stok_fisik,
+        SUM(CASE WHEN m.sumber='SO' THEN (m.mst_stok_in-m.mst_stok_out) ELSE 0 END) AS stok_pesanan
       FROM (
-        SELECT
-          y.Nomor,
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, 'RAK' AS sumber 
+        FROM tmasterstok WHERE mst_aktif='Y'
+        UNION ALL
+        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, 'SO' AS sumber 
+        FROM tmasterstokso WHERE mst_aktif='Y'
+      ) m
+      JOIN tbarangdc a ON a.brg_kode = m.mst_brg_kode
+      WHERE 1=1
+        ${branchFilter}
+        ${searchFilter}
+        ${ukuranFilter}
+        ${excludeFilter}
+        AND a.brg_aktif = 0
+        AND a.brg_logstok = 'Y'
+        AND a.brg_kode NOT LIKE 'JASA%'
+      GROUP BY 
+        m.mst_cab, a.brg_kode, nama, m.mst_ukuran
+    ),
+
+    -- 2. OPEN SO
+    open_so AS (
+      SELECT Nomor FROM (
+        SELECT y.Nomor,
           CASE
             WHEN y.sts <> 0 THEN 'DICLOSE'
             WHEN y.StatusKirim = 'TERKIRIM' THEN 'CLOSE'
-            WHEN y.StatusKirim = 'BELUM'
-                AND y.keluar = 0
-                AND y.minta = ''
-                AND y.pesan = 0
-              THEN 'OPEN'
+            WHEN y.StatusKirim = 'BELUM' AND y.keluar = 0 AND y.minta = '' AND y.pesan = 0 THEN 'OPEN'
             ELSE 'PROSES'
           END AS StatusFinal
         FROM (
-          SELECT
-            x.*,
-            IF(
-              x.QtyInv = 0,
-              'BELUM',
-              IF(x.QtyInv >= x.QtySO, 'TERKIRIM', 'SEBAGIAN')
-            ) AS StatusKirim,
-
-            IFNULL((
-              SELECT SUM(m.mst_stok_out)
-              FROM tmasterstok m
-              WHERE m.mst_noreferensi IN (
-                SELECT o.mo_nomor
-                FROM tmutasiout_hdr o
-                WHERE o.mo_so_nomor = x.Nomor
-              )
-            ), 0) AS keluar,
-
-            IFNULL((
-              SELECT mt_nomor
-              FROM tmintabarang_hdr
-              WHERE mt_so = x.Nomor
-              LIMIT 1
-            ), '') AS minta,
-
-            IFNULL((
-              SELECT SUM(mst_stok_in - mst_stok_out)
-              FROM tmasterstokso
-              WHERE mst_aktif = 'Y'
-                AND mst_nomor_so = x.Nomor
-            ), 0) AS pesan
-
+          SELECT x.*,
+            IF(x.QtyInv = 0, 'BELUM', IF(x.QtyInv >= x.QtySO, 'TERKIRIM', 'SEBAGIAN')) AS StatusKirim,
+            IFNULL((SELECT SUM(m.mst_stok_out) FROM tmasterstok m WHERE m.mst_noreferensi IN (SELECT o.mo_nomor FROM tmutasiout_hdr o WHERE o.mo_so_nomor = x.Nomor)), 0) AS keluar,
+            IFNULL((SELECT mt_nomor FROM tmintabarang_hdr WHERE mt_so = x.Nomor LIMIT 1), '') AS minta,
+            IFNULL((SELECT SUM(mst_stok_in - mst_stok_out) FROM tmasterstokso WHERE mst_aktif = 'Y' AND mst_nomor_so = x.Nomor), 0) AS pesan
           FROM (
-            SELECT
-              h.so_nomor AS Nomor,
-              h.so_close AS sts,
-
-              IFNULL((
-                SELECT SUM(dd.sod_jumlah)
-                FROM tso_dtl dd
-                WHERE dd.sod_so_nomor = h.so_nomor
-              ), 0) AS QtySO,
-
-              IFNULL((
-                SELECT SUM(dd.invd_jumlah)
-                FROM tinv_hdr hh
-                JOIN tinv_dtl dd
-                  ON dd.invd_inv_nomor = hh.inv_nomor
-                WHERE hh.inv_sts_pro = 0
-                  AND hh.inv_nomor_so = h.so_nomor
-              ), 0) AS QtyInv
-
+            SELECT h.so_nomor AS Nomor, h.so_close AS sts,
+              IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
+              IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0) AS QtyInv
             FROM tso_hdr h
-            WHERE h.so_close = 0
-              AND h.so_aktif = 'Y'
+            WHERE h.so_close = 0 AND h.so_aktif = 'Y'
           ) x
         ) y
-      ) z
-      WHERE z.StatusFinal = 'OPEN'
-    )
+      ) z WHERE z.StatusFinal = 'OPEN'
+    ),
     
-    ,
+    -- 3. SO SUMMARY: Di-join dengan base_filtered agar hanya menghitung barang yang sedang dicari
     so_summary AS (
       SELECT
-        h.so_cab,
-        d.sod_kode,
-        d.sod_ukuran,
-
-        SUM(
-          d.sod_jumlah - IFNULL(d.sod_scanned,0)
-        ) AS pesanan_proses,
-
+        h.so_cab, d.sod_kode, d.sod_ukuran,
+        SUM(d.sod_jumlah - IFNULL(d.sod_scanned,0)) AS pesanan_proses,
         GROUP_CONCAT(
-          CONCAT(
-            h.so_nomor,
-            ' (',
-            IFNULL(c.cus_nama,'-'),
-            ') - ',
-            (d.sod_jumlah - IFNULL(d.sod_scanned,0)),
-            ' pcs'
-          )
-          ORDER BY h.so_nomor
-          SEPARATOR '<br>'
+          CONCAT(h.so_nomor, ' (', IFNULL(c.cus_nama,'-'), ') - ', (d.sod_jumlah - IFNULL(d.sod_scanned,0)), ' pcs')
+          ORDER BY h.so_nomor SEPARATOR '<br>'
         ) AS detail_pesanan_proses
-
       FROM open_so os
-      JOIN tso_hdr h
-        ON h.so_nomor = os.Nomor
-      JOIN tso_dtl d
-        ON d.sod_so_nomor = h.so_nomor
-      LEFT JOIN tcustomer c
-        ON c.cus_kode = h.so_cus_kode
-
+      JOIN tso_hdr h ON h.so_nomor = os.Nomor
+      JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor
+      JOIN base_filtered bf ON bf.mst_cab = h.so_cab AND bf.brg_kode = d.sod_kode AND bf.mst_ukuran = d.sod_ukuran
+      LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
       WHERE d.sod_jumlah > IFNULL(d.sod_scanned,0)
-
-      GROUP BY
-        h.so_cab,
-        d.sod_kode,
-        d.sod_ukuran
+      GROUP BY h.so_cab, d.sod_kode, d.sod_ukuran
     ),
 
+    -- 4. OTW SUMMARY: Di-join dengan base_filtered agar tidak menghitung seluruh mutasi
     otw_summary AS (
-
-      SELECT
-        cabang,
-        kode,
-        ukuran,
-
-        SUM(qty) AS sudah_minta,
-
-        GROUP_CONCAT(
-          CONCAT(
-            sumber,
-            ' : ',
-            nomor,
-            ' - ',
-            qty,
-            ' pcs'
-          )
-          SEPARATOR '<br>'
-        ) AS detail_sudah_minta
-
+      SELECT cabang, kode, ukuran, SUM(qty) AS sudah_minta,
+        GROUP_CONCAT(CONCAT(sumber, ' : ', nomor, ' - ', qty, ' pcs') SEPARATOR '<br>') AS detail_sudah_minta
       FROM (
-
-        SELECT
-          h.mt_cab AS cabang,
-          d.mtd_kode AS kode,
-          d.mtd_ukuran AS ukuran,
-          h.mt_nomor AS nomor,
-          SUM(d.mtd_jumlah) AS qty,
-          'Minta Barang' AS sumber
-        FROM tmintabarang_hdr h
-        JOIN tmintabarang_dtl d
-          ON d.mtd_nomor = h.mt_nomor
-        WHERE h.mt_closing='N'
-          AND h.mt_close='N'
-        GROUP BY
-          h.mt_cab,
-          d.mtd_kode,
-          d.mtd_ukuran,
-          h.mt_nomor
-
+        SELECT h.mt_cab AS cabang, d.mtd_kode AS kode, d.mtd_ukuran AS ukuran, h.mt_nomor AS nomor, SUM(d.mtd_jumlah) AS qty, 'Minta Barang' AS sumber
+        FROM tmintabarang_hdr h JOIN tmintabarang_dtl d ON d.mtd_nomor = h.mt_nomor WHERE h.mt_closing='N' AND h.mt_close='N' GROUP BY h.mt_cab, d.mtd_kode, d.mtd_ukuran, h.mt_nomor
         UNION ALL
-
-        SELECT
-          h.pl_cab_tujuan,
-          d.pld_kode,
-          d.pld_ukuran,
-          h.pl_nomor,
-          SUM(d.pld_jumlah),
-          'Packing List'
-        FROM tpacking_list_hdr h
-        JOIN tpacking_list_dtl d
-          ON d.pld_nomor = h.pl_nomor
-        WHERE h.pl_status='O'
-        GROUP BY
-          h.pl_cab_tujuan,
-          d.pld_kode,
-          d.pld_ukuran,
-          h.pl_nomor
-
+        SELECT h.pl_cab_tujuan, d.pld_kode, d.pld_ukuran, h.pl_nomor, SUM(d.pld_jumlah), 'Packing List'
+        FROM tpacking_list_hdr h JOIN tpacking_list_dtl d ON d.pld_nomor = h.pl_nomor WHERE h.pl_status='O' GROUP BY h.pl_cab_tujuan, d.pld_kode, d.pld_ukuran, h.pl_nomor
         UNION ALL
-
-        SELECT
-          h.sj_kecab,
-          d.sjd_kode,
-          d.sjd_ukuran,
-          h.sj_nomor,
-          SUM(d.sjd_jumlah),
-          'Surat Jalan'
-        FROM tdc_sj_hdr h
-        JOIN tdc_sj_dtl d
-          ON d.sjd_nomor = h.sj_nomor
-        WHERE h.sj_noterima=''
-        GROUP BY
-          h.sj_kecab,
-          d.sjd_kode,
-          d.sjd_ukuran,
-          h.sj_nomor
-
+        SELECT h.sj_kecab, d.sjd_kode, d.sjd_ukuran, h.sj_nomor, SUM(d.sjd_jumlah), 'Surat Jalan'
+        FROM tdc_sj_hdr h JOIN tdc_sj_dtl d ON d.sjd_nomor = h.sj_nomor WHERE h.sj_noterima='' GROUP BY h.sj_kecab, d.sjd_kode, d.sjd_ukuran, h.sj_nomor
       ) x
-
-      GROUP BY
-        cabang,
-        kode,
-        ukuran
+      JOIN base_filtered bf ON bf.mst_cab = x.cabang AND bf.brg_kode = x.kode AND bf.mst_ukuran = x.ukuran
+      GROUP BY cabang, kode, ukuran
     )
 
-    SELECT
-      m.mst_cab AS cabang,
-      a.brg_kode AS kode,
-
-      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
-
-      m.mst_ukuran AS ukuran,
-
-      SUM(
-        CASE
-          WHEN m.sumber='RAK'
-          THEN (m.mst_stok_in-m.mst_stok_out)
-          ELSE 0
-        END
-      ) AS stok_fisik,
-
-      SUM(
-        CASE
-          WHEN m.sumber='SO'
-          THEN (m.mst_stok_in-m.mst_stok_out)
-          ELSE 0
-        END
-      ) AS stok_pesanan,
-
-    IFNULL(so.pesanan_proses,0) AS pesanan_proses,
-
-    IFNULL(otw.sudah_minta,0) AS sudah_minta,
-       
-    IFNULL(otw.detail_sudah_minta,'') AS detail_sudah_minta,
-
-    IFNULL(so.detail_pesanan_proses,'') AS detail_pesanan_proses,
-
-      (
-        SUM(
-          CASE
-            WHEN m.sumber='RAK'
-            THEN (m.mst_stok_in-m.mst_stok_out)
-            ELSE 0
-          END
-        )
-        -
-        SUM(
-          CASE
-            WHEN m.sumber='SO'
-            THEN (m.mst_stok_in-m.mst_stok_out)
-            ELSE 0
-          END
-        )
-      ) AS stok_real
-
-    FROM (
-      SELECT
-        mst_brg_kode,
-        mst_ukuran,
-        mst_stok_in,
-        mst_stok_out,
-        mst_cab,
-        'RAK' AS sumber
-      FROM tmasterstok
-      WHERE mst_aktif='Y'
-
-      UNION ALL
-
-      SELECT
-        mst_brg_kode,
-        mst_ukuran,
-        mst_stok_in,
-        mst_stok_out,
-        mst_cab,
-        'SO' AS sumber
-      FROM tmasterstokso
-      WHERE mst_aktif='Y'
-    ) m
-
-    JOIN tbarangdc a
-      ON a.brg_kode = m.mst_brg_kode
-
-    LEFT JOIN so_summary so
-      ON so.so_cab = m.mst_cab
-    AND so.sod_kode = a.brg_kode
-    AND so.sod_ukuran = m.mst_ukuran
-
-    LEFT JOIN otw_summary otw
-      ON otw.cabang = m.mst_cab
-    AND otw.kode = a.brg_kode
-    AND otw.ukuran = m.mst_ukuran
-
-    WHERE 1=1
-      ${branchFilter}
-      ${searchFilter}
-      ${ukuranFilter}
-      ${excludeFilter}
-      AND a.brg_aktif = 0
-      AND a.brg_logstok = 'Y'
-      AND a.brg_kode NOT LIKE 'JASA%'
-
-    GROUP BY
-      m.mst_cab,
-      a.brg_kode,
-      nama,
-      m.mst_ukuran
-
-    HAVING
-      stok_fisik > 0
-      OR stok_pesanan > 0
-      OR pesanan_proses > 0
-
-    ORDER BY
-      stok_real ASC,
-      nama ASC
-
+    -- 5. FINAL SELECT
+    SELECT 
+      bf.mst_cab AS cabang,
+      bf.brg_kode AS kode,
+      bf.nama,
+      bf.mst_ukuran AS ukuran,
+      bf.stok_fisik,
+      bf.stok_pesanan,
+      IFNULL(so.pesanan_proses, 0) AS pesanan_proses,
+      IFNULL(otw.sudah_minta, 0) AS sudah_minta,
+      IFNULL(otw.detail_sudah_minta, '') AS detail_sudah_minta,
+      IFNULL(so.detail_pesanan_proses, '') AS detail_pesanan_proses,
+      (bf.stok_fisik - bf.stok_pesanan) AS stok_real
+    FROM base_filtered bf
+    LEFT JOIN so_summary so 
+      ON so.so_cab = bf.mst_cab AND so.sod_kode = bf.brg_kode AND so.sod_ukuran = bf.mst_ukuran
+    LEFT JOIN otw_summary otw 
+      ON otw.cabang = bf.mst_cab AND otw.kode = bf.brg_kode AND otw.ukuran = bf.mst_ukuran
+    HAVING 
+      stok_fisik > 0 OR stok_pesanan > 0 OR pesanan_proses > 0
+    ORDER BY 
+      stok_real ASC, bf.nama ASC
     LIMIT ? OFFSET ?
   `;
 
