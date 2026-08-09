@@ -1038,14 +1038,13 @@ const getStockAlerts = async (user) => {
   let paramsPiutangOverdue = [];
 
   if (cabang === "KDC") {
-    // Mode KDC: Gunakan Correlated Subquery untuk menghindari GROUP BY dan Temporary Table
+    // Mode KDC
     queryPiutangOverdue = `
       SELECT COUNT(*) AS total
       FROM tpiutang_hdr u
-      WHERE DATEDIFF(CURDATE(), u.ph_tanggal) > u.ph_top
-        -- [KRUSIAL] Jika tabel tpiutang_hdr memiliki kolom status lunas atau sisa piutang,
-        -- wajib tambahkan di sini agar tidak scan nota bertahun-tahun lalu yang sudah lunas.
-        -- Contoh: AND u.ph_lunas = 0  ATAU  AND u.ph_sisa > 0
+      -- [SOLUSI] Batasi hanya mengecek nota 1 tahun terakhir agar memakai index
+      WHERE u.ph_tanggal >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR) 
+        AND DATEDIFF(CURDATE(), u.ph_tanggal) > u.ph_top
         AND (
           SELECT IFNULL(SUM(pd_debet) - SUM(pd_kredit), 0)
           FROM tpiutang_dtl d
@@ -1058,9 +1057,9 @@ const getStockAlerts = async (user) => {
       SELECT COUNT(*) AS total
       FROM tpiutang_hdr u
       WHERE u.ph_cab = ?
+        -- [SOLUSI] Batasi hanya mengecek nota 1 tahun terakhir agar memakai index
+        AND u.ph_tanggal >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)
         AND DATEDIFF(CURDATE(), u.ph_tanggal) > u.ph_top
-        -- [KRUSIAL] Sama seperti di atas, tambahkan filter lunas jika ada.
-        -- Contoh: AND u.ph_lunas = 0
         AND (
           SELECT IFNULL(SUM(pd_debet) - SUM(pd_kredit), 0)
           FROM tpiutang_dtl d
