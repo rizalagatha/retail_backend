@@ -2577,9 +2577,9 @@ const getRealStockList = async (user, filters = {}) => {
   const limitNum = parseInt(limit) || 50;
   const offset = (pageNum - 1) * limitNum;
 
-  // 4. Query Pengambilan Stok Real (Dioptimalkan)
+  // 4. Query Pengambilan Stok Real (Dioptimalkan Tingkat Lanjut)
   const query = `
-    -- 1. BASE FILTER: Saring data utama terlebih dahulu agar proses selanjutnya sangat ringan
+    -- 1. BASE FILTER: Saring data utama terlebih dahulu
     WITH base_filtered AS (
       SELECT 
         m.mst_cab, 
@@ -2608,34 +2608,27 @@ const getRealStockList = async (user, filters = {}) => {
         m.mst_cab, a.brg_kode, nama, m.mst_ukuran
     ),
 
-    -- 2. OPEN SO
+    -- 2. OPEN SO: [PERBAIKAN] Diganti menggunakan NOT EXISTS agar eksekusi instan
     open_so AS (
-      SELECT Nomor FROM (
-        SELECT y.Nomor,
-          CASE
-            WHEN y.sts <> 0 THEN 'DICLOSE'
-            WHEN y.StatusKirim = 'TERKIRIM' THEN 'CLOSE'
-            WHEN y.StatusKirim = 'BELUM' AND y.keluar = 0 AND y.minta = '' AND y.pesan = 0 THEN 'OPEN'
-            ELSE 'PROSES'
-          END AS StatusFinal
-        FROM (
-          SELECT x.*,
-            IF(x.QtyInv = 0, 'BELUM', IF(x.QtyInv >= x.QtySO, 'TERKIRIM', 'SEBAGIAN')) AS StatusKirim,
-            IFNULL((SELECT SUM(m.mst_stok_out) FROM tmasterstok m WHERE m.mst_noreferensi IN (SELECT o.mo_nomor FROM tmutasiout_hdr o WHERE o.mo_so_nomor = x.Nomor)), 0) AS keluar,
-            IFNULL((SELECT mt_nomor FROM tmintabarang_hdr WHERE mt_so = x.Nomor LIMIT 1), '') AS minta,
-            IFNULL((SELECT SUM(mst_stok_in - mst_stok_out) FROM tmasterstokso WHERE mst_aktif = 'Y' AND mst_nomor_so = x.Nomor), 0) AS pesan
-          FROM (
-            SELECT h.so_nomor AS Nomor, h.so_close AS sts,
-              IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
-              IFNULL((SELECT SUM(dd.invd_jumlah) FROM tinv_hdr hh JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor), 0) AS QtyInv
-            FROM tso_hdr h
-            WHERE h.so_close = 0 AND h.so_aktif = 'Y'
-          ) x
-        ) y
-      ) z WHERE z.StatusFinal = 'OPEN'
+      SELECT h.so_nomor AS Nomor
+      FROM tso_hdr h
+      WHERE h.so_close = 0 
+        AND h.so_aktif = 'Y'
+        -- Tidak ada Invoice
+        AND NOT EXISTS (SELECT 1 FROM tinv_hdr i WHERE i.inv_nomor_so = h.so_nomor AND i.inv_sts_pro = 0)
+        -- Tidak ada Minta Barang
+        AND NOT EXISTS (SELECT 1 FROM tmintabarang_hdr mt WHERE mt.mt_so = h.so_nomor)
+        -- Tidak ada Pesan (Master Stok SO) yg mengubah stok
+        AND NOT EXISTS (SELECT 1 FROM tmasterstokso ms WHERE ms.mst_nomor_so = h.so_nomor AND ms.mst_aktif = 'Y' AND (ms.mst_stok_in - ms.mst_stok_out) > 0)
+        -- Tidak ada Mutasi Keluar
+        AND NOT EXISTS (
+          SELECT 1 FROM tmutasiout_hdr mo 
+          JOIN tmasterstok m ON m.mst_noreferensi = mo.mo_nomor 
+          WHERE mo.mo_so_nomor = h.so_nomor AND m.mst_stok_out > 0
+        )
     ),
     
-    -- 3. SO SUMMARY: Di-join dengan base_filtered agar hanya menghitung barang yang sedang dicari
+    -- 3. SO SUMMARY
     so_summary AS (
       SELECT
         h.so_cab, d.sod_kode, d.sod_ukuran,
@@ -2653,21 +2646,37 @@ const getRealStockList = async (user, filters = {}) => {
       GROUP BY h.so_cab, d.sod_kode, d.sod_ukuran
     ),
 
-    -- 4. OTW SUMMARY: Di-join dengan base_filtered agar tidak menghitung seluruh mutasi
+    -- 4. OTW SUMMARY: [PERBAIKAN] INNER JOIN base_filtered diselipkan ke dalam 
+    -- masing-masing blok UNION agar tidak membaca seluruh riwayat mutasi
     otw_summary AS (
       SELECT cabang, kode, ukuran, SUM(qty) AS sudah_minta,
         GROUP_CONCAT(CONCAT(sumber, ' : ', nomor, ' - ', qty, ' pcs') SEPARATOR '<br>') AS detail_sudah_minta
       FROM (
         SELECT h.mt_cab AS cabang, d.mtd_kode AS kode, d.mtd_ukuran AS ukuran, h.mt_nomor AS nomor, SUM(d.mtd_jumlah) AS qty, 'Minta Barang' AS sumber
-        FROM tmintabarang_hdr h JOIN tmintabarang_dtl d ON d.mtd_nomor = h.mt_nomor WHERE h.mt_closing='N' AND h.mt_close='N' GROUP BY h.mt_cab, d.mtd_kode, d.mtd_ukuran, h.mt_nomor
+        FROM tmintabarang_hdr h 
+        JOIN tmintabarang_dtl d ON d.mtd_nomor = h.mt_nomor 
+        JOIN base_filtered bf ON bf.mst_cab = h.mt_cab AND bf.brg_kode = d.mtd_kode AND bf.mst_ukuran = d.mtd_ukuran
+        WHERE h.mt_closing='N' AND h.mt_close='N' 
+        GROUP BY h.mt_cab, d.mtd_kode, d.mtd_ukuran, h.mt_nomor
+        
         UNION ALL
+        
         SELECT h.pl_cab_tujuan, d.pld_kode, d.pld_ukuran, h.pl_nomor, SUM(d.pld_jumlah), 'Packing List'
-        FROM tpacking_list_hdr h JOIN tpacking_list_dtl d ON d.pld_nomor = h.pl_nomor WHERE h.pl_status='O' GROUP BY h.pl_cab_tujuan, d.pld_kode, d.pld_ukuran, h.pl_nomor
+        FROM tpacking_list_hdr h 
+        JOIN tpacking_list_dtl d ON d.pld_nomor = h.pl_nomor 
+        JOIN base_filtered bf ON bf.mst_cab = h.pl_cab_tujuan AND bf.brg_kode = d.pld_kode AND bf.mst_ukuran = d.pld_ukuran
+        WHERE h.pl_status='O' 
+        GROUP BY h.pl_cab_tujuan, d.pld_kode, d.pld_ukuran, h.pl_nomor
+        
         UNION ALL
+        
         SELECT h.sj_kecab, d.sjd_kode, d.sjd_ukuran, h.sj_nomor, SUM(d.sjd_jumlah), 'Surat Jalan'
-        FROM tdc_sj_hdr h JOIN tdc_sj_dtl d ON d.sjd_nomor = h.sj_nomor WHERE h.sj_noterima='' GROUP BY h.sj_kecab, d.sjd_kode, d.sjd_ukuran, h.sj_nomor
+        FROM tdc_sj_hdr h 
+        JOIN tdc_sj_dtl d ON d.sjd_nomor = h.sj_nomor 
+        JOIN base_filtered bf ON bf.mst_cab = h.sj_kecab AND bf.brg_kode = d.sjd_kode AND bf.mst_ukuran = d.sjd_ukuran
+        WHERE h.sj_noterima='' 
+        GROUP BY h.sj_kecab, d.sjd_kode, d.sjd_ukuran, h.sj_nomor
       ) x
-      JOIN base_filtered bf ON bf.mst_cab = x.cabang AND bf.brg_kode = x.kode AND bf.mst_ukuran = x.ukuran
       GROUP BY cabang, kode, ukuran
     )
 
