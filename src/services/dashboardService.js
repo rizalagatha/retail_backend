@@ -1907,7 +1907,6 @@ const getAgendaDateline = async (user) => {
     params = [];
   }
 
-  // OPTIMASI: Ganti Correlated Subquery dengan JOIN & GROUP BY di luar
   let query = `
     SELECT 
         'SO' as tipe, 
@@ -1915,7 +1914,6 @@ const getAgendaDateline = async (user) => {
         DATE_FORMAT(h.so_dateline, '%Y-%m-%d') as dateline, 
         c.cus_nama as customer,
         
-        -- Cek apakah sudah jadi invoice
         0 AS is_completed,
         
         -- Cek scan ready
@@ -1925,7 +1923,7 @@ const getAgendaDateline = async (user) => {
             WHERE sod_so_nomor = h.so_nomor
         ), 0) AS is_scan_ready,
 
-        -- Ambil rincian DTF menggunakan GROUP_CONCAT yang lebih efisien via JOIN di bawah
+        -- Ambil rincian DTF
         GROUP_CONCAT(
             DISTINCT CASE 
                 WHEN d.sod_custom_nama IS NOT NULL AND d.sod_custom_nama != '' THEN d.sod_custom_nama
@@ -1937,22 +1935,20 @@ const getAgendaDateline = async (user) => {
 
     FROM tso_hdr h 
     LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
-    
-    -- Lakukan LEFT JOIN langsung untuk mempermudah GROUP_CONCAT
     LEFT JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor AND d.sod_custom = 'Y'
     LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_sd_nomor
 
     WHERE h.so_close = 0 
       AND h.so_dateline IS NOT NULL 
+      -- [SOLUSI 1] Batasi agenda maksimal 6 bulan terakhir agar tabel sementara sangat kecil
+      AND h.so_dateline >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
       AND h.so_cab <> 'KPR'
       ${filterSo}
       AND NOT EXISTS (SELECT 1 FROM tinv_hdr WHERE inv_nomor_so = h.so_nomor AND inv_sts_pro = 0)
     
-    -- Wajib di-group per SO karena kita pakai GROUP_CONCAT di atas
     GROUP BY h.so_nomor, h.so_dateline, c.cus_nama
   `;
 
-  // [BARU] Sisipkan SPK untuk user KDC
   if (user.cabang === "KDC") {
     query += `
       UNION ALL
@@ -1962,12 +1958,11 @@ const getAgendaDateline = async (user) => {
         DATE_FORMAT(spk_dateline, '%Y-%m-%d') as dateline,
         CONCAT('[', IFNULL(spk_cabkaos, 'UMUM'), '] ', spk_nama) as customer,
         
-        -- Gunakan EXISTS agar lebih ringan daripada COUNT
-        IF(EXISTS(SELECT 1 FROM tdc_stbj_dtl WHERE tsd_spk_nomor = spk_nomor), 1, 0) AS is_completed,
+        -- [SOLUSI 2] Ganti menjadi 0 statis (karena sudah difilter di NOT EXISTS bawah)
+        0 AS is_completed,
         
         0 AS is_scan_ready,
         
-        -- Ambil status pengerjaan riil sebagai rincian (Dari bawah ke atas)
         CASE
             WHEN EXISTS(SELECT 1 FROM kencanaprint.tstbj_dtl WHERE stbjd_spk_nomor = spk_nomor) THEN 'Dikirim ke DC (STBJ)'
             WHEN EXISTS(SELECT 1 FROM kencanaprint.tmutasiproduksi_hdr WHERE mph_spk_nomor = spk_nomor AND mph_gdgasal = 'GP013') THEN 'Barang Jadi (Koli)'
@@ -1983,12 +1978,18 @@ const getAgendaDateline = async (user) => {
       WHERE spk_divisi = 3 
         AND spk_close = 0 
         AND spk_dateline IS NOT NULL 
+        -- [SOLUSI 1] Batasi agenda maksimal 6 bulan terakhir
+        AND spk_dateline >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
         AND NOT EXISTS (SELECT 1 FROM tdc_stbj_dtl WHERE tsd_spk_nomor = spk_nomor)
     `;
   }
 
+  // [SOLUSI 3] Bungkus query UNION sebelum di-ORDER BY
+  // agar MySQL menyusun tabel sementara secara optimal
   const finalQuery = `
-    ${query}
+    SELECT * FROM (
+      ${query}
+    ) AS final_agenda
     ORDER BY dateline ASC
   `;
 
