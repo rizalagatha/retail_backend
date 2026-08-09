@@ -1038,33 +1038,33 @@ const getStockAlerts = async (user) => {
   let paramsPiutangOverdue = [];
 
   if (cabang === "KDC") {
-    // Mode KDC
+    // Mode KDC: Sargable filter date + Batasan 6 bulan
     queryPiutangOverdue = `
       SELECT COUNT(*) AS total
-      FROM tpiutang_hdr u
-      -- [SOLUSI] Batasi hanya mengecek nota 1 tahun terakhir agar memakai index
-      WHERE u.ph_tanggal >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR) 
-        AND DATEDIFF(CURDATE(), u.ph_tanggal) > u.ph_top
-        AND (
-          SELECT IFNULL(SUM(pd_debet) - SUM(pd_kredit), 0)
-          FROM tpiutang_dtl d
-          WHERE d.pd_ph_nomor = u.ph_nomor
-        ) > 100
+      FROM (
+        SELECT u.ph_nomor
+        FROM tpiutang_hdr u
+        JOIN tpiutang_dtl d ON u.ph_nomor = d.pd_ph_nomor
+        WHERE u.ph_tanggal >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+          AND u.ph_tanggal < DATE_SUB(CURDATE(), INTERVAL u.ph_top DAY)
+        GROUP BY u.ph_nomor
+        HAVING SUM(d.pd_debet) - SUM(d.pd_kredit) > 100
+      ) AS overdue_invoices
     `;
   } else {
     // Mode Cabang
     queryPiutangOverdue = `
       SELECT COUNT(*) AS total
-      FROM tpiutang_hdr u
-      WHERE u.ph_cab = ?
-        -- [SOLUSI] Batasi hanya mengecek nota 1 tahun terakhir agar memakai index
-        AND u.ph_tanggal >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)
-        AND DATEDIFF(CURDATE(), u.ph_tanggal) > u.ph_top
-        AND (
-          SELECT IFNULL(SUM(pd_debet) - SUM(pd_kredit), 0)
-          FROM tpiutang_dtl d
-          WHERE d.pd_ph_nomor = u.ph_nomor
-        ) > 100
+      FROM (
+        SELECT u.ph_nomor
+        FROM tpiutang_hdr u
+        JOIN tpiutang_dtl d ON u.ph_nomor = d.pd_ph_nomor
+        WHERE u.ph_cab = ?
+          AND u.ph_tanggal >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+          AND u.ph_tanggal < DATE_SUB(CURDATE(), INTERVAL u.ph_top DAY)
+        GROUP BY u.ph_nomor
+        HAVING SUM(d.pd_debet) - SUM(d.pd_kredit) > 100
+      ) AS overdue_invoices
     `;
     paramsPiutangOverdue.push(cabang);
   }
