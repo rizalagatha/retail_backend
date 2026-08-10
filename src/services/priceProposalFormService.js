@@ -494,6 +494,8 @@ const sizeOrderIndex = (size) => {
 
 const LENGAN_SUFFIX_TRIGGERS = [
   { match: "BELAH SAMPING", suffix: "BELAH SAMPING" },
+  { match: "CUTTING BAWAH OVAL", suffix: "CUTTING OVAL" },
+  { match: "LIST LENGAN PANJANG", suffix: "LIST LENGAN" },
   { match: "MANSET", suffix: "MANSET" },
   { match: "POTONG LENGAN", suffix: "POTONG LENGAN" },
   { match: "RIB LENGAN", suffix: "RIB" },
