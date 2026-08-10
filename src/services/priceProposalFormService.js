@@ -413,8 +413,11 @@ const renameAccCustomerProof = async (tempFilePath, nomor) => {
 // ==========================================================================
 // [BARU] LOGIC GENERATE KODE BARANG CUSTOM (Draft, dengan histori versioning)
 // ==========================================================================
+const deriveJenisKaosKode = (additionalCostItems = [], jenisKaosNama = "") => {
+  const namaUpper = (jenisKaosNama || "").toUpperCase().trim();
+  if (namaUpper.startsWith("KK")) return "KK";
+  if (namaUpper.startsWith("KO")) return "KO";
 
-const deriveJenisKaosKode = (additionalCostItems = []) => {
   const hasKrah = additionalCostItems.some((item) =>
     (item.tambahan || "").toUpperCase().includes("KRAH"),
   );
@@ -1276,7 +1279,10 @@ const saveProposal = async (data) => {
           throw new Error("Warna harus diisi untuk Pengajuan Stok.");
       }
 
-      const genJenisKaos = deriveJenisKaosKode(additionalCostItems);
+      const genJenisKaos = deriveJenisKaosKode(
+        additionalCostItems,
+        header.jenisKaos || "",
+      );
       const genTipe = deriveTipe({
         hasBordirData,
         hasDtfData,
