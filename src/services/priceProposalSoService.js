@@ -18,6 +18,25 @@ const JO_KATEGORI = {
   WP: "WEARPACK",
 };
 
+// Deteksi varian size chart dari jeniskaos (brg_jeniskaos / pbd_jeniskaos).
+// Fallback ke "KAOSAN" (Kaos Polos) kalau tidak match kata kunci apa pun —
+// ini varian paling umum/default untuk program Kaosan.
+const VARIAN_KEYWORDS = [
+  { keywords: ["ANAK"], varian: "ANAK" },
+  { keywords: ["TUNIK"], varian: "TUNIK" },
+  { keywords: ["POLO"], varian: "POLO" },
+];
+const detectVarianUkuran = (lengan, jeniskain) => {
+  const lenganUpper = String(lengan || "").toUpperCase();
+  const kainUpper = String(jeniskain || "").toUpperCase();
+
+  if (lenganUpper.includes("ANAK")) return "ANAK";
+  if (lenganUpper.includes("TUNIK")) return "TUNIK";
+  if (kainUpper.includes("LACOS CVC")) return "POLO";
+
+  return "KAOSAN";
+};
+
 // Prefix kode barang -> Jenis Order. LL dinormalisasi ke KO (konsisten
 // dengan pola yang sudah dipakai di perencanaanProduksiService).
 const extractJoKode = (kodeBarang) => {
@@ -379,10 +398,10 @@ const generateSalesOrder = async (phNomor, payload, user) => {
       .join(",");
     const soNomor = await generateSoNomor(connection, PERUSH_KODE, joKode);
 
-    const lenganUpper = String(representative.lengan || "").toUpperCase();
-    const varianUkuran = lenganUpper.includes("PANJANG")
-      ? "LENGAN_PANJANG"
-      : "LENGAN_PENDEK";
+    const varianUkuran = detectVarianUkuran(
+      representative.lengan,
+      representative.jeniskain,
+    );
 
     // 1. Header SO — so_invdc = nomor Pengajuan Harga
     await connection.query(
@@ -457,7 +476,7 @@ const generateSalesOrder = async (phNomor, payload, user) => {
       const placeholders = kategoriList.map(() => "?").join(",");
       const [standarRows] = await connection.query(
         `SELECT * FROM tukuran_standar WHERE ts_kategori IN (${placeholders}) AND ts_varian = ?`,
-        [...kategoriList, "STANDAR"],
+        [...kategoriList, varianUkuran],
       );
       for (const row of standarRows) standarMap[row.ts_ukuran] = row;
     }
