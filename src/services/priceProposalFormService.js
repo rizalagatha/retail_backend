@@ -758,11 +758,13 @@ const resolveOrCreateStokBarang = async (
 
 /**
  * [DIUBAH] Digeneralisasi dari finalizeCustomBarang — sekarang dipakai
- * untuk Custom (ktgp PESANAN) MAUPUN Stok (ktgp REGULER). Stok TIDAK
- * membatasi pencarian exact-match ke kategori tertentu (matchKtgpFilter
- * null) karena barang Stok boleh reuse kode apapun yang kombinasinya
- * identik, sedangkan Custom tetap dibatasi ke 'PESANAN' saja (perilaku lama
- * dipertahankan, supaya tidak salah reuse kode barang reguler).
+ * untuk Custom MAUPUN Stok, KEDUANYA dengan ktgp 'PESANAN'. Baik Custom
+ * maupun Stok yang datang dari Pengajuan Harga (pesanan customer) TIDAK
+ * BOLEH reuse kode barang reguler (ktgp 'REGULER') meskipun kombinasi
+ * jeniskaos/tipe/lengan/jeniskain/warna-nya identik — supaya kode barang
+ * pesanan customer selalu terpisah dari master stok reguler, walau fisik
+ * barangnya sama. Reuse HANYA terjadi antar sesama pesanan (match ke
+ * ktgp='PESANAN' yang sudah ada), tidak pernah ke ktgp='REGULER'.
  */
 const finalizeBarangDraft = async (
   connection,
@@ -897,11 +899,14 @@ const finalizeCustomBarang = (connection, phNomor, user) =>
     newKtgp: "PESANAN",
   });
 
-// [BARU]
+// [UBAH] Stok sekarang juga dikunci ke kategori 'PESANAN' — jangan pernah
+// reuse/nunggang kode barang reguler (ktgp 'REGULER') meski kombinasinya
+// identik. Barang pesanan customer harus punya kode sendiri, terpisah dari
+// master stok reguler, biar tidak kecampur pas laporan/stok/dll.
 const finalizeStokBarang = (connection, phNomor, user) =>
   finalizeBarangDraft(connection, phNomor, user, {
-    matchKtgpFilter: null, // boleh reuse kode barang apapun yang kombinasinya identik
-    newKtgp: "REGULER",
+    matchKtgpFilter: "PESANAN",
+    newKtgp: "PESANAN",
   });
 
 /**

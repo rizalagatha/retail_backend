@@ -1,5 +1,6 @@
 const pool = require("../config/database");
 const { format } = require("date-fns");
+const paretoService = require("./paretoService");
 
 const getSudah = async (connection, soNomor, kode, ukuran, excludeMtNomor) => {
   const query = `
@@ -942,6 +943,65 @@ const generateAutomasiMintaBarang = async (user) => {
       GROUP BY mst_brg_kode, mst_ukuran
     `);
 
+    // =========================================================================
+    // G.5 FETCH TOP 10 SIZE PARETO PER CABANG (30 hari terakhir, kategori REGULER)
+    // Ranking dilakukan di level (kode+ukuran), BUKAN level kode — karena DC
+    // menyiapkan barang per size. limit di query di-set besar (bukan 10) supaya
+    // semua barang REGULER yang terjual dalam periode ini terambil dulu, baru
+    // di-flatten per size dan di-ranking ulang di JS.
+    // Kategori dikunci 'REGULER' — supaya qty besar dari pesanan custom
+    // customer (PESANAN/Custom/Stok non-reguler) tidak mengacaukan ranking
+    // barang yang benar-benar laku reguler di toko.
+    // =========================================================================
+    const paretoEndDate = today;
+    const paretoStartDateObj = new Date();
+    paretoStartDateObj.setDate(paretoStartDateObj.getDate() - 30);
+    const paretoStartDate = format(paretoStartDateObj, "yyyy-MM-dd");
+
+    const SIZE_COLUMNS = [
+      "XS",
+      "S",
+      "M",
+      "L",
+      "XL",
+      "2XL",
+      "3XL",
+      "4XL",
+      "5XL",
+      "ALLSIZE",
+      "OVERSIZE",
+      "JUMBO",
+    ];
+
+    const paretoSetByCabang = {};
+    for (const cab of activeCabangs) {
+      const paretoRows = await paretoService.getList({
+        startDate: paretoStartDate,
+        endDate: paretoEndDate,
+        cabang: cab,
+        kategori: "REGULER",
+        limit: 9999,
+        search: "",
+        isExport: false,
+      });
+
+      const sizeEntries = [];
+      paretoRows.forEach((row) => {
+        SIZE_COLUMNS.forEach((col) => {
+          const qty = Number(row[col]) || 0;
+          if (qty > 0) {
+            sizeEntries.push({ kode: row.KODE, ukuran: col, qty });
+          }
+        });
+      });
+      sizeEntries.sort((a, b) => b.qty - a.qty);
+      const top10Sizes = sizeEntries.slice(0, 10);
+
+      paretoSetByCabang[cab] = new Set(
+        top10Sizes.map((e) => `${e.kode}|${e.ukuran}`),
+      );
+    }
+
     // G. Ambil Jenis Kain per Kode Barang
     const [jenisKainData] = await connection.query(`
       SELECT brg_kode AS kode, brg_jeniskain AS jeniskain
@@ -1006,9 +1066,10 @@ const generateAutomasiMintaBarang = async (user) => {
     // =========================================================================
     // 5. HITUNG DEMAND DAN PISAHKAN JALUR PRIORITAS, NORMAL, & KOSONG
     // =========================================================================
-    const autoMintaPrioritas = {}; // Kumpulan item kritis (stok < 5)
-    const autoMintaNormal = {}; // Kumpulan item normal (berdasarkan jenis kain)
-    const autoMintaKosong = {}; // Kumpulan item yang stok DC-nya kurang
+    const autoMintaPrioritasKritis = {}; // Top 10 size terlaris + stok toko < 5
+    const autoMintaPrioritasTerlaris = {}; // Top 10 size terlaris, stok >= 5 (tapi masih di bawah buffer)
+    const autoMintaNormal = {}; // Bukan top 10, dikelompokkan per jenis kain
+    const autoMintaKosong = {}; // Stok DC kurang
 
     for (const buf of storeBuffers) {
       const k = makeKey(buf.cabang, buf.kode, buf.ukuran);
@@ -1048,20 +1109,30 @@ const generateAutomasiMintaBarang = async (user) => {
           };
 
           if (currentDcStock > 10) {
-            // [KUNCI PEMISAHAN] Cek apakah stok toko di bawah 5
-            if (stokFisik < 5) {
-              // Masuk ke grup PRIORITAS
-              if (!autoMintaPrioritas[buf.cabang])
-                autoMintaPrioritas[buf.cabang] = [];
-              autoMintaPrioritas[buf.cabang].push(payload);
+            // [UBAH] Prioritas sekarang 2 tingkat, berbasis Top 10 size
+            // terlaris per cabang (bukan lagi 1 tingkat berbasis stok<5 saja)
+            const paretoKey = `${buf.kode}|${buf.ukuran}`;
+            const isTop10ParetoSize =
+              paretoSetByCabang[buf.cabang]?.has(paretoKey);
+
+            if (isTop10ParetoSize && stokFisik < 5) {
+              // Tier 1: size top 10 terlaris DAN stok fisik toko < 5 — paling kritis
+              if (!autoMintaPrioritasKritis[buf.cabang])
+                autoMintaPrioritasKritis[buf.cabang] = [];
+              autoMintaPrioritasKritis[buf.cabang].push(payload);
+            } else if (isTop10ParetoSize) {
+              // Tier 2: size top 10 terlaris, stok fisik >= 5 (tapi tetap di bawah buffer)
+              if (!autoMintaPrioritasTerlaris[buf.cabang])
+                autoMintaPrioritasTerlaris[buf.cabang] = [];
+              autoMintaPrioritasTerlaris[buf.cabang].push(payload);
             } else {
-              // Masuk ke grup NORMAL
+              // Tier 3: Normal — dikelompokkan per jenis kain
               const groupKey = `${buf.cabang}|${jenisKain}`;
               if (!autoMintaNormal[groupKey]) autoMintaNormal[groupKey] = [];
               autoMintaNormal[groupKey].push(payload);
             }
           } else {
-            // Masuk ke grup STOK DC KOSONG
+            // Tier 4: Masuk ke grup STOK DC KOSONG
             if (!autoMintaKosong[buf.cabang]) autoMintaKosong[buf.cabang] = [];
             autoMintaKosong[buf.cabang].push(payload);
           }
@@ -1159,19 +1230,31 @@ const generateAutomasiMintaBarang = async (user) => {
       }
     };
 
-    // --- 6A. INSERT JALUR PRIORITAS (DENGAN LIMIT 120) ---
-    for (const [cabang, items] of Object.entries(autoMintaPrioritas)) {
+    // --- 6A. INSERT JALUR PRIORITAS KRITIS (TOP 10 TERLARIS + STOK <5, LIMIT 120) ---
+    for (const [cabang, items] of Object.entries(autoMintaPrioritasKritis)) {
       if (items.length > 0) {
         await processInsert(
           cabang,
-          "AUTO REPLENISHMENT - PRIORITAS",
+          "AUTO REPLENISHMENT - PRIORITAS KRITIS (TOP 10 TERLARIS, STOK <5)",
           items,
           true,
         );
       }
     }
 
-    // --- 6B. INSERT JALUR NORMAL (DENGAN LIMIT 120) ---
+    // --- 6B. INSERT JALUR PRIORITAS TERLARIS (TOP 10 TERLARIS, LIMIT 120) ---
+    for (const [cabang, items] of Object.entries(autoMintaPrioritasTerlaris)) {
+      if (items.length > 0) {
+        await processInsert(
+          cabang,
+          "AUTO REPLENISHMENT - PRIORITAS (TOP 10 TERLARIS)",
+          items,
+          true,
+        );
+      }
+    }
+
+    // --- 6C. INSERT JALUR NORMAL (DENGAN LIMIT 120) ---
     for (const [groupKey, items] of Object.entries(autoMintaNormal)) {
       if (items.length > 0) {
         const [cabang, jenisKain] = groupKey.split("|");
@@ -1184,10 +1267,9 @@ const generateAutomasiMintaBarang = async (user) => {
       }
     }
 
-    // --- 6C. INSERT JALUR KOSONG (TANPA LIMIT) ---
+    // --- 6D. INSERT JALUR KOSONG (TANPA LIMIT) ---
     for (const [cabang, items] of Object.entries(autoMintaKosong)) {
       if (items.length > 0) {
-        // applyLimit diset false agar semua item masuk 1 dokumen
         await processInsert(
           cabang,
           "AUTO REPLENISHMENT - STOK DC KOSONG",
