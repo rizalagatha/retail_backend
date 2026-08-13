@@ -47,6 +47,22 @@ const extractJoKode = (kodeBarang) => {
   return raw === "LL" ? "KO" : raw;
 };
 
+// [BARU] Menu ID SO di MANKSI (kencanaprint.thakuser) — dipakai buat cek
+// hak akses cross-db sebelum boleh edit SO dari Retail. Asumsi eksplisit:
+// kode user Retail == user_kode MANKSI (identitas sama, 1 orang). Kalau
+// asumsi ini salah, fungsi fail-closed (dianggap TIDAK punya akses) —
+// arah aman, bukan diam-diam ngasih akses.
+const MENU_ID_SO_MANKSI = 172;
+
+const checkSalesOrderEditPermission = async (userKode) => {
+  const [rows] = await pool.query(
+    `SELECT hak_men_edit FROM kencanaprint.thakuser WHERE hak_user_kode = ? AND hak_men_id = ?`,
+    [userKode, MENU_ID_SO_MANKSI],
+  );
+  if (rows.length === 0) return false;
+  return rows[0].hak_men_edit === "Y";
+};
+
 const generateSoNomor = async (connection, perushKode, joKode) => {
   const prefix = `SO-${perushKode}-${joKode}-`;
   const [rows] = await connection.query(
@@ -312,10 +328,7 @@ const getSoPrefill = async (phNomor) => {
     }
   }
 
-  const [kepentinganRows] = await pool.query(
-    "SELECT DISTINCT kepentingan FROM kencanaprint.tspk_kepentingan ORDER BY kepentingan",
-  );
-
+  const kepentinganOptions = ["STANDART", "URGENT", "TOP URGENT", "REGULER"];
   return {
     phNomor,
     kodeBarang: representative.kode,
@@ -328,7 +341,7 @@ const getSoPrefill = async (phNomor) => {
     custKaosanKode: ph.ph_kd_cus,
     custKaosanNama: ph.cus_nama,
     matchedSales,
-    kepentinganOptions: kepentinganRows.map((r) => r.kepentingan),
+    kepentinganOptions,
     keteranganProduksi: ph.ph_keterangan_produksi || "",
   };
 };
@@ -545,9 +558,193 @@ const generateSalesOrder = async (phNomor, payload, user) => {
   }
 };
 
+/**
+ * [BARU] Ambil detail SO MANKSI untuk form edit dari Retail — TERBATAS ke
+ * field yang relevan buat Kaosan (dateline, kepentingan, keterangan
+ * produksi, qty per size). Field lain (alokasi, komponen, dll) sengaja
+ * TIDAK diekspos, sesuai keputusan scope.
+ */
+const getSalesOrderForEdit = async (phNomor, user) => {
+  // 1. Cek hak akses menu SO MANKSI (172) — WAJIB sebelum apapun lain
+  const hasEditAccess = await checkSalesOrderEditPermission(user.kode);
+  if (!hasEditAccess) {
+    throw new Error(
+      "Anda tidak memiliki hak akses untuk mengubah Sales Order di MANKSI (Menu SO).",
+    );
+  }
+
+  // 2. Pastikan PH ini punya SO terhubung
+  const [phRows] = await pool.query(
+    "SELECT ph_ref_so_spk FROM tpengajuanharga WHERE ph_nomor = ?",
+    [phNomor],
+  );
+  if (phRows.length === 0) throw new Error("Pengajuan harga tidak ditemukan.");
+  const soNomor = phRows[0].ph_ref_so_spk;
+  if (!soNomor) {
+    throw new Error(
+      "Pengajuan Harga ini belum memiliki SO MANKSI (belum di-generate).",
+    );
+  }
+
+  // 3. Ambil detail SO
+  const [soRows] = await pool.query(
+    `SELECT so_nomor, so_nama, so_jumlah,
+            DATE_FORMAT(so_dateline, '%Y-%m-%d') AS dateline,
+            so_statuskerja AS kepentingan, so_keterangan AS keteranganProduksi,
+            so_invdc, so_close
+     FROM kencanaprint.tsalesorder WHERE so_nomor = ?`,
+    [soNomor],
+  );
+  if (soRows.length === 0)
+    throw new Error(`SO ${soNomor} tidak ditemukan di MANKSI.`);
+  const so = soRows[0];
+
+  // [PENTING] Guard kepemilikan — SO ini HARUS terhubung ke PH ini persis
+  // (bukan cuma "ada SO", tapi SO YANG SAMA yang di-generate dari PH ini).
+  // Mencegah user iseng edit PH lain lalu nembak nomor SO yang sebenarnya
+  // milik PH lain.
+  if (so.so_invdc !== phNomor) {
+    throw new Error(
+      "SO ini tidak terhubung dengan Pengajuan Harga ini — akses ditolak.",
+    );
+  }
+
+  const [sizeRows] = await pool.query(
+    `SELECT sos_size AS size, sos_qty AS qty
+     FROM kencanaprint.tsalesorder_size WHERE sos_so_nomor = ? ORDER BY sos_size`,
+    [soNomor],
+  );
+  // [FIX] Sama seperti getSoPrefill — query DISTINCT ke tspk_kepentingan
+  // salah tebak sebagai sumber daftar dropdown. Daftar resmi dikonfirmasi
+  // user, konsisten dengan getSoPrefill.
+  const kepentinganOptions = ["STANDART", "URGENT", "TOP URGENT", "REGULER"];
+  return {
+    soNomor: so.so_nomor,
+    namaSo: so.so_nama,
+    totalQty: so.so_jumlah,
+    dateline: so.dateline,
+    kepentingan: so.kepentingan,
+    keteranganProduksi: so.keteranganProduksi || "",
+    isClosed: Number(so.so_close) !== 0,
+    sizes: sizeRows,
+    kepentinganOptions,
+  };
+};
+
+/**
+ * [BARU] Update SO MANKSI dari Retail — TERBATAS ke field yang sama
+ * seperti getSalesOrderForEdit. Qty per size di-UPDATE saja (BUKAN
+ * delete+insert), supaya data ukuran badan (ld/pb/dst) yang sudah
+ * tersimpan dari standar ukuran saat generate awal tidak ikut hilang —
+ * ini juga berarti TIDAK BISA nambah/hapus baris size baru dari sini,
+ * cuma ubah qty size yang sudah ada.
+ */
+const updateSalesOrder = async (phNomor, payload, user) => {
+  const { dateline, kepentingan, keteranganProduksi, sizes } = payload;
+
+  if (!dateline) throw new Error("Dateline SO wajib diisi.");
+  if (!kepentingan) throw new Error("Kepentingan wajib dipilih.");
+  if (!Array.isArray(sizes) || sizes.length === 0)
+    throw new Error("Detail ukuran wajib diisi.");
+
+  const hasEditAccess = await checkSalesOrderEditPermission(user.kode);
+  if (!hasEditAccess) {
+    throw new Error(
+      "Anda tidak memiliki hak akses untuk mengubah Sales Order di MANKSI (Menu SO).",
+    );
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [phRows] = await connection.query(
+      "SELECT ph_ref_so_spk FROM tpengajuanharga WHERE ph_nomor = ? FOR UPDATE",
+      [phNomor],
+    );
+    if (phRows.length === 0)
+      throw new Error("Pengajuan harga tidak ditemukan.");
+    const soNomor = phRows[0].ph_ref_so_spk;
+    if (!soNomor)
+      throw new Error("Pengajuan Harga ini belum memiliki SO MANKSI.");
+
+    const [soRows] = await connection.query(
+      "SELECT so_invdc, so_close FROM kencanaprint.tsalesorder WHERE so_nomor = ? FOR UPDATE",
+      [soNomor],
+    );
+    if (soRows.length === 0)
+      throw new Error(`SO ${soNomor} tidak ditemukan di MANKSI.`);
+    if (soRows[0].so_invdc !== phNomor) {
+      throw new Error(
+        "SO ini tidak terhubung dengan Pengajuan Harga ini — akses ditolak.",
+      );
+    }
+    if (Number(soRows[0].so_close) !== 0) {
+      throw new Error("SO ini sudah CLOSE, tidak bisa diubah lagi.");
+    }
+
+    const totalQty = sizes.reduce((sum, s) => sum + (Number(s.qty) || 0), 0);
+    if (totalQty <= 0) throw new Error("Total qty harus lebih dari 0.");
+    const ketUkuran = sizes.map((s) => `${s.size}=${s.qty}`).join(",");
+
+    // Update header — TERBATAS ke field yang diizinkan (dateline,
+    // kepentingan/so_statuskerja, keterangan, qty & ringkasan ukuran)
+    await connection.query(
+      `UPDATE kencanaprint.tsalesorder 
+       SET so_dateline = ?, so_statuskerja = ?, so_keterangan = ?, so_jumlah = ?, 
+           so_ukuran = ?, user_modified = ?, date_modified = NOW()
+       WHERE so_nomor = ?`,
+      [
+        dateline,
+        kepentingan,
+        keteranganProduksi || "",
+        totalQty,
+        ketUkuran,
+        user.kode,
+        soNomor,
+      ],
+    );
+
+    // Update qty per size — UPDATE saja, baris size dipastikan sudah ada
+    // dari saat generate awal (lihat catatan di komentar fungsi)
+    for (const item of sizes) {
+      await connection.query(
+        `UPDATE kencanaprint.tsalesorder_size SET sos_qty = ? WHERE sos_so_nomor = ? AND sos_size = ?`,
+        [Number(item.qty) || 0, soNomor, item.size],
+      );
+    }
+
+    // Sinkron ke tsalesorder_kaosan juga — dipakai di titik lain oleh
+    // MANKSI (kaosan = qty per kode barang, size = ukuran badan/measurement)
+    for (const item of sizes) {
+      await connection.query(
+        `UPDATE kencanaprint.tsalesorder_kaosan SET sok_qtyorder = ? WHERE sok_so_nomor = ? AND sok_ukuran = ?`,
+        [Number(item.qty) || 0, soNomor, item.size],
+      );
+    }
+
+    // Keterangan produksi juga dipertahankan sinkron di sisi PH (kolom
+    // yang sama dipakai sebagai riwayat, sesuai pola generateSalesOrder)
+    await connection.query(
+      "UPDATE tpengajuanharga SET ph_keterangan_produksi = ? WHERE ph_nomor = ?",
+      [keteranganProduksi || null, phNomor],
+    );
+
+    await connection.commit();
+    return { soNomor, message: `SO ${soNomor} berhasil diperbarui.` };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
 module.exports = {
   getSoPrefill,
   checkSoEligibility,
   generateSalesOrder,
   getDatelineRange,
+  getSalesOrderForEdit,
+  updateSalesOrder,
 };

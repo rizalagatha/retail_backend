@@ -88,6 +88,18 @@ router.post(
   checkPermission(PRICE_PROPOSAL_MENU_ID, "edit"),
   priceProposalController.generateSalesOrder,
 );
+router.get(
+  "/:nomor/so-detail",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "edit"),
+  priceProposalController.getSalesOrderForEdit,
+);
+router.put(
+  "/:nomor/so-detail",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "edit"),
+  priceProposalController.updateSalesOrder,
+);
 
 router.delete(
   "/:nomor",

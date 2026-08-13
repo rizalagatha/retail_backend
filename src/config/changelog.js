@@ -1,4 +1,15 @@
 const changelogs = {
+  "1.5.4": {
+    date: "2026-07-31",
+    changes: [
+      {
+        title: "Pembaruan",
+        items: [
+          "Fitur baru ubah SO Manksi melalui Retail Kaosan, yang sebelumnya masih bersifat read-only, namun perubahan terbatas pada kepentingan, tanggal dateline, dan keterangan",
+        ],
+      },
+    ],
+  },
   "1.5.3": {
     date: "2026-07-31",
     changes: [
