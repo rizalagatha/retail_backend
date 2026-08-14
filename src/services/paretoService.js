@@ -139,7 +139,7 @@ const getListPerCabang = async (filters) => {
 
   // Ambil semua cabang aktif
   const [cabangRows] = await pool.query(
-    "SELECT gdg_kode FROM tgudang WHERE gdg_dc = 0 ORDER BY gdg_kode",
+    "SELECT gdg_kode FROM tgudang WHERE gdg_dc = 0 OR gdg_kode IN ('KPR', 'KON') ORDER BY gdg_kode",
   );
 
   const results = [];
@@ -177,12 +177,12 @@ const getCabangOptions = async (user) => {
 
   if (user.cabang === "KDC") {
     query = `
-            SELECT * FROM (
-                (SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_dc = 0 ORDER BY gdg_kode)
-                UNION ALL
-                SELECT "ALL" AS kode, "SEMUA CABANG" AS nama
-            ) x ORDER BY kode;
-        `;
+      SELECT * FROM (
+        (SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_dc = 0 OR gdg_kode IN ('KPR', 'KON') ORDER BY gdg_kode)
+        UNION ALL
+        SELECT "ALL" AS kode, "SEMUA CABANG" AS nama
+      ) x ORDER BY kode;
+    `;
   } else {
     query =
       "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_kode = ?";
@@ -292,7 +292,7 @@ const getDataForPerCabangExport = async (filters) => {
   // 3. Ambil Data TOP 20 Barang Terlaris Masing-Masing Cabang (Untuk Sheet Tambahan)
   // Ambil opsi cabang DC=0 (bukan DC)
   const [cabangRows] = await pool.query(
-    "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_dc = 0 ORDER BY gdg_kode",
+    "SELECT gdg_kode AS kode, gdg_nama AS nama FROM tgudang WHERE gdg_dc = 0 OR gdg_kode IN ('KPR', 'KON') ORDER BY gdg_kode",
   );
 
   const perBranchTopSheets = [];
