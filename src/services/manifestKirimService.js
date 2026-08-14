@@ -3,13 +3,13 @@ const { format } = require("date-fns");
 
 /**
  * Generates a new Manifest Kirim number.
- * Format: [GUDANG].MK.[YYMM].[NNNN] (e.g. KDC.MK.2608.0001)
+ * Format: [GUDANG].MP.[YYMM].[NNNN] (e.g. KDC.MP.2608.0001)
  */
 const generateNewManifestNumber = async (gudang, tanggal) => {
     const dateObj = new Date(tanggal);
     const year = format(dateObj, "yy");
     const month = format(dateObj, "MM");
-    const prefix = `${gudang}.MK.${year}${month}.`;
+    const prefix = `${gudang}.MP.${year}${month}.`;
 
     const query = `
     SELECT IFNULL(MAX(RIGHT(mp_nomor, 4)), 0) + 1 AS next_num
@@ -97,6 +97,7 @@ const getDetails = async (nomor) => {
       h.mp_gudang AS gudang,
       g.gdg_nama AS namaGudang,
       h.mp_tujuan AS tujuan,
+      gt.gdg_nama AS namaTujuan,
       h.mp_jenis_kirim AS jenisKirim,
       h.mp_driver AS driver,
       h.mp_plat_nomor AS platNomor,
@@ -114,6 +115,7 @@ const getDetails = async (nomor) => {
       h.date_create AS dateCreate
     FROM tmanifest_pengiriman_hdr h
     LEFT JOIN tgudang g ON g.gdg_kode = h.mp_gudang
+    LEFT JOIN tgudang gt ON gt.gdg_kode = h.mp_tujuan
     WHERE h.mp_nomor = ?;
   `;
     const [headerRows] = await pool.query(headerQuery, [nomor]);
@@ -317,7 +319,9 @@ const saveData = async (payload, user) => {
                 manifestNomor,
                 item.sjNomor,
                 item.storeKode,
-                item.koli !== undefined && item.koli !== null ? Number(item.koli) : 1,
+                item.koli !== undefined && item.koli !== null
+                    ? Number(item.koli)
+                    : 1,
                 item.qty || 0,
                 item.keterangan || "",
                 item.referensiGabung || null,
