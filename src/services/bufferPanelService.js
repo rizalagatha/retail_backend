@@ -150,8 +150,10 @@ const getAvgSales = async (
 };
 
 // ── Main: getPreviewData ─────────────────────────────────
-const getPreviewData = async (cabang) => {
+const getPreviewData = async (cabang, options = {}) => {
+  const { requireStock = true } = options;
   const now = new Date();
+
   const curYear = now.getFullYear();
   const curMonth = now.getMonth(); // 0-based
 
@@ -193,46 +195,7 @@ const getPreviewData = async (cabang) => {
   const isNewStore = newStoreCheck.cnt === 0;
 
   // Ambil semua SKU yang ada stok di cabang ini
-  const [skuRows] = await pool.query(
-    `
-    SELECT 
-      b.brgd_kode AS kode,
-      TRIM(REGEXP_REPLACE(
-        CONCAT(a.brg_jeniskaos,' ',a.brg_tipe,' ',a.brg_lengan,' ',a.brg_jeniskain,' ',a.brg_warna),
-        '\\\\s+', ' '
-      )) AS nama,
-      b.brgd_ukuran AS ukuran,
-      CASE 
-        WHEN a.brg_ktgp = 'REGULER' THEN 'reg'
-        WHEN a.brg_ktgp = 'SESIONAL' THEN 'sea'
-        WHEN a.brg_ktgp = 'PESANAN' THEN 'ord'
-        ELSE 'lainnya'
-      END AS kategori_produk,
-      IFNULL((
-        SELECT SUM(mst_stok_in - mst_stok_out)
-        FROM tmasterstok
-        WHERE mst_brg_kode = b.brgd_kode
-          AND mst_ukuran = b.brgd_ukuran
-          AND mst_cab = ?
-          AND mst_aktif = 'Y'
-      ), 0) AS real_stok
-    FROM tbarangdc a
-    JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
-    JOIN (
-      SELECT mst_brg_kode, mst_ukuran
-      FROM tmasterstok
-      WHERE mst_aktif = 'Y' AND mst_cab = ?
-      GROUP BY mst_brg_kode, mst_ukuran
-      HAVING SUM(mst_stok_in - mst_stok_out) > 0
-    ) stok ON stok.mst_brg_kode = b.brgd_kode AND stok.mst_ukuran = b.brgd_ukuran
-    WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
-      AND a.brg_ktgp = 'REGULER' 
-      AND b.brgd_ukuran NOT IN ('ALLSIZE', 'XS', '4XL', '5XL', '6XL', '7XL', '8XL', '9XL', '10XL', 'OVERSIZE', 'JUMBO') 
-    GROUP BY b.brgd_kode, b.brgd_ukuran
-    ORDER BY nama, b.brgd_ukuran
-  `,
-    [cabang, cabang],
-  );
+  const skuRows = await getEligibleSkus(cabang, requireStock);
 
   const allKodes = [...new Set(skuRows.map((r) => r.kode))];
 
@@ -324,6 +287,10 @@ const getPreviewData = async (cabang) => {
       bufferValue = getBufferValue(row.ukuran, salesKategori);
     }
 
+    if (bufferValue !== 5) {
+      bufferValue = Math.round(bufferValue * 0.5);
+    }
+
     return {
       kode: row.kode,
       nama: row.nama,
@@ -352,7 +319,24 @@ const getPreviewData = async (cabang) => {
 };
 
 // KDC version — 1,5x lipat dari jumlah semua buffer toko
-const getPreviewDataKDC = async () => {
+const getPreviewDataKDC = async (kprDataOverride = null) => {
+  // [BARU] Ambil demand KPR — dipakai HANYA untuk menambah beban
+  // perhitungan buffer KDC. KPR sendiri TIDAK pernah dipasangi buffer
+  // stok (tidak disimpan ke tbarangdc_dtl2 untuk cabang KPR).
+  let kprData = kprDataOverride;
+  if (kprData === null) {
+    try {
+      kprData = await getPreviewData("KPR", { requireStock: false });
+    } catch (error) {
+      console.error("[BUFFER KDC] Gagal ambil data KPR:", error.message);
+      kprData = [];
+    }
+  }
+  const kprMap = new Map();
+  kprData.forEach((item) => {
+    kprMap.set(`${item.kode}||${item.ukuran}`, item);
+  });
+
   const [rows] = await pool.query(`
     SELECT 
       b.brgd_kode AS kode,
@@ -381,8 +365,6 @@ const getPreviewDataKDC = async () => {
           AND pld.pld_ukuran = b.brgd_ukuran
           AND plh.pl_status = 'O'
       ), 0) AS real_stok,
-      
-      -- [BARU] Subquery SPK Beredar
       IFNULL((
         SELECT SUM(sub_spk.qty_sisa)
         FROM (
@@ -404,7 +386,6 @@ const getPreviewDataKDC = async () => {
         WHERE sub_spk.spkd_kode = b.brgd_kode
           AND sub_spk.spkd_ukuran = b.brgd_ukuran
       ), 0) AS spk_beredar
-
     FROM tbarangdc a
     JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
     LEFT JOIN tbarangdc_dtl2 d2 ON d2.brgd_kode = b.brgd_kode AND d2.brgd_ukuran = b.brgd_ukuran
@@ -419,8 +400,15 @@ const getPreviewDataKDC = async () => {
   `);
 
   return rows.map((row) => {
-    const mindc = Math.ceil(row.total_min_toko * 1.5);
-    const maxdc = Math.ceil(row.total_max_toko * 1.5);
+    const key = `${row.kode}||${row.ukuran}`;
+    const kpr = kprMap.get(key);
+
+    // [BARU] Tambahkan demand KPR ke total sebelum dikali 1.5x
+    const totalMinToko = Number(row.total_min_toko) + (kpr ? kpr.min : 0);
+    const totalMaxToko = Number(row.total_max_toko) + (kpr ? kpr.max : 0);
+
+    const mindc = Math.ceil(totalMinToko * 1.5);
+    const maxdc = Math.ceil(totalMaxToko * 1.5);
 
     return {
       kode: row.kode,
@@ -508,6 +496,12 @@ const saveConfig = async (cabang, cfg, user) => {
 };
 
 const saveCalculatedBuffer = async (cabang, itemsArray, userKode) => {
+  if (cabang === "KPR") {
+    throw new Error(
+      "Cabang KPR tidak dapat dipasangi buffer stok sendiri. Penjualan KPR sudah otomatis diperhitungkan sebagai demand tambahan di buffer KDC.",
+    );
+  }
+
   if (!itemsArray || itemsArray.length === 0)
     return { message: "Tidak ada data untuk disimpan." };
 
@@ -681,13 +675,90 @@ const saveSesionalItems = async (cabang, items) => {
   }
 };
 
-// Tambahkan di bufferPanelService.js
+// ── Helper: ambil daftar SKU yang layak dihitung buffer-nya ─
+// requireStock=true  → SKU harus punya stok fisik > 0 di cabang tsb (perilaku lama, untuk toko normal)
+// requireStock=false → SEMUA SKU REGULER aktif diikutkan tanpa syarat stok
+//                       (dipakai KHUSUS untuk KPR, karena KPR tidak pernah
+//                       menyimpan baris stok sendiri di tmasterstok — histori
+//                       penjualannya tetap harus terhitung)
+const getEligibleSkus = async (cabang, requireStock) => {
+  if (requireStock) {
+    const [skuRows] = await pool.query(
+      `
+      SELECT 
+        b.brgd_kode AS kode,
+        TRIM(REGEXP_REPLACE(
+          CONCAT(a.brg_jeniskaos,' ',a.brg_tipe,' ',a.brg_lengan,' ',a.brg_jeniskain,' ',a.brg_warna),
+          '\\\\s+', ' '
+        )) AS nama,
+        b.brgd_ukuran AS ukuran,
+        CASE 
+          WHEN a.brg_ktgp = 'REGULER' THEN 'reg'
+          WHEN a.brg_ktgp = 'SESIONAL' THEN 'sea'
+          WHEN a.brg_ktgp = 'PESANAN' THEN 'ord'
+          ELSE 'lainnya'
+        END AS kategori_produk,
+        IFNULL((
+          SELECT SUM(mst_stok_in - mst_stok_out)
+          FROM tmasterstok
+          WHERE mst_brg_kode = b.brgd_kode
+            AND mst_ukuran = b.brgd_ukuran
+            AND mst_cab = ?
+            AND mst_aktif = 'Y'
+        ), 0) AS real_stok
+      FROM tbarangdc a
+      JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
+      JOIN (
+        SELECT mst_brg_kode, mst_ukuran
+        FROM tmasterstok
+        WHERE mst_aktif = 'Y' AND mst_cab = ?
+        GROUP BY mst_brg_kode, mst_ukuran
+        HAVING SUM(mst_stok_in - mst_stok_out) > 0
+      ) stok ON stok.mst_brg_kode = b.brgd_kode AND stok.mst_ukuran = b.brgd_ukuran
+      WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
+        AND a.brg_ktgp = 'REGULER' 
+        AND b.brgd_ukuran NOT IN ('ALLSIZE', 'XS', '4XL', '5XL', '6XL', '7XL', '8XL', '9XL', '10XL', 'OVERSIZE', 'JUMBO') 
+      GROUP BY b.brgd_kode, b.brgd_ukuran
+      ORDER BY nama, b.brgd_ukuran
+    `,
+      [cabang, cabang],
+    );
+    return skuRows;
+  }
+
+  const [skuRows] = await pool.query(`
+    SELECT 
+      b.brgd_kode AS kode,
+      TRIM(REGEXP_REPLACE(
+        CONCAT(a.brg_jeniskaos,' ',a.brg_tipe,' ',a.brg_lengan,' ',a.brg_jeniskain,' ',a.brg_warna),
+        '\\\\s+', ' '
+      )) AS nama,
+      b.brgd_ukuran AS ukuran,
+      CASE 
+        WHEN a.brg_ktgp = 'REGULER' THEN 'reg'
+        WHEN a.brg_ktgp = 'SESIONAL' THEN 'sea'
+        WHEN a.brg_ktgp = 'PESANAN' THEN 'ord'
+        ELSE 'lainnya'
+      END AS kategori_produk,
+      0 AS real_stok
+    FROM tbarangdc a
+    JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
+    WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
+      AND a.brg_ktgp = 'REGULER' 
+      AND b.brgd_ukuran NOT IN ('ALLSIZE', 'XS', '4XL', '5XL', '6XL', '7XL', '8XL', '9XL', '10XL', 'OVERSIZE', 'JUMBO') 
+    GROUP BY b.brgd_kode, b.brgd_ukuran
+    ORDER BY nama, b.brgd_ukuran
+  `);
+  return skuRows;
+};
+
 const generateMonthlyLog = async () => {
   const now = new Date();
   const periode = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
+  // [UBAH] KPR dikecualikan dari loop toko biasa — KPR tidak dipasangi buffer
   const [cabangRows] = await pool.query(
-    "SELECT gdg_kode FROM tgudang WHERE gdg_dc = 0 AND gdg_kode != 'KDC'",
+    "SELECT gdg_kode FROM tgudang WHERE gdg_dc = 0 AND gdg_kode NOT IN ('KDC', 'KPR')",
   );
 
   const results = { success: [], failed: [] };
@@ -762,6 +833,18 @@ const generateMonthlyLog = async () => {
       results.failed.push({ cabang, error: error.message });
       // [FIX] Lanjut ke cabang berikutnya, jangan hentikan seluruh proses
     }
+  }
+
+  // [BARU] Hitung demand KPR terpisah — HANYA untuk KDC, tidak disimpan
+  // sebagai buffer toko KPR sendiri
+  let kprData = [];
+  try {
+    console.log(`[BUFFER CRON] Mulai hitung demand KPR (untuk KDC)...`);
+    kprData = await getPreviewData("KPR", { requireStock: false });
+    console.log(`[BUFFER CRON] Demand KPR: ${kprData.length} item.`);
+  } catch (error) {
+    console.error(`[BUFFER CRON] Gagal hitung demand KPR:`, error.message);
+    results.failed.push({ cabang: "KPR (demand only)", error: error.message });
   }
 
   // KDC — transaksi terpisah lagi, setelah semua toko selesai
