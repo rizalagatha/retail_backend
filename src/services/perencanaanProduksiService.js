@@ -619,10 +619,14 @@ const generateBulkSpk = async (items, user) => {
         );
       }
 
-      // 1. Header SO — [UBAH] target tsalesorder, hapus spk_is_so/spk_so_ref
-      // (itu cuma workaround buat "SO palsu" di tabel tspk legacy, gak perlu
-      // lagi karena tsalesorder tabelnya sendiri). so_acc_customer/so_acc_tanggal
-      // SENGAJA TIDAK diisi — divisi 3/Kaosan tidak mensyaratkan acc customer.
+      // 1. Header SO — [FIX] Blok INSERT sebelumnya salah paste dari alur
+      // Pengajuan Harga (pakai variabel PERUSH_KODE/CUS_KODE/ph.ph_kd_cus/
+      // salesKode/namaSo/namaExt/ketUkuran/finalNomorPo/phNomor/
+      // keteranganProduksi yang TIDAK PERNAH didefinisikan di function ini
+      // — itu penyebab "ReferenceError: PERUSH_KODE is not defined").
+      // Diganti pakai variabel yang benar-benar ada di scope loop DC Planning.
+      const keteranganProduksi = formatSpkKeterangan(representative, kode);
+
       await connection.query(
         `INSERT INTO kencanaprint.tsalesorder (
          so_nomor, so_tanggal, so_dateline, so_perush_kode, so_cus_kode, so_cus_kaosan, so_sal_kode,
@@ -648,25 +652,25 @@ const generateBulkSpk = async (items, user) => {
         [
           soNomor,
           dateline,
-          PERUSH_KODE,
-          CUS_KODE,
-          ph.ph_kd_cus,
-          salesKode,
+          PERUSH_KODE_DC,
+          CUS_KODE_DC,
+          CUS_KODE_DC, // so_cus_kaosan — LIHAT CATATAN #1 di bawah
+          SAL_KODE_DC,
           joKode,
           DIVISI_KAOSAN,
-          namaSo,
-          namaExt || "",
+          spkNama,
+          "", // so_nama2 — tidak ada padanan di alur DC Planning, dikosongkan
           totalQty,
-          ketUkuran,
+          ukuranGabungan,
           representative.jeniskain || "",
           representative.tipe || "",
-          CAB_KODE,
-          CAB_KODE,
+          CAB_KODE_DC,
+          CAB_KODE_DC,
           kepentingan,
           varianUkuran,
-          finalNomorPo,
-          phNomor,
-          keteranganProduksi || "",
+          "", // so_nomor_po — SO ini tidak berasal dari PO, dikosongkan
+          "", // so_invdc — LIHAT CATATAN #2 di bawah, SENGAJA dikosongkan
+          keteranganProduksi,
           user.kode,
         ],
       );
