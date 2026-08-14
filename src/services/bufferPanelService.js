@@ -291,13 +291,28 @@ const getPreviewData = async (cabang, options = {}) => {
       bufferValue = Math.round(bufferValue * 0.5);
     }
 
+    // [BARU] Item dengan stok fisik 0 di cabang ini TIDAK dihitung sebagai
+    // demand buffer — tetap ditampilkan di list (untuk visibility & flag
+    // "RESTOCK!" di frontend), tapi buffer/min/max/rop di-nolkan supaya
+    // tidak ikut masuk ke TOTAL maupun ke database saat "Terapkan ke Toko".
+    //
+    // PENTING: hanya berlaku kalau requireStock=true (toko normal).
+    // KPR sengaja dipanggil dengan requireStock:false KARENA KPR memang
+    // tidak pernah punya baris stok sendiri (real_stok KPR SELALU 0) —
+    // kalau aturan ini ikut diterapkan ke KPR, demand KPR yang harusnya
+    // masuk ke perhitungan buffer KDC akan SELALU ter-nol-kan, merusak
+    // fitur KPR→KDC yang sudah dibuat sebelumnya.
+    if (requireStock && Number(row.real_stok) === 0) {
+      bufferValue = 0;
+    }
+
     return {
       kode: row.kode,
       nama: row.nama,
       ukuran: row.ukuran,
       kategori: row.kategori_produk,
       avg_per_bulan: Math.round(avgPerBulan * 10) / 10,
-      sales_kategori: salesKategori, // null jika pareto
+      sales_kategori: salesKategori,
       is_pareto: isPareto,
       pareto_group: pendekSet.has(row.kode)
         ? "pendek"
