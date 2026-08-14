@@ -1,13 +1,32 @@
 const bufferPanelService = require("../services/bufferPanelService");
 
+const getCabangList = async (req, res, next) => {
+  try {
+    const data = await bufferPanelService.getCabangList();
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getPreview = async (req, res, next) => {
   try {
     const cabang = req.query.cabang || req.user.cabang;
 
-    const data =
-      cabang === "KDC"
-        ? await bufferPanelService.getPreviewDataKDC()
-        : await bufferPanelService.getPreviewData(cabang);
+    let data;
+    if (cabang === "KDC") {
+      data = await bufferPanelService.getPreviewDataKDC();
+    } else if (cabang === "KPR") {
+      data = await bufferPanelService.getPreviewData(cabang, {
+        requireStock: false,
+        excludeKodes: EXCLUDED_KODES_VIRTUAL_CABANG,
+      });
+    } else if (cabang === "TOKO_BARU") {
+      // [BARU]
+      data = await bufferPanelService.getPreviewDataNewStore();
+    } else {
+      data = await bufferPanelService.getPreviewData(cabang);
+    }
 
     res.json(data);
   } catch (error) {
@@ -136,6 +155,7 @@ const triggerGenerateLog = async (req, res, next) => {
 };
 
 module.exports = {
+  getCabangList,
   getPreview,
   getDetailSpk,
   saveSettings,

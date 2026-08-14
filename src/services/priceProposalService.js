@@ -85,6 +85,7 @@ const getPriceProposals = async (filters) => {
           h.ph_status_updated AS statusUpdated,
           h.ph_ref_so_spk AS refSoSpk,
           h.ph_ref_invoice AS refInvoice,
+          (SELECT sod_so_nomor FROM tso_dtl WHERE sod_ph_nomor = h.ph_nomor LIMIT 1) AS soKaosanNomor,
           h.ph_cab AS cabang,
           h.user_create AS created,
           CASE 

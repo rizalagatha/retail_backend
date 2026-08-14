@@ -10,6 +10,10 @@ const BUFFER_TABLE = {
   "3XL": { small: 5, medium: 10, large: 15, xlarge: 20 },
 };
 
+// Kode virtual untuk simulasi toko baru — TIDAK ADA di tgudang,
+// murni untuk preview prediksi buffer sebelum toko fisiknya dibuka.
+const VIRTUAL_NEW_STORE_KODE = "TOKO_BARU";
+
 // Fallback ukuran yang tidak ada di tabel → small
 const getBufferValue = (ukuran, kategoriSales) => {
   const row = BUFFER_TABLE[ukuran] ?? {
@@ -28,6 +32,27 @@ const getSalesCategory = (avgPerBulan) => {
   if (avgPerBulan < 15) return "medium";
   if (avgPerBulan < 20) return "large";
   return "xlarge";
+};
+
+// ── Ambil Daftar Cabang untuk Buffer Panel ────────────────
+const getCabangList = async () => {
+  const [rows] = await pool.query(
+    `SELECT gdg_kode AS kode, gdg_nama AS nama 
+     FROM tgudang 
+     WHERE (gdg_dc = 0 OR gdg_kode = 'KPR') 
+       AND gdg_kode != 'KDC' 
+     ORDER BY gdg_kode`,
+  );
+
+  // [BARU] Tambahkan opsi Simulasi Toko Baru — BUKAN cabang asli di
+  // tgudang, murni untuk kebutuhan prediksi/persiapan buffer sebelum toko
+  // fisiknya dibuka.
+  rows.push({
+    kode: VIRTUAL_NEW_STORE_KODE,
+    nama: "Simulasi Toko Baru",
+  });
+
+  return rows;
 };
 
 // ── Ambil pareto per jenis ───────────────────────────────
@@ -116,6 +141,33 @@ const getParetoKodes = async (cabang) => {
   };
 };
 
+// [BARU] Top 10 barang terlaris GLOBAL (gabungan SEMUA cabang, bukan per
+// toko seperti getParetoKodes) — dasar kategori "large" untuk simulasi
+// toko baru. Pakai periode referensi yang sama (5 bulan musiman tahun
+// lalu) supaya konsisten dengan logic pareto yang sudah ada.
+const getTop10GlobalPareto = async () => {
+  const now = new Date();
+  const startRef = new Date(now.getFullYear() - 1, now.getMonth(), 1);
+  const endRef = new Date(now.getFullYear() - 1, now.getMonth() + 5, 0);
+  const fmt = (d) => d.toISOString().slice(0, 10);
+
+  const [rows] = await pool.query(
+    `
+    SELECT d.invd_kode AS kode, SUM(d.invd_jumlah) AS total
+    FROM tinv_dtl d
+    JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+    JOIN tbarangdc a ON a.brg_kode = d.invd_kode
+    WHERE h.inv_tanggal BETWEEN ? AND ?
+      AND a.brg_ktgp = 'REGULER'
+    GROUP BY d.invd_kode
+    ORDER BY total DESC
+    LIMIT 10
+  `,
+    [fmt(startRef), fmt(endRef)],
+  );
+  return new Set(rows.map((r) => r.kode));
+};
+
 // ── Helper: hitung avg/bulan penjualan per kode+ukuran ──
 const getAvgSales = async (
   cabang,
@@ -151,7 +203,7 @@ const getAvgSales = async (
 
 // ── Main: getPreviewData ─────────────────────────────────
 const getPreviewData = async (cabang, options = {}) => {
-  const { requireStock = true } = options;
+  const { requireStock = true, excludeKodes = [] } = options;
   const now = new Date();
 
   const curYear = now.getFullYear();
@@ -195,7 +247,7 @@ const getPreviewData = async (cabang, options = {}) => {
   const isNewStore = newStoreCheck.cnt === 0;
 
   // Ambil semua SKU yang ada stok di cabang ini
-  const skuRows = await getEligibleSkus(cabang, requireStock);
+  const skuRows = await getEligibleSkus(cabang, requireStock, excludeKodes);
 
   const allKodes = [...new Set(skuRows.map((r) => r.kode))];
 
@@ -291,7 +343,7 @@ const getPreviewData = async (cabang, options = {}) => {
       bufferValue = Math.round(bufferValue * 0.5);
     }
 
-    // [BARU] Item dengan stok fisik 0 di cabang ini TIDAK dihitung sebagai
+    // Item dengan stok fisik 0 di cabang ini TIDAK dihitung sebagai
     // demand buffer — tetap ditampilkan di list (untuk visibility & flag
     // "RESTOCK!" di frontend), tapi buffer/min/max/rop di-nolkan supaya
     // tidak ikut masuk ke TOTAL maupun ke database saat "Terapkan ke Toko".
@@ -333,6 +385,11 @@ const getPreviewData = async (cabang, options = {}) => {
   return result;
 };
 
+// Kode barang yang DIKECUALIKAN dari perhitungan buffer KPR &
+// Simulasi Toko Baru — DTF METERAN & EMBLEM BORDIR bukan barang jadi/kaos,
+// tidak relevan sebagai demand di konteks toko murni penjualan/simulasi.
+const EXCLUDED_KODES_VIRTUAL_CABANG = ["2600050", "2600019"];
+
 // KDC version — 1,5x lipat dari jumlah semua buffer toko
 const getPreviewDataKDC = async (kprDataOverride = null) => {
   // [BARU] Ambil demand KPR — dipakai HANYA untuk menambah beban
@@ -341,7 +398,10 @@ const getPreviewDataKDC = async (kprDataOverride = null) => {
   let kprData = kprDataOverride;
   if (kprData === null) {
     try {
-      kprData = await getPreviewData("KPR", { requireStock: false });
+      kprData = await getPreviewData("KPR", {
+        requireStock: false,
+        excludeKodes: EXCLUDED_KODES_VIRTUAL_CABANG,
+      });
     } catch (error) {
       console.error("[BUFFER KDC] Gagal ambil data KPR:", error.message);
       kprData = [];
@@ -439,6 +499,55 @@ const getPreviewDataKDC = async (kprDataOverride = null) => {
   });
 };
 
+// Preview buffer untuk toko yang BELUM ADA fisiknya. Aturan simple:
+// - Top 10 barang terlaris GLOBAL → kategori "large"
+// - Sisanya → kategori "small"
+// Tidak ada avg_per_bulan (karena belum ada histori penjualan toko ini),
+// dan real_stok SELALU 0 (toko belum dibuka, belum ada barang sama sekali).
+const getPreviewDataNewStore = async () => {
+  // requireStock diabaikan sepenuhnya di getEligibleSkus versi saat ini
+  // (selalu ambil SEMUA SKU REGULER aktif) — jadi aman dipanggil dengan
+  // kode virtual apapun, real_stok otomatis 0 karena tidak ada baris
+  // tmasterstok untuk cabang yang tidak pernah ada.
+  const skuRows = await getEligibleSkus(
+    VIRTUAL_NEW_STORE_KODE,
+    false,
+    EXCLUDED_KODES_VIRTUAL_CABANG,
+  );
+  const top10GlobalSet = await getTop10GlobalPareto();
+
+  const result = skuRows.map((row) => {
+    const isTopPareto = top10GlobalSet.has(row.kode);
+    const salesKategori = isTopPareto ? "large" : "small";
+
+    let bufferValue = getBufferValue(row.ukuran, salesKategori);
+
+    // Reduksi 50% — konsisten dengan aturan toko normal (kecuali persis 5)
+    if (bufferValue !== 5) {
+      bufferValue = Math.round(bufferValue * 0.5);
+    }
+
+    return {
+      kode: row.kode,
+      nama: row.nama,
+      ukuran: row.ukuran,
+      kategori: row.kategori_produk,
+      avg_per_bulan: 0,
+      sales_kategori: salesKategori,
+      is_pareto: isTopPareto,
+      pareto_group: isTopPareto ? "top10_global" : null,
+      data_source: "toko_baru",
+      buffer: bufferValue,
+      min: bufferValue,
+      max: bufferValue * 2,
+      rop: Math.round(bufferValue * 0.7),
+      real_stok: 0,
+    };
+  });
+
+  return result;
+};
+
 const getDetailSpkByItem = async (kode, ukuran) => {
   const [rows] = await pool.query(
     `
@@ -511,9 +620,11 @@ const saveConfig = async (cabang, cfg, user) => {
 };
 
 const saveCalculatedBuffer = async (cabang, itemsArray, userKode) => {
-  if (cabang === "KPR") {
+  if (cabang === "KPR" || cabang === VIRTUAL_NEW_STORE_KODE) {
     throw new Error(
-      "Cabang KPR tidak dapat dipasangi buffer stok sendiri. Penjualan KPR sudah otomatis diperhitungkan sebagai demand tambahan di buffer KDC.",
+      cabang === "KPR"
+        ? "Cabang KPR tidak dapat dipasangi buffer stok sendiri. Penjualan KPR sudah otomatis diperhitungkan sebagai demand tambahan di buffer KDC."
+        : "Simulasi Toko Baru hanya untuk preview — belum ada cabang fisiknya untuk dipasangi buffer.",
     );
   }
 
@@ -696,7 +807,19 @@ const saveSesionalItems = async (cabang, items) => {
 //                       (dipakai KHUSUS untuk KPR, karena KPR tidak pernah
 //                       menyimpan baris stok sendiri di tmasterstok — histori
 //                       penjualannya tetap harus terhitung)
-const getEligibleSkus = async (cabang, requireStock) => {
+// excludeKodes       → [BARU] daftar kode barang yang DIKECUALIKAN sama sekali
+//                       dari hasil (dipakai untuk KPR & Simulasi Toko Baru —
+//                       DTF METERAN & EMBLEM BORDIR bukan barang jadi/kaos,
+//                       tidak relevan dihitung sebagai demand buffer di
+//                       konteks itu)
+const getEligibleSkus = async (cabang, requireStock, excludeKodes = []) => {
+  let excludeFilter = "";
+  const params = [cabang];
+  if (excludeKodes.length > 0) {
+    excludeFilter = `AND b.brgd_kode NOT IN (${excludeKodes.map(() => "?").join(",")})`;
+    params.push(...excludeKodes);
+  }
+
   const [skuRows] = await pool.query(
     `
     SELECT 
@@ -725,10 +848,11 @@ const getEligibleSkus = async (cabang, requireStock) => {
     WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
       AND a.brg_ktgp = 'REGULER' 
       AND b.brgd_ukuran NOT IN ('ALLSIZE', 'XS', '4XL', '5XL', '6XL', '7XL', '8XL', '9XL', '10XL', 'OVERSIZE', 'JUMBO') 
+      ${excludeFilter}
     GROUP BY b.brgd_kode, b.brgd_ukuran
     ORDER BY nama, b.brgd_ukuran
   `,
-    [cabang],
+    params,
   );
   return skuRows;
 };
@@ -821,7 +945,10 @@ const generateMonthlyLog = async () => {
   let kprData = [];
   try {
     console.log(`[BUFFER CRON] Mulai hitung demand KPR (untuk KDC)...`);
-    kprData = await getPreviewData("KPR", { requireStock: false });
+    kprData = await getPreviewData("KPR", {
+      requireStock: false,
+      excludeKodes: EXCLUDED_KODES_VIRTUAL_CABANG,
+    });
     console.log(`[BUFFER CRON] Demand KPR: ${kprData.length} item.`);
   } catch (error) {
     console.error(`[BUFFER CRON] Gagal hitung demand KPR:`, error.message);
@@ -887,8 +1014,10 @@ const generateMonthlyLog = async () => {
 };
 
 module.exports = {
+  getCabangList,
   getPreviewData,
   getPreviewDataKDC,
+  getPreviewDataNewStore,
   getDetailSpkByItem,
   getConfig,
   saveConfig,

@@ -8,6 +8,13 @@ const {
 
 const MENU_ID = "63"; // Menu ID untuk Panel Setting Buffer Stok
 
+router.get(
+  "/cabang",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  bufferPanelController.getCabangList,
+);
+
 // GET: Mengambil data mentah (Average penjualan terkini vs tahun lalu)
 router.get(
   "/preview",
