@@ -425,7 +425,7 @@ const generateSalesOrder = async (phNomor, payload, user) => {
          so_cab, so_cabkaos, so_tipe, so_statuskerja,
          so_standar_ukuran, so_varian_ukuran,
          so_nomor_po, so_tgl_po, so_datelinepo,
-         so_invdc, so_keterangan,
+         so_invdc, so_keterangan, so_workshop,
          so_aktif, so_close,
          user_create, date_create
        ) VALUES (
@@ -461,6 +461,7 @@ const generateSalesOrder = async (phNomor, payload, user) => {
         finalNomorPo,
         phNomor,
         keteranganProduksi || "",
+        "JERON",
         user.kode,
       ],
     );
