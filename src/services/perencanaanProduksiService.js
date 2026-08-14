@@ -635,7 +635,7 @@ const generateBulkSpk = async (items, user) => {
          so_cab, so_cabkaos, so_tipe, so_statuskerja,
          so_standar_ukuran, so_varian_ukuran,
          so_nomor_po, so_tgl_po, so_datelinepo,
-         so_invdc, so_keterangan,
+         so_invdc, so_keterangan, so_workshop,
          so_aktif, so_close,
          user_create, date_create
        ) VALUES (
@@ -645,7 +645,7 @@ const generateBulkSpk = async (items, user) => {
          ?, ?, 'Premium', ?,
          'KENCANA', ?,
          ?, CURDATE(), CURDATE(),
-         ?, ?,
+         ?, ?, ?,
          'Y', 0,
          ?, NOW()
        )`,
@@ -654,12 +654,12 @@ const generateBulkSpk = async (items, user) => {
           dateline,
           PERUSH_KODE_DC,
           CUS_KODE_DC,
-          CUS_KODE_DC, // so_cus_kaosan — LIHAT CATATAN #1 di bawah
+          CUS_KODE_DC, // so_cus_kaosan
           SAL_KODE_DC,
           joKode,
           DIVISI_KAOSAN,
           spkNama,
-          "", // so_nama2 — tidak ada padanan di alur DC Planning, dikosongkan
+          "", // so_nama2
           totalQty,
           ukuranGabungan,
           representative.jeniskain || "",
@@ -668,9 +668,10 @@ const generateBulkSpk = async (items, user) => {
           CAB_KODE_DC,
           kepentingan,
           varianUkuran,
-          "", // so_nomor_po — SO ini tidak berasal dari PO, dikosongkan
-          "", // so_invdc — LIHAT CATATAN #2 di bawah, SENGAJA dikosongkan
+          "STOCK", // so_nomor_po
+          "", // so_invdc — sengaja kosong (guard Edit SO Retail)
           keteranganProduksi,
+          "JERON",
           user.kode,
         ],
       );
