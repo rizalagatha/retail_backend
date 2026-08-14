@@ -160,6 +160,11 @@ const getAvailableSj = async (gudang, storeSearch) => {
         "(h.sj_noterima IS NULL OR TRIM(h.sj_noterima) = '')",
     ];
 
+    if (gudang && gudang.trim() !== "" && gudang !== "ALL") {
+        whereConditions.push("h.sj_cab = ?");
+        params.push(gudang.trim());
+    }
+
     if (storeSearch && storeSearch.trim() !== "") {
         whereConditions.push(
             "(h.sj_nomor LIKE ? OR h.sj_kecab LIKE ? OR g.gdg_nama LIKE ? OR h.sj_mt_nomor LIKE ?)",
