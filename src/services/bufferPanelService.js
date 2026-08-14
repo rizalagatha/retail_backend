@@ -682,51 +682,8 @@ const saveSesionalItems = async (cabang, items) => {
 //                       menyimpan baris stok sendiri di tmasterstok — histori
 //                       penjualannya tetap harus terhitung)
 const getEligibleSkus = async (cabang, requireStock) => {
-  if (requireStock) {
-    const [skuRows] = await pool.query(
-      `
-      SELECT 
-        b.brgd_kode AS kode,
-        TRIM(REGEXP_REPLACE(
-          CONCAT(a.brg_jeniskaos,' ',a.brg_tipe,' ',a.brg_lengan,' ',a.brg_jeniskain,' ',a.brg_warna),
-          '\\\\s+', ' '
-        )) AS nama,
-        b.brgd_ukuran AS ukuran,
-        CASE 
-          WHEN a.brg_ktgp = 'REGULER' THEN 'reg'
-          WHEN a.brg_ktgp = 'SESIONAL' THEN 'sea'
-          WHEN a.brg_ktgp = 'PESANAN' THEN 'ord'
-          ELSE 'lainnya'
-        END AS kategori_produk,
-        IFNULL((
-          SELECT SUM(mst_stok_in - mst_stok_out)
-          FROM tmasterstok
-          WHERE mst_brg_kode = b.brgd_kode
-            AND mst_ukuran = b.brgd_ukuran
-            AND mst_cab = ?
-            AND mst_aktif = 'Y'
-        ), 0) AS real_stok
-      FROM tbarangdc a
-      JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
-      JOIN (
-        SELECT mst_brg_kode, mst_ukuran
-        FROM tmasterstok
-        WHERE mst_aktif = 'Y' AND mst_cab = ?
-        GROUP BY mst_brg_kode, mst_ukuran
-        HAVING SUM(mst_stok_in - mst_stok_out) > 0
-      ) stok ON stok.mst_brg_kode = b.brgd_kode AND stok.mst_ukuran = b.brgd_ukuran
-      WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
-        AND a.brg_ktgp = 'REGULER' 
-        AND b.brgd_ukuran NOT IN ('ALLSIZE', 'XS', '4XL', '5XL', '6XL', '7XL', '8XL', '9XL', '10XL', 'OVERSIZE', 'JUMBO') 
-      GROUP BY b.brgd_kode, b.brgd_ukuran
-      ORDER BY nama, b.brgd_ukuran
-    `,
-      [cabang, cabang],
-    );
-    return skuRows;
-  }
-
-  const [skuRows] = await pool.query(`
+  const [skuRows] = await pool.query(
+    `
     SELECT 
       b.brgd_kode AS kode,
       TRIM(REGEXP_REPLACE(
@@ -740,7 +697,14 @@ const getEligibleSkus = async (cabang, requireStock) => {
         WHEN a.brg_ktgp = 'PESANAN' THEN 'ord'
         ELSE 'lainnya'
       END AS kategori_produk,
-      0 AS real_stok
+      IFNULL((
+        SELECT SUM(mst_stok_in - mst_stok_out)
+        FROM tmasterstok
+        WHERE mst_brg_kode = b.brgd_kode
+          AND mst_ukuran = b.brgd_ukuran
+          AND mst_cab = ?
+          AND mst_aktif = 'Y'
+      ), 0) AS real_stok
     FROM tbarangdc a
     JOIN tbarangdc_dtl b ON a.brg_kode = b.brgd_kode
     WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
@@ -748,7 +712,9 @@ const getEligibleSkus = async (cabang, requireStock) => {
       AND b.brgd_ukuran NOT IN ('ALLSIZE', 'XS', '4XL', '5XL', '6XL', '7XL', '8XL', '9XL', '10XL', 'OVERSIZE', 'JUMBO') 
     GROUP BY b.brgd_kode, b.brgd_ukuran
     ORDER BY nama, b.brgd_ukuran
-  `);
+  `,
+    [cabang],
+  );
   return skuRows;
 };
 
