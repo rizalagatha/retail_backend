@@ -1,5 +1,7 @@
 const bufferPanelService = require("../services/bufferPanelService");
 
+const EXCLUDED_KODES_VIRTUAL_CABANG = [];
+
 const getCabangList = async (req, res, next) => {
   try {
     const data = await bufferPanelService.getCabangList();
