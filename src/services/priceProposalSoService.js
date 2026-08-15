@@ -435,7 +435,7 @@ const generateSalesOrder = async (phNomor, payload, user) => {
          ?, ?, 'Premium', ?,
          'KENCANA', ?,
          ?, CURDATE(), CURDATE(),
-         ?, ?,
+         ?, ?, ?,
          'Y', 0,
          ?, NOW()
        )`,
