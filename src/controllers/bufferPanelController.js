@@ -1,7 +1,5 @@
 const bufferPanelService = require("../services/bufferPanelService");
 
-const EXCLUDED_KODES_VIRTUAL_CABANG = [];
-
 const getCabangList = async (req, res, next) => {
   try {
     const data = await bufferPanelService.getCabangList();
@@ -21,7 +19,7 @@ const getPreview = async (req, res, next) => {
     } else if (cabang === "KPR") {
       data = await bufferPanelService.getPreviewData(cabang, {
         requireStock: false,
-        excludeKodes: EXCLUDED_KODES_VIRTUAL_CABANG,
+        excludeKodes: bufferPanelService.EXCLUDED_KODES_VIRTUAL_CABANG,
       });
     } else if (cabang === "TOKO_BARU") {
       // [BARU]

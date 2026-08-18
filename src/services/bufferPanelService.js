@@ -69,7 +69,7 @@ const getCabangList = async () => {
   const [rows] = await pool.query(
     `SELECT gdg_kode AS kode, gdg_nama AS nama 
      FROM tgudang 
-     WHERE (gdg_dc = 0 OR gdg_kode = 'KPR') 
+     WHERE (gdg_dc = 0 OR gdg_kode IN ('KPR', 'KDC')) 
      ORDER BY gdg_kode`,
   );
 
@@ -1054,6 +1054,7 @@ module.exports = {
   getPreviewData,
   getPreviewDataKDC,
   getPreviewDataNewStore,
+  EXCLUDED_KODES_VIRTUAL_CABANG,
   getDetailSpkByItem,
   getConfig,
   saveConfig,
