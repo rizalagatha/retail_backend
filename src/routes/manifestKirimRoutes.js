@@ -13,6 +13,8 @@ router.get("/", verifyToken, checkPermission(MENU_ID, "view"), manifestKirimCont
 router.get("/available-sj", verifyToken, checkPermission(MENU_ID, "view"), manifestKirimController.getAvailableSj);
 router.get("/:nomor", verifyToken, checkPermission(MENU_ID, "view"), manifestKirimController.getDetails);
 router.post("/", verifyToken, checkSavePermission(MENU_ID), manifestKirimController.saveData);
+router.patch("/:nomor/status", verifyToken, checkPermission(MENU_ID, "edit"), manifestKirimController.updateStatus);
+router.put("/:nomor/status", verifyToken, checkPermission(MENU_ID, "edit"), manifestKirimController.updateStatus);
 router.delete("/:nomor", verifyToken, checkPermission(MENU_ID, "delete"), manifestKirimController.remove);
 
 module.exports = router;
