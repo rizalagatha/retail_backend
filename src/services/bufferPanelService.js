@@ -535,6 +535,144 @@ const getPreviewDataKDC = async (kprDataOverride = null) => {
   });
 };
 
+// ── Ambil daftar periode (bulan) yang punya histori log buffer ──
+const getPeriodeOptions = async () => {
+  const [rows] = await pool.query(`
+    SELECT log_periode AS periode FROM tbuffer_log_toko
+    UNION
+    SELECT log_periode AS periode FROM tbuffer_log_kdc
+    ORDER BY periode DESC
+  `);
+  return rows.map((r) => r.periode);
+};
+
+// ── Histori buffer TOKO untuk periode tertentu (snapshot beku, BUKAN
+// hitung ulang — real_stok null karena histori tidak menyimpan stok
+// aktual saat itu, hanya angka buffer yang disimpan cron) ──
+const getHistoricalBufferToko = async (cabang, periode) => {
+  const [rows] = await pool.query(
+    `
+    SELECT 
+      l.log_kode AS kode,
+      l.log_ukuran AS ukuran,
+      TRIM(CONCAT(a.brg_jeniskaos,' ',a.brg_tipe,' ',a.brg_lengan,' ',a.brg_jeniskain,' ',a.brg_warna)) AS nama,
+      l.log_min AS min,
+      l.log_max AS max
+    FROM tbuffer_log_toko l
+    LEFT JOIN tbarangdc a ON a.brg_kode = l.log_kode
+    WHERE l.log_cabang = ? AND l.log_periode = ?
+    ORDER BY nama, l.log_ukuran
+  `,
+    [cabang, periode],
+  );
+  return rows.map((r) => ({
+    kode: r.kode,
+    nama: r.nama || r.kode,
+    ukuran: r.ukuran,
+    kategori: "reg",
+    avg_per_bulan: null,
+    sales_kategori: null,
+    is_pareto: false,
+    pareto_group: null,
+    data_source: "histori",
+    buffer: r.min,
+    min: r.min,
+    max: r.max,
+    rop: Math.round(r.min * 0.7),
+    real_stok: null,
+  }));
+};
+
+// ── Histori buffer KDC untuk periode tertentu ──
+const getHistoricalBufferKdc = async (periode) => {
+  const [rows] = await pool.query(
+    `
+    SELECT 
+      l.log_kode AS kode,
+      l.log_ukuran AS ukuran,
+      TRIM(CONCAT(a.brg_jeniskaos,' ',a.brg_tipe,' ',a.brg_lengan,' ',a.brg_jeniskain,' ',a.brg_warna)) AS nama,
+      l.log_mindc AS min,
+      l.log_maxdc AS max
+    FROM tbuffer_log_kdc l
+    LEFT JOIN tbarangdc a ON a.brg_kode = l.log_kode
+    WHERE l.log_periode = ?
+    ORDER BY nama, l.log_ukuran
+  `,
+    [periode],
+  );
+  return rows.map((r) => ({
+    kode: r.kode,
+    nama: r.nama || r.kode,
+    ukuran: r.ukuran,
+    kategori: "reg",
+    buffer: r.min,
+    min: r.min,
+    max: r.max,
+    real_stok: null,
+    spk_beredar: null,
+  }));
+};
+
+// ── Dispatcher tunggal: pilih sumber data (live vs histori) sekaligus
+// tujuan cabang (toko reguler / KDC / KPR / Simulasi Toko Baru).
+// Dipakai bareng oleh endpoint preview biasa DAN export semua toko —
+// supaya 1 sumber kebenaran, tidak ada logic switch yang keduplikasi.
+const getPreviewForCabang = async (cabang, periode = null) => {
+  if (periode) {
+    // Histori TIDAK TERSEDIA untuk KPR & Simulasi Toko Baru — keduanya
+    // memang tidak pernah disimpan ke tabel log oleh generateMonthlyLog.
+    if (cabang === "KPR" || cabang === VIRTUAL_NEW_STORE_KODE) {
+      return [];
+    }
+    if (cabang === "KDC") {
+      return await getHistoricalBufferKdc(periode);
+    }
+    return await getHistoricalBufferToko(cabang, periode);
+  }
+
+  // Live — perilaku existing, TIDAK BERUBAH
+  if (cabang === "KDC") {
+    return await getPreviewDataKDC();
+  }
+  if (cabang === "KPR") {
+    return await getPreviewData(cabang, {
+      requireStock: false,
+      excludeKodes: EXCLUDED_KODES_VIRTUAL_CABANG,
+    });
+  }
+  if (cabang === VIRTUAL_NEW_STORE_KODE) {
+    return await getPreviewDataNewStore();
+  }
+  return await getPreviewData(cabang);
+};
+
+// ── Export All Store — gabungkan SEMUA cabang (termasuk KDC, KPR,
+// Simulasi Toko Baru) jadi 1 payload untuk export multi-sheet ──
+const getAllCabangPreviewData = async (periode = null) => {
+  const cabangList = await getCabangList(); // sudah termasuk KDC, KPR, TOKO_BARU
+  const result = [];
+
+  for (const cab of cabangList) {
+    try {
+      const items = await getPreviewForCabang(cab.kode, periode);
+      result.push({ kode_cabang: cab.kode, nama_cabang: cab.nama, items });
+    } catch (error) {
+      console.error(
+        `[EXPORT ALL] Gagal ambil data cabang ${cab.kode}:`,
+        error.message,
+      );
+      result.push({
+        kode_cabang: cab.kode,
+        nama_cabang: cab.nama,
+        items: [],
+        error: error.message,
+      });
+    }
+  }
+
+  return result;
+};
+
 // Preview buffer untuk toko yang BELUM ADA fisiknya. Aturan simple:
 // - Top 10 barang terlaris GLOBAL → kategori "large"
 // - Sisanya → kategori "small"
@@ -1054,6 +1192,9 @@ module.exports = {
   getPreviewData,
   getPreviewDataKDC,
   getPreviewDataNewStore,
+  getPreviewForCabang,
+  getPeriodeOptions,
+  getAllCabangPreviewData,
   EXCLUDED_KODES_VIRTUAL_CABANG,
   getDetailSpkByItem,
   getConfig,

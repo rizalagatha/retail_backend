@@ -12,22 +12,28 @@ const getCabangList = async (req, res, next) => {
 const getPreview = async (req, res, next) => {
   try {
     const cabang = req.query.cabang || req.user.cabang;
+    const periode = req.query.periode || null; // [BARU] format "YYYY-MM"
 
-    let data;
-    if (cabang === "KDC") {
-      data = await bufferPanelService.getPreviewDataKDC();
-    } else if (cabang === "KPR") {
-      data = await bufferPanelService.getPreviewData(cabang, {
-        requireStock: false,
-        excludeKodes: bufferPanelService.EXCLUDED_KODES_VIRTUAL_CABANG,
-      });
-    } else if (cabang === "TOKO_BARU") {
-      // [BARU]
-      data = await bufferPanelService.getPreviewDataNewStore();
-    } else {
-      data = await bufferPanelService.getPreviewData(cabang);
-    }
+    const data = await bufferPanelService.getPreviewForCabang(cabang, periode);
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+};
 
+const getPeriodeOptions = async (req, res, next) => {
+  try {
+    const data = await bufferPanelService.getPeriodeOptions();
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const exportAllStores = async (req, res, next) => {
+  try {
+    const periode = req.query.periode || null;
+    const data = await bufferPanelService.getAllCabangPreviewData(periode);
     res.json(data);
   } catch (error) {
     next(error);
@@ -157,6 +163,8 @@ const triggerGenerateLog = async (req, res, next) => {
 module.exports = {
   getCabangList,
   getPreview,
+  getPeriodeOptions,
+  exportAllStores,
   getDetailSpk,
   saveSettings,
   getConfig,

@@ -24,6 +24,19 @@ router.get(
 );
 
 router.get(
+  "/periode-options",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  bufferPanelController.getPeriodeOptions,
+);
+router.get(
+  "/export-all",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  bufferPanelController.exportAllStores,
+);
+
+router.get(
   "/detail-spk",
   verifyToken,
   checkPermission(MENU_ID, "view"),

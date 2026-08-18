@@ -69,7 +69,7 @@ const getList = async (filters) => {
         y.DipakaiDTF,
         y.MpPesanan, y.MpResi,
         y.Disc1, y.Disc2, y.Promo, y.Ppn, y.Bkrm,
-        y.NoSPK,
+        y.NoSalesOrder,
         y.TglJadi,
         y.UserModified, y.DateModified,
 
@@ -201,10 +201,12 @@ const getList = async (filters) => {
                 ) AS TglJadi,
 
                 IFNULL((
-                    SELECT GROUP_CONCAT(spk_nomor SEPARATOR ', ')
-                    FROM kencanaprint.tspk 
-                    WHERE spk_invdc = h.so_nomor AND spk_aktif = 'Y' 
-                ), "") AS NoSPK,
+                    SELECT GROUP_CONCAT(DISTINCT so2.so_nomor SEPARATOR ', ')
+                    FROM tso_dtl dd2
+                    JOIN kencanaprint.tsalesorder so2 ON so2.so_invdc = dd2.sod_ph_nomor
+                    WHERE dd2.sod_so_nomor = h.so_nomor
+                      AND dd2.sod_ph_nomor IS NOT NULL AND dd2.sod_ph_nomor <> ''
+                ), "") AS NoSalesOrder,
 
                 (SELECT ROUND(
                     SUM(dd.sod_jumlah * (dd.sod_harga - dd.sod_diskon))
@@ -853,6 +855,10 @@ const trackOrderTimeline = async (nomorSO) => {
         namaBarang = r.sod_custom_nama;
       else if (r.nama_dtf) namaBarang = r.nama_dtf;
 
+      if (!namaBarang || namaBarang.trim() === "") {
+        namaBarang = r.nama_spk || r.sod_kode || "Barang Pesanan";
+      }
+
       const qty = Number(r.sod_jumlah || 0);
       const scanned = Number(r.sod_scanned || 0);
       const subtotal = qty * (r.sod_harga - r.sod_diskon);
@@ -1123,15 +1129,85 @@ const trackOrderTimeline = async (nomorSO) => {
     }
 
     // ==========================================
-    // 4B. TRACKING PRODUKSI PABRIK (SPK GARMEN)
+    // 4B. TRACKING SO MANKSI -> PPIC -> SPK PRODUKSI
+    // Rantai baru: tso_dtl.sod_ph_nomor -> tsalesorder.so_invdc (dari PH)
+    // -> tsalesorder.so_spk_ref -> tspk.spk_nomor (kalau sudah diterbitkan)
     // ==========================================
-    const [spkRows] = await connection.query(
-      `SELECT spk_nomor, spk_nama, date_create FROM kencanaprint.tspk WHERE spk_invdc = ? AND spk_aktif = 'Y'`,
+
+    // [4B.0] Ambil semua PH yang terkait SO Retail ini
+    const [phLinkRows] = await connection.query(
+      `SELECT DISTINCT sod_ph_nomor
+       FROM tso_dtl
+       WHERE sod_so_nomor = ? AND sod_ph_nomor IS NOT NULL AND sod_ph_nomor <> ''`,
       [nomorSO],
     );
-    let hasSpk = spkRows.length > 0;
+    const phNomorList = phLinkRows.map((r) => r.sod_ph_nomor);
 
-    for (const spk of spkRows) {
+    // [4B.1] Cari SO MANKSI (tsalesorder) yang dihasilkan dari PH tsb
+    let salesOrderRows = [];
+    if (phNomorList.length > 0) {
+      const placeholders = phNomorList.map(() => "?").join(",");
+      const [rows] = await connection.query(
+        `SELECT so_nomor, so_nama, so_spk_ref, date_create, so_dateline, so_invdc
+         FROM kencanaprint.tsalesorder
+         WHERE so_invdc IN (${placeholders}) AND so_aktif = 'Y'`,
+        phNomorList,
+      );
+      salesOrderRows = rows;
+    }
+
+    let hasSpk = salesOrderRows.length > 0; // Sudah diteruskan ke MANKSI (minimal)
+
+    for (const so2 of salesOrderRows) {
+      // Milestone: SO diteruskan/diterbitkan ke MANKSI
+      timeline.push({
+        id: milestoneId++,
+        title: "SO Diteruskan ke MANKSI (PPIC)",
+        subtitle: `Nama: ${so2.so_nama}`,
+        waktu: format(new Date(so2.date_create), "dd-MM-yyyy HH:mm"),
+        rawDate: new Date(so2.date_create),
+        status: "DONE",
+        icon: "mdi-send-check",
+        color: "indigo",
+        detail: `No. SO MANKSI: ${so2.so_nomor}`,
+        stepOrder: 3.5,
+      });
+
+      // Estimasi 2 minggu dari SO MANKSI dibuat (fallback jika SPK belum terbit)
+      let tglEstimasiSo = new Date(so2.date_create);
+      tglEstimasiSo.setDate(tglEstimasiSo.getDate() + 14);
+      if (!estimasiSelesai || tglEstimasiSo > estimasiSelesai) {
+        estimasiSelesai = tglEstimasiSo;
+      }
+
+      // [4B.2] Kalau PPIC BELUM menerbitkan SPK produksi
+      if (!so2.so_spk_ref || so2.so_spk_ref.trim() === "") {
+        timeline.push({
+          id: milestoneId++,
+          title: "Menunggu SPK Produksi (PPIC)",
+          subtitle: "Belum diterbitkan oleh tim PPIC",
+          waktu: "Berjalan",
+          rawDate: new Date(new Date(so2.date_create).getTime() + 1000),
+          status: "ACTIVE",
+          icon: "mdi-timer-sand",
+          color: "orange",
+          detail: `No. SO MANKSI: ${so2.so_nomor}`,
+          stepOrder: 3.6,
+        });
+        continue; // Lanjut ke SO MANKSI berikutnya (kalau ada > 1), skip drill-down produksi
+      }
+
+      // [4B.3] SPK SUDAH diterbitkan — ambil detailnya dari tspk
+      const [spkDetailRows] = await connection.query(
+        `SELECT spk_nomor, spk_nama, date_create
+         FROM kencanaprint.tspk
+         WHERE spk_nomor = ? AND spk_aktif = 'Y'
+         LIMIT 1`,
+        [so2.so_spk_ref],
+      );
+      if (spkDetailRows.length === 0) continue; // referensi ada tapi SPK-nya sudah tidak aktif/dihapus
+
+      const spk = spkDetailRows[0];
       const jenisProd = "SPK PABRIK";
       if (!jenisProduksiArr.includes(jenisProd))
         jenisProduksiArr.push(jenisProd);
@@ -1140,22 +1216,18 @@ const trackOrderTimeline = async (nomorSO) => {
       let isMaterialRealized = false;
       let spkChildren = [];
 
-      // --- [BARU] LOGIKA ESTIMASI SPK PABRIK (2 MINGGU) ---
+      // Estimasi 2 minggu dari SPK diterbitkan (menggantikan estimasi dari SO MANKSI)
       let tglEstimasiSpk = new Date(spk.date_create);
-      tglEstimasiSpk.setDate(tglEstimasiSpk.getDate() + 14); // Tambah 14 Hari
-
-      // Adu dengan estimasi DTF/Jasa (jika ada), ambil tanggal yang paling lama/jauh
+      tglEstimasiSpk.setDate(tglEstimasiSpk.getDate() + 14);
       if (!estimasiSelesai || tglEstimasiSpk > estimasiSelesai) {
         estimasiSelesai = tglEstimasiSpk;
       }
-      // ----------------------------------------------------
 
-      // [4B.1] CEK PERMINTAAN BAHAN & REALISASI
+      // [4B.3.1] CEK PERMINTAAN BAHAN & REALISASI — TIDAK BERUBAH
       const [mintaRows] = await connection.query(
         `SELECT m.min_nomor, m.min_close, m.date_create as req_date, m.user_create as req_user, IFNULL((SELECT SUM(mind_jumlah) FROM kencanaprint.tmintabahan_dtl WHERE mind_nomor = m.min_nomor), 0) as req_qty FROM kencanaprint.tmintabahan_hdr m WHERE m.min_spk_nomor = ? ORDER BY m.date_create ASC`,
         [spk.spk_nomor],
       );
-
       if (mintaRows.length > 0) {
         for (const minta of mintaRows) {
           lastSpkActionDate = new Date(minta.req_date);
@@ -1171,7 +1243,6 @@ const trackOrderTimeline = async (nomorSO) => {
             detail: `Ref: ${minta.min_nomor} • Qty: ${minta.req_qty}`,
             stepOrder: 4.1,
           });
-
           const [realRows] = await connection.query(
             `SELECT p.promin_nomor, p.date_create as real_date, p.user_create as real_user, IFNULL((SELECT SUM(promind_Jumlah) FROM kencanaprint.tproduksiminta_dtl WHERE promind_promin_Nomor = p.promin_nomor), 0) as real_qty FROM kencanaprint.tproduksiminta_hdr p WHERE p.promin_minta = ? OR p.promin_spk_nomor = ? ORDER BY p.date_create DESC LIMIT 1`,
             [minta.min_nomor, spk.spk_nomor],
@@ -1241,7 +1312,7 @@ const trackOrderTimeline = async (nomorSO) => {
         });
       }
 
-      // [4B.2] CEK MUTASI PRODUKSI (GROUP BY TANGGAL, GUDANG, & NAMA KOMPONEN DETAIL)
+      // [4B.3.2] CEK MUTASI PRODUKSI — TIDAK BERUBAH
       const [mutasiRows] = await connection.query(
         `SELECT 
             h.mph_gdgasal, 
@@ -1258,23 +1329,18 @@ const trackOrderTimeline = async (nomorSO) => {
          ORDER BY date_create ASC`,
         [spk.spk_nomor, spk.spk_nomor],
       );
-
       let lastGudangAsal = null;
       for (const mutasi of mutasiRows) {
         lastSpkActionDate = new Date(mutasi.date_create);
         lastGudangAsal = mutasi.mph_gdgasal;
-
         let mutasiTitle = "";
         let mutasiIcon = "mdi-factory";
         let mutasiOrder = 4.3;
         let mutasiColor = "blue-grey";
-
-        // Memasukkan nama komponen ke dalam Judul
         const namaKomp =
           mutasi.nama_komponen !== "Gabungan"
             ? ` (${mutasi.nama_komponen})`
             : "";
-
         switch (mutasi.mph_gdgasal) {
           case "GP001":
             mutasiTitle = `Proses Potong Selesai${namaKomp}`;
@@ -1307,9 +1373,7 @@ const trackOrderTimeline = async (nomorSO) => {
             mutasiColor = "green-darken-2";
             break;
         }
-
         let refText = mutasi.list_nomor;
-
         spkChildren.push({
           id: milestoneId++,
           title: mutasiTitle,
@@ -1324,14 +1388,13 @@ const trackOrderTimeline = async (nomorSO) => {
         });
       }
 
-      // [4B.3] CEK STBJ DAN PENERIMAAN DC
+      // [4B.3.3] CEK STBJ DAN PENERIMAAN DC — TIDAK BERUBAH
       const [stbjRows] = await connection.query(
         `SELECT DISTINCT h.stbj_nomor, h.date_create, h.user_create, IFNULL((SELECT SUM(stbjd_jumlah) FROM kencanaprint.tstbj_dtl d2 WHERE d2.stbjd_stbj_nomor = h.stbj_nomor AND d2.stbjd_spk_nomor = ?), 0) AS qty_stbj 
          FROM kencanaprint.tstbj_hdr h JOIN kencanaprint.tstbj_dtl d ON d.stbjd_stbj_nomor = h.stbj_nomor 
          WHERE d.stbjd_spk_nomor = ? ORDER BY h.date_create ASC`,
         [spk.spk_nomor, spk.spk_nomor],
       );
-
       let isStbjDone = false;
       if (stbjRows.length > 0) {
         for (const stbj of stbjRows) {
@@ -1350,7 +1413,6 @@ const trackOrderTimeline = async (nomorSO) => {
             stepOrder: 4.8,
           });
         }
-
         const [terimaDcRows] = await connection.query(
           `SELECT DISTINCT h.ts_nomor, h.date_create, h.user_create, IFNULL((SELECT SUM(tsd_jumlah) FROM tdc_stbj_dtl d2 WHERE d2.tsd_nomor = h.ts_nomor AND d2.tsd_spk_nomor = ?), 0) AS qty_terima 
            FROM tdc_stbj_hdr h JOIN tdc_stbj_dtl d ON d.tsd_nomor = h.ts_nomor 
@@ -1389,7 +1451,7 @@ const trackOrderTimeline = async (nomorSO) => {
         }
       }
 
-      // [4B.4] INJEKSI STATUS "MENUNGGU PROSES" DINAMIS
+      // [4B.3.4] INJEKSI STATUS "MENUNGGU PROSES" DINAMIS — TIDAK BERUBAH
       if (isMaterialRealized && !isStbjDone) {
         let waitTitle = "";
         let waitIcon = "mdi-timer-sand";
@@ -1415,7 +1477,6 @@ const trackOrderTimeline = async (nomorSO) => {
           waitIcon = "mdi-file-document-outline";
           waitOrder = 4.75;
         }
-
         if (waitTitle) {
           spkChildren.push({
             id: milestoneId++,
@@ -1432,12 +1493,11 @@ const trackOrderTimeline = async (nomorSO) => {
         }
       }
 
-      // [4B.5] PUSH PARENT SPK KE TIMELINE UTAMA (Sort descending di dalam children)
+      // [4B.3.5] PUSH PARENT SPK KE TIMELINE UTAMA
       spkChildren.sort((a, b) => {
         if (a.stepOrder !== b.stepOrder) return a.stepOrder - b.stepOrder;
         return a.rawDate.getTime() - b.rawDate.getTime();
       });
-
       timeline.push({
         id: milestoneId++,
         title: `Diteruskan ke Produksi (${jenisProd})`,
@@ -1452,7 +1512,7 @@ const trackOrderTimeline = async (nomorSO) => {
         isSpkGroup: true,
         children: spkChildren,
       });
-    } // Akhir loop for (const spk of spkRows)
+    } // Akhir loop for (const so2 of salesOrderRows)
 
     // ==========================================
     // 5. TRACKING READY & INVOICE / PELUNASAN
