@@ -74,7 +74,9 @@ const getList = async (filters) => {
       h.mp_ket AS Keterangan,
       h.mp_status AS Status,
       h.user_create AS Usr,
-      h.date_create AS DateCreate
+      h.date_create AS DateCreate,
+      CASE WHEN h.mp_ttd_pengirim IS NOT NULL AND h.mp_ttd_pengirim != '' THEN 'Y' ELSE 'N' END AS HasTtdPengirim,
+      CASE WHEN h.mp_ttd_driver IS NOT NULL AND h.mp_ttd_driver != '' THEN 'Y' ELSE 'N' END AS HasTtdDriver
     FROM tmanifest_pengiriman_hdr h
     LEFT JOIN tgudang g ON g.gdg_kode = h.mp_gudang
     WHERE ${whereConditions.join(" AND ")}
@@ -112,7 +114,9 @@ const getDetails = async (nomor) => {
       h.mp_ttd_pengirim AS ttdPengirim,
       h.mp_ttd_driver AS ttdDriver,
       h.user_create AS userCreate,
-      h.date_create AS dateCreate
+      h.date_create AS dateCreate,
+      h.user_modified AS userModified,
+      h.date_modified AS dateModified
     FROM tmanifest_pengiriman_hdr h
     LEFT JOIN tgudang g ON g.gdg_kode = h.mp_gudang
     LEFT JOIN tgudang gt ON gt.gdg_kode = h.mp_tujuan
@@ -227,6 +231,9 @@ const saveData = async (payload, user) => {
 
         let manifestNomor = header.nomor;
 
+        const hasBothTtd = Boolean(header.ttdPengirim && header.ttdDriver);
+        const finalStatus = header.status || (hasBothTtd ? "DIKIRIM" : "DRAFT");
+
         if (isNew) {
             manifestNomor = await generateNewManifestNumber(
                 header.gudang,
@@ -245,7 +252,7 @@ const saveData = async (payload, user) => {
                 header.jam || null,
                 header.gudang,
                 header.tujuan || null,
-                header.jenisKirim || NULL,
+                header.jenisKirim || null,
                 header.driver || "",
                 header.platNomor || "",
                 header.ekspedisi || "",
@@ -255,7 +262,7 @@ const saveData = async (payload, user) => {
                 totalQty,
                 header.beratKg || 0,
                 header.keterangan || "",
-                header.status || "DIKIRIM",
+                finalStatus,
                 header.ttdPengirim || null,
                 header.ttdDriver || null,
                 user.kode || user.id || "ADMIN",
@@ -280,7 +287,7 @@ const saveData = async (payload, user) => {
                 header.jam || null,
                 header.gudang,
                 header.tujuan || null,
-                header.jenisKirim || NULL,
+                header.jenisKirim || null,
                 header.driver || "",
                 header.platNomor || "",
                 header.ekspedisi || "",
@@ -290,7 +297,7 @@ const saveData = async (payload, user) => {
                 totalQty,
                 header.beratKg || 0,
                 header.keterangan || "",
-                header.status || "DIKIRIM",
+                finalStatus,
                 header.ttdPengirim || null,
                 header.ttdDriver || null,
                 user.kode || user.id || "ADMIN",
@@ -397,6 +404,44 @@ const remove = async (nomor) => {
     }
 };
 
+/**
+ * Updates only the status field of a Manifest Kirim.
+ * Allowed transitions: any -> DIKIRIM (manual confirm by admin)
+ */
+const updateStatus = async (nomor, newStatus, user) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        const [rows] = await connection.query(
+            "SELECT mp_status FROM tmanifest_pengiriman_hdr WHERE mp_nomor = ?",
+            [nomor],
+        );
+
+        if (rows.length === 0) {
+            throw new Error("Manifest Kirim tidak ditemukan.");
+        }
+
+        const allowedTargets = ["DIKIRIM", "SELESAI", "BATAL"];
+        if (!allowedTargets.includes(newStatus)) {
+            throw new Error(`Status "${newStatus}" tidak diizinkan.`);
+        }
+
+        await connection.query(
+            "UPDATE tmanifest_pengiriman_hdr SET mp_status = ?, user_modified = ?, date_modified = NOW() WHERE mp_nomor = ?",
+            [newStatus, user?.kode || user?.id || "SYSTEM", nomor],
+        );
+
+        await connection.commit();
+        return { message: `Status Manifest ${nomor} berhasil diubah ke ${newStatus}.` };
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    } finally {
+        connection.release();
+    }
+};
+
 module.exports = {
     generateNewManifestNumber,
     getList,
@@ -404,4 +449,5 @@ module.exports = {
     getAvailableSj,
     saveData,
     remove,
+    updateStatus,
 };

@@ -100,10 +100,39 @@ const remove = async (req, res) => {
   }
 };
 
+const updateStatus = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const { status } = req.body;
+    const user = req.user || { id: "ADMIN", kode: "ADMIN" };
+
+    if (!status) {
+      return res.status(400).json({ message: "Field 'status' wajib diisi." });
+    }
+
+    const result = await manifestKirimService.updateStatus(nomor, status, user);
+
+    auditService.logActivity(
+      req,
+      "UPDATE",
+      "MANIFEST_KIRIM",
+      nomor,
+      null,
+      { status },
+      `Update status Manifest Kirim ${nomor} -> ${status}`
+    );
+
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getList,
   getDetails,
   getAvailableSj,
   saveData,
   remove,
+  updateStatus,
 };
