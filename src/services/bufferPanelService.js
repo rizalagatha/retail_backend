@@ -14,6 +14,36 @@ const BUFFER_TABLE = {
 // murni untuk preview prediksi buffer sebelum toko fisiknya dibuka.
 const VIRTUAL_NEW_STORE_KODE = "TOKO_BARU";
 
+// [BARU] Nama barang yang TETAP di-nolkan buffernya kalau stok toko 0 —
+// ini bahan pendukung/consumable, bukan barang jadi/kaos, jadi tidak
+// relevan dipaksa punya buffer walau kategorinya REGULER. Dicocokkan
+// via substring nama (bukan kode persis), supaya tetap match meski ada
+// variasi kode untuk STICKER DTF / STICKER DTF PREMIUM yang belum
+// terdaftar eksplisit.
+const REGULER_ZERO_ON_NOSTOK_NAMA = [
+  "EMBLEM BORDIR",
+  "DTF METERAN",
+  "STICKER DTF PREMIUM",
+  "STICKER DTF",
+];
+
+// [BARU] Daftar toko reguler — dipakai untuk aturan khusus "barang reszo"
+// (kode full angka seperti 2400016) yang TIDAK BOLEH dipasangi buffer
+// sama sekali di toko-toko ini, meskipun brg_ktgp = REGULER.
+const REGULER_STORE_LIST = [
+  "K01",
+  "K02",
+  "K03",
+  "K05",
+  "K06",
+  "K07",
+  "K08",
+  "K09",
+  "K10",
+  "K11",
+  "K12",
+];
+
 // Fallback ukuran yang tidak ada di tabel → small
 const getBufferValue = (ukuran, kategoriSales) => {
   const row = BUFFER_TABLE[ukuran] ?? {
@@ -40,7 +70,6 @@ const getCabangList = async () => {
     `SELECT gdg_kode AS kode, gdg_nama AS nama 
      FROM tgudang 
      WHERE (gdg_dc = 0 OR gdg_kode = 'KPR') 
-       AND gdg_kode != 'KDC' 
      ORDER BY gdg_kode`,
   );
 
@@ -343,18 +372,25 @@ const getPreviewData = async (cabang, options = {}) => {
       bufferValue = Math.round(bufferValue * 0.5);
     }
 
-    // Item dengan stok fisik 0 di cabang ini TIDAK dihitung sebagai
-    // demand buffer — tetap ditampilkan di list (untuk visibility & flag
-    // "RESTOCK!" di frontend), tapi buffer/min/max/rop di-nolkan supaya
-    // tidak ikut masuk ke TOTAL maupun ke database saat "Terapkan ke Toko".
-    //
-    // PENTING: hanya berlaku kalau requireStock=true (toko normal).
-    // KPR sengaja dipanggil dengan requireStock:false KARENA KPR memang
-    // tidak pernah punya baris stok sendiri (real_stok KPR SELALU 0) —
-    // kalau aturan ini ikut diterapkan ke KPR, demand KPR yang harusnya
-    // masuk ke perhitungan buffer KDC akan SELALU ter-nol-kan, merusak
-    // fitur KPR→KDC yang sudah dibuat sebelumnya.
-    if (requireStock && Number(row.real_stok) === 0) {
+    // [UBAH] Sebelumnya SEMUA item dengan stok toko 0 selalu dinolkan
+    // buffernya. Sekarang: buffer TETAP terpasang meski stok 0 — KECUALI
+    // untuk barang pendukung tertentu (EMBLEM BORDIR, DTF METERAN,
+    // STICKER DTF, STICKER DTF PREMIUM) yang memang tidak relevan dipaksa
+    // punya buffer per toko.
+    const isStockZeroExemptItem = REGULER_ZERO_ON_NOSTOK_NAMA.some((n) =>
+      (row.nama || "").toUpperCase().includes(n),
+    );
+
+    if (requireStock && isStockZeroExemptItem && Number(row.real_stok) === 0) {
+      bufferValue = 0;
+    }
+
+    // [BARU] Barang RESZO — kode barang berupa angka murni (mis. "2400016")
+    // TIDAK BOLEH dipasangi buffer di toko-toko reguler (K01–K12), meskipun
+    // brg_ktgp-nya REGULER. Barang jenis ini bukan barang display/jual
+    // normal per toko.
+    const isReszoKode = /^\d+$/.test(row.kode);
+    if (REGULER_STORE_LIST.includes(cabang) && isReszoKode) {
       bufferValue = 0;
     }
 
