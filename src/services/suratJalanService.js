@@ -28,6 +28,7 @@ const getList = async (filters) => {
             h.sj_kecab AS Store,
             g.gdg_nama AS Nama_Store,
             h.sj_mt_nomor AS NoMinta,
+            IFNULL(h.sj_manifest_nomor, "") AS NoManifest,
             -- FIX: Cari invoice yang inv_nomor_so nya adalah Nomor SJ (sj_nomor)
             IFNULL((SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor_so = h.sj_nomor LIMIT 1), "") AS NoInvoice,
             m.mt_tanggal AS TglMinta,

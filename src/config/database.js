@@ -9,14 +9,11 @@ const pool = mysql.createPool({
   database: process.env.DB_NAME,
   waitForConnections: true,
   connectionLimit: 10,
+  maxIdle: 10, // batas koneksi idle di pool
+  idleTimeout: 60000, // bersihkan koneksi idle setelah 60s agar tidak diputus paksa MySQL / firewall
   queueLimit: 0,
-  // [BARU] TCP keepalive — kirim paket "masih hidup" berkala ke koneksi
-  // idle, supaya firewall/NAT di jalur jaringan (antara app server dan
-  // 103.94.238.252) tidak diam-diam motong koneksi yang didiamkan pool,
-  // sebelum wait_timeout MySQL (28800s) sempat kepakai. Ini kandidat kuat
-  // penyebab "Aborted connection" yang berulang di log MariaDB.
   enableKeepAlive: true,
-  keepAliveInitialDelay: 10000, // mulai kirim keepalive setelah 10 detik idle
+  keepAliveInitialDelay: 0, // kirim keepalive TCP secepat mungkin
 });
 
 // [BARU] Tangkap error di level pool (mis. koneksi idle diputus paksa oleh
