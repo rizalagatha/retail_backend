@@ -206,6 +206,7 @@ const allowedOrigins = [
   "https://retail.kaosanofficial.com",
   "http://192.168.1.191:5173",
   "https://103.94.238.252",
+  "https://tracking.kaosanofficial.com",
 ];
 const imageFolderPath = path.join(__dirname, "public", "images");
 const memoFolderPath = path.join(__dirname, "../public/memos");
