@@ -414,14 +414,21 @@ const renameAccCustomerProof = async (tempFilePath, nomor) => {
 // [BARU] LOGIC GENERATE KODE BARANG CUSTOM (Draft, dengan histori versioning)
 // ==========================================================================
 const deriveJenisKaosKode = (additionalCostItems = [], jenisKaosNama = "") => {
+  // 1. Cek biaya tambahan KRAH terlebih dahulu (menang dari nama bawaan)
+  const hasKrah = additionalCostItems.some(
+    (item) =>
+      (item.tambahan || "").toUpperCase().includes("KRAH") ||
+      (item.tambahan || "").toUpperCase().includes("KERAH"), // Ditambahkan antisipasi typo
+  );
+
+  if (hasKrah) return "KK";
+
+  // 2. Jika tidak ada tambahan krah, baru cek awalan nama jenis kaos
   const namaUpper = (jenisKaosNama || "").toUpperCase().trim();
   if (namaUpper.startsWith("KK")) return "KK";
-  if (namaUpper.startsWith("KO")) return "KO";
 
-  const hasKrah = additionalCostItems.some((item) =>
-    (item.tambahan || "").toUpperCase().includes("KRAH"),
-  );
-  return hasKrah ? "KK" : "KO";
+  // 3. Fallback jika bukan keduanya
+  return "KO";
 };
 
 const deriveTipe = ({
