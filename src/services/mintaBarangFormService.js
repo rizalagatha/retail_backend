@@ -995,7 +995,7 @@ const generateAutomasiMintaBarang = async (user) => {
         });
       });
       sizeEntries.sort((a, b) => b.qty - a.qty);
-      const top10Sizes = sizeEntries.slice(0, 1000);
+      const top10Sizes = sizeEntries.slice(0, 100);
 
       paretoSetByCabang[cab] = new Set(
         top10Sizes.map((e) => `${e.kode}|${e.ukuran}`),
