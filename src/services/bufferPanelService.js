@@ -701,8 +701,6 @@ const getPreviewDataNewStore = async () => {
 
   const top10GlobalSet = await getTop10GlobalPareto();
 
-  const top10GlobalSet = await getTop10GlobalPareto();
-
   const result = skuRows.map((row) => {
     const isTopPareto = top10GlobalSet.has(row.kode);
     const salesKategori = isTopPareto ? "large" : "small";
