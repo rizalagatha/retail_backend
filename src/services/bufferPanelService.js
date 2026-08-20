@@ -44,6 +44,9 @@ const REGULER_STORE_LIST = [
   "K12",
 ];
 
+// Deteksi kode barang RESZO (kode full angka, mis. "2400016", "2400021")
+const isReszoKode = (kode) => /^\d+$/.test(kode);
+
 // Fallback ukuran yang tidak ada di tabel → small
 const getBufferValue = (ukuran, kategoriSales) => {
   const row = BUFFER_TABLE[ukuran] ?? {
@@ -276,7 +279,16 @@ const getPreviewData = async (cabang, options = {}) => {
   const isNewStore = newStoreCheck.cnt === 0;
 
   // Ambil semua SKU yang ada stok di cabang ini
-  const skuRows = await getEligibleSkus(cabang, requireStock, excludeKodes);
+  const skuRowsRaw = await getEligibleSkus(cabang, requireStock, excludeKodes);
+
+  // [BARU] KPR & Simulasi Toko Baru: barang RESZO (kode full angka) TIDAK
+  // dihitung sama sekali — bukan barang jual/display normal, jadi tidak
+  // relevan sebagai demand di dua konteks ini.
+  const isReszoExcludedCabang =
+    cabang === "KPR" || cabang === VIRTUAL_NEW_STORE_KODE;
+  const skuRows = isReszoExcludedCabang
+    ? skuRowsRaw.filter((r) => !isReszoKode(r.kode))
+    : skuRowsRaw;
 
   const allKodes = [...new Set(skuRows.map((r) => r.kode))];
 
@@ -389,8 +401,7 @@ const getPreviewData = async (cabang, options = {}) => {
     // TIDAK BOLEH dipasangi buffer di toko-toko reguler (K01–K12), meskipun
     // brg_ktgp-nya REGULER. Barang jenis ini bukan barang display/jual
     // normal per toko.
-    const isReszoKode = /^\d+$/.test(row.kode);
-    if (REGULER_STORE_LIST.includes(cabang) && isReszoKode) {
+    if (REGULER_STORE_LIST.includes(cabang) && isReszoKode(row.kode)) {
       bufferValue = 0;
     }
 
@@ -688,6 +699,8 @@ const getPreviewDataNewStore = async () => {
     false,
     EXCLUDED_KODES_VIRTUAL_CABANG,
   );
+  const skuRows = skuRowsRaw.filter((r) => !isReszoKode(r.kode));
+
   const top10GlobalSet = await getTop10GlobalPareto();
 
   const result = skuRows.map((row) => {
