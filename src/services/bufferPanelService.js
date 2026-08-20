@@ -690,16 +690,16 @@ const getAllCabangPreviewData = async (periode = null) => {
 // Tidak ada avg_per_bulan (karena belum ada histori penjualan toko ini),
 // dan real_stok SELALU 0 (toko belum dibuka, belum ada barang sama sekali).
 const getPreviewDataNewStore = async () => {
-  // requireStock diabaikan sepenuhnya di getEligibleSkus versi saat ini
-  // (selalu ambil SEMUA SKU REGULER aktif) — jadi aman dipanggil dengan
-  // kode virtual apapun, real_stok otomatis 0 karena tidak ada baris
-  // tmasterstok untuk cabang yang tidak pernah ada.
-  const skuRows = await getEligibleSkus(
+  const skuRowsRaw = await getEligibleSkus(
     VIRTUAL_NEW_STORE_KODE,
     false,
     EXCLUDED_KODES_VIRTUAL_CABANG,
   );
+
+  // [BARU] Sama seperti KPR — barang RESZO tidak dihitung untuk simulasi toko baru
   const skuRows = skuRowsRaw.filter((r) => !isReszoKode(r.kode));
+
+  const top10GlobalSet = await getTop10GlobalPareto();
 
   const top10GlobalSet = await getTop10GlobalPareto();
 
