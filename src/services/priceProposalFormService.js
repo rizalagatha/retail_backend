@@ -411,15 +411,17 @@ const renameAccCustomerProof = async (tempFilePath, nomor) => {
 };
 
 // ==========================================================================
-// [BARU] LOGIC GENERATE KODE BARANG CUSTOM (Draft, dengan histori versioning)
+// LOGIC GENERATE KODE BARANG CUSTOM (Draft, dengan histori versioning)
 // ==========================================================================
 const deriveJenisKaosKode = (additionalCostItems = [], jenisKaosNama = "") => {
   // 1. Cek biaya tambahan KRAH terlebih dahulu (menang dari nama bawaan)
-  const hasKrah = additionalCostItems.some(
-    (item) =>
-      (item.tambahan || "").toUpperCase().includes("KRAH") ||
-      (item.tambahan || "").toUpperCase().includes("KERAH"), // Ditambahkan antisipasi typo
-  );
+  const hasKrah = additionalCostItems.some((item) => {
+    // Ambil teks keterangan tambahan dengan aman
+    const text = (item.tambahan || item.pht_jenis || "").toUpperCase();
+
+    // Cukup cari kata kunci utamanya saja
+    return text.includes("KRAH") || text.includes("KERAH");
+  });
 
   if (hasKrah) return "KK";
 
@@ -1637,7 +1639,8 @@ const saveProposal = async (data) => {
         VALUES (?, ?, ?)
       `;
       for (const item of additionalCostItems) {
-        if (item.tambahan && item.harga > 0) {
+        // UBAH syarat item.harga > 0 menjadi >= 0
+        if (item.tambahan && item.harga >= 0) {
           await connection.query(costQuery, [nomor, item.tambahan, item.harga]);
         }
       }
