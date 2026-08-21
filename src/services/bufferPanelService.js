@@ -437,27 +437,52 @@ const getPreviewData = async (cabang, options = {}) => {
 // tidak relevan sebagai demand di konteks toko murni penjualan/simulasi.
 const EXCLUDED_KODES_VIRTUAL_CABANG = ["2600050", "2600019"];
 
-// KDC version — 1,5x lipat dari jumlah semua buffer toko
-const getPreviewDataKDC = async (kprDataOverride = null) => {
-  // [BARU] Ambil demand KPR — dipakai HANYA untuk menambah beban
-  // perhitungan buffer KDC. KPR sendiri TIDAK pernah dipasangi buffer
-  // stok (tidak disimpan ke tbarangdc_dtl2 untuk cabang KPR).
+// KDC version — 1x lipat dari jumlah semua buffer toko (KPR & Simulasi Toko Baru ikut dihitung)
+const getPreviewDataKDC = async (
+  kprDataOverride = null,
+  newStoreDataOverride = null,
+) => {
+  // 1. Ambil demand KPR
   let kprData = kprDataOverride;
   if (kprData === null) {
     try {
+      console.log("[BUFFER KDC] Mengambil demand KPR...");
       kprData = await getPreviewData("KPR", {
         requireStock: false,
         excludeKodes: EXCLUDED_KODES_VIRTUAL_CABANG,
       });
+      console.log(
+        `[BUFFER KDC] Selesai ambil demand KPR: ${kprData.length} item.`,
+      );
     } catch (error) {
       console.error("[BUFFER KDC] Gagal ambil data KPR:", error.message);
       kprData = [];
     }
   }
   const kprMap = new Map();
-  kprData.forEach((item) => {
-    kprMap.set(`${item.kode}||${item.ukuran}`, item);
-  });
+  kprData.forEach((item) => kprMap.set(`${item.kode}||${item.ukuran}`, item));
+
+  // 2. [BARU] Ambil demand Simulasi Toko Baru
+  let newStoreData = newStoreDataOverride;
+  if (newStoreData === null) {
+    try {
+      console.log("[BUFFER KDC] Mengambil demand Simulasi Toko Baru...");
+      newStoreData = await getPreviewDataNewStore();
+      console.log(
+        `[BUFFER KDC] Selesai ambil demand Simulasi Toko Baru: ${newStoreData.length} item.`,
+      );
+    } catch (error) {
+      console.error(
+        "[BUFFER KDC] Gagal ambil data Simulasi Toko Baru:",
+        error.message,
+      );
+      newStoreData = [];
+    }
+  }
+  const newStoreMap = new Map();
+  newStoreData.forEach((item) =>
+    newStoreMap.set(`${item.kode}||${item.ukuran}`, item),
+  );
 
   const [rows] = await pool.query(`
     SELECT 
@@ -524,13 +549,21 @@ const getPreviewDataKDC = async (kprDataOverride = null) => {
   return rows.map((row) => {
     const key = `${row.kode}||${row.ukuran}`;
     const kpr = kprMap.get(key);
+    const newStore = newStoreMap.get(key);
 
-    // [BARU] Tambahkan demand KPR ke total sebelum dikali 1.5x
-    const totalMinToko = Number(row.total_min_toko) + (kpr ? kpr.min : 0);
-    const totalMaxToko = Number(row.total_max_toko) + (kpr ? kpr.max : 0);
+    // [BARU] Tambahkan demand KPR & Toko Baru ke total
+    const totalMinToko =
+      Number(row.total_min_toko) +
+      (kpr ? kpr.min : 0) +
+      (newStore ? newStore.min : 0);
+    const totalMaxToko =
+      Number(row.total_max_toko) +
+      (kpr ? kpr.max : 0) +
+      (newStore ? newStore.max : 0);
 
-    const mindc = Math.ceil(totalMinToko * 1.5);
-    const maxdc = Math.ceil(totalMaxToko * 1.5);
+    // [UBAH] Pengali diubah menjadi 1 (1x lipat)
+    const mindc = Math.ceil(totalMinToko * 1);
+    const maxdc = Math.ceil(totalMaxToko * 1);
 
     return {
       kode: row.kode,
@@ -1140,9 +1173,31 @@ const generateMonthlyLog = async () => {
     results.failed.push({ cabang: "KPR (demand only)", error: error.message });
   }
 
+  // [BARU] Hitung demand Simulasi Toko Baru terpisah
+  let newStoreData = [];
+  try {
+    console.log(
+      `[BUFFER CRON] Mulai hitung demand Simulasi Toko Baru (untuk KDC)...`,
+    );
+    newStoreData = await getPreviewDataNewStore();
+    console.log(
+      `[BUFFER CRON] Demand Simulasi Toko Baru: ${newStoreData.length} item.`,
+    );
+  } catch (error) {
+    console.error(
+      `[BUFFER CRON] Gagal hitung demand Simulasi Toko Baru:`,
+      error.message,
+    );
+    results.failed.push({
+      cabang: "TOKO_BARU (demand only)",
+      error: error.message,
+    });
+  }
+
   // KDC — transaksi terpisah lagi, setelah semua toko selesai
   try {
-    const dataKDC = await getPreviewDataKDC();
+    // [FIX] Teruskan kprData dan newStoreData agar query tidak berjalan dua kali
+    const dataKDC = await getPreviewDataKDC(kprData, newStoreData);
     if (dataKDC && dataKDC.length > 0) {
       const connection = await pool.getConnection();
       try {
