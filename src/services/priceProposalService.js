@@ -12,6 +12,7 @@ const STATUS = {
   READY_STORE: "READY_STORE",
   CLOSED: "CLOSED",
   REJECTED: "REJECTED",
+  DIBATALKAN: "DIBATALKAN",
 };
 
 const STATUS_LABEL = {
@@ -25,14 +26,23 @@ const STATUS_LABEL = {
   READY_STORE: "Ready di Store",
   CLOSED: "Closed (Invoiced)",
   REJECTED: "Ditolak",
+  DIBATALKAN: "Dibatalkan",
 };
 
 // State machine guard: dari status apa boleh pindah ke status apa
 const ALLOWED_TRANSITIONS = {
   [STATUS.DRAFT]: [STATUS.ACC_CUSTOMER],
-  [STATUS.ACC_CUSTOMER]: [STATUS.ACC_FINANCE, STATUS.REJECTED],
-  [STATUS.ACC_FINANCE]: [STATUS.MENUNGGU_DC, STATUS.REJECTED],
-  [STATUS.MENUNGGU_DC]: [STATUS.ACC_DC, STATUS.REJECTED],
+  [STATUS.ACC_CUSTOMER]: [
+    STATUS.ACC_FINANCE,
+    STATUS.REJECTED,
+    STATUS.DIBATALKAN,
+  ],
+  [STATUS.ACC_FINANCE]: [
+    STATUS.MENUNGGU_DC,
+    STATUS.REJECTED,
+    STATUS.DIBATALKAN,
+  ],
+  [STATUS.MENUNGGU_DC]: [STATUS.ACC_DC, STATUS.REJECTED, STATUS.DIBATALKAN],
   // [DIUBAH] ACC_DC & PRODUKSI bisa loncat langsung ke READY_STORE — scan+mutasi
   // di Store adalah sinyal otoritatif, nggak wajib nunggu tracking produksi
   // MANKSI (SPK PPIC/STBJ) yang mungkin belum pernah tercatat di test/praktik.
@@ -41,12 +51,18 @@ const ALLOWED_TRANSITIONS = {
     STATUS.BARANG_DITERIMA_DC,
     STATUS.READY_STORE,
     STATUS.REJECTED,
+    STATUS.DIBATALKAN,
   ],
-  [STATUS.PRODUKSI]: [STATUS.BARANG_DITERIMA_DC, STATUS.READY_STORE],
-  [STATUS.BARANG_DITERIMA_DC]: [STATUS.READY_STORE],
-  [STATUS.READY_STORE]: [STATUS.CLOSED],
+  [STATUS.PRODUKSI]: [
+    STATUS.BARANG_DITERIMA_DC,
+    STATUS.READY_STORE,
+    STATUS.DIBATALKAN,
+  ],
+  [STATUS.BARANG_DITERIMA_DC]: [STATUS.READY_STORE, STATUS.DIBATALKAN],
+  [STATUS.READY_STORE]: [STATUS.CLOSED, STATUS.DIBATALKAN],
   [STATUS.REJECTED]: [STATUS.DRAFT],
   [STATUS.CLOSED]: [],
+  [STATUS.DIBATALKAN]: [],
 };
 
 /**
@@ -209,6 +225,28 @@ const getStatusHistory = async (nomor) => {
 };
 
 /**
+ * Ambil status ph_status untuk sekumpulan nomor PH sekaligus — dipakai
+ * frontend SO Form untuk validasi hapus item (item dengan PH yang sudah
+ * ACC_DC ke atas tidak boleh dihapus dari SO karena DC sudah alokasikan
+ * produksinya).
+ */
+const getStatusesForNomors = async (nomors) => {
+  if (!nomors || nomors.length === 0) return {};
+
+  const placeholders = nomors.map(() => "?").join(",");
+  const [rows] = await pool.query(
+    `SELECT ph_nomor, ph_status FROM tpengajuanharga WHERE ph_nomor IN (${placeholders})`,
+    nomors,
+  );
+
+  const map = {};
+  rows.forEach((r) => {
+    map[r.ph_nomor] = r.ph_status || STATUS.DRAFT;
+  });
+  return map;
+};
+
+/**
  * Fungsi inti perubahan status — semua approve/reject/produksi/dst lewat sini
  * supaya validasi transisi & logging konsisten di 1 tempat.
  *
@@ -236,9 +274,12 @@ const changeStatus = async (nomor, targetStatus, options = {}) => {
     throw new Error(`Status tujuan tidak valid: ${targetStatus}`);
   }
 
-  if (targetStatus === STATUS.REJECTED && !keterangan) {
+  if (
+    (targetStatus === STATUS.REJECTED || targetStatus === STATUS.DIBATALKAN) &&
+    !keterangan
+  ) {
     throw new Error(
-      "Keterangan/alasan wajib diisi saat menolak pengajuan harga.",
+      "Keterangan/alasan wajib diisi saat menolak atau menutup pengajuan harga.",
     );
   }
 
@@ -343,6 +384,17 @@ const rejectProposal = (nomor, user, keterangan) =>
     user,
     sourceSystem: "KAOSAN",
     keterangan,
+  });
+
+// Close manual — dipakai untuk status selain DRAFT, WAJIB lewat
+// otorisasi SPV (authNomor dari AuthorizationModal frontend, disimpan
+// sebagai refNomor di log untuk jejak audit siapa yang mengotorisasi).
+const closeProposal = (nomor, user, keterangan, authNomor) =>
+  changeStatus(nomor, STATUS.DIBATALKAN, {
+    user,
+    sourceSystem: "KAOSAN",
+    keterangan,
+    refNomor: authNomor,
   });
 
 // Dipanggil dari MANKSI (lewat endpoint internal) saat SPK Produksi diproses
@@ -643,11 +695,13 @@ module.exports = {
   getSizeDetails,
   getProposalDetails,
   getStatusHistory,
+  getStatusesForNomors,
   changeStatus,
   approveCustomer,
   approveFinance,
   approveDc,
   rejectProposal,
+  closeProposal,
   markProduksi,
   markBarangJadi,
   markReadyStore,

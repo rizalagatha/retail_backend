@@ -21,6 +21,12 @@ router.get(
   priceProposalController.getDatelineRange,
 );
 router.get(
+  "/status-bulk",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "view"),
+  priceProposalController.getStatusesBulk,
+);
+router.get(
   "/:nomor/size-details",
   verifyToken,
   checkPermission(PRICE_PROPOSAL_MENU_ID, "view"),
@@ -64,6 +70,12 @@ router.patch(
   priceProposalController.reject,
 );
 router.patch(
+  "/:nomor/close",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "edit"),
+  priceProposalController.closeProposal,
+);
+router.patch(
   "/:nomor/ready-store",
   verifyToken,
   checkPermission(PRICE_PROPOSAL_MENU_ID, "edit"),
@@ -93,6 +105,12 @@ router.get(
   verifyToken,
   checkPermission(PRICE_PROPOSAL_MENU_ID, "edit"),
   priceProposalController.getSalesOrderForEdit,
+);
+router.post(
+  "/:nomor/request-revisi",
+  verifyToken,
+  checkPermission(PRICE_PROPOSAL_MENU_ID, "edit"),
+  priceProposalController.requestSoRevision,
 );
 router.put(
   "/:nomor/so-detail",

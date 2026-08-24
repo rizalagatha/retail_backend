@@ -74,6 +74,24 @@ const getStatusHistory = async (req, res) => {
   }
 };
 
+const getStatusesBulk = async (req, res) => {
+  try {
+    const nomors = (req.query.nomors || "")
+      .split(",")
+      .map((n) => n.trim())
+      .filter(Boolean);
+
+    if (nomors.length === 0) {
+      return res.json({});
+    }
+
+    const statuses = await priceProposalService.getStatusesForNomors(nomors);
+    res.json(statuses);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // Helper generic buat 4 endpoint approve/reject di bawah
 const handleStatusAction = (serviceFn, actionLabel) => async (req, res) => {
   try {
@@ -135,6 +153,46 @@ const reject = handleStatusAction(
   priceProposalService.rejectProposal,
   "Reject",
 );
+// [BARU] Close manual — beda dari handleStatusAction generic karena butuh
+// authNomor (hasil otorisasi SPV), bukan cuma keterangan.
+const closeProposal = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const { keterangan, authNomor } = req.body;
+    const user = req.user?.username || "UNKNOWN";
+
+    if (!authNomor) {
+      return res.status(400).json({
+        message: "Otorisasi diperlukan untuk menutup pengajuan harga.",
+      });
+    }
+
+    const oldData = await priceProposalService
+      .getProposalDetails(nomor)
+      .catch(() => null);
+
+    const result = await priceProposalService.closeProposal(
+      nomor,
+      user,
+      keterangan,
+      authNomor,
+    );
+
+    auditService.logActivity(
+      req,
+      "UPDATE_STATUS",
+      "PENGAJUAN_HARGA",
+      nomor,
+      oldData ? { ph_status: result.statusFrom } : null,
+      { ph_status: result.statusTo },
+      `Close pengajuan harga ${nomor} (Otorisasi: ${authNomor})${keterangan ? ` - ${keterangan}` : ""}`,
+    );
+
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
 
 const markReadyStore = handleStatusAction(
   priceProposalService.markReadyStore,
@@ -279,6 +337,32 @@ const getSalesOrderForEdit = async (req, res) => {
   }
 };
 
+const requestSoRevision = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const { keterangan } = req.body;
+    const result = await priceProposalSoService.requestRevisionFromDc(
+      nomor,
+      keterangan,
+      req.user,
+    );
+
+    auditService.logActivity(
+      req,
+      "REQUEST_REVISI_SO",
+      "PENGAJUAN_HARGA",
+      nomor,
+      null,
+      { keterangan },
+      `DC meminta revisi SO untuk PH ${nomor}: ${keterangan}`,
+    );
+
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
 const updateSalesOrder = async (req, res) => {
   try {
     const { nomor } = req.params;
@@ -309,10 +393,12 @@ module.exports = {
   getSizeDetails,
   getDetails,
   getStatusHistory,
+  getStatusesBulk,
   approveCustomer,
   approveFinance,
   approveDc,
   reject,
+  closeProposal,
   markReadyStore,
   getSoEligibility,
   getSoPrefill,
@@ -320,5 +406,6 @@ module.exports = {
   generateSalesOrder,
   remove,
   getSalesOrderForEdit,
+  requestSoRevision,
   updateSalesOrder,
 };

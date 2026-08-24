@@ -104,6 +104,7 @@ const authPinService = {
         const isClosePenawaran = String(jenis).trim() === "CLOSE_PENAWARAN";
         const isCloseSoDtf = String(jenis).trim() === "CLOSE_SO_DTF";
         const isCloseSo = String(jenis).trim() === "CLOSE_SO";
+        const isClosePh = String(jenis).trim() === "CLOSE_PH";
 
         let managerCodes = ["DARUL"]; // Darul selalu dikirim
 
@@ -113,7 +114,8 @@ const authPinService = {
           isSubmitBap ||
           isClosePenawaran ||
           isCloseSoDtf ||
-          isCloseSo
+          isCloseSo ||
+          isClosePh
         ) {
           if (!managerCodes.includes("ESTU")) managerCodes.push("ESTU");
         }
@@ -130,7 +132,8 @@ const authPinService = {
             !isSubmitBap &&
             !isClosePenawaran &&
             !isCloseSoDtf &&
-            !isCloseSo
+            !isCloseSo &&
+            !isClosePh
           ) {
             managerCodes.push("HARIS");
           }
@@ -216,6 +219,7 @@ const authPinService = {
       "CLOSE_PENAWARAN",
       "CLOSE_SO_DTF",
       "CLOSE_SO",
+      "CLOSE_PH",
     ];
 
     if (userCabang === "KDC") {
@@ -233,6 +237,7 @@ const authPinService = {
           "CLOSE_PENAWARAN",
           "CLOSE_SO_DTF",
           "CLOSE_SO",
+          "CLOSE_PH",
         ]);
       } else if (userKodeUpper === "HARIS") {
         if (isEstuManagerPeriod) {

@@ -63,6 +63,82 @@ const checkSalesOrderEditPermission = async (userKode) => {
   return rows[0].hak_men_edit === "Y";
 };
 
+// [BARU] Ambil permintaan revisi DC yang masih terbuka (belum ditindaklanjuti
+// toko) untuk PH tertentu — dasar penentu apakah form edit SO MANKSI di
+// Retail boleh dibuka atau terkunci.
+const getOpenRevision = async (phNomor) => {
+  const [rows] = await pool.query(
+    `SELECT revisi_id AS id, revisi_keterangan AS keterangan, 
+            user_create AS userCreate, date_create AS dateCreate
+     FROM tpengajuanharga_revisi_dc
+     WHERE revisi_ph_nomor = ? AND revisi_status = 'OPEN'
+     ORDER BY revisi_id DESC LIMIT 1`,
+    [phNomor],
+  );
+  return rows[0] || null;
+};
+
+// [BARU] Dipanggil DC (user cabang KDC) — komunikasi revisi yang sebelumnya
+// cuma lewat chat sekarang tercatat resmi di sistem, dan otomatis membuka
+// gerbang edit SO MANKSI untuk toko.
+const requestRevisionFromDc = async (phNomor, keterangan, user) => {
+  if (!keterangan || !keterangan.trim()) {
+    throw new Error("Keterangan revisi wajib diisi.");
+  }
+  if (user.cabang !== "KDC") {
+    throw new Error("Hanya DC (KDC) yang dapat meminta revisi SO.");
+  }
+
+  const [phRows] = await pool.query(
+    "SELECT ph_status, ph_ref_so_spk FROM tpengajuanharga WHERE ph_nomor = ?",
+    [phNomor],
+  );
+  if (phRows.length === 0) throw new Error("Pengajuan harga tidak ditemukan.");
+  const ph = phRows[0];
+
+  if (!["MENUNGGU_DC", "ACC_DC"].includes(ph.ph_status)) {
+    throw new Error(
+      `Revisi hanya bisa diminta saat status Menunggu Validasi DC atau Acc DC (status saat ini: ${ph.ph_status}).`,
+    );
+  }
+  if (!ph.ph_ref_so_spk) {
+    throw new Error(
+      "Pengajuan Harga ini belum punya SO MANKSI untuk direvisi.",
+    );
+  }
+
+  const existingOpen = await getOpenRevision(phNomor);
+  if (existingOpen) {
+    throw new Error(
+      "Sudah ada permintaan revisi yang masih terbuka untuk PH ini — tunggu toko menindaklanjuti dulu.",
+    );
+  }
+
+  await pool.query(
+    `INSERT INTO tpengajuanharga_revisi_dc (revisi_ph_nomor, revisi_keterangan, revisi_status, user_create, date_create)
+     VALUES (?, ?, 'OPEN', ?, NOW())`,
+    [phNomor, keterangan.trim(), user.kode],
+  );
+
+  await pool.query(
+    `INSERT INTO tpengajuanharga_status_log
+      (phl_nomor, phl_status_from, phl_status_to, phl_user, phl_source_system, phl_keterangan)
+     VALUES (?, ?, ?, ?, 'DC', ?)`,
+    [
+      phNomor,
+      ph.ph_status,
+      ph.ph_status,
+      user.kode,
+      `Revisi diminta DC: ${keterangan.trim()}`,
+    ],
+  );
+
+  return {
+    message:
+      "Permintaan revisi berhasil dikirim, SO MANKSI sekarang bisa diedit toko.",
+  };
+};
+
 const generateSoNomor = async (connection, perushKode, joKode) => {
   const prefix = `SO-${perushKode}-${joKode}-`;
   const [rows] = await connection.query(
@@ -329,20 +405,23 @@ const getSoPrefill = async (phNomor) => {
   }
 
   const kepentinganOptions = ["STANDART", "URGENT", "TOP URGENT", "REGULER"];
+
+  // Sertakan catatan revisi DC yang masih terbuka (kalau ada) —
+  // dipakai frontend Retail untuk menampilkan instruksi & menentukan
+  // apakah form edit boleh dibuka.
+  const revisiTerbuka = await getOpenRevision(phNomor);
+
   return {
-    phNomor,
-    kodeBarang: representative.kode,
-    joKode,
-    jeniskain: representative.jeniskain,
-    finishing: representative.tipe,
-    lengan: representative.lengan,
-    jumlah: totalQty,
-    ketUkuran,
-    custKaosanKode: ph.ph_kd_cus,
-    custKaosanNama: ph.cus_nama,
-    matchedSales,
+    soNomor: so.so_nomor,
+    namaSo: so.so_nama,
+    totalQty: so.so_jumlah,
+    dateline: so.dateline,
+    kepentingan: so.kepentingan,
+    keteranganProduksi: so.keteranganProduksi || "",
+    isClosed: Number(so.so_close) !== 0,
+    sizes: sizeRows,
     kepentinganOptions,
-    keteranganProduksi: ph.ph_keterangan_produksi || "",
+    revisiTerbuka,
   };
 };
 
@@ -590,9 +669,9 @@ const getSalesOrderForEdit = async (phNomor, user) => {
   // 3. Ambil detail SO
   const [soRows] = await pool.query(
     `SELECT so_nomor, so_nama, so_jumlah,
-            DATE_FORMAT(so_dateline, '%Y-%m-%d') AS dateline,
-            so_statuskerja AS kepentingan, so_keterangan AS keteranganProduksi,
-            so_invdc, so_close
+      DATE_FORMAT(so_dateline, '%Y-%m-%d') AS dateline,
+      so_statuskerja AS kepentingan, so_keterangan AS keteranganProduksi,
+      so_invdc, so_close
      FROM kencanaprint.tsalesorder WHERE so_nomor = ?`,
     [soNomor],
   );
@@ -641,8 +720,9 @@ const getSalesOrderForEdit = async (phNomor, user) => {
  * cuma ubah qty size yang sudah ada.
  */
 const updateSalesOrder = async (phNomor, payload, user) => {
-  const { dateline, kepentingan, keteranganProduksi, sizes } = payload;
+  const { namaSo, dateline, kepentingan, keteranganProduksi, sizes } = payload;
 
+  if (!namaSo || !namaSo.trim()) throw new Error("Nama SO wajib diisi.");
   if (!dateline) throw new Error("Dateline SO wajib diisi.");
   if (!kepentingan) throw new Error("Kepentingan wajib dipilih.");
   if (!Array.isArray(sizes) || sizes.length === 0)
@@ -684,18 +764,35 @@ const updateSalesOrder = async (phNomor, payload, user) => {
       throw new Error("SO ini sudah CLOSE, tidak bisa diubah lagi.");
     }
 
+    // Gerbang revisi — SO hanya bisa diupdate kalau ada permintaan
+    // revisi TERBUKA dari DC. FOR UPDATE mencegah race condition kalau
+    // toko klik simpan 2x cepat berurutan.
+    const [revRows] = await connection.query(
+      `SELECT revisi_id FROM tpengajuanharga_revisi_dc
+       WHERE revisi_ph_nomor = ? AND revisi_status = 'OPEN'
+       ORDER BY revisi_id DESC LIMIT 1 FOR UPDATE`,
+      [phNomor],
+    );
+    if (revRows.length === 0) {
+      throw new Error(
+        "Belum ada permintaan revisi dari DC untuk SO ini — SO terkunci sampai DC memberi catatan revisi.",
+      );
+    }
+    const revisiId = revRows[0].revisi_id;
+
     const totalQty = sizes.reduce((sum, s) => sum + (Number(s.qty) || 0), 0);
     if (totalQty <= 0) throw new Error("Total qty harus lebih dari 0.");
     const ketUkuran = sizes.map((s) => `${s.size}=${s.qty}`).join(",");
 
-    // Update header — TERBATAS ke field yang diizinkan (dateline,
+    // Update header — TERBATAS ke field yang diizinkan (nama SO, dateline,
     // kepentingan/so_statuskerja, keterangan, qty & ringkasan ukuran)
     await connection.query(
       `UPDATE kencanaprint.tsalesorder 
-       SET so_dateline = ?, so_statuskerja = ?, so_keterangan = ?, so_jumlah = ?, 
+       SET so_nama = ?, so_dateline = ?, so_statuskerja = ?, so_keterangan = ?, so_jumlah = ?, 
            so_ukuran = ?, user_modified = ?, date_modified = NOW()
        WHERE so_nomor = ?`,
       [
+        namaSo.trim(), // [BARU]
         dateline,
         kepentingan,
         keteranganProduksi || "",
@@ -731,6 +828,13 @@ const updateSalesOrder = async (phNomor, payload, user) => {
       [keteranganProduksi || null, phNomor],
     );
 
+    // Tandai revisi ini SELESAI — kunci lagi form edit sampai DC
+    // minta revisi baru berikutnya
+    await connection.query(
+      `UPDATE tpengajuanharga_revisi_dc SET revisi_status = 'SELESAI', user_resolve = ?, date_resolve = NOW() WHERE revisi_id = ?`,
+      [user.kode, revisiId],
+    );
+
     await connection.commit();
     return { soNomor, message: `SO ${soNomor} berhasil diperbarui.` };
   } catch (error) {
@@ -748,4 +852,6 @@ module.exports = {
   getDatelineRange,
   getSalesOrderForEdit,
   updateSalesOrder,
+  requestRevisionFromDc,
+  getOpenRevision,
 };

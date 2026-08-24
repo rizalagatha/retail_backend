@@ -240,10 +240,10 @@ const determineJoKode = (item, kodeBarang) => {
   const jeniskain = String(item.brg_jeniskain || "")
     .trim()
     .toUpperCase();
-  if (
-    jeniskain.includes("HOODIE FLEECE") ||
-    jeniskain.includes("JAKET FLEECE")
-  ) {
+
+  // Deteksi SEMUA varian Jaket/Hoodie (FLEECE, RYU, TASLAN, PARASUT, dst),
+  // bukan cuma string literal "JAKET FLEECE" / "HOODIE FLEECE".
+  if (jeniskain.includes("JAKET") || jeniskain.includes("HOODIE")) {
     return "JK";
   }
 
@@ -294,11 +294,8 @@ const formatSpkNama = (item, joKode) => {
     return clean(`KAOSAN POLOS ${lengan} SPANDEK ${jeniskain} ${warna}`);
   }
 
-  // 2. Jaket/Hoodie — tanpa POLOS, tanpa lengan
-  if (
-    jeniskain.includes("HOODIE FLEECE") ||
-    jeniskain.includes("JAKET FLEECE")
-  ) {
+  // 2. Jaket/Hoodie — tanpa POLOS, tanpa lengan (semua varian bahan)
+  if (jeniskain.includes("JAKET") || jeniskain.includes("HOODIE")) {
     return clean(`KAOSAN ${jeniskain} ${warna}`);
   }
 
@@ -345,138 +342,80 @@ const formatSpkKeterangan = (item, kode) => {
 
   if (jeniskain.includes("KATUN AIR")) {
     hasil = `BUATKAN KAOS PENDEK OVERSIZE
-
 Size S (lb=50, pb=69) M (lb=54, pb=70),  L (lb=56 cm, pb=71),  XL (lb=60, pb=72)
-
 MODEL, POLA DAN UKURAN panjang depan belakang sama
-
 Haming 2 jahitan di lengan dan badan bawah
-
 Rib leher lebar. tindes MODEL oversized
-
 Lebar Lengan Mohon dipastikan tidak terlalu besar
-
 Size dan Logo kaosan Jahit jadi satu
-
 Label timbul kaosan di kiri bawah
-
 Dikerjakan di P04 JERON`;
   } else if (jeniskain.includes("JERSEY EMBOZZ")) {
     hasil = `Buatkan JERSEY BAHAN DRYFIT EMBOSS MOTIF TOPO HITAM
-
-
 Spek dan jahitan standart kaosan, jahitan tindes overdeck
-
 Jahit potongan di bagian belakang punggung, Blazer twiltip kaosan
-
 Size dan Logo kaosan Jahit jadi satu. Packing kaosan
-
 Lengan bagian dalam, ujung obras mohon dikunci
-
 Label timbul kaosan di kiri bawah
-
 Mohon Jahitan rapi dan bagus
 
 DIKERJAKAN DI P4 JERON`;
   } else if (lengan.includes("TUNIK")) {
     hasil = `Buatkan tunik dengan Spek ukuran dan Jahitan standar kaosan
-
 Belahan samping +- 20 CM dan panjang badan 80 CM
-
 Panjang lengan dari atas ke bawah mengecil, leher vneck
-
 Lengan bagian dalam, ujung obras mohon dikunci
-
 Size dan Logo kaosan Jahit jadi satu
-
 Packing kaosan
-
 Mohon jahitan rapi dan bagus, buang benang bersih
-
 DIKERJAKAN DI P04 JERON`;
   } else if (lengan.includes("RIP")) {
     hasil = `Buatkan kaos oblong polos panjang rip
-
 Spek ukuran dan Jahitan standar kaosan
-
 Size dan Logo kaosan Jahit jadi satu
-
 Label timbul kaosan di kiri bawah
-
 Packing kaosan
-
 Mohon jahitan rapi dan bagus, buang benang bersih
-
 DIKERJAKAN DI P4 JERON`;
   } else if (jeniskaos === "KO" && lengan.includes("PENDEK")) {
     hasil = `Buatkan kaos oblong polos pendek
-
 3 Jahitan di lengan dan badan bawah
-
 Spek ukuran dan Jahitan standar kaosan
-
 Lengan bagian dalam, ujung obras mohon dikunci
-
 Size dan Logo kaosan Jahit jadi satu
-
 Label timbul kaosan di kiri bawah
-
 Packing kaosan
-
 Mohon jahitan rapi dan bagus, buang benang bersih
-
 DIKERJAKAN DI P4 JERON`;
   } else if (jeniskaos === "KO" && lengan.includes("PANJANG")) {
     hasil = `Buatkan kaos oblong polos panjang
-
 3 Jahitan di lengan dan badan bawah
-
 Spek ukuran dan Jahitan standar kaosan
-
 Lengan bagian dalam, ujung obras mohon dikunci
-
 Size dan Logo kaosan Jahit jadi satu
-
 Label timbul kaosan di kiri bawah
-
 Packing kaosan
-
 Mohon jahitan rapi dan bagus, buang benang bersih
-
 DIKERJAKAN DI P4 JERON`;
   } else if (jeniskaos === "KK" && lengan.includes("PENDEK")) {
     hasil = `BUATKAN KAOS KERAH
-
 Spek ukuran, pola potong, cara belah samping standar Kaosan. maju bahu. 3 Jahitan
-
 3 kancing kaosan, warna kerah, manset, dan paspol sesuai badan
-
 Size dan Logo kaosan Jahit jadi satu
-
 Label timbul kaosan di kiri bawah
-
 Pakai blazer twiltip kaosan
-
 PACKING KAOSAN. 
 Pakai cadangan kancing 1 pcs
-
 DIKERJAKAN DI P4 JERON`;
   } else if (jeniskaos === "KK" && lengan.includes("PANJANG")) {
     hasil = `BUATKAN KAOS KERAH
-
 Spek ukuran, pola potong, cara belah samping standar Kaosan. maju bahu. 3 Jahitan
-
 3 kancing kaosan, warna kerah, rip lengan, dan paspol sesuai badan
-
 Size dan Logo kaosan Jahit jadi satu
-
 Label timbul kaosan di kiri bawah
-
 Pakai blazer twiltip kaosan
-
 PACKING KAOSAN. 
 Pakai cadangan kancing 1 pcs
-
 DIKERJAKAN DI P4 JERON`;
   }
 

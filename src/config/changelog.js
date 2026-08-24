@@ -1,4 +1,16 @@
 const changelogs = {
+  "1.5.5": {
+    date: "2026-08-24",
+    changes: [
+      {
+        title: "Pembaruan",
+        items: [
+          "Penyempurnaan Pengajuan Harga : Close Pengajuan Harga untuk Cancel Order/Salah Input dan Note Revisi dari DC untuk SO Manksi yang diterbitkan Toko, sehingga bisa dilakukan melalui sistem. Selain itu, SO Manksi atas satu nomor Pengajuan Harga hanya bisa digenerate satu kali, lebih dari itu harus membuat Pengajuan Harga baru",
+          "Untuk toko yang memiliki stok accesories, wajib memilih salah satu packaging sebelum simpan invoice karena tidak bisa simpan invoice tanpa memilih satu packaging",
+        ],
+      },
+    ],
+  },
   "1.5.4": {
     date: "2026-07-31",
     changes: [
