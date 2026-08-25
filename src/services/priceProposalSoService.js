@@ -406,22 +406,29 @@ const getSoPrefill = async (phNomor) => {
 
   const kepentinganOptions = ["STANDART", "URGENT", "TOP URGENT", "REGULER"];
 
-  // Sertakan catatan revisi DC yang masih terbuka (kalau ada) —
+  // [BARU] Sertakan catatan revisi DC yang masih terbuka (kalau ada) —
   // dipakai frontend Retail untuk menampilkan instruksi & menentukan
   // apakah form edit boleh dibuka.
   const revisiTerbuka = await getOpenRevision(phNomor);
 
+  // [FIX] Return statement ini sebelumnya ketimpa copy-paste dari
+  // getSalesOrderForEdit (pakai variabel `so` yang tidak ada di fungsi
+  // ini) — dikembalikan ke variabel-variabel yang benar dari getSoPrefill.
   return {
-    soNomor: so.so_nomor,
-    namaSo: so.so_nama,
-    totalQty: so.so_jumlah,
-    dateline: so.dateline,
-    kepentingan: so.kepentingan,
-    keteranganProduksi: so.keteranganProduksi || "",
-    isClosed: Number(so.so_close) !== 0,
-    sizes: sizeRows,
+    phNomor,
+    kodeBarang: representative.kode,
+    joKode,
+    jeniskain: representative.jeniskain,
+    finishing: representative.tipe,
+    lengan: representative.lengan,
+    jumlah: totalQty,
+    ketUkuran,
+    custKaosanKode: ph.ph_kd_cus,
+    custKaosanNama: ph.cus_nama,
+    matchedSales,
     kepentinganOptions,
-    revisiTerbuka,
+    keteranganProduksi: ph.ph_keterangan_produksi || "",
+    revisiTerbuka, // [BARU]
   };
 };
 
@@ -694,31 +701,20 @@ const getSalesOrderForEdit = async (phNomor, user) => {
      FROM kencanaprint.tsalesorder_size WHERE sos_so_nomor = ? ORDER BY sos_size`,
     [soNomor],
   );
+  // [FIX] Sama seperti getSoPrefill — query DISTINCT ke tspk_kepentingan
+  // salah tebak sebagai sumber daftar dropdown. Daftar resmi dikonfirmasi
+  // user, konsisten dengan getSoPrefill.
   const kepentinganOptions = ["STANDART", "URGENT", "TOP URGENT", "REGULER"];
-
-  // [BARU] Sertakan catatan revisi DC yang masih terbuka (kalau ada) —
-  // dipakai frontend Retail untuk menampilkan instruksi & menentukan
-  // apakah form edit boleh dibuka.
-  const revisiTerbuka = await getOpenRevision(phNomor);
-
-  // [FIX] Return statement ini sebelumnya ketimpa copy-paste dari
-  // getSalesOrderForEdit (pakai variabel `so` yang tidak ada di fungsi
-  // ini) — dikembalikan ke variabel-variabel yang benar dari getSoPrefill.
   return {
-    phNomor,
-    kodeBarang: representative.kode,
-    joKode,
-    jeniskain: representative.jeniskain,
-    finishing: representative.tipe,
-    lengan: representative.lengan,
-    jumlah: totalQty,
-    ketUkuran,
-    custKaosanKode: ph.ph_kd_cus,
-    custKaosanNama: ph.cus_nama,
-    matchedSales,
+    soNomor: so.so_nomor,
+    namaSo: so.so_nama,
+    totalQty: so.so_jumlah,
+    dateline: so.dateline,
+    kepentingan: so.kepentingan,
+    keteranganProduksi: so.keteranganProduksi || "",
+    isClosed: Number(so.so_close) !== 0,
+    sizes: sizeRows,
     kepentinganOptions,
-    keteranganProduksi: ph.ph_keterangan_produksi || "",
-    revisiTerbuka, // [BARU]
   };
 };
 
