@@ -47,7 +47,36 @@ const extractJoKode = (kodeBarang) => {
   return raw === "LL" ? "KO" : raw;
 };
 
-// [BARU] Menu ID SO di MANKSI (kencanaprint.thakuser) — dipakai buat cek
+// Template nama SO — SELALU auto-generate, SC tidak input manual.
+// Format (TANPA pemisah dash, murni spasi):
+// KAOSAN {TIPE [+ NAMA DESAIN kalau bukan Polos]} {LENGAN} {WARNA} {BAHAN}
+// Contoh: "KAOSAN DTF MAS AMBA PENDEK HITAM COMBED 24S"
+const buildSoNamaTemplate = (representative, namaDesain = "") => {
+  const tipe =
+    (representative.tipe || "").toString().toUpperCase().trim() || "POLOS";
+  const desain = (namaDesain || "").trim();
+
+  const tipeSegment = tipe !== "POLOS" && desain ? `${tipe} ${desain}` : tipe;
+
+  const parts = [
+    "KAOSAN",
+    tipeSegment,
+    representative.lengan,
+    representative.warna,
+    representative.jeniskain,
+  ];
+  return parts
+    .filter((p) => p !== null && p !== undefined && String(p).trim() !== "")
+    .join(" "); // [UBAH] sebelumnya " - ", sekarang murni spasi
+};
+
+const isPolosType = (representative) => {
+  const tipe =
+    (representative.tipe || "").toString().toUpperCase().trim() || "POLOS";
+  return tipe === "POLOS";
+};
+
+//  Menu ID SO di MANKSI (kencanaprint.thakuser) — dipakai buat cek
 // hak akses cross-db sebelum boleh edit SO dari Retail. Asumsi eksplisit:
 // kode user Retail == user_kode MANKSI (identitas sama, 1 orang). Kalau
 // asumsi ini salah, fungsi fail-closed (dianggap TIDAK punya akses) —
@@ -405,15 +434,14 @@ const getSoPrefill = async (phNomor) => {
   }
 
   const kepentinganOptions = ["STANDART", "URGENT", "TOP URGENT", "REGULER"];
-
-  // [BARU] Sertakan catatan revisi DC yang masih terbuka (kalau ada) —
-  // dipakai frontend Retail untuk menampilkan instruksi & menentukan
-  // apakah form edit boleh dibuka.
   const revisiTerbuka = await getOpenRevision(phNomor);
 
-  // [FIX] Return statement ini sebelumnya ketimpa copy-paste dari
-  // getSalesOrderForEdit (pakai variabel `so` yang tidak ada di fungsi
-  // ini) — dikembalikan ke variabel-variabel yang benar dari getSoPrefill.
+  // Nama SO otomatis dari template — hanya untuk PREVIEW di dialog,
+  // SC tidak bisa mengetik manual. isPolos menentukan apakah field
+  // "Nama Desain" boleh diisi di frontend.
+  const namaSoPreview = buildSoNamaTemplate(representative);
+  const polos = isPolosType(representative);
+
   return {
     phNomor,
     kodeBarang: representative.kode,
@@ -421,6 +449,7 @@ const getSoPrefill = async (phNomor) => {
     jeniskain: representative.jeniskain,
     finishing: representative.tipe,
     lengan: representative.lengan,
+    warna: representative.warna,
     jumlah: totalQty,
     ketUkuran,
     custKaosanKode: ph.ph_kd_cus,
@@ -428,7 +457,9 @@ const getSoPrefill = async (phNomor) => {
     matchedSales,
     kepentinganOptions,
     keteranganProduksi: ph.ph_keterangan_produksi || "",
-    revisiTerbuka, // [BARU]
+    revisiTerbuka,
+    namaSoPreview,
+    isPolos: polos,
   };
 };
 
@@ -439,20 +470,13 @@ const getSoPrefill = async (phNomor) => {
  * di kolom so_invdc (repurposed, sesuai keputusan kalian).
  */
 const generateSalesOrder = async (phNomor, payload, user) => {
-  const {
-    namaSo,
-    namaExt,
-    kepentingan,
-    salesKode,
-    dateline,
-    keteranganProduksi,
-  } = payload;
-  if (!namaSo) throw new Error("Nama SO wajib diisi.");
+  const { namaDesain, kepentingan, salesKode, dateline, keteranganProduksi } =
+    payload;
+
   if (!kepentingan) throw new Error("Kepentingan wajib dipilih.");
   if (!salesKode) throw new Error("Sales wajib dipilih.");
   if (!dateline) throw new Error("Dateline SO wajib diisi.");
 
-  // Fallback default kalau frontend tidak mengirim (jaga-jaga)
   const finalNomorPo = `KAOSAN ${user.cabangNama || user.cabang || ""}`.trim();
 
   const connection = await pool.getConnection();
@@ -495,8 +519,23 @@ const generateSalesOrder = async (phNomor, payload, user) => {
     const ketUkuran = sizeRows
       .map((r) => `${r.phs_size}=${r.phs_jumlah}`)
       .join(",");
-    const soNomor = await generateSoNomor(connection, PERUSH_KODE, joKode);
 
+    // Nama Desain hanya boleh diisi kalau BUKAN Polos — validasi
+    // server-side, bukan cuma disable di UI.
+    const polos = isPolosType(representative);
+    let finalNamaDesain = "";
+    if (!polos) {
+      finalNamaDesain = (namaDesain || "").trim();
+    } else if (namaDesain && namaDesain.trim()) {
+      throw new Error(
+        "Nama Desain hanya bisa diisi untuk jenis DTF/Sablon/Bordir, tidak berlaku untuk Polos.",
+      );
+    }
+
+    // [UBAH] namaDesain sekarang jadi BAGIAN dari so_nama, bukan kolom terpisah
+    const namaSo = buildSoNamaTemplate(representative, finalNamaDesain);
+
+    const soNomor = await generateSoNomor(connection, PERUSH_KODE, joKode);
     const varianUkuran = detectVarianUkuran(
       representative.lengan,
       representative.jeniskain,
@@ -535,7 +574,7 @@ const generateSalesOrder = async (phNomor, payload, user) => {
         joKode,
         DIVISI_KAOSAN,
         namaSo,
-        namaExt || "",
+        "",
         totalQty,
         ketUkuran,
         representative.jeniskain || "",
@@ -675,7 +714,7 @@ const getSalesOrderForEdit = async (phNomor, user) => {
 
   // 3. Ambil detail SO
   const [soRows] = await pool.query(
-    `SELECT so_nomor, so_nama, so_jumlah,
+    `SELECT so_nomor, so_nama, so_nama2, so_jumlah,
       DATE_FORMAT(so_dateline, '%Y-%m-%d') AS dateline,
       so_statuskerja AS kepentingan, so_keterangan AS keteranganProduksi,
       so_invdc, so_close
@@ -708,6 +747,7 @@ const getSalesOrderForEdit = async (phNomor, user) => {
   return {
     soNomor: so.so_nomor,
     namaSo: so.so_nama,
+    namaDesain: so.so_nama2 || "",
     totalQty: so.so_jumlah,
     dateline: so.dateline,
     kepentingan: so.kepentingan,
@@ -727,9 +767,8 @@ const getSalesOrderForEdit = async (phNomor, user) => {
  * cuma ubah qty size yang sudah ada.
  */
 const updateSalesOrder = async (phNomor, payload, user) => {
-  const { namaSo, dateline, kepentingan, keteranganProduksi, sizes } = payload;
+  const { dateline, kepentingan, keteranganProduksi, sizes } = payload;
 
-  if (!namaSo || !namaSo.trim()) throw new Error("Nama SO wajib diisi.");
   if (!dateline) throw new Error("Dateline SO wajib diisi.");
   if (!kepentingan) throw new Error("Kepentingan wajib dipilih.");
   if (!Array.isArray(sizes) || sizes.length === 0)
@@ -795,11 +834,10 @@ const updateSalesOrder = async (phNomor, payload, user) => {
     // kepentingan/so_statuskerja, keterangan, qty & ringkasan ukuran)
     await connection.query(
       `UPDATE kencanaprint.tsalesorder 
-       SET so_nama = ?, so_dateline = ?, so_statuskerja = ?, so_keterangan = ?, so_jumlah = ?, 
+       SET so_dateline = ?, so_statuskerja = ?, so_keterangan = ?, so_jumlah = ?, 
            so_ukuran = ?, user_modified = ?, date_modified = NOW()
        WHERE so_nomor = ?`,
       [
-        namaSo.trim(), // [BARU]
         dateline,
         kepentingan,
         keteranganProduksi || "",
