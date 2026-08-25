@@ -3945,7 +3945,7 @@ const getPackagingOptions = async (cabang) => {
       b.brg_harga   AS harga,
       IFNULL((
         SELECT SUM(m.mst_stok_in - m.mst_stok_out)
-        FROM retailnew.tmasterstok_bahan m
+        FROM retail.tmasterstok_bahan m
         WHERE m.mst_aktif = 'Y'
           AND m.mst_cab = ?
           AND m.mst_brg_kode = b.brg_kode
