@@ -225,7 +225,13 @@ const saveData = async (payload, user) => {
         for (const item of items) {
             if (!item.sjNomor)
                 throw new Error("Nomor Surat Jalan tidak valid.");
-            totalKoli += Number(item.koli || 1);
+            const koliVal =
+                item.koli !== undefined &&
+                item.koli !== null &&
+                !isNaN(Number(item.koli))
+                    ? Number(item.koli)
+                    : 0;
+            totalKoli += koliVal;
             totalQty += Number(item.qty || 0);
         }
 
@@ -321,14 +327,18 @@ const saveData = async (payload, user) => {
         const detailValues = items.map((item, index) => {
             const urut = index + 1;
             const iddrec = `${manifestNomor}${urut}`;
+            const koliVal =
+                item.koli !== undefined &&
+                item.koli !== null &&
+                !isNaN(Number(item.koli))
+                    ? Number(item.koli)
+                    : 0;
             return [
                 iddrec,
                 manifestNomor,
                 item.sjNomor,
                 item.storeKode,
-                item.koli !== undefined && item.koli !== null
-                    ? Number(item.koli)
-                    : 1,
+                koliVal,
                 item.qty || 0,
                 item.keterangan || "",
                 item.referensiGabung || null,
