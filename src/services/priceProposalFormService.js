@@ -296,6 +296,36 @@ const getProposalForEdit = async (nomor) => {
     }
   }
 
+  // [BARU] Deteksi mockup Sublim (depan/belakang)
+  const detectMockup = (side) => {
+    const dir = path.join(
+      process.cwd(),
+      "public",
+      "images",
+      cabang,
+      "sublim-mockup",
+      side,
+    );
+    if (!fs.existsSync(dir)) return null;
+    const files = fs.readdirSync(dir);
+    const fileName = files.find((file) => file.startsWith(nomor + "."));
+    return fileName
+      ? `/images/${cabang}/sublim-mockup/${side}/${fileName}?t=${Date.now()}`
+      : null;
+  };
+  const sublimMockupDepanUrl = detectMockup("depan");
+  const sublimMockupBelakangUrl = detectMockup("belakang");
+
+  // [BARU] Parse detail warna sublim (disimpan sebagai JSON string)
+  let sublimColorDetails = null;
+  if (headerRows[0].ph_sublim_warna_detail) {
+    try {
+      sublimColorDetails = JSON.parse(headerRows[0].ph_sublim_warna_detail);
+    } catch (e) {
+      sublimColorDetails = null;
+    }
+  }
+
   return {
     header: headerRows[0],
     sizes: sizeRows,
@@ -305,6 +335,9 @@ const getProposalForEdit = async (nomor) => {
     imageUrl: imageUrl,
     barangDraft: barangDraft,
     accCustomerProofUrl,
+    sublimMockupDepanUrl,
+    sublimMockupBelakangUrl,
+    sublimColorDetails,
   };
 };
 
@@ -405,6 +438,52 @@ const renameAccCustomerProof = async (tempFilePath, nomor) => {
         });
       } else {
         resolve(finalPath);
+      }
+    });
+  });
+};
+
+const renameSublimMockup = async (tempFilePath, nomor, side, ext) => {
+  return new Promise((resolve, reject) => {
+    if (!fs.existsSync(tempFilePath)) {
+      return reject(new Error("File sumber tidak ditemukan."));
+    }
+
+    const cabang = nomor.substring(0, 3);
+    const finalFileName = `${nomor}${ext}`;
+    const folderPath = path.join(
+      process.cwd(),
+      "public",
+      "images",
+      cabang,
+      "sublim-mockup",
+      side, // "depan" atau "belakang"
+    );
+
+    try {
+      fs.mkdirSync(folderPath, { recursive: true });
+    } catch (mkdirError) {
+      return reject(new Error("Gagal membuat direktori mockup."));
+    }
+
+    const finalPath = path.join(folderPath, finalFileName);
+
+    fs.rename(tempFilePath, finalPath, (err) => {
+      if (err) {
+        fs.copyFile(tempFilePath, finalPath, (copyErr) => {
+          if (copyErr)
+            return reject(
+              new Error("Gagal memproses mockup: " + copyErr.message),
+            );
+          fs.unlink(tempFilePath, () => {});
+          resolve(
+            `/images/${cabang}/sublim-mockup/${side}/${finalFileName}?t=${Date.now()}`,
+          );
+        });
+      } else {
+        resolve(
+          `/images/${cabang}/sublim-mockup/${side}/${finalFileName}?t=${Date.now()}`,
+        );
       }
     });
   });
@@ -775,12 +854,7 @@ const resolveOrCreateStokBarang = async (
  * barangnya sama. Reuse HANYA terjadi antar sesama pesanan (match ke
  * ktgp='PESANAN' yang sudah ada), tidak pernah ke ktgp='REGULER'.
  */
-const finalizeBarangDraft = async (
-  connection,
-  phNomor,
-  user,
-  { matchKtgpFilter, newKtgp },
-) => {
+const finalizeBarangDraft = async (connection, phNomor, user, { newKtgp }) => {
   const [draftRows] = await connection.query(
     "SELECT * FROM tpengajuanharga_barang_draft WHERE pbd_nomor = ? AND pbd_kategori = 'UTAMA' AND pbd_status = 'DRAFT' ORDER BY pbd_id DESC LIMIT 1 FOR UPDATE",
     [phNomor],
@@ -788,53 +862,34 @@ const finalizeBarangDraft = async (
   if (draftRows.length === 0) return null;
   const draft = draftRows[0];
 
-  let matchQuery = `SELECT brg_kode FROM tbarangdc
-     WHERE brg_jeniskaos = ? AND brg_tipe = ? AND brg_lengan = ? AND brg_jeniskain = ? AND brg_warna = ?
-       AND brg_aktif = 0`;
-  const matchParams = [
-    draft.pbd_jeniskaos,
-    draft.pbd_tipe,
-    draft.pbd_lengan,
-    draft.pbd_jeniskain,
-    draft.pbd_warna,
-  ];
-  if (matchKtgpFilter) {
-    matchQuery += ` AND brg_ktgp = ?`;
-    matchParams.push(matchKtgpFilter);
-  }
-  matchQuery += ` LIMIT 1 FOR UPDATE`;
+  // [UBAH] SELALU insert kode baru — TIDAK reuse kode barang existing
+  // meskipun kombinasi jeniskaos/tipe/lengan/jeniskain/warna identik.
+  // Alasan: tbarangdc_dtl.brgd_ph_nomor harus link 1:1 ke PH masing-masing,
+  // jadi tiap PH wajib punya kode barang sendiri di tbarangdc.
+  const finalKode = draft.pbd_kode_barang_draft;
+  const year = new Date().getFullYear().toString();
+  const [bcdRows] = await connection.query(
+    'SELECT IFNULL(MAX(brg_bcdid), 0) + 1 AS next_id FROM tbarangdc WHERE DATE_FORMAT(date_create, "%Y") = ? FOR UPDATE',
+    [year],
+  );
+  const bcdId = bcdRows[0].next_id;
 
-  const [existingRows] = await connection.query(matchQuery, matchParams);
-
-  let finalKode;
-  if (existingRows.length > 0) {
-    finalKode = existingRows[0].brg_kode;
-  } else {
-    finalKode = draft.pbd_kode_barang_draft;
-    const year = new Date().getFullYear().toString();
-    const [bcdRows] = await connection.query(
-      'SELECT IFNULL(MAX(brg_bcdid), 0) + 1 AS next_id FROM tbarangdc WHERE DATE_FORMAT(date_create, "%Y") = ? FOR UPDATE',
-      [year],
-    );
-    const bcdId = bcdRows[0].next_id;
-
-    await connection.query(
-      `INSERT INTO tbarangdc
-        (brg_kode, brg_jeniskaos, brg_ktgp, brg_tipe, brg_lengan, brg_jeniskain, brg_warna, brg_aktif, brg_bcdid, brg_logstok, user_create, date_create)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 'Y', ?, NOW())`,
-      [
-        finalKode,
-        draft.pbd_jeniskaos,
-        newKtgp,
-        draft.pbd_tipe,
-        draft.pbd_lengan,
-        draft.pbd_jeniskain,
-        draft.pbd_warna,
-        bcdId,
-        user.kode,
-      ],
-    );
-  }
+  await connection.query(
+    `INSERT INTO tbarangdc
+      (brg_kode, brg_jeniskaos, brg_ktgp, brg_tipe, brg_lengan, brg_jeniskain, brg_warna, brg_aktif, brg_bcdid, brg_logstok, user_create, date_create)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 'Y', ?, NOW())`,
+    [
+      finalKode,
+      draft.pbd_jeniskaos,
+      newKtgp,
+      draft.pbd_tipe,
+      draft.pbd_lengan,
+      draft.pbd_jeniskain,
+      draft.pbd_warna,
+      bcdId,
+      user.kode,
+    ],
+  );
 
   const [sizeRowsRaw] = await connection.query(
     "SELECT DISTINCT phs_size FROM tpengajuanharga_size WHERE phs_nomor = ?",
@@ -844,36 +899,14 @@ const finalizeBarangDraft = async (
     .map((r) => r.phs_size)
     .sort((a, b) => sizeOrderIndex(a) - sizeOrderIndex(b));
 
-  const [existingBarcodeRows] = await connection.query(
-    `SELECT brgd_barcode FROM tbarangdc_dtl WHERE brgd_kode = ? AND brgd_barcode IS NOT NULL AND brgd_barcode <> ''`,
-    [finalKode],
-  );
-  let barcodePrefix, nextSeq;
-  if (existingBarcodeRows.length > 0) {
-    const sample = existingBarcodeRows[0].brgd_barcode;
-    barcodePrefix =
-      sample.length > 2 ? sample.substring(0, sample.length - 2) : sample;
-    nextSeq = existingBarcodeRows.reduce((max, row) => {
-      const seqPart = parseInt(row.brgd_barcode.slice(-2), 10);
-      return isNaN(seqPart) ? max : Math.max(max, seqPart + 1);
-    }, 0);
-  } else {
-    const [brgRow] = await connection.query(
-      "SELECT brg_bcdid FROM tbarangdc WHERE brg_kode = ? LIMIT 1",
-      [finalKode],
-    );
-    const bcdId = brgRow[0]?.brg_bcdid || 0;
-    const yearYY = new Date().getFullYear().toString().substring(2);
-    barcodePrefix = `${yearYY}${bcdId.toString().padStart(4, "0")}`;
-    nextSeq = 0;
-  }
+  // [UBAH] Karena finalKode SELALU baru (belum pernah ada di tbarangdc
+  // sebelumnya), barcode-nya juga selalu mulai dari seq 0 — nggak perlu lagi
+  // cek barcode existing punya kode lain.
+  const yearYY = new Date().getFullYear().toString().substring(2);
+  const barcodePrefix = `${yearYY}${bcdId.toString().padStart(4, "0")}`;
+  let nextSeq = 0;
 
   for (const size of sortedSizes) {
-    const [existingVariant] = await connection.query(
-      "SELECT 1 FROM tbarangdc_dtl WHERE brgd_kode = ? AND brgd_ukuran = ? LIMIT 1",
-      [finalKode, size],
-    );
-    if (existingVariant.length > 0) continue;
     const barcode = `${barcodePrefix}${nextSeq.toString().padStart(2, "0")}`;
     nextSeq++;
     await connection.query(
@@ -888,6 +921,9 @@ const finalizeBarangDraft = async (
     "UPDATE tpengajuanharga_barang_draft SET pbd_status = 'FINAL', pbd_finalized_kode = ? WHERE pbd_id = ?",
     [finalKode, draft.pbd_id],
   );
+  // finalKode === draft.pbd_kode_barang_draft SELALU sekarang, jadi blok
+  // sinkronisasi phs_kode di bawah ini sudah tidak akan pernah kepakai —
+  // dibiarkan saja untuk jaga-jaga (no-op).
   if (finalKode !== draft.pbd_kode_barang_draft) {
     await connection.query(
       "UPDATE tpengajuanharga_size SET phs_kode = ? WHERE phs_nomor = ? AND phs_kode = ?",
@@ -903,20 +939,10 @@ const finalizeBarangDraft = async (
 };
 
 const finalizeCustomBarang = (connection, phNomor, user) =>
-  finalizeBarangDraft(connection, phNomor, user, {
-    matchKtgpFilter: "PESANAN",
-    newKtgp: "PESANAN",
-  });
+  finalizeBarangDraft(connection, phNomor, user, { newKtgp: "PESANAN" });
 
-// [UBAH] Stok sekarang juga dikunci ke kategori 'PESANAN' — jangan pernah
-// reuse/nunggang kode barang reguler (ktgp 'REGULER') meski kombinasinya
-// identik. Barang pesanan customer harus punya kode sendiri, terpisah dari
-// master stok reguler, biar tidak kecampur pas laporan/stok/dll.
 const finalizeStokBarang = (connection, phNomor, user) =>
-  finalizeBarangDraft(connection, phNomor, user, {
-    matchKtgpFilter: "PESANAN",
-    newKtgp: "PESANAN",
-  });
+  finalizeBarangDraft(connection, phNomor, user, { newKtgp: "PESANAN" });
 
 /**
  * Acc Finance: transisi ACC_CUSTOMER -> ACC_FINANCE, sekalian finalisasi kode
@@ -1217,6 +1243,24 @@ const previewSublimHarga = async (payload) => {
     });
   }
   return result;
+};
+
+/**
+ * Info kop surat cabang untuk kebutuhan cetak (mirror kolom gdg_inv_* yang
+ * sudah dipakai di SoPrintView, supaya header cetak Pengajuan Harga Sublim
+ * konsisten dengan cetakan lain).
+ */
+const getBranchInfoForPrint = async (cabang) => {
+  const query = `
+    SELECT
+      gdg_kode, gdg_inv_nama, gdg_inv_alamat, gdg_inv_kota, gdg_inv_telp,
+      gdg_inv_instagram
+    FROM tgudang
+    WHERE gdg_kode = ?
+    LIMIT 1
+  `;
+  const [rows] = await pool.query(query, [cabang]);
+  return rows[0] || null;
 };
 
 const saveProposal = async (data) => {
@@ -1523,9 +1567,9 @@ const saveProposal = async (data) => {
       const headerQuery = `
         INSERT INTO tpengajuanharga 
           (ph_nomor, ph_tanggal, ph_custom, ph_kd_cus, ph_ket, ph_jenis, ph_apv, ph_status, ph_status_updated, ph_diskon, ph_cab,
-          ph_kode_barang_draft, ph_sublim_kain, ph_sublim_katalog_id, ph_sublim_katalog_gambar, ph_celana_kode_barang_draft, 
+          ph_kode_barang_draft, ph_sublim_kain, ph_sublim_katalog_id, ph_sublim_katalog_gambar, ph_sublim_warna_detail, ph_celana_kode_barang_draft, 
           user_create, date_create) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', NOW(), ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
       `;
       await connection.query(headerQuery, [
         nomor,
@@ -1541,6 +1585,9 @@ const saveProposal = async (data) => {
         isSublim ? data.sublim.kain : null,
         isSublim ? data.sublim.katalogId || null : null,
         isSublim ? katalogGambar : null,
+        isSublim && data.sublim.colorDetails
+          ? JSON.stringify(data.sublim.colorDetails)
+          : null,
         isSublim ? kodeBarangCelana : null,
         user.kode,
       ]);
@@ -1556,6 +1603,7 @@ const saveProposal = async (data) => {
         UPDATE tpengajuanharga SET 
           ph_tanggal = ?, ph_custom = ?, ph_kd_cus = ?, ph_ket = ?, ph_jenis = ?, ph_apv = ?, ph_diskon = ?, ph_kode_barang_draft = ?, 
           ph_harga_locked = ?, ph_harga_locked_by = ?, ph_harga_locked_at = ?,
+          ph_sublim_warna_detail = COALESCE(?, ph_sublim_warna_detail),
           user_modified = ?, date_modified = NOW() 
         WHERE ph_nomor = ?
       `;
@@ -1571,6 +1619,9 @@ const saveProposal = async (data) => {
         finalHargaLocked,
         finalLockedBy,
         finalLockedAt,
+        isSublim && data.sublim.colorDetails
+          ? JSON.stringify(data.sublim.colorDetails)
+          : null,
         user.kode,
         nomor,
       ]);
@@ -1738,6 +1789,7 @@ module.exports = {
   getProposalForEdit,
   renameProposalImage,
   renameAccCustomerProof,
+  renameSublimMockup,
   finalizeStokBarang,
   finalizeCustomBarang,
   approveFinance,
@@ -1750,5 +1802,6 @@ module.exports = {
   resolveSublimJerseyHarga,
   generateOrReuseSublimDraft,
   previewSublimHarga,
+  getBranchInfoForPrint,
   saveProposal,
 };

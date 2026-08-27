@@ -76,6 +76,19 @@ const isPolosType = (representative) => {
   return tipe === "POLOS";
 };
 
+// Tentukan flag so_sablon/so_bordir/so_sublim dari tipe representative.
+// DTF sengaja TIDAK di-set ke kolom manapun (fallback default produksi,
+// cukup terekam lewat so_finishing) — sesuai keputusan konfirmasi.
+const getFinishingFlags = (representative) => {
+  const tipe =
+    (representative.tipe || "").toString().toUpperCase().trim() || "POLOS";
+  return {
+    sablon: tipe.includes("SABLON") ? "Y" : "N",
+    bordir: tipe.includes("BORDIR") ? "Y" : "N",
+    sublim: tipe.includes("SUBLIM") ? "Y" : "N",
+  };
+};
+
 //  Menu ID SO di MANKSI (kencanaprint.thakuser) — dipakai buat cek
 // hak akses cross-db sebelum boleh edit SO dari Retail. Asumsi eksplisit:
 // kode user Retail == user_kode MANKSI (identitas sama, 1 orang). Kalau
@@ -523,6 +536,8 @@ const generateSalesOrder = async (phNomor, payload, user) => {
     // Nama Desain hanya boleh diisi kalau BUKAN Polos — validasi
     // server-side, bukan cuma disable di UI.
     const polos = isPolosType(representative);
+    const finishingFlags = getFinishingFlags(representative);
+
     let finalNamaDesain = "";
     if (!polos) {
       finalNamaDesain = (namaDesain || "").trim();
@@ -551,6 +566,7 @@ const generateSalesOrder = async (phNomor, payload, user) => {
          so_standar_ukuran, so_varian_ukuran,
          so_nomor_po, so_tgl_po, so_datelinepo,
          so_invdc, so_keterangan, so_workshop,
+         so_sablon, so_bordir, so_sublim,
          so_aktif, so_close,
          user_create, date_create
        ) VALUES (
@@ -560,6 +576,7 @@ const generateSalesOrder = async (phNomor, payload, user) => {
          ?, ?, 'Premium', ?,
          'KENCANA', ?,
          ?, CURDATE(), CURDATE(),
+         ?, ?, ?,
          ?, ?, ?,
          'Y', 0,
          ?, NOW()
@@ -587,6 +604,9 @@ const generateSalesOrder = async (phNomor, payload, user) => {
         phNomor,
         keteranganProduksi || "",
         "JERON",
+        finishingFlags.sablon,
+        finishingFlags.bordir,
+        finishingFlags.sublim,
         user.kode,
       ],
     );

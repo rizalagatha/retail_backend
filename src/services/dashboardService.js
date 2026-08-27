@@ -2011,12 +2011,16 @@ const getDeadStockSummary = async (user, filters = {}) => {
     params.push(cabang);
   }
 
-  // Ambil data stok dengan usia (dari last terima STBJ)
+  // Ambil data stok dengan usia (dari last terima STBJ — prioritas global per
+  // SKU, sama seperti laporan dead stock; SJ toko sebagai fallback)
   const query = `
     SELECT 
       IFNULL(
-        FLOOR(DATEDIFF(CURDATE(), b.last_tstbj) / 30),
-        IFNULL(FLOOR(DATEDIFF(CURDATE(), a.date_create) / 30), 999)
+        FLOOR(DATEDIFF(CURDATE(), b_stbj.last_tstbj) / 30),
+        IFNULL(
+          FLOOR(DATEDIFF(CURDATE(), b_sj.last_tstbj) / 30),
+          IFNULL(FLOOR(DATEDIFF(CURDATE(), a.date_create) / 30), 999)
+        )
       ) AS umur_bulan,
       SUM(x.stok) AS stok,
       SUM(x.stok * IFNULL(dtl.brgd_hpp, 0)) AS nilai
@@ -2037,6 +2041,18 @@ const getDeadStockSummary = async (user, filters = {}) => {
     LEFT JOIN tbarangdc a ON a.brg_kode = x.mst_brg_kode
     LEFT JOIN tbarangdc_dtl dtl ON dtl.brgd_kode = x.mst_brg_kode 
       AND dtl.brgd_ukuran = x.mst_ukuran
+    -- Sumber UTAMA (semua cabang): STBJ terakhir untuk SKU ini, global
+    -- (bukan per cabang) — STBJ hanya terjadi di KDC saat produksi masuk
+    LEFT JOIN (
+      SELECT tsd_kode AS kode, tsd_ukuran AS ukuran,
+            MAX(ts_tanggal) AS last_tstbj
+      FROM tdc_stbj_hdr
+      INNER JOIN tdc_stbj_dtl ON tsd_nomor = ts_nomor
+      GROUP BY 1, 2
+    ) b_stbj ON b_stbj.kode = x.mst_brg_kode
+      AND b_stbj.ukuran = x.mst_ukuran
+    -- Sumber FALLBACK (khusus toko): dipakai hanya kalau SKU ini belum
+    -- pernah punya catatan STBJ sama sekali
     LEFT JOIN (
       SELECT LEFT(tjd_nomor, 3) AS cab, 
             tjd_kode AS kode, 
@@ -2045,19 +2061,9 @@ const getDeadStockSummary = async (user, filters = {}) => {
       FROM ttrm_sj_hdr
       INNER JOIN ttrm_sj_dtl ON tjd_nomor = tj_nomor
       GROUP BY 1, 2, 3
-
-      UNION ALL
-
-      SELECT 'KDC' AS cab,
-            tsd_kode AS kode,
-            tsd_ukuran AS ukuran,
-            MAX(ts_tanggal) AS last_tstbj
-      FROM tdc_stbj_hdr
-      INNER JOIN tdc_stbj_dtl ON tsd_nomor = ts_nomor
-      GROUP BY 1, 2, 3
-    ) b ON b.cab = x.mst_cab
-      AND b.kode = x.mst_brg_kode
-      AND b.ukuran = x.mst_ukuran
+    ) b_sj ON b_sj.cab = x.mst_cab
+      AND b_sj.kode = x.mst_brg_kode
+      AND b_sj.ukuran = x.mst_ukuran
     WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
       AND a.brg_warna NOT LIKE '%STICKER%'
       AND a.brg_warna NOT LIKE '%STIKER%'
@@ -2091,10 +2097,10 @@ const getDeadStockSummary = async (user, filters = {}) => {
     if (bln <= 6) {
       result.fm += stok;
       result.nilaiFm += nilai;
-    } else if (bln <= 12) {
+    } else if (bln <= 18) {
       result.std += stok;
       result.nilaiStd += nilai;
-    } else if (bln <= 24) {
+    } else if (bln <= 36) {
       result.sm += stok;
       result.nilaySm += nilai;
     } else {
@@ -2124,15 +2130,18 @@ const getDeadStockChart = async (user, filters = {}) => {
     SELECT 
       kategori,
       SUM(CASE WHEN umur_bulan <= 6  THEN stok ELSE 0 END) AS fm,
-      SUM(CASE WHEN umur_bulan > 6  AND umur_bulan <= 12 THEN stok ELSE 0 END) AS std,
-      SUM(CASE WHEN umur_bulan > 12 AND umur_bulan <= 24 THEN stok ELSE 0 END) AS sm,
-      SUM(CASE WHEN umur_bulan > 24 THEN stok ELSE 0 END) AS ds
+      SUM(CASE WHEN umur_bulan > 6  AND umur_bulan <= 18 THEN stok ELSE 0 END) AS std,
+      SUM(CASE WHEN umur_bulan > 18 AND umur_bulan <= 36 THEN stok ELSE 0 END) AS sm,
+      SUM(CASE WHEN umur_bulan > 36 THEN stok ELSE 0 END) AS ds
     FROM (
       SELECT
         IFNULL(NULLIF(TRIM(a.brg_jeniskain), ''), 'LAIN-LAIN') AS kategori,
         IFNULL(
-          FLOOR(DATEDIFF(CURDATE(), b.last_tstbj) / 30),
-          IFNULL(FLOOR(DATEDIFF(CURDATE(), a.date_create) / 30), 999)
+          FLOOR(DATEDIFF(CURDATE(), b_stbj.last_tstbj) / 30),
+          IFNULL(
+            FLOOR(DATEDIFF(CURDATE(), b_sj.last_tstbj) / 30),
+            IFNULL(FLOOR(DATEDIFF(CURDATE(), a.date_create) / 30), 999)
+          )
         ) AS umur_bulan,
         x.stok
       FROM (
@@ -2151,6 +2160,14 @@ const getDeadStockChart = async (user, filters = {}) => {
       ) x
       LEFT JOIN tbarangdc a ON a.brg_kode = x.mst_brg_kode
       LEFT JOIN (
+        SELECT tsd_kode AS kode, tsd_ukuran AS ukuran,
+              MAX(ts_tanggal) AS last_tstbj
+        FROM tdc_stbj_hdr
+        INNER JOIN tdc_stbj_dtl ON tsd_nomor = ts_nomor
+        GROUP BY 1, 2
+      ) b_stbj ON b_stbj.kode = x.mst_brg_kode
+        AND b_stbj.ukuran = x.mst_ukuran
+      LEFT JOIN (
         SELECT LEFT(tjd_nomor, 3) AS cab, 
               tjd_kode AS kode, 
               tjd_ukuran AS ukuran,
@@ -2158,19 +2175,9 @@ const getDeadStockChart = async (user, filters = {}) => {
         FROM ttrm_sj_hdr
         INNER JOIN ttrm_sj_dtl ON tjd_nomor = tj_nomor
         GROUP BY 1, 2, 3
-
-        UNION ALL
-
-        SELECT 'KDC' AS cab,
-              tsd_kode AS kode,
-              tsd_ukuran AS ukuran,
-              MAX(ts_tanggal) AS last_tstbj
-        FROM tdc_stbj_hdr
-        INNER JOIN tdc_stbj_dtl ON tsd_nomor = ts_nomor
-        GROUP BY 1, 2, 3
-      ) b ON b.cab = x.mst_cab
-        AND b.kode = x.mst_brg_kode
-        AND b.ukuran = x.mst_ukuran
+      ) b_sj ON b_sj.cab = x.mst_cab
+        AND b_sj.kode = x.mst_brg_kode
+        AND b_sj.ukuran = x.mst_ukuran
       WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
         AND a.brg_warna NOT LIKE '%STICKER%'
         AND a.brg_warna NOT LIKE '%STIKER%'
@@ -2206,7 +2213,6 @@ const getDeadStockSalesPie = async (user, filters = {}) => {
     salesParams.push(cabang);
   }
 
-  // Ambil SKU dead stock (umur > 24 bulan) lalu cek apakah terjual 12 bln terakhir
   const query = `
     SELECT
       SUM(CASE WHEN sls.total_terjual > 0 THEN x.stok ELSE 0 END) AS stok_terjual,
@@ -2230,20 +2236,22 @@ const getDeadStockSalesPie = async (user, filters = {}) => {
     ) x
     LEFT JOIN tbarangdc a ON a.brg_kode = x.mst_brg_kode
     LEFT JOIN (
+      SELECT tsd_kode AS kode, tsd_ukuran AS ukuran,
+        MAX(ts_tanggal) AS last_tstbj
+      FROM tdc_stbj_hdr
+      INNER JOIN tdc_stbj_dtl ON tsd_nomor = ts_nomor
+      GROUP BY 1, 2
+    ) b_stbj ON b_stbj.kode = x.mst_brg_kode
+      AND b_stbj.ukuran = x.mst_ukuran
+    LEFT JOIN (
       SELECT LEFT(tjd_nomor, 3) AS cab, tjd_kode AS kode, tjd_ukuran AS ukuran,
         MAX(tj_tanggal) AS last_tstbj
       FROM ttrm_sj_hdr
       INNER JOIN ttrm_sj_dtl ON tjd_nomor = tj_nomor
       GROUP BY 1, 2, 3
-      UNION ALL
-      SELECT 'KDC' AS cab, tsd_kode AS kode, tsd_ukuran AS ukuran,
-        MAX(ts_tanggal) AS last_tstbj
-      FROM tdc_stbj_hdr
-      INNER JOIN tdc_stbj_dtl ON tsd_nomor = ts_nomor
-      GROUP BY 1, 2, 3
-    ) b ON b.cab = x.mst_cab
-      AND b.kode = x.mst_brg_kode
-      AND b.ukuran = x.mst_ukuran
+    ) b_sj ON b_sj.cab = x.mst_cab
+      AND b_sj.kode = x.mst_brg_kode
+      AND b_sj.ukuran = x.mst_ukuran
     LEFT JOIN (
       SELECT d.invd_kode, d.invd_ukuran,
         SUM(d.invd_jumlah) AS total_terjual
@@ -2259,7 +2267,10 @@ const getDeadStockSalesPie = async (user, filters = {}) => {
       AND a.brg_warna NOT LIKE '%STICKER%'
       AND a.brg_warna NOT LIKE '%STIKER%'
       AND a.brg_warna NOT LIKE '%DTF%'
-      AND IFNULL(FLOOR(DATEDIFF(CURDATE(), b.last_tstbj) / 30), 999) > 24
+      AND IFNULL(
+        FLOOR(DATEDIFF(CURDATE(), b_stbj.last_tstbj) / 30),
+        IFNULL(FLOOR(DATEDIFF(CURDATE(), b_sj.last_tstbj) / 30), 999)
+      ) > 36
   `;
 
   const allParams = [...params, ...salesParams];
@@ -2268,7 +2279,7 @@ const getDeadStockSalesPie = async (user, filters = {}) => {
 };
 
 const getDeadStockSalesDetail = async (user, filters = {}) => {
-  const { cabang = "ALL", tipe = "bergerak" } = filters; // tipe: bergerak | stagnan
+  const { cabang = "ALL", tipe = "bergerak" } = filters;
 
   let branchFilter = "";
   let salesBranchFilter = "";
@@ -2300,10 +2311,13 @@ const getDeadStockSalesDetail = async (user, filters = {}) => {
       x.mst_cab AS cabang,
       x.stok,
       IFNULL(
-        FLOOR(DATEDIFF(CURDATE(), b.last_tstbj) / 30),
-        IFNULL(FLOOR(DATEDIFF(CURDATE(), a.date_create) / 30), 999)
+        FLOOR(DATEDIFF(CURDATE(), b_stbj.last_tstbj) / 30),
+        IFNULL(
+          FLOOR(DATEDIFF(CURDATE(), b_sj.last_tstbj) / 30),
+          IFNULL(FLOOR(DATEDIFF(CURDATE(), a.date_create) / 30), 999)
+        )
       ) AS umur_bulan,
-      b.last_tstbj,
+      IFNULL(b_stbj.last_tstbj, b_sj.last_tstbj) AS last_tstbj,
       IFNULL(sls.total_terjual, 0) AS total_terjual,
       IFNULL(dtl.brgd_hpp, 0) AS hpp,
       x.stok * IFNULL(dtl.brgd_hpp, 0) AS nilai_stok
@@ -2325,20 +2339,22 @@ const getDeadStockSalesDetail = async (user, filters = {}) => {
     LEFT JOIN tbarangdc_dtl dtl ON dtl.brgd_kode = x.mst_brg_kode
       AND dtl.brgd_ukuran = x.mst_ukuran
     LEFT JOIN (
+      SELECT tsd_kode AS kode, tsd_ukuran AS ukuran,
+        MAX(ts_tanggal) AS last_tstbj
+      FROM tdc_stbj_hdr
+      INNER JOIN tdc_stbj_dtl ON tsd_nomor = ts_nomor
+      GROUP BY 1, 2
+    ) b_stbj ON b_stbj.kode = x.mst_brg_kode
+      AND b_stbj.ukuran = x.mst_ukuran
+    LEFT JOIN (
       SELECT LEFT(tjd_nomor, 3) AS cab, tjd_kode AS kode, tjd_ukuran AS ukuran,
         MAX(tj_tanggal) AS last_tstbj
       FROM ttrm_sj_hdr
       INNER JOIN ttrm_sj_dtl ON tjd_nomor = tj_nomor
       GROUP BY 1, 2, 3
-      UNION ALL
-      SELECT 'KDC' AS cab, tsd_kode AS kode, tsd_ukuran AS ukuran,
-        MAX(ts_tanggal) AS last_tstbj
-      FROM tdc_stbj_hdr
-      INNER JOIN tdc_stbj_dtl ON tsd_nomor = ts_nomor
-      GROUP BY 1, 2, 3
-    ) b ON b.cab = x.mst_cab
-      AND b.kode = x.mst_brg_kode
-      AND b.ukuran = x.mst_ukuran
+    ) b_sj ON b_sj.cab = x.mst_cab
+      AND b_sj.kode = x.mst_brg_kode
+      AND b_sj.ukuran = x.mst_ukuran
     LEFT JOIN (
       SELECT d.invd_kode, d.invd_ukuran,
         SUM(d.invd_jumlah) AS total_terjual
@@ -2355,7 +2371,10 @@ const getDeadStockSalesDetail = async (user, filters = {}) => {
       AND a.brg_warna NOT LIKE '%STIKER%'
       AND a.brg_warna NOT LIKE '%DTF%'
       AND a.brg_kode NOT LIKE 'JASA%'
-      AND IFNULL(FLOOR(DATEDIFF(CURDATE(), b.last_tstbj) / 30), 999) > 24
+      AND IFNULL(
+        FLOOR(DATEDIFF(CURDATE(), b_stbj.last_tstbj) / 30),
+        IFNULL(FLOOR(DATEDIFF(CURDATE(), b_sj.last_tstbj) / 30), 999)
+      ) > 24
   ) hasil
   ${havingClause}
   ORDER BY nilai_stok DESC
