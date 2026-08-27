@@ -8,6 +8,14 @@ const {
 
 const MENU_ID = "31"; // Menu ID untuk Terima SJ
 
+// --- Endpoint Tracking Manifest ---
+router.get(
+  "/tracking/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  terimaSjController.getTracking,
+);
+
 // --- Endpoint Browse & Lookup ---
 router.get(
   "/",
