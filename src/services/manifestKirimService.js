@@ -247,11 +247,11 @@ const saveData = async (payload, user) => {
             );
             const headerSql = `
         INSERT INTO tmanifest_pengiriman_hdr (
-          mp_nomor, mp_tanggal, mp_jam, mp_gudang, mp_tujuan, mp_jenis_kirim, mp_driver, 
-          mp_plat_nomor, mp_ekspedisi, mp_no_resi, mp_total_sj, mp_total_koli, 
-          mp_total_qty, mp_berat_kg, mp_ket, mp_status, mp_ttd_pengirim, mp_ttd_driver, user_create, date_create
+            mp_nomor, mp_tanggal, mp_jam, mp_gudang, mp_tujuan, mp_jenis_kirim, mp_driver, 
+            mp_plat_nomor, mp_ekspedisi, mp_no_resi, mp_total_sj, mp_total_koli, 
+            mp_total_qty, mp_berat_kg, mp_ket, mp_status, mp_ttd_pengirim, mp_ttd_driver, user_create, date_create
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
-      `;
+        `;
             await connection.query(headerSql, [
                 manifestNomor,
                 header.tanggal,
@@ -274,6 +274,51 @@ const saveData = async (payload, user) => {
                 user.kode || user.id || "ADMIN",
             ]);
         } else {
+            // Cek status tanda tangan dan status manifest yang sudah ada di database
+            const [existingRows] = await connection.query(
+                "SELECT mp_jenis_kirim, mp_status, mp_ttd_pengirim, mp_ttd_driver FROM tmanifest_pengiriman_hdr WHERE mp_nomor = ?",
+                [manifestNomor],
+            );
+
+            if (existingRows.length === 0) {
+                throw new Error("Manifest Kirim tidak ditemukan.");
+            }
+
+            const existing = existingRows[0];
+            const hasSignedBoth = Boolean(
+                existing.mp_ttd_pengirim &&
+                String(existing.mp_ttd_pengirim).trim() !== "" &&
+                existing.mp_ttd_driver &&
+                String(existing.mp_ttd_driver).trim() !== "",
+            );
+            const isDikirimOrDone = ["DIKIRIM", "SELESAI", "TERKIRIM"].includes(
+                String(existing.mp_status || "").toUpperCase(),
+            );
+            const isLocked = hasSignedBoth || isDikirimOrDone;
+
+            if (isLocked) {
+                if (existing.mp_jenis_kirim === "EKSPEDISI") {
+                    // Khusus EKSPEDISI: Hanya boleh memperbarui No. Resi saja
+                    await connection.query(
+                        "UPDATE tmanifest_pengiriman_hdr SET mp_no_resi = ?, user_modified = ?, date_modified = NOW() WHERE mp_nomor = ?",
+                        [
+                            header.noResi || "",
+                            user.kode || user.id || "ADMIN",
+                            manifestNomor,
+                        ],
+                    );
+                    await connection.commit();
+                    return {
+                        message: `No. Resi untuk Manifest ${manifestNomor} berhasil diperbarui.`,
+                        nomor: manifestNomor,
+                    };
+                } else {
+                    throw new Error(
+                        "Manifest sudah dikirim / ditandatangani oleh pengirim dan penerima. Perubahan data tidak diizinkan.",
+                    );
+                }
+            }
+
             // Release SJ lama yang terikat ke manifest ini
             await connection.query(
                 "UPDATE tdc_sj_hdr SET sj_manifest_nomor = NULL WHERE sj_manifest_nomor = ?",
@@ -282,12 +327,12 @@ const saveData = async (payload, user) => {
 
             const headerSql = `
         UPDATE tmanifest_pengiriman_hdr SET 
-          mp_tanggal = ?, mp_jam = ?, mp_gudang = ?, mp_tujuan = ?, mp_jenis_kirim = ?, 
-          mp_driver = ?, mp_plat_nomor = ?, mp_ekspedisi = ?, mp_no_resi = ?, 
-          mp_total_sj = ?, mp_total_koli = ?, mp_total_qty = ?, mp_berat_kg = ?, 
-          mp_ket = ?, mp_status = ?, mp_ttd_pengirim = ?, mp_ttd_driver = ?, user_modified = ?, date_modified = NOW()
-        WHERE mp_nomor = ?;
-      `;
+            mp_tanggal = ?, mp_jam = ?, mp_gudang = ?, mp_tujuan = ?, mp_jenis_kirim = ?, 
+            mp_driver = ?, mp_plat_nomor = ?, mp_ekspedisi = ?, mp_no_resi = ?, 
+            mp_total_sj = ?, mp_total_koli = ?, mp_total_qty = ?, mp_berat_kg = ?, 
+            mp_ket = ?, mp_status = ?, mp_ttd_pengirim = ?, mp_ttd_driver = ?, user_modified = ?, date_modified = NOW()
+            WHERE mp_nomor = ?;
+        `;
             await connection.query(headerSql, [
                 header.tanggal,
                 header.jam || null,
@@ -443,7 +488,9 @@ const updateStatus = async (nomor, newStatus, user) => {
         );
 
         await connection.commit();
-        return { message: `Status Manifest ${nomor} berhasil diubah ke ${newStatus}.` };
+        return {
+            message: `Status Manifest ${nomor} berhasil diubah ke ${newStatus}.`,
+        };
     } catch (error) {
         await connection.rollback();
         throw error;
