@@ -62,6 +62,16 @@ const runAutoReceive = async (req, res) => {
   }
 };
 
+const getTracking = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const data = await terimaSjService.getTracking(nomor);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getCabangList,
   getList,
@@ -69,4 +79,5 @@ module.exports = {
   remove,
   exportDetails,
   runAutoReceive,
+  getTracking,
 };

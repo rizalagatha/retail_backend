@@ -331,6 +331,165 @@ const autoReceiveSj = async () => {
   }
 };
 
+/**
+ * Mengambil informasi tracking komprehensif Surat Jalan (DC / Workshop)
+ * Menggabungkan info:
+ * 1. Surat Jalan Header (Nomor, Tanggal, Jam, User Buat, Store Tujuan, No. Minta, Packing List, Invoice)
+ * 2. Manifest Pengiriman (Nomor Manifest, Tanggal, Jam, Status, Driver, Plat, Ekspedisi, Resi, TTD Driver/Pengirim)
+ * 3. Penerimaan Toko (Nomor Terima TJ, Tanggal Terima, Jam, Closing, User Penerima)
+ */
+const getTracking = async (nomor) => {
+  // 1. Coba cari di tdc_sj_hdr (DC)
+  const dcQuery = `
+    SELECT 
+      h.sj_nomor AS sjNomor,
+      h.sj_tanggal AS sjTanggal,
+      h.sj_mt_nomor AS noMinta,
+      h.sj_manifest_nomor AS manifestNomor,
+      h.sj_noterima AS noTerima,
+      h.sj_kecab AS storeKode,
+      g.gdg_nama AS storeNama,
+      h.sj_ket AS keterangan,
+      h.user_create AS userCreateSj,
+      h.date_create AS dateCreateSj,
+      'DC' AS source,
+      (SELECT GROUP_CONCAT(DISTINCT pl_nomor SEPARATOR ', ') FROM tpacking_list_hdr WHERE pl_sj_nomor = h.sj_nomor) AS noPackingList,
+      (SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor_so = h.sj_nomor LIMIT 1) AS noInvoice
+    FROM tdc_sj_hdr h
+    LEFT JOIN tgudang g ON g.gdg_kode = h.sj_kecab
+    WHERE h.sj_nomor = ?;
+  `;
+
+  let [rows] = await pool.query(dcQuery, [nomor]);
+  let isWorkshop = false;
+
+  if (rows.length === 0) {
+    // 2. Coba cari di tsj_workshop_hdr (Workshop)
+    const wkQuery = `
+      SELECT 
+        h.sjw_nomor AS sjNomor,
+        h.sjw_tanggal AS sjTanggal,
+        h.sjw_so_nomor AS noMinta,
+        t.tj_nomor AS noTerima,
+        h.sjw_tujuan_cab AS storeKode,
+        g.gdg_nama AS storeNama,
+        h.sjw_ket AS keterangan,
+        h.user_create AS userCreateSj,
+        h.date_create AS dateCreateSj,
+        'WORKSHOP' AS source,
+        '' AS manifestNomor,
+        '' AS noPackingList,
+        '' AS noInvoice
+      FROM tsj_workshop_hdr h
+      LEFT JOIN tgudang g ON g.gdg_kode = h.sjw_tujuan_cab
+      LEFT JOIN ttrm_sj_hdr t ON t.tj_sj_workshop = h.sjw_nomor
+      WHERE h.sjw_nomor = ?;
+    `;
+    [rows] = await pool.query(wkQuery, [nomor]);
+    if (rows.length === 0) {
+      throw new Error(`Surat Jalan ${nomor} tidak ditemukan.`);
+    }
+    isWorkshop = true;
+  }
+
+  const sjInfo = rows[0];
+
+  // Ambil Data Manifest jika ada (cek header SJ atau detail manifest)
+  let manifestNomor = sjInfo.manifestNomor;
+  if (!manifestNomor) {
+    const [dtlRows] = await pool.query(
+      "SELECT mpd_nomor FROM tmanifest_pengiriman_dtl WHERE mpd_sj_nomor = ? LIMIT 1",
+      [nomor],
+    );
+    if (dtlRows.length > 0) {
+      manifestNomor = dtlRows[0].mpd_nomor;
+      sjInfo.manifestNomor = manifestNomor;
+    }
+  }
+
+  let manifestInfo = null;
+  if (manifestNomor) {
+    const mpQuery = `
+      SELECT 
+        m.mp_nomor AS manifestNomor,
+        m.mp_tanggal AS manifestTanggal,
+        m.mp_jam AS manifestJam,
+        m.mp_gudang AS gudangAsal,
+        ga.gdg_nama AS namaGudangAsal,
+        m.mp_tujuan AS gudangTujuan,
+        gt.gdg_nama AS namaGudangTujuan,
+        m.mp_status AS manifestStatus,
+        m.mp_jenis_kirim AS jenisKirim,
+        m.mp_driver AS driver,
+        m.mp_plat_nomor AS platNomor,
+        m.mp_ekspedisi AS ekspedisi,
+        m.mp_no_resi AS noResi,
+        m.mp_total_sj AS totalSj,
+        m.mp_total_koli AS totalKoli,
+        m.mp_total_qty AS totalQty,
+        m.mp_berat_kg AS beratKg,
+        m.mp_ket AS keterangan,
+        CASE WHEN m.mp_ttd_pengirim IS NOT NULL AND m.mp_ttd_pengirim != '' THEN 1 ELSE 0 END AS hasTtdPengirim,
+        CASE WHEN m.mp_ttd_driver IS NOT NULL AND m.mp_ttd_driver != '' THEN 1 ELSE 0 END AS hasTtdDriver,
+        m.user_create AS userCreateManifest,
+        m.date_create AS dateCreateManifest,
+        m.user_modified AS userModifiedManifest,
+        m.date_modified AS dateModifiedManifest
+      FROM tmanifest_pengiriman_hdr m
+      LEFT JOIN tgudang ga ON ga.gdg_kode = m.mp_gudang
+      LEFT JOIN tgudang gt ON gt.gdg_kode = m.mp_tujuan
+      WHERE m.mp_nomor = ?;
+    `;
+    const [mpRows] = await pool.query(mpQuery, [manifestNomor]);
+    if (mpRows.length > 0) {
+      manifestInfo = mpRows[0];
+    }
+  }
+
+  // Ambil Data Penerimaan (TJ) jika ada
+  let terimaInfo = null;
+  const noTerima = sjInfo.noTerima;
+  if (noTerima) {
+    const tjQuery = `
+      SELECT 
+        t.tj_nomor AS noTerima,
+        t.tj_tanggal AS tanggalTerima,
+        t.tj_closing AS closing,
+        t.user_create AS userTerima,
+        t.date_create AS dateCreateTerima
+      FROM ttrm_sj_hdr t
+      WHERE t.tj_nomor = ?;
+    `;
+    const [tjRows] = await pool.query(tjQuery, [noTerima]);
+    if (tjRows.length > 0) {
+      terimaInfo = tjRows[0];
+    }
+  }
+
+  // Tentukan Status Manifest Saat Ini:
+  // 1. DRAFT: Manifest Dibuat (Draft)
+  // 2. DIKIRIM: Manifest Dikirim
+  // 3. DITERIMA: Manifest Diterima (Penerimaan Store dengan No. Terima)
+  let currentStatus = "BELUM_MANIFEST";
+  if (terimaInfo?.noTerima || sjInfo.noTerima) {
+    currentStatus = "DITERIMA";
+  } else if (manifestInfo?.manifestStatus === "DIKIRIM") {
+    currentStatus = "DIKIRIM";
+  } else if (manifestInfo?.manifestNomor) {
+    currentStatus = "DRAFT";
+  } else {
+    currentStatus = "BELUM_MANIFEST";
+  }
+
+  return {
+    sj: sjInfo,
+    manifest: manifestInfo,
+    terima: terimaInfo,
+    currentStatus,
+    isWorkshop,
+  };
+};
+
 module.exports = {
   getCabangList,
   getList,
@@ -338,4 +497,5 @@ module.exports = {
   remove,
   getExportDetails,
   autoReceiveSj,
+  getTracking,
 };
