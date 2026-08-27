@@ -69,6 +69,13 @@ router.get(
   priceProposalFormController.getNextNumber,
 );
 
+router.get(
+  "/branch-info-print",
+  verifyToken,
+  checkInsertOrEditPermission(PRICE_PROPOSAL_MENU_ID),
+  priceProposalFormController.getBranchInfoForPrint,
+);
+
 router.post(
   "/upload-acc-customer/:nomor",
   verifyToken,
@@ -136,6 +143,13 @@ router.post(
   checkPermission(PRICE_PROPOSAL_MENU_ID, "edit"),
   upload.single("image"),
   priceProposalFormController.uploadImage,
+);
+router.post(
+  "/sublim/upload-mockup/:nomor",
+  verifyToken,
+  checkInsertOrEditPermission(PRICE_PROPOSAL_MENU_ID),
+  upload.single("image"),
+  priceProposalFormController.uploadSublimMockup,
 );
 
 module.exports = router;

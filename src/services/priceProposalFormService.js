@@ -296,6 +296,36 @@ const getProposalForEdit = async (nomor) => {
     }
   }
 
+  // [BARU] Deteksi mockup Sublim (depan/belakang)
+  const detectMockup = (side) => {
+    const dir = path.join(
+      process.cwd(),
+      "public",
+      "images",
+      cabang,
+      "sublim-mockup",
+      side,
+    );
+    if (!fs.existsSync(dir)) return null;
+    const files = fs.readdirSync(dir);
+    const fileName = files.find((file) => file.startsWith(nomor + "."));
+    return fileName
+      ? `/images/${cabang}/sublim-mockup/${side}/${fileName}?t=${Date.now()}`
+      : null;
+  };
+  const sublimMockupDepanUrl = detectMockup("depan");
+  const sublimMockupBelakangUrl = detectMockup("belakang");
+
+  // [BARU] Parse detail warna sublim (disimpan sebagai JSON string)
+  let sublimColorDetails = null;
+  if (headerRows[0].ph_sublim_warna_detail) {
+    try {
+      sublimColorDetails = JSON.parse(headerRows[0].ph_sublim_warna_detail);
+    } catch (e) {
+      sublimColorDetails = null;
+    }
+  }
+
   return {
     header: headerRows[0],
     sizes: sizeRows,
@@ -305,6 +335,9 @@ const getProposalForEdit = async (nomor) => {
     imageUrl: imageUrl,
     barangDraft: barangDraft,
     accCustomerProofUrl,
+    sublimMockupDepanUrl,
+    sublimMockupBelakangUrl,
+    sublimColorDetails,
   };
 };
 
@@ -405,6 +438,52 @@ const renameAccCustomerProof = async (tempFilePath, nomor) => {
         });
       } else {
         resolve(finalPath);
+      }
+    });
+  });
+};
+
+const renameSublimMockup = async (tempFilePath, nomor, side, ext) => {
+  return new Promise((resolve, reject) => {
+    if (!fs.existsSync(tempFilePath)) {
+      return reject(new Error("File sumber tidak ditemukan."));
+    }
+
+    const cabang = nomor.substring(0, 3);
+    const finalFileName = `${nomor}${ext}`;
+    const folderPath = path.join(
+      process.cwd(),
+      "public",
+      "images",
+      cabang,
+      "sublim-mockup",
+      side, // "depan" atau "belakang"
+    );
+
+    try {
+      fs.mkdirSync(folderPath, { recursive: true });
+    } catch (mkdirError) {
+      return reject(new Error("Gagal membuat direktori mockup."));
+    }
+
+    const finalPath = path.join(folderPath, finalFileName);
+
+    fs.rename(tempFilePath, finalPath, (err) => {
+      if (err) {
+        fs.copyFile(tempFilePath, finalPath, (copyErr) => {
+          if (copyErr)
+            return reject(
+              new Error("Gagal memproses mockup: " + copyErr.message),
+            );
+          fs.unlink(tempFilePath, () => {});
+          resolve(
+            `/images/${cabang}/sublim-mockup/${side}/${finalFileName}?t=${Date.now()}`,
+          );
+        });
+      } else {
+        resolve(
+          `/images/${cabang}/sublim-mockup/${side}/${finalFileName}?t=${Date.now()}`,
+        );
       }
     });
   });
@@ -1219,6 +1298,24 @@ const previewSublimHarga = async (payload) => {
   return result;
 };
 
+/**
+ * Info kop surat cabang untuk kebutuhan cetak (mirror kolom gdg_inv_* yang
+ * sudah dipakai di SoPrintView, supaya header cetak Pengajuan Harga Sublim
+ * konsisten dengan cetakan lain).
+ */
+const getBranchInfoForPrint = async (cabang) => {
+  const query = `
+    SELECT
+      gdg_kode, gdg_inv_nama, gdg_inv_alamat, gdg_inv_kota, gdg_inv_telp,
+      gdg_inv_instagram
+    FROM tgudang
+    WHERE gdg_kode = ?
+    LIMIT 1
+  `;
+  const [rows] = await pool.query(query, [cabang]);
+  return rows[0] || null;
+};
+
 const saveProposal = async (data) => {
   const {
     header,
@@ -1523,9 +1620,9 @@ const saveProposal = async (data) => {
       const headerQuery = `
         INSERT INTO tpengajuanharga 
           (ph_nomor, ph_tanggal, ph_custom, ph_kd_cus, ph_ket, ph_jenis, ph_apv, ph_status, ph_status_updated, ph_diskon, ph_cab,
-          ph_kode_barang_draft, ph_sublim_kain, ph_sublim_katalog_id, ph_sublim_katalog_gambar, ph_celana_kode_barang_draft, 
+          ph_kode_barang_draft, ph_sublim_kain, ph_sublim_katalog_id, ph_sublim_katalog_gambar, ph_sublim_warna_detail, ph_celana_kode_barang_draft, 
           user_create, date_create) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', NOW(), ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
       `;
       await connection.query(headerQuery, [
         nomor,
@@ -1541,6 +1638,9 @@ const saveProposal = async (data) => {
         isSublim ? data.sublim.kain : null,
         isSublim ? data.sublim.katalogId || null : null,
         isSublim ? katalogGambar : null,
+        isSublim && data.sublim.colorDetails
+          ? JSON.stringify(data.sublim.colorDetails)
+          : null,
         isSublim ? kodeBarangCelana : null,
         user.kode,
       ]);
@@ -1556,6 +1656,7 @@ const saveProposal = async (data) => {
         UPDATE tpengajuanharga SET 
           ph_tanggal = ?, ph_custom = ?, ph_kd_cus = ?, ph_ket = ?, ph_jenis = ?, ph_apv = ?, ph_diskon = ?, ph_kode_barang_draft = ?, 
           ph_harga_locked = ?, ph_harga_locked_by = ?, ph_harga_locked_at = ?,
+          ph_sublim_warna_detail = COALESCE(?, ph_sublim_warna_detail),
           user_modified = ?, date_modified = NOW() 
         WHERE ph_nomor = ?
       `;
@@ -1571,6 +1672,9 @@ const saveProposal = async (data) => {
         finalHargaLocked,
         finalLockedBy,
         finalLockedAt,
+        isSublim && data.sublim.colorDetails
+          ? JSON.stringify(data.sublim.colorDetails)
+          : null,
         user.kode,
         nomor,
       ]);
@@ -1738,6 +1842,7 @@ module.exports = {
   getProposalForEdit,
   renameProposalImage,
   renameAccCustomerProof,
+  renameSublimMockup,
   finalizeStokBarang,
   finalizeCustomBarang,
   approveFinance,
@@ -1750,5 +1855,6 @@ module.exports = {
   resolveSublimJerseyHarga,
   generateOrReuseSublimDraft,
   previewSublimHarga,
+  getBranchInfoForPrint,
   saveProposal,
 };

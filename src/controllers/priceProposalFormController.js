@@ -254,6 +254,57 @@ const uploadSublimDesign = async (req, res) => {
   }
 };
 
+/**
+ * Upload mockup Sublim (Depan/Belakang) — pola sama seperti uploadSublimDesign,
+ * tapi disimpan di subfolder terpisah per sisi (depan/belakang) supaya kedua
+ * file tidak saling menimpa untuk nomor pengajuan yang sama.
+ */
+const uploadSublimMockup = async (req, res) => {
+  try {
+    if (!req.file)
+      return res.status(400).json({ message: "Tidak ada file yang diunggah." });
+
+    const { nomor } = req.params;
+    const { side } = req.body;
+    if (!["depan", "belakang"].includes(side)) {
+      fs.unlinkSync(req.file.path);
+      return res
+        .status(400)
+        .json({ message: "Parameter 'side' harus 'depan' atau 'belakang'." });
+    }
+
+    const imageUrl = await priceProposalFormService.renameSublimMockup(
+      req.file.path,
+      nomor,
+      side,
+      path.extname(req.file.originalname),
+    );
+
+    res.json({ message: `Mockup ${side} berhasil diunggah.`, imageUrl });
+  } catch (error) {
+    console.error("Upload Sublim Mockup Error:", error);
+    if (req.file && req.file.path) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (e) {}
+    }
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getBranchInfoForPrint = async (req, res) => {
+  try {
+    const cabang = req.user.cabang;
+    const data = await priceProposalFormService.getBranchInfoForPrint(cabang);
+    if (!data) {
+      return res.status(404).json({ message: "Data cabang tidak ditemukan." });
+    }
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // [AUDIT TRAIL DITERAPKAN DI SINI]
 const save = async (req, res) => {
   try {
@@ -284,5 +335,7 @@ module.exports = {
   previewSublimHarga,
   getSublimKatalogByKategori,
   uploadSublimDesign,
+  uploadSublimMockup,
+  getBranchInfoForPrint,
   save,
 };
