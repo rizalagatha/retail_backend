@@ -132,6 +132,7 @@ const getDetails = async (nomor) => {
       d.mpd_iddrec AS idDrec,
       d.mpd_nomor AS manifestNomor,
       d.mpd_sj_nomor AS sjNomor,
+      d.mpd_nama_barang AS namaBarang,
       sjh.sj_tanggal AS sjTanggal,
       d.mpd_store AS storeKode,
       g.gdg_nama AS storeNama,
@@ -212,19 +213,54 @@ const saveData = async (payload, user) => {
     try {
         await connection.beginTransaction();
 
-        // Validasi Dasar
-        if (!header.gudang) throw new Error("Gudang pengirim harus diisi.");
-        if (!header.tanggal) throw new Error("Tanggal manifest harus diisi.");
-        if (!items || items.length === 0)
-            throw new Error("Surat Jalan yang dimuat harus diisi.");
+        // 1. Validasi & Sinkronisasi Tujuan Pengiriman (Store Tujuan)
+        const sjItems = items.filter(
+            (i) => i.sjNomor && String(i.sjNomor).trim() !== "",
+        );
 
-        let totalSj = items.length;
+        if (sjItems.length > 0) {
+            const primaryStore = String(sjItems[0].storeKode || "").trim().toUpperCase();
+            if (!primaryStore) {
+                throw new Error(`Surat Jalan ${sjItems[0].sjNomor} tidak memiliki kode toko tujuan.`);
+            }
+
+            // Pastikan semua SJ dalam manifest menuju ke toko yang sama
+            for (const sj of sjItems) {
+                const curStore = String(sj.storeKode || "").trim().toUpperCase();
+                if (curStore !== primaryStore) {
+                    throw new Error(
+                        `Surat Jalan ${sj.sjNomor} bertujuan ke "${curStore}", tidak sama dengan tujuan manifest (${primaryStore}). Semua SJ dalam satu manifest harus menuju ke store yang sama.`,
+                    );
+                }
+            }
+
+            // Selaraskan header.tujuan dengan store tujuan SJ
+            header.tujuan = primaryStore;
+        } else {
+            if (!header.tujuan || String(header.tujuan).trim() === "") {
+                throw new Error("Tujuan pengiriman manifest harus diisi.");
+            }
+            header.tujuan = String(header.tujuan).trim().toUpperCase();
+        }
+
+        // Pastikan semua item muatan (SJ maupun custom) memiliki storeKode yang sama dengan header.tujuan
+        for (const item of items) {
+            item.storeKode = header.tujuan;
+        }
+
+        let totalSj = 0;
         let totalKoli = 0;
         let totalQty = 0;
 
         for (const item of items) {
-            if (!item.sjNomor)
-                throw new Error("Nomor Surat Jalan tidak valid.");
+            const hasSj = item.sjNomor && String(item.sjNomor).trim() !== "";
+            const hasNama = item.namaBarang && String(item.namaBarang).trim() !== "";
+            if (!hasSj && !hasNama) {
+                throw new Error("Setiap item muatan harus memiliki Nomor Surat Jalan atau Nama Barang.");
+            }
+            if (hasSj) {
+                totalSj++;
+            }
             const koliVal =
                 item.koli !== undefined &&
                 item.koli !== null &&
@@ -365,7 +401,7 @@ const saveData = async (payload, user) => {
         // Insert Detail baru & Update sj_manifest_nomor pada tdc_sj_hdr
         const detailSql = `
       INSERT INTO tmanifest_pengiriman_dtl (
-        mpd_iddrec, mpd_nomor, mpd_sj_nomor, mpd_store, mpd_koli, mpd_qty, mpd_ket, mpd_referensi_gabung
+        mpd_iddrec, mpd_nomor, mpd_sj_nomor, mpd_nama_barang, mpd_store, mpd_koli, mpd_qty, mpd_ket, mpd_referensi_gabung
       ) VALUES ?;
     `;
 
@@ -381,7 +417,12 @@ const saveData = async (payload, user) => {
             return [
                 iddrec,
                 manifestNomor,
-                item.sjNomor,
+                item.sjNomor && String(item.sjNomor).trim() !== ""
+                    ? String(item.sjNomor).trim()
+                    : null,
+                item.namaBarang && String(item.namaBarang).trim() !== ""
+                    ? String(item.namaBarang).trim()
+                    : null,
                 item.storeKode,
                 koliVal,
                 item.qty || 0,
@@ -394,8 +435,10 @@ const saveData = async (payload, user) => {
             await connection.query(detailSql, [detailValues]);
         }
 
-        // Bind Surat Jalan yang dipilih ke Manifest
-        const sjList = items.map((i) => i.sjNomor);
+        // Bind Surat Jalan yang dipilih ke Manifest (hanya yang memiliki nomor SJ)
+        const sjList = items
+            .filter((i) => i.sjNomor && String(i.sjNomor).trim() !== "")
+            .map((i) => String(i.sjNomor).trim());
         if (sjList.length > 0) {
             await connection.query(
                 "UPDATE tdc_sj_hdr SET sj_manifest_nomor = ? WHERE sj_nomor IN (?)",
