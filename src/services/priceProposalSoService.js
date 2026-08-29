@@ -779,9 +779,10 @@ const getSalesOrderForEdit = async (phNomor, user) => {
      FROM kencanaprint.tsalesorder_size WHERE sos_so_nomor = ? ORDER BY sos_size`,
     [soNomor],
   );
-  // [FIX] Sama seperti getSoPrefill — query DISTINCT ke tspk_kepentingan
-  // salah tebak sebagai sumber daftar dropdown. Daftar resmi dikonfirmasi
-  // user, konsisten dengan getSoPrefill.
+    // [FIX] revisiTerbuka WAJIB disertakan di sini juga (sama seperti
+  // getSoPrefill) — tanpa ini, frontend selalu menganggap SO terkunci
+  // walaupun DC sudah kirim permintaan revisi lewat requestRevisionFromDc.
+  const revisiTerbuka = await getOpenRevision(phNomor);
   const kepentinganOptions = ["STANDART", "URGENT", "TOP URGENT", "REGULER"];
   return {
     soNomor: so.so_nomor,
@@ -794,6 +795,7 @@ const getSalesOrderForEdit = async (phNomor, user) => {
     isClosed: Number(so.so_close) !== 0,
     sizes: sizeRows,
     kepentinganOptions,
+    revisiTerbuka,
   };
 };
 
