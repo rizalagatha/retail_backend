@@ -1,4 +1,15 @@
 const changelogs = {
+  "1.5.6": {
+    date: "2026-08-29",
+    changes: [
+      {
+        title: "Pembaruan",
+        items: [
+          "Search Product digantikan dengan Side Panel untuk membantu mempermudah SC dalam pencarian produk/barang",
+        ],
+      },
+    ],
+  },
   "1.5.5": {
     date: "2026-08-24",
     changes: [

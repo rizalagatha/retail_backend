@@ -138,6 +138,18 @@ router.get(
   controller.searchProducts,
 );
 
+router.get(
+  "/lookup/product-panel",
+  verifyToken,
+  controller.getProductPanelList,
+);
+
+router.get(
+  "/lookup/jenis-kain-options",
+  verifyToken,
+  controller.getJenisKainOptions,
+);
+
 // Lookup SJ khusus cabang KPR
 router.get(
   "/lookup/sj-list",

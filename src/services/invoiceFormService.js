@@ -3031,6 +3031,440 @@ const searchProducts = async (filters, user) => {
   return { items: finalItems, total: countRows[0].total };
 };
 
+/**
+ * Data produk untuk Side Panel Cari Barang — dikelompokkan per kode
+ * barang, dengan stok Store (cabang aktif user) DAN stok DC (KDC)
+ * ditampilkan bersamaan per ukuran, plus flag Terlaris (30 hari terakhir),
+ * Promo aktif per item, dan gambar produk (tbarangdc_images).
+ */
+const getProductPanelList = async (filters, user) => {
+  const { term = "", kategori = "", page = 1, itemsPerPage = 20 } = filters;
+
+  const limitVal = parseInt(itemsPerPage) || 20;
+  const offsetVal = (parseInt(page) - 1) * limitVal;
+
+  let baseWhere = ` WHERE a.brg_aktif = 0 AND (a.brg_logstok = 'Y' OR a.brg_kode LIKE 'JASA%') `;
+  const params = [];
+
+  if (user.cabang === "K04") {
+    baseWhere += ` AND a.brg_ktg <> '' `;
+  } else if (user.cabang === "K05") {
+    baseWhere += ` AND a.brg_ktg = '' `;
+  }
+
+  // "PROMO" dan "TERLARIS" tetap status turunan (subquery). Selain
+  // itu, chip kategori sekarang berbasis JENIS KAIN (brg_jeniskain), bukan
+  // lagi brg_ktgp (REGULER/PESANAN/dst) — SC lebih sering cari berdasar
+  // bahan (COMBED 24S, POLO LACOS CVC, dll) daripada status barang.
+  if (kategori === "PROMO") {
+    baseWhere += ` AND a.brg_kode IN (
+      SELECT DISTINCT pb.pb_brg_kode
+      FROM tpromo_barang pb
+      INNER JOIN tpromo p ON p.pro_nomor = pb.pb_nomor
+      INNER JOIN tpromo_cabang pc ON pc.pc_nomor = p.pro_nomor AND pc.pc_cab = ?
+      WHERE CURDATE() BETWEEN p.pro_tanggal1 AND p.pro_tanggal2
+    ) `;
+    params.push(user.cabang);
+  } else if (kategori === "TERLARIS") {
+    // [DIPINDAH] Filter + urutan terlaris sekarang ditangani langsung di
+    // kodeListQuery lewat INNER JOIN ke ranking qty, supaya hasil akhir
+    // bisa diurutkan sesuai qty (bukan cuma difilter). Tidak menambah
+    // baseWhere apa pun di sini.
+  } else if (kategori && kategori !== "SEMUA") {
+    baseWhere += ` AND a.brg_jeniskain = ? `;
+    params.push(kategori);
+  }
+
+  const tokens = (term || "")
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+  let searchWhere = "";
+
+  if (tokens.length > 0) {
+    searchWhere += " AND (";
+    const likeParts = [];
+    for (const t of tokens) {
+      likeParts.push(`
+        (
+          a.brg_kode LIKE ?
+          OR TRIM(CONCAT(
+            a.brg_jeniskaos, ' ',
+            a.brg_tipe, ' ',
+            a.brg_lengan, ' ',
+            a.brg_jeniskain, ' ',
+            a.brg_warna
+          )) LIKE ?
+        )
+      `);
+      const likeVal = `%${t}%`;
+      params.push(likeVal, likeVal);
+    }
+    searchWhere += likeParts.join(" AND ");
+    searchWhere += ")";
+  }
+
+  let countQuery;
+  let countParams;
+
+  if (kategori === "TERLARIS") {
+    countQuery = `
+      SELECT COUNT(*) AS total
+      FROM tbarangdc a
+      INNER JOIN (
+        SELECT d.invd_kode AS kode
+        FROM tinv_hdr h
+        INNER JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+        WHERE h.inv_sts_pro = 0
+          AND h.inv_tanggal >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+          AND LEFT(h.inv_nomor, 3) = ?
+        GROUP BY d.invd_kode
+      ) t ON t.kode = a.brg_kode
+      ${baseWhere}
+      ${searchWhere}
+    `;
+    countParams = [user.cabang, ...params];
+  } else {
+    countQuery = `
+      SELECT COUNT(*) AS total FROM tbarangdc a
+      ${baseWhere}
+      ${searchWhere}
+    `;
+    countParams = params;
+  }
+
+  const [countRows] = await pool.query(countQuery, countParams);
+  const total = countRows[0]?.total || 0;
+
+  // [FIX] Saat kategori "TERLARIS" aktif, urutkan hasil sesuai ranking qty
+  // terjual (paling laris duluan) — bukan alfabetis. Untuk kategori lain,
+  // urutan nama tetap dipertahankan seperti semula.
+  const orderByClause =
+    kategori === "TERLARIS"
+      ? `ORDER BY FIELD(a.brg_kode, ${(kodeList) => ""}) `
+      : "ORDER BY nama";
+
+  let kodeListQuery;
+  let kodeListParams;
+
+  if (kategori === "TERLARIS") {
+    // Ambil urutan qty langsung dari subquery yang sama (top 50 terlaris),
+    // lalu JOIN balik supaya urutan qty ikut terbawa ke hasil akhir.
+    kodeListQuery = `
+      SELECT
+        a.brg_kode AS kode,
+        TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) AS nama,
+        a.brg_ktgp AS kategori,
+        t.qty AS terlarisQty
+      FROM tbarangdc a
+      INNER JOIN (
+        SELECT d.invd_kode AS kode, SUM(d.invd_jumlah) AS qty
+        FROM tinv_hdr h
+        INNER JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+        WHERE h.inv_sts_pro = 0
+          AND h.inv_tanggal >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+          AND LEFT(h.inv_nomor, 3) = ?
+        GROUP BY d.invd_kode
+      ) t ON t.kode = a.brg_kode
+      ${baseWhere}
+      ${searchWhere}
+      ORDER BY t.qty DESC
+      LIMIT ? OFFSET ?
+    `;
+    kodeListParams = [user.cabang, ...params, limitVal, offsetVal];
+  } else {
+    kodeListQuery = `
+      SELECT
+        a.brg_kode AS kode,
+        TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) AS nama,
+        a.brg_ktgp AS kategori
+      FROM tbarangdc a
+      ${baseWhere}
+      ${searchWhere}
+      ORDER BY nama
+      LIMIT ? OFFSET ?
+    `;
+    kodeListParams = [...params, limitVal, offsetVal];
+  }
+
+  const [kodeRows] = await pool.query(kodeListQuery, kodeListParams);
+
+  if (kodeRows.length === 0) return { items: [], total };
+
+  const kodeList = kodeRows.map((r) => r.kode);
+
+  const hargaSelect =
+    user.cabang === "KDC" ? "b.brgd_hpp AS harga" : "b.brgd_harga AS harga";
+
+  // Filter "ukuran reguler" cuma dipakai untuk mempersempit ORDER
+  // (biar S,M,L,XL urut rapi), TAPI tidak boleh MEMBUANG baris ukuran yang
+  // di luar daftar itu (kode + celana pakai ukuran angka: 28/30/32, dst).
+  // Solusinya: ambil SEMUA ukuran per kode, ORDER pakai FIELD (yang dikenal
+  // di depan, sisanya menyusul apa adanya) — tidak ada WHERE ukuran sama sekali.
+  const detailQuery = `
+    SELECT
+      b.brgd_kode AS kode,
+      b.brgd_ukuran AS ukuran,
+      b.brgd_barcode AS barcode,
+      ${hargaSelect}
+    FROM tbarangdc_dtl b
+    WHERE b.brgd_kode IN (?)
+    ORDER BY FIELD(b.brgd_ukuran, 'XS','S','M','L','XL','2XL','3XL','4XL','5XL') = 0,
+             FIELD(b.brgd_ukuran, 'XS','S','M','L','XL','2XL','3XL','4XL','5XL'),
+             b.brgd_ukuran + 0,
+             b.brgd_ukuran
+  `;
+  const [detailRows] = await pool.query(detailQuery, [kodeList]);
+
+  // ---------- STOK RAK STORE (Ready = fisik - SO reserved - SO booking) ----------
+  // Formula sama dengan mode "store" di stockService.getRealTimeStock &
+  // dashboardService.getRealStockList: barang yang sudah terikat SO (baik
+  // yang sudah dialokasikan fisik ke tmasterstokso, MAUPUN yang masih
+  // outstanding di SO terbuka tapi belum di-reserve) TIDAK dihitung sebagai
+  // stok yang bisa dijual lagi.
+  const [stokFisikStoreRows] = await pool.query(
+    `SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_in - mst_stok_out) AS qty
+     FROM tmasterstok
+     WHERE mst_aktif = 'Y' AND mst_cab = ? AND mst_brg_kode IN (?)
+     GROUP BY mst_brg_kode, mst_ukuran`,
+    [user.cabang, kodeList],
+  );
+
+  // Reserved: sudah dialokasikan fisik ke SO tertentu (tmasterstokso)
+  const [stokReservedStoreRows] = await pool.query(
+    `SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_in - mst_stok_out) AS qty
+     FROM tmasterstokso
+     WHERE mst_aktif = 'Y' AND mst_cab = ? AND mst_brg_kode IN (?)
+     GROUP BY mst_brg_kode, mst_ukuran`,
+    [user.cabang, kodeList],
+  );
+
+  // Booked: qty SO yang masih terbuka (belum di-invoice/di-mutasi/direserve)
+  // — reuse logic "open_so" yang sama persis dengan stockService.js
+  const [stokBookedStoreRows] = await pool.query(
+    `WITH open_so AS (
+      SELECT Nomor
+      FROM (
+        SELECT
+          y.Nomor,
+          CASE
+            WHEN y.sts <> 0 THEN 'DICLOSE'
+            WHEN y.StatusKirim = 'TERKIRIM' THEN 'CLOSE'
+            WHEN y.StatusKirim = 'BELUM' AND y.keluar = 0 AND y.minta = '' AND y.pesan = 0 THEN 'OPEN'
+            ELSE 'PROSES'
+          END AS StatusFinal
+        FROM (
+          SELECT
+            x.*,
+            IF(x.QtyInv = 0, 'BELUM', IF(x.QtyInv >= x.QtySO, 'TERKIRIM', 'SEBAGIAN')) AS StatusKirim,
+            IFNULL((
+              SELECT SUM(m.mst_stok_out)
+              FROM tmasterstok m
+              WHERE m.mst_noreferensi IN (
+                SELECT o.mo_nomor FROM tmutasiout_hdr o WHERE o.mo_so_nomor = x.Nomor
+              )
+            ), 0) AS keluar,
+            IFNULL((
+              SELECT mt_nomor FROM tmintabarang_hdr WHERE mt_so = x.Nomor LIMIT 1
+            ), '') AS minta,
+            IFNULL((
+              SELECT SUM(mst_stok_in - mst_stok_out)
+              FROM tmasterstokso
+              WHERE mst_aktif = 'Y' AND mst_nomor_so = x.Nomor
+            ), 0) AS pesan
+          FROM (
+            SELECT
+              h.so_nomor AS Nomor,
+              h.so_close AS sts,
+              IFNULL((SELECT SUM(dd.sod_jumlah) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor), 0) AS QtySO,
+              IFNULL((
+                SELECT SUM(dd.invd_jumlah)
+                FROM tinv_hdr hh
+                JOIN tinv_dtl dd ON dd.invd_inv_nomor = hh.inv_nomor
+                WHERE hh.inv_sts_pro = 0 AND hh.inv_nomor_so = h.so_nomor
+              ), 0) AS QtyInv
+            FROM tso_hdr h
+            WHERE h.so_close = 0 AND h.so_aktif = 'Y' AND h.so_cab = ?
+          ) x
+        ) y
+      ) z
+      WHERE z.StatusFinal = 'OPEN'
+    )
+    SELECT d.sod_kode AS mst_brg_kode, d.sod_ukuran AS mst_ukuran,
+           SUM(d.sod_jumlah - IFNULL(d.sod_scanned, 0)) AS qty
+    FROM open_so os
+    JOIN tso_dtl d ON d.sod_so_nomor = os.Nomor
+    WHERE d.sod_jumlah > IFNULL(d.sod_scanned, 0)
+      AND d.sod_kode IN (?)
+    GROUP BY d.sod_kode, d.sod_ukuran`,
+    [user.cabang, kodeList],
+  );
+
+  // ---------- STOK DC (fisik murni, cabang KDC — tidak ada konsep booking) ----------
+  const [stokFisikDcRows] = await pool.query(
+    `SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_in - mst_stok_out) AS qty
+     FROM tmasterstok
+     WHERE mst_aktif = 'Y' AND mst_cab = 'KDC' AND mst_brg_kode IN (?)
+     GROUP BY mst_brg_kode, mst_ukuran`,
+    [kodeList],
+  );
+
+  // ---------- GABUNGKAN DI JS ----------
+  const toMap = (rows) => {
+    const map = new Map();
+    rows.forEach((r) => {
+      map.set(`${r.mst_brg_kode}_${r.mst_ukuran}`, Number(r.qty) || 0);
+    });
+    return map;
+  };
+
+  const fisikStoreMap = toMap(stokFisikStoreRows);
+  const reservedStoreMap = toMap(stokReservedStoreRows);
+  const bookedStoreMap = toMap(stokBookedStoreRows);
+  const stokDcMap = toMap(stokFisikDcRows);
+
+  // Stok Rak Ready = fisik - reserved - booked, tidak boleh minus
+  const stokStoreMap = new Map();
+  fisikStoreMap.forEach((fisikQty, key) => {
+    const reserved = reservedStoreMap.get(key) || 0;
+    const booked = bookedStoreMap.get(key) || 0;
+    stokStoreMap.set(key, Math.max(0, fisikQty - reserved - booked));
+  });
+
+  // ---------- [BARU] TERLARIS (30 hari terakhir, cabang aktif user) ----------
+  const [terlarisRows] = await pool.query(
+    `SELECT d.invd_kode AS kode, SUM(d.invd_jumlah) AS qty
+     FROM tinv_hdr h
+     INNER JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+     WHERE h.inv_sts_pro = 0
+       AND h.inv_tanggal >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+       AND LEFT(h.inv_nomor, 3) = ?
+       AND d.invd_kode IN (?)
+     GROUP BY d.invd_kode
+     ORDER BY qty DESC
+     LIMIT 20`,
+    [user.cabang, kodeList],
+  );
+  const terlarisSet = new Set(terlarisRows.map((r) => r.kode));
+
+  // ---------- [BARU] PROMO AKTIF PER ITEM — sekarang termasuk nama & masa
+  // berlaku, bukan cuma boolean. Kalau 1 barang ikut beberapa promo aktif
+  // sekaligus, ambil yang masa berlakunya paling dekat berakhir (ORDER BY
+  // pro_tanggal2 ASC), karena itu yang paling relevan untuk SC.
+  const [promoRows] = await pool.query(
+    `SELECT
+       pb.pb_brg_kode AS kode,
+       p.pro_nomor AS nomorPromo,
+       p.pro_judul AS namaPromo,
+       p.pro_tanggal1 AS tanggalMulai,
+       p.pro_tanggal2 AS tanggalSelesai
+     FROM tpromo_barang pb
+     INNER JOIN tpromo p ON p.pro_nomor = pb.pb_nomor
+     INNER JOIN tpromo_cabang pc ON pc.pc_nomor = p.pro_nomor AND pc.pc_cab = ?
+     WHERE CURDATE() BETWEEN p.pro_tanggal1 AND p.pro_tanggal2
+       AND pb.pb_brg_kode IN (?)
+     ORDER BY p.pro_tanggal2 ASC`,
+    [user.cabang, kodeList],
+  );
+  // Ambil promo pertama per kode (query sudah terurut, jadi entri pertama
+  // yang ketemu untuk tiap kode = yang paling dekat masa berlakunya habis)
+  const promoInfoMap = new Map();
+  promoRows.forEach((r) => {
+    if (!promoInfoMap.has(r.kode)) {
+      promoInfoMap.set(r.kode, {
+        nomorPromo: r.nomorPromo,
+        namaPromo: r.namaPromo,
+        tanggalMulai: r.tanggalMulai,
+        tanggalSelesai: r.tanggalSelesai,
+      });
+    }
+  });
+  const promoSet = new Set(promoInfoMap.keys());
+
+  // ---------- [BARU] GAMBAR PRODUK (tbarangdc_images) — 1 gambar representatif
+  // per kode, ambil index terkecil (slot 1 = foto utama, sama dengan pola
+  // getGalleryByKode di gambarProdukService).
+  const [imageRows] = await pool.query(
+    `SELECT t.img_brg_kode AS kode, t.img_url AS gambar
+     FROM tbarangdc_images t
+     INNER JOIN (
+       SELECT img_brg_kode, MIN(img_index) AS min_index
+       FROM tbarangdc_images
+       WHERE img_brg_kode IN (?)
+       GROUP BY img_brg_kode
+     ) m ON m.img_brg_kode = t.img_brg_kode AND m.min_index = t.img_index`,
+    [kodeList],
+  );
+  const imageMap = new Map(imageRows.map((r) => [r.kode, r.gambar]));
+
+  const detailByKode = new Map();
+  detailRows.forEach((row) => {
+    if (!detailByKode.has(row.kode)) detailByKode.set(row.kode, []);
+    const key = `${row.kode}_${row.ukuran}`;
+    detailByKode.get(row.kode).push({
+      ukuran: row.ukuran,
+      barcode: row.barcode,
+      harga: Number(row.harga) || 0,
+      stokStore: stokStoreMap.get(key) || 0,
+      stokDc: stokDcMap.get(key) || 0,
+    });
+  });
+
+  const items = kodeRows.map((r) => {
+    const sizes = detailByKode.get(r.kode) || [];
+    const hargaList = sizes.map((s) => s.harga).filter((h) => h > 0);
+    const promoInfo = promoInfoMap.get(r.kode) || null;
+    return {
+      kode: r.kode,
+      nama: r.nama,
+      kategori: r.kategori,
+      hargaMin: hargaList.length ? Math.min(...hargaList) : 0,
+      hargaMax: hargaList.length ? Math.max(...hargaList) : 0,
+      sizes,
+      isTerlaris: terlarisSet.has(r.kode),
+      isPromo: promoSet.has(r.kode),
+      namaPromo: promoInfo?.namaPromo || null,
+      promoBerlakuHingga: promoInfo?.tanggalSelesai || null,
+      gambar: imageMap.get(r.kode) || null,
+    };
+  });
+
+  return { items, total };
+};
+
+/**
+ * [BARU] Daftar Jenis Kain untuk chip filter di panel produk, diurutkan
+ * dari yang paling laris (qty terjual 30 hari terakhir, cabang aktif user).
+ * Jenis kain yang tidak pernah terjual dalam 30 hari tetap disertakan di
+ * akhir (urut alfabet) supaya tidak "hilang" dari daftar chip.
+ */
+const getJenisKainOptions = async (user) => {
+  const [rows] = await pool.query(
+    `SELECT
+       a.brg_jeniskain AS jenisKain,
+       IFNULL(sls.qty, 0) AS totalTerjual
+     FROM (
+       SELECT DISTINCT brg_jeniskain
+       FROM tbarangdc
+       WHERE brg_aktif = 0 AND brg_logstok = 'Y'
+         AND brg_jeniskain IS NOT NULL AND brg_jeniskain <> ''
+     ) a
+     LEFT JOIN (
+       SELECT bd.brg_jeniskain AS jeniskain, SUM(d.invd_jumlah) AS qty
+       FROM tinv_hdr h
+       INNER JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+       INNER JOIN tbarangdc bd ON bd.brg_kode = d.invd_kode
+       WHERE h.inv_sts_pro = 0
+         AND h.inv_tanggal >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         AND LEFT(h.inv_nomor, 3) = ?
+       GROUP BY bd.brg_jeniskain
+     ) sls ON sls.jeniskain = a.brg_jeniskain
+     ORDER BY totalTerjual DESC, jenisKain ASC`,
+    [user.cabang],
+  );
+  return rows.map((r) => r.jenisKain);
+};
+
 const generateNewSetorNumber = async (connection, cabang, tanggal) => {
   const date = new Date(tanggal);
   const prefix = `${cabang}.STR.${format(date, "yyMM")}.`;
@@ -4034,6 +4468,8 @@ module.exports = {
   getPrintData,
   findByBarcode,
   searchProducts,
+  getProductPanelList,
+  getJenisKainOptions,
   getPrintDataKasir,
   searchSoDtf,
   getSoDtfDetails,

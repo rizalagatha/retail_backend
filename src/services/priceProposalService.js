@@ -78,61 +78,61 @@ const getPriceProposals = async (filters) => {
   let params = [startDate, endDate];
 
   let query = `
-        SELECT 
-          h.ph_nomor AS nomor,
-          h.ph_tanggal AS tanggal,
-          h.ph_kd_cus AS kdcus,
-          c.cus_nama AS customer,
-          CASE 
-            WHEN h.ph_sublim_kain IS NOT NULL THEN h.ph_sublim_kain
-            ELSE h.ph_jenis 
-          END AS jenisKaos,
-          h.ph_ket AS keterangan,
-          h.ph_apv AS approval,
-          -- [FIX] Data lama (dibuat sebelum kolom ph_status ada): status tetap
-          -- 'DRAFT'/NULL di DB, tapi ph_apv sudah terisi nama approver. Tandai
-          -- sebagai LEGACY_APPROVED khusus untuk tampilan — data asli TIDAK diubah.
-          CASE 
-            WHEN (h.ph_status IS NULL OR h.ph_status = 'DRAFT')
-              AND h.ph_apv IS NOT NULL AND h.ph_apv <> ''
-            THEN 'LEGACY_APPROVED'
-            ELSE IFNULL(h.ph_status, 'DRAFT')
-          END AS status,
-          h.ph_status_updated AS statusUpdated,
-          h.ph_ref_so_spk AS refSoSpk,
-          h.ph_ref_invoice AS refInvoice,
-          (SELECT sod_so_nomor FROM tso_dtl WHERE sod_ph_nomor = h.ph_nomor LIMIT 1) AS soKaosanNomor,
-          h.ph_cab AS cabang,
-          h.user_create AS created,
-          CASE 
-            WHEN h.ph_sublim_kain IS NOT NULL THEN 'Sublim'
-            WHEN h.ph_custom = 'Y' THEN 'Custom'
-            ELSE 'Stok'
-          END AS ketersediaan,
-          COALESCE(
-            (
-              SELECT pbd_kode_barang_draft FROM tpengajuanharga_barang_draft 
-              WHERE pbd_nomor = h.ph_nomor AND pbd_kategori = 'UTAMA'
-              ORDER BY pbd_id DESC LIMIT 1
-            ),
-            h.ph_kode_barang_draft
-          ) AS kodeBarangDraft,
-          (
-            SELECT pbd_finalized_kode FROM tpengajuanharga_barang_draft 
-            WHERE pbd_nomor = h.ph_nomor AND pbd_kategori = 'UTAMA' AND pbd_finalized_kode IS NOT NULL 
-            ORDER BY pbd_id DESC LIMIT 1
-          ) AS kodeBarangFinal,
-          h.ph_celana_kode_barang_draft AS kodeCelanaDraft
-      FROM tpengajuanharga h
-      LEFT JOIN tcustomer c ON c.cus_kode = h.ph_kd_cus
-      WHERE h.ph_tanggal BETWEEN ? AND ?
-    `;
+    SELECT 
+      h.ph_nomor AS nomor,
+      h.ph_tanggal AS tanggal,
+      h.ph_kd_cus AS kdcus,
+      c.cus_nama AS customer,
+      CASE 
+        WHEN h.ph_sublim_kain IS NOT NULL THEN h.ph_sublim_kain
+        ELSE h.ph_jenis 
+      END AS jenisKaos,
+      h.ph_ket AS keterangan,
+      h.ph_apv AS approval,
+      CASE 
+        WHEN (h.ph_status IS NULL OR h.ph_status = 'DRAFT')
+          AND h.ph_apv IS NOT NULL AND h.ph_apv <> ''
+        THEN 'LEGACY_APPROVED'
+        ELSE IFNULL(h.ph_status, 'DRAFT')
+      END AS status,
+      h.ph_status_updated AS statusUpdated,
+      h.ph_ref_so_spk AS refSoSpk,
+      h.ph_ref_invoice AS refInvoice,
+      so.soNomor AS soKaosanNomor,
+      h.ph_cab AS cabang,
+      h.user_create AS created,
+      CASE 
+        WHEN h.ph_sublim_kain IS NOT NULL THEN 'Sublim'
+        WHEN h.ph_custom = 'Y' THEN 'Custom'
+        ELSE 'Stok'
+      END AS ketersediaan,
+      COALESCE(bd.kodeDraft, h.ph_kode_barang_draft) AS kodeBarangDraft,
+      bd.kodeFinal AS kodeBarangFinal,
+      h.ph_celana_kode_barang_draft AS kodeCelanaDraft
+    FROM tpengajuanharga h
+    LEFT JOIN tcustomer c ON c.cus_kode = h.ph_kd_cus
+    LEFT JOIN (
+      SELECT sod_ph_nomor, MIN(sod_so_nomor) AS soNomor
+      FROM tso_dtl
+      WHERE sod_ph_nomor IS NOT NULL
+      GROUP BY sod_ph_nomor
+    ) so ON so.sod_ph_nomor = h.ph_nomor
+    LEFT JOIN (
+      SELECT 
+        pbd_nomor,
+        SUBSTRING_INDEX(GROUP_CONCAT(pbd_kode_barang_draft ORDER BY pbd_id DESC), ',', 1) AS kodeDraft,
+        SUBSTRING_INDEX(GROUP_CONCAT(pbd_finalized_kode ORDER BY pbd_id DESC), ',', 1) AS kodeFinal
+      FROM tpengajuanharga_barang_draft
+      WHERE pbd_kategori = 'UTAMA'
+      GROUP BY pbd_nomor
+    ) bd ON bd.pbd_nomor = h.ph_nomor
+    WHERE h.ph_tanggal BETWEEN ? AND ?
+  `;
 
   if (cabang && cabang !== "ALL") {
     query += " AND h.ph_cab = ?";
     params.push(cabang);
   }
-
   if (status) {
     query += " AND h.ph_status = ?";
     params.push(status);

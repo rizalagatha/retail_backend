@@ -266,6 +266,24 @@ const searchProducts = async (req, res) => {
   }
 };
 
+const getProductPanelList = async (req, res) => {
+  try {
+    const data = await service.getProductPanelList(req.query, req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getJenisKainOptions = async (req, res) => {
+  try {
+    const data = await service.getJenisKainOptions(req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const getPrintDataKasir = async (req, res) => {
   try {
     const { nomor } = req.params;
@@ -555,6 +573,8 @@ module.exports = {
   getPrintData,
   getByBarcode,
   searchProducts,
+  getProductPanelList,
+  getJenisKainOptions,
   getPrintDataKasir,
   searchSoDtf,
   getSoDtfDetails,

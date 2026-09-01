@@ -305,6 +305,19 @@ const isCustomProductionType = async (phNomor) => {
 };
 
 /**
+ * Cek apakah PH ini punya biaya DTF tercatat (tpengajuanharga_dtf.phd_rpdtf > 0).
+ * Dipakai untuk ikut menyalakan so_sablon saat generate SO MANKSI — DTF
+ * secara proses produksi tergolong sablon (bukan bordir/sublim terpisah).
+ */
+const checkHasDtf = async (connection, phNomor) => {
+  const [rows] = await connection.query(
+    "SELECT phd_rpdtf FROM tpengajuanharga_dtf WHERE phd_nomor = ? LIMIT 1",
+    [phNomor],
+  );
+  return rows.length > 0 && Number(rows[0].phd_rpdtf) > 0;
+};
+
+/**
  * Cek 3 syarat sebelum tombol "Generate SO" boleh muncul/dipakai:
  * 1. Status ACC_FINANCE
  * 2. Item PH ini sudah ditarik ke SO Kaosan (tso_dtl.sod_ph_nomor)
@@ -537,7 +550,13 @@ const generateSalesOrder = async (phNomor, payload, user) => {
     // server-side, bukan cuma disable di UI.
     const polos = isPolosType(representative);
     const finishingFlags = getFinishingFlags(representative);
-
+    // [BARU] PH dengan DTF ikut dianggap sablon di so_sablon, terlepas dari
+    // apa isi representative.tipe-nya — DTF sebelumnya sengaja tidak
+    // ke-set ke kolom manapun, sekarang eksplisit diarahkan ke so_sablon.
+    const hasDtf = await checkHasDtf(connection, phNomor);
+    if (hasDtf) {
+      finishingFlags.sablon = "Y";
+    }
     let finalNamaDesain = "";
     if (!polos) {
       finalNamaDesain = (namaDesain || "").trim();
@@ -760,9 +779,10 @@ const getSalesOrderForEdit = async (phNomor, user) => {
      FROM kencanaprint.tsalesorder_size WHERE sos_so_nomor = ? ORDER BY sos_size`,
     [soNomor],
   );
-  // [FIX] Sama seperti getSoPrefill — query DISTINCT ke tspk_kepentingan
-  // salah tebak sebagai sumber daftar dropdown. Daftar resmi dikonfirmasi
-  // user, konsisten dengan getSoPrefill.
+    // [FIX] revisiTerbuka WAJIB disertakan di sini juga (sama seperti
+  // getSoPrefill) — tanpa ini, frontend selalu menganggap SO terkunci
+  // walaupun DC sudah kirim permintaan revisi lewat requestRevisionFromDc.
+  const revisiTerbuka = await getOpenRevision(phNomor);
   const kepentinganOptions = ["STANDART", "URGENT", "TOP URGENT", "REGULER"];
   return {
     soNomor: so.so_nomor,
@@ -775,6 +795,7 @@ const getSalesOrderForEdit = async (phNomor, user) => {
     isClosed: Number(so.so_close) !== 0,
     sizes: sizeRows,
     kepentinganOptions,
+    revisiTerbuka,
   };
 };
 
