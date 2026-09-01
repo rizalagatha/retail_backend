@@ -26,13 +26,18 @@ const generateNewManifestNumber = async (gudang, tanggal) => {
  * Retrieves list of Manifest Kirim headers based on filters.
  */
 const getList = async (filters) => {
-    const { startDate, endDate, gudang, status, search } = filters;
+    const { startDate, endDate, gudang, tujuan, status, search } = filters;
     let params = [startDate, endDate];
     let whereConditions = ["h.mp_tanggal BETWEEN ? AND ?"];
 
     if (gudang && gudang !== "") {
         whereConditions.push("h.mp_gudang = ?");
         params.push(gudang);
+    }
+
+    if (tujuan && tujuan !== "") {
+        whereConditions.push("h.mp_tujuan = ?");
+        params.push(tujuan);
     }
 
     if (status && status !== "") {
@@ -62,6 +67,7 @@ const getList = async (filters) => {
       h.mp_gudang AS Gudang,
       g.gdg_nama AS NamaGudang,
       h.mp_tujuan AS Tujuan,
+      gt.gdg_nama AS NamaTujuan,
       h.mp_jenis_kirim AS JenisKirim,
       h.mp_driver AS Driver,
       h.mp_plat_nomor AS PlatNomor,
@@ -79,6 +85,7 @@ const getList = async (filters) => {
       CASE WHEN h.mp_ttd_driver IS NOT NULL AND h.mp_ttd_driver != '' THEN 'Y' ELSE 'N' END AS HasTtdDriver
     FROM tmanifest_pengiriman_hdr h
     LEFT JOIN tgudang g ON g.gdg_kode = h.mp_gudang
+    LEFT JOIN tgudang gt ON gt.gdg_kode = h.mp_tujuan
     WHERE ${whereConditions.join(" AND ")}
     ORDER BY h.date_create DESC;
   `;
@@ -219,14 +226,20 @@ const saveData = async (payload, user) => {
         );
 
         if (sjItems.length > 0) {
-            const primaryStore = String(sjItems[0].storeKode || "").trim().toUpperCase();
+            const primaryStore = String(sjItems[0].storeKode || "")
+                .trim()
+                .toUpperCase();
             if (!primaryStore) {
-                throw new Error(`Surat Jalan ${sjItems[0].sjNomor} tidak memiliki kode toko tujuan.`);
+                throw new Error(
+                    `Surat Jalan ${sjItems[0].sjNomor} tidak memiliki kode toko tujuan.`,
+                );
             }
 
             // Pastikan semua SJ dalam manifest menuju ke toko yang sama
             for (const sj of sjItems) {
-                const curStore = String(sj.storeKode || "").trim().toUpperCase();
+                const curStore = String(sj.storeKode || "")
+                    .trim()
+                    .toUpperCase();
                 if (curStore !== primaryStore) {
                     throw new Error(
                         `Surat Jalan ${sj.sjNomor} bertujuan ke "${curStore}", tidak sama dengan tujuan manifest (${primaryStore}). Semua SJ dalam satu manifest harus menuju ke store yang sama.`,
@@ -254,9 +267,12 @@ const saveData = async (payload, user) => {
 
         for (const item of items) {
             const hasSj = item.sjNomor && String(item.sjNomor).trim() !== "";
-            const hasNama = item.namaBarang && String(item.namaBarang).trim() !== "";
+            const hasNama =
+                item.namaBarang && String(item.namaBarang).trim() !== "";
             if (!hasSj && !hasNama) {
-                throw new Error("Setiap item muatan harus memiliki Nomor Surat Jalan atau Nama Barang.");
+                throw new Error(
+                    "Setiap item muatan harus memiliki Nomor Surat Jalan atau Nama Barang.",
+                );
             }
             if (hasSj) {
                 totalSj++;
