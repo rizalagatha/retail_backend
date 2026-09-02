@@ -140,6 +140,10 @@ const getDetails = async (nomor) => {
       d.mpd_nomor AS manifestNomor,
       d.mpd_sj_nomor AS sjNomor,
       d.mpd_nama_barang AS namaBarang,
+      CASE 
+        WHEN d.mpd_nama_barang IS NOT NULL AND TRIM(d.mpd_nama_barang) != '' THEN 'Barang Lain-lain' 
+        ELSE 'Barang SJ' 
+      END AS kategori,
       sjh.sj_tanggal AS sjTanggal,
       d.mpd_store AS storeKode,
       g.gdg_nama AS storeNama,
@@ -616,6 +620,10 @@ const exportDetails = async (filters) => {
       d.mpd_koli AS 'Jml Koli',
       d.mpd_qty AS 'Qty',
       d.mpd_nama_barang AS 'Item / Barang',
+      CASE 
+        WHEN d.mpd_nama_barang IS NOT NULL AND TRIM(d.mpd_nama_barang) != '' THEN 'Barang Lain-lain' 
+        ELSE 'Barang SJ' 
+      END AS 'Kategori',
       d.mpd_ket AS 'Keterangan SJ',
       h.user_create AS 'User Create'
     FROM tmanifest_pengiriman_hdr h
