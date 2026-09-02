@@ -558,6 +558,80 @@ const updateStatus = async (nomor, newStatus, user) => {
     }
 };
 
+/**
+ * Mengambil data detail lengkap (Header + Detail SJ) Manifest Pengiriman untuk export Excel.
+ */
+const exportDetails = async (filters) => {
+    const { startDate, endDate, gudang, tujuan, status, search } = filters;
+    let params = [startDate, endDate];
+    let whereConditions = ["h.mp_tanggal BETWEEN ? AND ?"];
+
+    if (gudang && gudang !== "") {
+        whereConditions.push("h.mp_gudang = ?");
+        params.push(gudang);
+    }
+
+    if (tujuan && tujuan !== "") {
+        whereConditions.push("h.mp_tujuan = ?");
+        params.push(tujuan);
+    }
+
+    if (status && status !== "") {
+        whereConditions.push("h.mp_status = ?");
+        params.push(status);
+    }
+
+    if (search && search.trim() !== "") {
+        whereConditions.push(
+            "(h.mp_nomor LIKE ? OR h.mp_driver LIKE ? OR h.mp_plat_nomor LIKE ? OR h.mp_ekspedisi LIKE ? OR h.mp_no_resi LIKE ?)",
+        );
+        const searchPattern = `%${search.trim()}%`;
+        params.push(
+            searchPattern,
+            searchPattern,
+            searchPattern,
+            searchPattern,
+            searchPattern,
+        );
+    }
+
+    const query = `
+    SELECT 
+      h.mp_nomor AS 'Nomor Manifest',
+      h.mp_tanggal AS 'Tanggal',
+      h.mp_jam AS 'Jam',
+      h.mp_status AS 'Status',
+      g.gdg_nama AS 'Gudang Pengirim',
+      IFNULL(gt.gdg_nama, h.mp_tujuan) AS 'Tujuan Manifest',
+      h.mp_jenis_kirim AS 'Jenis Kirim',
+      h.mp_driver AS 'Driver',
+      h.mp_plat_nomor AS 'Plat Nomor',
+      h.mp_ekspedisi AS 'Ekspedisi',
+      h.mp_no_resi AS 'No Resi',
+      d.mpd_sj_nomor AS 'Nomor SJ',
+      sjh.sj_tanggal AS 'Tanggal SJ',
+      d.mpd_store AS 'Kode Store SJ',
+      gs.gdg_nama AS 'Nama Store SJ',
+      sjh.sj_mt_nomor AS 'No Minta Barang',
+      d.mpd_koli AS 'Jml Koli',
+      d.mpd_qty AS 'Qty',
+      d.mpd_nama_barang AS 'Item / Barang',
+      d.mpd_ket AS 'Keterangan SJ',
+      h.user_create AS 'User Create'
+    FROM tmanifest_pengiriman_hdr h
+    INNER JOIN tmanifest_pengiriman_dtl d ON d.mpd_nomor = h.mp_nomor
+    LEFT JOIN tgudang g ON g.gdg_kode = h.mp_gudang
+    LEFT JOIN tgudang gt ON gt.gdg_kode = h.mp_tujuan
+    LEFT JOIN tgudang gs ON gs.gdg_kode = d.mpd_store
+    LEFT JOIN tdc_sj_hdr sjh ON sjh.sj_nomor = d.mpd_sj_nomor
+    WHERE ${whereConditions.join(" AND ")}
+    ORDER BY h.mp_tanggal DESC, h.mp_nomor DESC, d.mpd_iddrec ASC;
+  `;
+
+    const [rows] = await pool.query(query, params);
+    return rows;
+};
+
 module.exports = {
     generateNewManifestNumber,
     getList,
@@ -566,4 +640,5 @@ module.exports = {
     saveData,
     remove,
     updateStatus,
+    exportDetails,
 };

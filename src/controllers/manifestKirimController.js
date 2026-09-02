@@ -128,6 +128,25 @@ const updateStatus = async (req, res) => {
   }
 };
 
+const exportDetails = async (req, res) => {
+  try {
+    const filters = {
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      gudang: req.query.gudang,
+      tujuan: req.query.tujuan,
+      status: req.query.status,
+      search: req.query.search,
+    };
+
+    const data = await manifestKirimService.exportDetails(filters);
+    res.json(data);
+  } catch (error) {
+    console.error("❌ Manifest Export Error:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getList,
   getDetails,
@@ -135,4 +154,5 @@ module.exports = {
   saveData,
   remove,
   updateStatus,
+  exportDetails,
 };
