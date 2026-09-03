@@ -26,13 +26,18 @@ const generateNewManifestNumber = async (gudang, tanggal) => {
  * Retrieves list of Manifest Kirim headers based on filters.
  */
 const getList = async (filters) => {
-    const { startDate, endDate, gudang, status, search } = filters;
+    const { startDate, endDate, gudang, tujuan, status, search } = filters;
     let params = [startDate, endDate];
     let whereConditions = ["h.mp_tanggal BETWEEN ? AND ?"];
 
     if (gudang && gudang !== "") {
         whereConditions.push("h.mp_gudang = ?");
         params.push(gudang);
+    }
+
+    if (tujuan && tujuan !== "") {
+        whereConditions.push("h.mp_tujuan = ?");
+        params.push(tujuan);
     }
 
     if (status && status !== "") {
@@ -62,6 +67,7 @@ const getList = async (filters) => {
       h.mp_gudang AS Gudang,
       g.gdg_nama AS NamaGudang,
       h.mp_tujuan AS Tujuan,
+      gt.gdg_nama AS NamaTujuan,
       h.mp_jenis_kirim AS JenisKirim,
       h.mp_driver AS Driver,
       h.mp_plat_nomor AS PlatNomor,
@@ -79,6 +85,7 @@ const getList = async (filters) => {
       CASE WHEN h.mp_ttd_driver IS NOT NULL AND h.mp_ttd_driver != '' THEN 'Y' ELSE 'N' END AS HasTtdDriver
     FROM tmanifest_pengiriman_hdr h
     LEFT JOIN tgudang g ON g.gdg_kode = h.mp_gudang
+    LEFT JOIN tgudang gt ON gt.gdg_kode = h.mp_tujuan
     WHERE ${whereConditions.join(" AND ")}
     ORDER BY h.date_create DESC;
   `;
@@ -132,6 +139,11 @@ const getDetails = async (nomor) => {
       d.mpd_iddrec AS idDrec,
       d.mpd_nomor AS manifestNomor,
       d.mpd_sj_nomor AS sjNomor,
+      d.mpd_nama_barang AS namaBarang,
+      CASE 
+        WHEN d.mpd_nama_barang IS NOT NULL AND TRIM(d.mpd_nama_barang) != '' THEN 'Barang Lain-lain' 
+        ELSE 'Barang SJ' 
+      END AS kategori,
       sjh.sj_tanggal AS sjTanggal,
       d.mpd_store AS storeKode,
       g.gdg_nama AS storeNama,
@@ -212,19 +224,63 @@ const saveData = async (payload, user) => {
     try {
         await connection.beginTransaction();
 
-        // Validasi Dasar
-        if (!header.gudang) throw new Error("Gudang pengirim harus diisi.");
-        if (!header.tanggal) throw new Error("Tanggal manifest harus diisi.");
-        if (!items || items.length === 0)
-            throw new Error("Surat Jalan yang dimuat harus diisi.");
+        // 1. Validasi & Sinkronisasi Tujuan Pengiriman (Store Tujuan)
+        const sjItems = items.filter(
+            (i) => i.sjNomor && String(i.sjNomor).trim() !== "",
+        );
 
-        let totalSj = items.length;
+        if (sjItems.length > 0) {
+            const primaryStore = String(sjItems[0].storeKode || "")
+                .trim()
+                .toUpperCase();
+            if (!primaryStore) {
+                throw new Error(
+                    `Surat Jalan ${sjItems[0].sjNomor} tidak memiliki kode toko tujuan.`,
+                );
+            }
+
+            // Pastikan semua SJ dalam manifest menuju ke toko yang sama
+            for (const sj of sjItems) {
+                const curStore = String(sj.storeKode || "")
+                    .trim()
+                    .toUpperCase();
+                if (curStore !== primaryStore) {
+                    throw new Error(
+                        `Surat Jalan ${sj.sjNomor} bertujuan ke "${curStore}", tidak sama dengan tujuan manifest (${primaryStore}). Semua SJ dalam satu manifest harus menuju ke store yang sama.`,
+                    );
+                }
+            }
+
+            // Selaraskan header.tujuan dengan store tujuan SJ
+            header.tujuan = primaryStore;
+        } else {
+            if (!header.tujuan || String(header.tujuan).trim() === "") {
+                throw new Error("Tujuan pengiriman manifest harus diisi.");
+            }
+            header.tujuan = String(header.tujuan).trim().toUpperCase();
+        }
+
+        // Pastikan semua item muatan (SJ maupun custom) memiliki storeKode yang sama dengan header.tujuan
+        for (const item of items) {
+            item.storeKode = header.tujuan;
+        }
+
+        let totalSj = 0;
         let totalKoli = 0;
         let totalQty = 0;
 
         for (const item of items) {
-            if (!item.sjNomor)
-                throw new Error("Nomor Surat Jalan tidak valid.");
+            const hasSj = item.sjNomor && String(item.sjNomor).trim() !== "";
+            const hasNama =
+                item.namaBarang && String(item.namaBarang).trim() !== "";
+            if (!hasSj && !hasNama) {
+                throw new Error(
+                    "Setiap item muatan harus memiliki Nomor Surat Jalan atau Nama Barang.",
+                );
+            }
+            if (hasSj) {
+                totalSj++;
+            }
             const koliVal =
                 item.koli !== undefined &&
                 item.koli !== null &&
@@ -247,11 +303,11 @@ const saveData = async (payload, user) => {
             );
             const headerSql = `
         INSERT INTO tmanifest_pengiriman_hdr (
-          mp_nomor, mp_tanggal, mp_jam, mp_gudang, mp_tujuan, mp_jenis_kirim, mp_driver, 
-          mp_plat_nomor, mp_ekspedisi, mp_no_resi, mp_total_sj, mp_total_koli, 
-          mp_total_qty, mp_berat_kg, mp_ket, mp_status, mp_ttd_pengirim, mp_ttd_driver, user_create, date_create
+            mp_nomor, mp_tanggal, mp_jam, mp_gudang, mp_tujuan, mp_jenis_kirim, mp_driver, 
+            mp_plat_nomor, mp_ekspedisi, mp_no_resi, mp_total_sj, mp_total_koli, 
+            mp_total_qty, mp_berat_kg, mp_ket, mp_status, mp_ttd_pengirim, mp_ttd_driver, user_create, date_create
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
-      `;
+        `;
             await connection.query(headerSql, [
                 manifestNomor,
                 header.tanggal,
@@ -274,6 +330,51 @@ const saveData = async (payload, user) => {
                 user.kode || user.id || "ADMIN",
             ]);
         } else {
+            // Cek status tanda tangan dan status manifest yang sudah ada di database
+            const [existingRows] = await connection.query(
+                "SELECT mp_jenis_kirim, mp_status, mp_ttd_pengirim, mp_ttd_driver FROM tmanifest_pengiriman_hdr WHERE mp_nomor = ?",
+                [manifestNomor],
+            );
+
+            if (existingRows.length === 0) {
+                throw new Error("Manifest Kirim tidak ditemukan.");
+            }
+
+            const existing = existingRows[0];
+            const hasSignedBoth = Boolean(
+                existing.mp_ttd_pengirim &&
+                String(existing.mp_ttd_pengirim).trim() !== "" &&
+                existing.mp_ttd_driver &&
+                String(existing.mp_ttd_driver).trim() !== "",
+            );
+            const isDikirimOrDone = ["DIKIRIM", "SELESAI", "TERKIRIM"].includes(
+                String(existing.mp_status || "").toUpperCase(),
+            );
+            const isLocked = hasSignedBoth || isDikirimOrDone;
+
+            if (isLocked) {
+                if (existing.mp_jenis_kirim === "EKSPEDISI") {
+                    // Khusus EKSPEDISI: Hanya boleh memperbarui No. Resi saja
+                    await connection.query(
+                        "UPDATE tmanifest_pengiriman_hdr SET mp_no_resi = ?, user_modified = ?, date_modified = NOW() WHERE mp_nomor = ?",
+                        [
+                            header.noResi || "",
+                            user.kode || user.id || "ADMIN",
+                            manifestNomor,
+                        ],
+                    );
+                    await connection.commit();
+                    return {
+                        message: `No. Resi untuk Manifest ${manifestNomor} berhasil diperbarui.`,
+                        nomor: manifestNomor,
+                    };
+                } else {
+                    throw new Error(
+                        "Manifest sudah dikirim / ditandatangani oleh pengirim dan penerima. Perubahan data tidak diizinkan.",
+                    );
+                }
+            }
+
             // Release SJ lama yang terikat ke manifest ini
             await connection.query(
                 "UPDATE tdc_sj_hdr SET sj_manifest_nomor = NULL WHERE sj_manifest_nomor = ?",
@@ -282,12 +383,12 @@ const saveData = async (payload, user) => {
 
             const headerSql = `
         UPDATE tmanifest_pengiriman_hdr SET 
-          mp_tanggal = ?, mp_jam = ?, mp_gudang = ?, mp_tujuan = ?, mp_jenis_kirim = ?, 
-          mp_driver = ?, mp_plat_nomor = ?, mp_ekspedisi = ?, mp_no_resi = ?, 
-          mp_total_sj = ?, mp_total_koli = ?, mp_total_qty = ?, mp_berat_kg = ?, 
-          mp_ket = ?, mp_status = ?, mp_ttd_pengirim = ?, mp_ttd_driver = ?, user_modified = ?, date_modified = NOW()
-        WHERE mp_nomor = ?;
-      `;
+            mp_tanggal = ?, mp_jam = ?, mp_gudang = ?, mp_tujuan = ?, mp_jenis_kirim = ?, 
+            mp_driver = ?, mp_plat_nomor = ?, mp_ekspedisi = ?, mp_no_resi = ?, 
+            mp_total_sj = ?, mp_total_koli = ?, mp_total_qty = ?, mp_berat_kg = ?, 
+            mp_ket = ?, mp_status = ?, mp_ttd_pengirim = ?, mp_ttd_driver = ?, user_modified = ?, date_modified = NOW()
+            WHERE mp_nomor = ?;
+        `;
             await connection.query(headerSql, [
                 header.tanggal,
                 header.jam || null,
@@ -320,7 +421,7 @@ const saveData = async (payload, user) => {
         // Insert Detail baru & Update sj_manifest_nomor pada tdc_sj_hdr
         const detailSql = `
       INSERT INTO tmanifest_pengiriman_dtl (
-        mpd_iddrec, mpd_nomor, mpd_sj_nomor, mpd_store, mpd_koli, mpd_qty, mpd_ket, mpd_referensi_gabung
+        mpd_iddrec, mpd_nomor, mpd_sj_nomor, mpd_nama_barang, mpd_store, mpd_koli, mpd_qty, mpd_ket, mpd_referensi_gabung
       ) VALUES ?;
     `;
 
@@ -336,7 +437,12 @@ const saveData = async (payload, user) => {
             return [
                 iddrec,
                 manifestNomor,
-                item.sjNomor,
+                item.sjNomor && String(item.sjNomor).trim() !== ""
+                    ? String(item.sjNomor).trim()
+                    : null,
+                item.namaBarang && String(item.namaBarang).trim() !== ""
+                    ? String(item.namaBarang).trim()
+                    : null,
                 item.storeKode,
                 koliVal,
                 item.qty || 0,
@@ -349,8 +455,10 @@ const saveData = async (payload, user) => {
             await connection.query(detailSql, [detailValues]);
         }
 
-        // Bind Surat Jalan yang dipilih ke Manifest
-        const sjList = items.map((i) => i.sjNomor);
+        // Bind Surat Jalan yang dipilih ke Manifest (hanya yang memiliki nomor SJ)
+        const sjList = items
+            .filter((i) => i.sjNomor && String(i.sjNomor).trim() !== "")
+            .map((i) => String(i.sjNomor).trim());
         if (sjList.length > 0) {
             await connection.query(
                 "UPDATE tdc_sj_hdr SET sj_manifest_nomor = ? WHERE sj_nomor IN (?)",
@@ -443,13 +551,93 @@ const updateStatus = async (nomor, newStatus, user) => {
         );
 
         await connection.commit();
-        return { message: `Status Manifest ${nomor} berhasil diubah ke ${newStatus}.` };
+        return {
+            message: `Status Manifest ${nomor} berhasil diubah ke ${newStatus}.`,
+        };
     } catch (error) {
         await connection.rollback();
         throw error;
     } finally {
         connection.release();
     }
+};
+
+/**
+ * Mengambil data detail lengkap (Header + Detail SJ) Manifest Pengiriman untuk export Excel.
+ */
+const exportDetails = async (filters) => {
+    const { startDate, endDate, gudang, tujuan, status, search } = filters;
+    let params = [startDate, endDate];
+    let whereConditions = ["h.mp_tanggal BETWEEN ? AND ?"];
+
+    if (gudang && gudang !== "") {
+        whereConditions.push("h.mp_gudang = ?");
+        params.push(gudang);
+    }
+
+    if (tujuan && tujuan !== "") {
+        whereConditions.push("h.mp_tujuan = ?");
+        params.push(tujuan);
+    }
+
+    if (status && status !== "") {
+        whereConditions.push("h.mp_status = ?");
+        params.push(status);
+    }
+
+    if (search && search.trim() !== "") {
+        whereConditions.push(
+            "(h.mp_nomor LIKE ? OR h.mp_driver LIKE ? OR h.mp_plat_nomor LIKE ? OR h.mp_ekspedisi LIKE ? OR h.mp_no_resi LIKE ?)",
+        );
+        const searchPattern = `%${search.trim()}%`;
+        params.push(
+            searchPattern,
+            searchPattern,
+            searchPattern,
+            searchPattern,
+            searchPattern,
+        );
+    }
+
+    const query = `
+    SELECT 
+      h.mp_nomor AS 'Nomor Manifest',
+      h.mp_tanggal AS 'Tanggal',
+      h.mp_jam AS 'Jam',
+      h.mp_status AS 'Status',
+      g.gdg_nama AS 'Gudang Pengirim',
+      IFNULL(gt.gdg_nama, h.mp_tujuan) AS 'Tujuan Manifest',
+      h.mp_jenis_kirim AS 'Jenis Kirim',
+      h.mp_driver AS 'Driver',
+      h.mp_plat_nomor AS 'Plat Nomor',
+      h.mp_ekspedisi AS 'Ekspedisi',
+      h.mp_no_resi AS 'No Resi',
+      d.mpd_sj_nomor AS 'Nomor SJ',
+      sjh.sj_tanggal AS 'Tanggal SJ',
+      d.mpd_store AS 'Kode Store SJ',
+      gs.gdg_nama AS 'Nama Store SJ',
+      sjh.sj_mt_nomor AS 'No Minta Barang',
+      d.mpd_koli AS 'Jml Koli',
+      d.mpd_qty AS 'Qty',
+      d.mpd_nama_barang AS 'Item / Barang',
+      CASE 
+        WHEN d.mpd_nama_barang IS NOT NULL AND TRIM(d.mpd_nama_barang) != '' THEN 'Barang Lain-lain' 
+        ELSE 'Barang SJ' 
+      END AS 'Kategori',
+      d.mpd_ket AS 'Keterangan SJ',
+      h.user_create AS 'User Create'
+    FROM tmanifest_pengiriman_hdr h
+    INNER JOIN tmanifest_pengiriman_dtl d ON d.mpd_nomor = h.mp_nomor
+    LEFT JOIN tgudang g ON g.gdg_kode = h.mp_gudang
+    LEFT JOIN tgudang gt ON gt.gdg_kode = h.mp_tujuan
+    LEFT JOIN tgudang gs ON gs.gdg_kode = d.mpd_store
+    LEFT JOIN tdc_sj_hdr sjh ON sjh.sj_nomor = d.mpd_sj_nomor
+    WHERE ${whereConditions.join(" AND ")}
+    ORDER BY h.mp_tanggal DESC, h.mp_nomor DESC, d.mpd_iddrec ASC;
+  `;
+
+    const [rows] = await pool.query(query, params);
+    return rows;
 };
 
 module.exports = {
@@ -460,4 +648,5 @@ module.exports = {
     saveData,
     remove,
     updateStatus,
+    exportDetails,
 };
