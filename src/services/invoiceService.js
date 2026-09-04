@@ -371,6 +371,8 @@ const getList = async (filters) => {
           )
         ) AS DiskonPromoNominal,
 
+        (COALESCE(DC.TotalItemNetto, 0) + COALESCE(DC.TotalItemDiscount, 0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0)) AS TotalSebelumDiskon,
+
         (COALESCE(DC.TotalItemDiscount, 0) + COALESCE(h.inv_disc, 0)) AS Diskon,
         h.inv_dp AS Dp,
         h.inv_bkrm AS Biayakirim,
@@ -727,7 +729,8 @@ const getExportHeader = async (filters) => {
     -- Hitung Total Item
     DetailCalc AS (
         SELECT d.invd_inv_nomor,
-          SUM((d.invd_jumlah * d.invd_harga) - (d.invd_jumlah * d.invd_diskon)) as TotalItemNetto
+          SUM((d.invd_jumlah * d.invd_harga) - (d.invd_jumlah * d.invd_diskon)) as TotalItemNetto,
+          SUM(d.invd_jumlah * d.invd_diskon) as TotalItemDiscount
         FROM tinv_dtl d
         INNER JOIN BaseInvoices fb ON fb.inv_nomor = d.invd_inv_nomor
         GROUP BY d.invd_inv_nomor
@@ -754,6 +757,8 @@ const getExportHeader = async (filters) => {
         h.inv_cus_kode AS 'Kode Customer',
         COALESCE(k.kar_nama, c.cus_nama, 'KARYAWAN') AS 'Nama Customer',
         c.cus_kota AS 'Kota',
+
+        (COALESCE(DC.TotalItemNetto, 0) + h.inv_disc + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0)) AS 'Total Sebelum Diskon',
 
         -- Keuangan
         h.inv_disc AS 'Diskon',
@@ -947,6 +952,7 @@ const getExportDetails = async (filters) => {
             d.invd_ukuran AS 'Ukuran',
             d.invd_jumlah AS 'Jumlah',
             d.invd_harga AS 'Harga',
+            (d.invd_jumlah * d.invd_harga) AS 'Total Sebelum Diskon',
             d.invd_diskon AS 'Diskon Rp',
             (d.invd_jumlah * (d.invd_harga - d.invd_diskon)) AS 'Total'
 
