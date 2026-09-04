@@ -105,6 +105,14 @@ const save = async (payload, user) => {
     }
 
     if (isApproved) {
+      const adaItemDenganHargaBaru = items.some(
+        (item) => Number(item.hargabaru) > 0,
+      );
+      if (!adaItemDenganHargaBaru) {
+        throw new Error(
+          "Approve gagal: minimal 1 item harus punya Diskon % atau Harga Baru terisi.",
+        );
+      }
       await connection.query(
         "UPDATE tpengajuanbarcode_hdr SET pc_acc = ?, date_acc = NOW() WHERE pc_nomor = ?",
         [user.kode, nomorDokumen],
