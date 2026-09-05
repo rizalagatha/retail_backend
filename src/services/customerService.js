@@ -28,7 +28,7 @@ const getAllCustomers = async (filters, user) => {
 
   if (term) {
     whereClauses.push(
-      `(c.cus_nama LIKE ? OR c.cus_kode LIKE ? OR c.cus_kota LIKE ?)`
+      `(c.cus_nama LIKE ? OR c.cus_kode LIKE ? OR c.cus_kota LIKE ?)`,
     );
     params.push(searchTerm, searchTerm, searchTerm);
   }
@@ -99,8 +99,8 @@ const createCustomer = async (customerData, user) => {
     const toNull = (v) => (v === "" || v === undefined ? null : v);
 
     await connection.query(
-      `INSERT INTO tcustomer (cus_kode, cus_nama, cus_alamat, cus_kota, cus_telp, cus_nama_kontak, cus_tgllahir, cus_top, cus_aktif, cus_npwp, cus_nama_npwp, cus_alamat_npwp, cus_kota_npwp, cus_limit) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO tcustomer (cus_kode, cus_nama, cus_alamat, cus_kota, cus_telp, cus_nama_kontak, cus_tgllahir, cus_top, cus_aktif, cus_npwp, cus_nama_npwp, cus_alamat_npwp, cus_kota_npwp, cus_limit, date_create) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
         newKode,
         nama,
@@ -116,13 +116,13 @@ const createCustomer = async (customerData, user) => {
         toNull(alamatNpwp),
         toNull(kotaNpwp),
         limitTrans || 0,
-      ]
+      ],
     );
 
     if (level) {
       await connection.query(
         `INSERT INTO tcustomer_level_history (clh_cus_kode, clh_tanggal, clh_level) VALUES (?, CURDATE(), ?)`,
-        [newKode, level]
+        [newKode, level],
       );
     }
 
@@ -148,7 +148,7 @@ const createCustomer = async (customerData, user) => {
             ) x ON x.clh_cus_kode = c.cus_kode
             WHERE c.cus_kode = ?
         `,
-      [newKode, newKode]
+      [newKode, newKode],
     );
 
     await connection.commit();
@@ -215,7 +215,7 @@ const updateCustomer = async (kode, customerData) => {
         toNull(kotaNpwp),
         limitTrans || 0,
         kode,
-      ]
+      ],
     );
 
     if (level) {
@@ -223,7 +223,7 @@ const updateCustomer = async (kode, customerData) => {
         `INSERT INTO tcustomer_level_history (clh_cus_kode, clh_tanggal, clh_level) 
                  VALUES (?, CURDATE(), ?)
                  ON DUPLICATE KEY UPDATE clh_level = ?`,
-        [kode, level, level]
+        [kode, level, level],
       );
     }
 
@@ -277,11 +277,11 @@ const getCustomerDetails = async (kode) => {
         LEFT JOIN tcustomer_level l ON l.level_kode = h.clh_level
         WHERE h.clh_cus_kode = ? ORDER BY h.clh_tanggal DESC
     `,
-    [kode]
+    [kode],
   );
 
   const [levels] = await pool.query(
-    'SELECT level_kode as kode, level_nama as nama FROM tcustomer_level WHERE level_aktif="Y"'
+    'SELECT level_kode as kode, level_nama as nama FROM tcustomer_level WHERE level_aktif="Y"',
   );
 
   return { customer: customerRows[0], levelHistory: levelHistoryRows, levels };
@@ -291,7 +291,7 @@ const generateNewCustomerCode = async (cabang) => {
   // Logika ini meniru fungsi getnomor dari Delphi
   const [rows] = await pool.query(
     "SELECT IFNULL(MAX(RIGHT(cus_kode, 5)), 0) as lastNum FROM tcustomer WHERE LEFT(cus_kode, 3) = ?",
-    [cabang]
+    [cabang],
   );
   const lastNum = parseInt(rows[0].lastNum, 10);
   const newNum = (100001 + lastNum).toString().slice(1);
@@ -300,7 +300,7 @@ const generateNewCustomerCode = async (cabang) => {
 
 const getCustomerLevels = async () => {
   const [rows] = await pool.query(
-    'SELECT level_kode as kode, level_nama as nama FROM tcustomer_level WHERE level_aktif="Y" ORDER BY level_kode'
+    'SELECT level_kode as kode, level_nama as nama FROM tcustomer_level WHERE level_aktif="Y" ORDER BY level_kode',
   );
   return rows;
 };
