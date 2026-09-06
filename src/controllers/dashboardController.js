@@ -540,8 +540,14 @@ const getTargetAchievementSummary = async (req, res) => {
       ...req.user,
       cabangOverride: req.query.cabang || null,
     };
-    const data =
-      await dashboardService.getTargetAchievementSummary(userWithOverride);
+    const periode =
+      req.query.bulan && req.query.tahun
+        ? { bulan: Number(req.query.bulan), tahun: Number(req.query.tahun) }
+        : {};
+    const data = await dashboardService.getTargetAchievementSummary(
+      userWithOverride,
+      periode,
+    );
     res.json(data);
   } catch (error) {
     console.error("Error getTargetAchievementSummary:", error);
@@ -557,7 +563,14 @@ const getWorkSummary = async (req, res) => {
       ...req.user,
       cabangOverride: req.query.cabang || null,
     };
-    const data = await dashboardService.getWorkSummary(userWithOverride);
+    const periode =
+      req.query.bulan && req.query.tahun
+        ? { bulan: Number(req.query.bulan), tahun: Number(req.query.tahun) }
+        : {};
+    const data = await dashboardService.getWorkSummary(
+      userWithOverride,
+      periode,
+    );
     res.json(data);
   } catch (error) {
     console.error("Error getWorkSummary:", error);
@@ -573,6 +586,10 @@ const getWorkSummaryDetail = async (req, res) => {
     ...req.user,
     cabangOverride: req.query.cabang || null,
   };
+  const periode =
+    req.query.bulan && req.query.tahun
+      ? { bulan: Number(req.query.bulan), tahun: Number(req.query.tahun) }
+      : {};
 
   try {
     if (key === "produksi_terlambat") {
@@ -593,49 +610,55 @@ const getWorkSummaryDetail = async (req, res) => {
     }
 
     if (key === "minta_barang_belum_diproses") {
-      const data = await dashboardService.getMintaBarangDetailList(
-        userWithOverride,
-        page,
-        limit,
+      return res.json(
+        await dashboardService.getMintaBarangDetailList(
+          userWithOverride,
+          periode,
+          page,
+          limit,
+        ),
       );
-      return res.json(data);
     }
-
-    // BARU — routing untuk card Penawaran
     if (key === "penawaran_belum_follow_up" || key === "penawaran_closing") {
-      const data = await dashboardService.getPenawaranDetailList(
-        key,
-        userWithOverride,
-        page,
-        limit,
+      return res.json(
+        await dashboardService.getPenawaranDetailList(
+          key,
+          userWithOverride,
+          periode,
+          page,
+          limit,
+        ),
       );
-      return res.json(data);
     }
-
     if (key === "customer_baru") {
-      const data = await dashboardService.getCustomerBaruDetailList(
-        userWithOverride,
-        page,
-        limit,
+      return res.json(
+        await dashboardService.getCustomerBaruDetailList(
+          userWithOverride,
+          periode,
+          page,
+          limit,
+        ),
       );
-      return res.json(data);
     }
     if (key === "repeat_order") {
-      const data = await dashboardService.getRepeatOrderDetailList(
+      return res.json(
+        await dashboardService.getRepeatOrderDetailList(
+          userWithOverride,
+          periode,
+          page,
+          limit,
+        ),
+      );
+    }
+    res.json(
+      await dashboardService.getSuratPesananDetailList(
+        key,
         userWithOverride,
+        periode,
         page,
         limit,
-      );
-      return res.json(data);
-    }
-
-    const data = await dashboardService.getSuratPesananDetailList(
-      key,
-      userWithOverride,
-      page,
-      limit,
+      ),
     );
-    res.json(data);
   } catch (error) {
     console.error("Error getWorkSummaryDetail:", error);
     res
