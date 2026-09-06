@@ -597,12 +597,18 @@ const getWorkSummaryDetail = async (req, res) => {
       const effectiveCabang = isKDC
         ? req.query.cabang || null
         : req.user.cabang;
-      const all = await dashboardService.getProduksiTerlambat(effectiveCabang); // BARU
+      const resolvedPeriode = dashboardService.resolvePeriodeRange
+        ? dashboardService.resolvePeriodeRange(periode)
+        : periode; // fallback aman kalau helper belum di-export
+      const all = await dashboardService.getProduksiTerlambat(
+        effectiveCabang,
+        resolvedPeriode,
+      );
       const mapped = all.map((r) => ({
-        nomor: r.nomor, // BARU — sudah berupa nomor SO, bukan spk_nomor lagi
+        nomor: r.nomor,
         tanggal: r.tanggal,
         dateline: r.dateline,
-        customer: r.nama, // BARU — field nama sudah diganti dari spk_nama
+        customer: r.nama,
         nominal: r.nilai,
       }));
       const start = (page - 1) * limit;

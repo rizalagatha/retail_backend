@@ -3030,21 +3030,24 @@ const getInvoiceBacklogAnalysis = async (user, filters = {}) => {
  * link ke PH (SO Kaosan selalu link ke PH); SPK PPIC turunan ikut memakai
  * nilai dari SO asalnya (spk_so_ref).
  */
-const getProduksiTerlambat = async (cabangFilter = null) => {
+const getProduksiTerlambat = async (cabangFilter = null, periode = null) => {
   const cabangCondition = cabangFilter ? "AND ph.ph_cab = ?" : "";
   const cabangParam = cabangFilter ? [cabangFilter] : [];
+
+  // [BARU] Filter opsional berdasarkan tanggal SPK dibuat (bukan tanggal
+  // dateline) — supaya bisa lihat "dari SPK yang dibuat bulan X, berapa
+  // yang SAMPAI HARI INI masih terlambat". Kondisi terlambat itu sendiri
+  // (spk_dateline < CURDATE()) tetap terhadap HARI INI, tidak ikut geser
+  // ke periode — karena "terlambat" secara definisi selalu relatif ke
+  // waktu sekarang, bukan ke masa lalu.
+  const periodeCondition = periode ? "AND sk.spk_tanggal BETWEEN ? AND ?" : "";
+  const periodeParam = periode ? [periode.startDate, periode.endDate] : [];
 
   const query = `
     WITH spk_kaosan AS (
       SELECT
-        spk_nomor,
-        spk_nama,
-        spk_tanggal,
-        spk_dateline,
-        spk_close,
-        spk_is_so,
-        spk_so_ref,
-        user_create,
+        spk_nomor, spk_nama, spk_tanggal, spk_dateline, spk_close,
+        spk_is_so, spk_so_ref, user_create,
         IF(spk_is_so = 0, spk_so_ref, spk_nomor) AS so_ref_nomor
       FROM kencanaprint.tspk
       WHERE spk_divisi = 3
@@ -3052,14 +3055,9 @@ const getProduksiTerlambat = async (cabangFilter = null) => {
         AND user_create NOT IN ('LUTFI', 'ADIN')
       UNION ALL
       SELECT
-        so_nomor AS spk_nomor,
-        so_nama AS spk_nama,
-        so_tanggal AS spk_tanggal,
-        so_dateline AS spk_dateline,
-        so_close AS spk_close,
-        1 AS spk_is_so,
-        NULL AS spk_so_ref,
-        user_create,
+        so_nomor AS spk_nomor, so_nama AS spk_nama, so_tanggal AS spk_tanggal,
+        so_dateline AS spk_dateline, so_close AS spk_close,
+        1 AS spk_is_so, NULL AS spk_so_ref, user_create,
         so_nomor AS so_ref_nomor
       FROM kencanaprint.tsalesorder
       WHERE so_divisi = 3
@@ -3076,9 +3074,6 @@ const getProduksiTerlambat = async (cabangFilter = null) => {
       WHERE ph.ph_ref_so_spk IS NOT NULL AND ph.ph_ref_so_spk <> ''
       GROUP BY ph.ph_ref_so_spk, ph.ph_cab
     ),
-    -- BARU — kelompokkan per SO asal (so_ref_nomor), supaya SPK dan SO
-    -- turunannya yang merujuk ke SO sama tidak muncul dobel. Ambil
-    -- dateline PALING TELAT (MAX telat) dan nama dari baris manapun.
     grouped AS (
       SELECT
         sk.so_ref_nomor,
@@ -3089,6 +3084,7 @@ const getProduksiTerlambat = async (cabangFilter = null) => {
       FROM spk_kaosan sk
       WHERE sk.spk_dateline IS NOT NULL
         AND sk.spk_dateline < CURDATE()
+        ${periodeCondition}
       GROUP BY sk.so_ref_nomor
     )
     SELECT
@@ -3106,7 +3102,7 @@ const getProduksiTerlambat = async (cabangFilter = null) => {
     ORDER BY g.telatHari DESC;
   `;
 
-  const [rows] = await pool.query(query, cabangParam);
+  const [rows] = await pool.query(query, [...periodeParam, ...cabangParam]);
   return rows;
 };
 
@@ -3115,7 +3111,14 @@ const getProduksiTerlambat = async (cabangFilter = null) => {
  * (belum close), tanpa syarat deadline — dipakai sebagai pembanding
  * jumlah yang sudah telat.
  */
-const getTotalSpkKaosanTerbuka = async () => {
+const getTotalSpkKaosanTerbuka = async (
+  cabangFilter = null,
+  periode = null,
+) => {
+  const periodeCondition = periode ? "AND spk_tanggal BETWEEN ? AND ?" : "";
+  const periodeConditionSo = periode ? "AND so_tanggal BETWEEN ? AND ?" : "";
+  const periodeParam = periode ? [periode.startDate, periode.endDate] : [];
+
   const query = `
     SELECT COUNT(*) AS total FROM (
       SELECT spk_nomor
@@ -3123,28 +3126,32 @@ const getTotalSpkKaosanTerbuka = async () => {
       WHERE spk_divisi = 3
         AND spk_close = 0
         AND user_create NOT IN ('LUTFI', 'ADIN')
+        ${periodeCondition}
       UNION ALL
       SELECT so_nomor AS spk_nomor
       FROM kencanaprint.tsalesorder
       WHERE so_divisi = 3
         AND so_close = 0
         AND user_create NOT IN ('LUTFI', 'ADIN')
+        ${periodeConditionSo}
     ) x;
   `;
-  const [rows] = await pool.query(query);
+  // periodeParam dipakai 2x (satu untuk tspk, satu untuk tsalesorder)
+  const params = periode ? [...periodeParam, ...periodeParam] : [];
+  const [rows] = await pool.query(query, params);
   return Number(rows[0]?.total || 0);
 };
 
 /**
  * Versi ringkas untuk card "Produksi Terlambat" di summary dashboard.
  */
-const getProduksiTerlambatSummary = async (user) => {
+const getProduksiTerlambatSummary = async (user, periode = null) => {
   const isKDC = user.cabang === "KDC";
   const effectiveCabang = isKDC ? user.cabangOverride || null : user.cabang;
 
   const [rows, totalTerbuka] = await Promise.all([
-    getProduksiTerlambat(effectiveCabang),
-    getTotalSpkKaosanTerbuka(effectiveCabang),
+    getProduksiTerlambat(effectiveCabang, periode),
+    getTotalSpkKaosanTerbuka(effectiveCabang, periode),
   ]);
 
   const totalCount = rows.length;
@@ -4108,10 +4115,11 @@ const getWorkSummary = async (user, periode = {}) => {
     console.error("Gagal load card Repeat Order:", err.message);
   }
 
-  // Produksi Terlambat TIDAK ikut filter bulan — sifatnya snapshot
-  // "SPK terbuka sekarang", tidak relevan dipilih ke bulan lampau
+  // [FIX] Sekarang ikut filter bulan (Opsi A) — dihitung dari spk_tanggal
+  // dibuat pada periode, dicek terlambat/tidaknya terhadap HARI INI.
   try {
-    cards.push(await getProduksiTerlambatSummary(user));
+    const resolvedPeriode = resolvePeriodeRange(periode);
+    cards.push(await getProduksiTerlambatSummary(user, resolvedPeriode));
   } catch (err) {
     console.error("Gagal load card Produksi Terlambat:", err.message);
   }
@@ -4165,6 +4173,7 @@ module.exports = {
   getProduksiTerlambatSummary,
   getTargetAchievementSummary,
   getSuratPesananDetailList,
+  resolvePeriodeRange,
   getPenawaranWorkSummary,
   getPenawaranDetailList,
   getMintaBarangWorkSummary,
