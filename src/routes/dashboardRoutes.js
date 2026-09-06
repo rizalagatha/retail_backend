@@ -207,4 +207,24 @@ router.get(
   dashboardController.getStokKosongFastMoving,
 );
 
+router.get(
+  "/produksi-terlambat",
+  verifyToken,
+  dashboardController.getProduksiTerlambat,
+);
+
+router.get(
+  "/target-achievement-summary",
+  verifyToken,
+  dashboardController.getTargetAchievementSummary,
+);
+
+router.get("/work-summary", verifyToken, dashboardController.getWorkSummary);
+
+router.get(
+  "/work-summary-detail/:key",
+  verifyToken,
+  dashboardController.getWorkSummaryDetail,
+);
+
 module.exports = router;

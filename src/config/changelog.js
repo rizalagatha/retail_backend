@@ -1,4 +1,17 @@
 const changelogs = {
+  "1.5.7": {
+    date: "2026-09-06",
+    changes: [
+      {
+        title: "Pembaruan",
+        items: [
+          "Work Summary Dashboard, sebuah dashboard komprehensif untuk monitoring seluruh progress atau pekerjaan Store",
+          "Penambahan kategori pada Surat Jalan ke Store, dibedakan menjadi Barang Utama dan Bahan Penolong untuk Accessories/packaging dan Obat",
+          "Penambahan kolom Nomor SO pada cetak/print Form Setoran Kasir/FSK",
+        ],
+      },
+    ],
+  },
   "1.5.6": {
     date: "2026-08-29",
     changes: [

@@ -77,6 +77,13 @@ const getItemsForLoad = async (nomor, gudang) => {
 };
 
 /**
+ * Menentukan kategori SJ berdasarkan user pembuat.
+ * ANTA -> Bahan Penolong. Selain itu (termasuk LUTFI, ADIN) -> Barang Utama.
+ */
+const resolveSjKategori = (userKode) =>
+  userKode === "ANTA" ? "PENOLONG" : "UTAMA";
+
+/**
  * Menyimpan data Surat Jalan (Baru atau Ubah).
  */
 const saveData = async (payload, user) => {
@@ -128,16 +135,18 @@ const saveData = async (payload, user) => {
 
     if (isNew) {
       sjNomor = await generateNewSjNumber(header.gudang.kode, header.tanggal);
+      const kategori = resolveSjKategori(user.kode);
       const headerSql = `
-                INSERT INTO tdc_sj_hdr (sj_nomor, sj_tanggal, sj_kecab, sj_mt_nomor, sj_so_nomor, sj_ket, user_create, date_create)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NOW());
-            `;
+          INSERT INTO tdc_sj_hdr (sj_nomor, sj_tanggal, sj_kecab, sj_mt_nomor, sj_so_nomor, sj_kategori, sj_ket, user_create, date_create)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW());
+      `;
       await connection.query(headerSql, [
         sjNomor,
         header.tanggal,
         header.store.kode,
         header.permintaan,
-        soNomorRef, // <--- [INSERT BARU]
+        soNomorRef,
+        kategori,
         header.keterangan,
         user.kode,
       ]);
@@ -209,21 +218,22 @@ const saveData = async (payload, user) => {
  */
 const loadForEdit = async (nomor, user) => {
   const headerQuery = `
-        SELECT 
-            h.sj_nomor AS nomor,
-            h.sj_tanggal AS tanggal,
-            h.sj_ket AS keterangan,
-            h.sj_mt_nomor AS permintaan,
-            h.sj_so_nomor AS soNomor,
-            LEFT(h.sj_nomor, 3) AS gudang_kode,
-            g.gdg_nama AS gudang_nama,
-            h.sj_kecab AS store_kode,
-            s.gdg_nama AS store_nama
-        FROM tdc_sj_hdr h
-        LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.sj_nomor, 3)
-        LEFT JOIN tgudang s ON s.gdg_kode = h.sj_kecab
-        WHERE h.sj_nomor = ?;
-    `;
+      SELECT 
+          h.sj_nomor AS nomor,
+          h.sj_tanggal AS tanggal,
+          h.sj_ket AS keterangan,
+          h.sj_mt_nomor AS permintaan,
+          h.sj_so_nomor AS soNomor,
+          h.sj_kategori AS kategori,
+          LEFT(h.sj_nomor, 3) AS gudang_kode,
+          g.gdg_nama AS gudang_nama,
+          h.sj_kecab AS store_kode,
+          s.gdg_nama AS store_nama
+      FROM tdc_sj_hdr h
+      LEFT JOIN tgudang g ON g.gdg_kode = LEFT(h.sj_nomor, 3)
+      LEFT JOIN tgudang s ON s.gdg_kode = h.sj_kecab
+      WHERE h.sj_nomor = ?;
+  `;
   const [headerRows] = await pool.query(headerQuery, [nomor]);
   if (headerRows.length === 0) throw new Error("Data tidak ditemukan");
 

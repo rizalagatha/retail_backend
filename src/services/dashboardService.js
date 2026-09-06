@@ -8,6 +8,22 @@ const {
   subYears,
   subWeeks,
 } = require("date-fns");
+const monitoringAchievementService = require("./monitoringAchievementService");
+
+const monthShortNames = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "Mei",
+  "Jun",
+  "Jul",
+  "Agu",
+  "Sep",
+  "Okt",
+  "Nov",
+  "Des",
+];
 
 // Fungsi untuk mengambil statistik penjualan & transaksi hari ini
 const getTodayStats = async (user, cabangOverride = null) => {
@@ -3005,6 +3021,1064 @@ const getInvoiceBacklogAnalysis = async (user, filters = {}) => {
   };
 };
 
+/**
+ * PRODUKSI TERLAMBAT: SELURUH SPK Kaosan (divisi 3, MO selain LUTFI/ADIN,
+ * belum close) yang deadline-nya sudah lewat. Populasi (Y) = seluruh SPK
+ * Kaosan yang masih terbuka (belum close), tanpa syarat harus sudah
+ * berasal dari SO tertentu — lebih luas dari versi sebelumnya.
+ * Nominal diambil dari Pengajuan Harga kalau SPK ini berasal dari SO yang
+ * link ke PH (SO Kaosan selalu link ke PH); SPK PPIC turunan ikut memakai
+ * nilai dari SO asalnya (spk_so_ref).
+ */
+const getProduksiTerlambat = async (cabangFilter = null) => {
+  const cabangCondition = cabangFilter ? "AND ph.ph_cab = ?" : "";
+  const cabangParam = cabangFilter ? [cabangFilter] : [];
+
+  const query = `
+    WITH spk_kaosan AS (
+      SELECT
+        spk_nomor,
+        spk_nama,
+        spk_tanggal,
+        spk_dateline,
+        spk_close,
+        spk_is_so,
+        spk_so_ref,
+        user_create,
+        IF(spk_is_so = 0, spk_so_ref, spk_nomor) AS so_ref_nomor
+      FROM kencanaprint.tspk
+      WHERE spk_divisi = 3
+        AND spk_close = 0
+        AND user_create NOT IN ('LUTFI', 'ADIN')
+      UNION ALL
+      SELECT
+        so_nomor AS spk_nomor,
+        so_nama AS spk_nama,
+        so_tanggal AS spk_tanggal,
+        so_dateline AS spk_dateline,
+        so_close AS spk_close,
+        1 AS spk_is_so,
+        NULL AS spk_so_ref,
+        user_create,
+        so_nomor AS so_ref_nomor
+      FROM kencanaprint.tsalesorder
+      WHERE so_divisi = 3
+        AND so_close = 0
+        AND user_create NOT IN ('LUTFI', 'ADIN')
+    ),
+    nilai_ph AS (
+      SELECT
+        ph.ph_ref_so_spk AS so_nomor,
+        ph.ph_cab,
+        SUM(d.sod_jumlah * (d.sod_harga - IFNULL(d.sod_diskon, 0))) AS nilai
+      FROM tpengajuanharga ph
+      INNER JOIN tso_dtl d ON d.sod_ph_nomor = ph.ph_nomor
+      WHERE ph.ph_ref_so_spk IS NOT NULL AND ph.ph_ref_so_spk <> ''
+      GROUP BY ph.ph_ref_so_spk, ph.ph_cab
+    ),
+    -- BARU — kelompokkan per SO asal (so_ref_nomor), supaya SPK dan SO
+    -- turunannya yang merujuk ke SO sama tidak muncul dobel. Ambil
+    -- dateline PALING TELAT (MAX telat) dan nama dari baris manapun.
+    grouped AS (
+      SELECT
+        sk.so_ref_nomor,
+        MAX(sk.spk_nama) AS nama,
+        MIN(sk.spk_tanggal) AS tanggal,
+        MAX(sk.spk_dateline) AS dateline,
+        MAX(DATEDIFF(CURDATE(), sk.spk_dateline)) AS telatHari
+      FROM spk_kaosan sk
+      WHERE sk.spk_dateline IS NOT NULL
+        AND sk.spk_dateline < CURDATE()
+      GROUP BY sk.so_ref_nomor
+    )
+    SELECT
+      g.so_ref_nomor AS nomor,
+      g.nama,
+      DATE_FORMAT(g.tanggal, '%Y-%m-%d') AS tanggal,
+      DATE_FORMAT(g.dateline, '%Y-%m-%d') AS dateline,
+      g.telatHari,
+      IFNULL(ph.nilai, 0) AS nilai,
+      ph.ph_cab AS cabangPh
+    FROM grouped g
+    INNER JOIN nilai_ph ph ON ph.so_nomor = g.so_ref_nomor
+    WHERE 1 = 1
+      ${cabangCondition}
+    ORDER BY g.telatHari DESC;
+  `;
+
+  const [rows] = await pool.query(query, cabangParam);
+  return rows;
+};
+
+/**
+ * Populasi total (Y) untuk card: seluruh SPK Kaosan yang masih terbuka
+ * (belum close), tanpa syarat deadline — dipakai sebagai pembanding
+ * jumlah yang sudah telat.
+ */
+const getTotalSpkKaosanTerbuka = async () => {
+  const query = `
+    SELECT COUNT(*) AS total FROM (
+      SELECT spk_nomor
+      FROM kencanaprint.tspk
+      WHERE spk_divisi = 3
+        AND spk_close = 0
+        AND user_create NOT IN ('LUTFI', 'ADIN')
+      UNION ALL
+      SELECT so_nomor AS spk_nomor
+      FROM kencanaprint.tsalesorder
+      WHERE so_divisi = 3
+        AND so_close = 0
+        AND user_create NOT IN ('LUTFI', 'ADIN')
+    ) x;
+  `;
+  const [rows] = await pool.query(query);
+  return Number(rows[0]?.total || 0);
+};
+
+/**
+ * Versi ringkas untuk card "Produksi Terlambat" di summary dashboard.
+ */
+const getProduksiTerlambatSummary = async (user) => {
+  const isKDC = user.cabang === "KDC";
+  const effectiveCabang = isKDC ? user.cabangOverride || null : user.cabang;
+
+  const [rows, totalTerbuka] = await Promise.all([
+    getProduksiTerlambat(effectiveCabang),
+    getTotalSpkKaosanTerbuka(effectiveCabang),
+  ]);
+
+  const totalCount = rows.length;
+  const totalNilai = rows.reduce((acc, r) => acc + Number(r.nilai || 0), 0);
+  const percent = totalTerbuka > 0 ? (totalCount / totalTerbuka) * 100 : 0;
+
+  let status = "baik";
+  if (percent > 50) status = "kritis";
+  else if (percent > 25) status = "perhatian";
+
+  return {
+    key: "produksi_terlambat",
+    title: "Produksi Terlambat",
+    icon: "mdi-clock-alert-outline",
+    current: totalCount,
+    total: totalTerbuka,
+    nominal: totalNilai,
+    percent: Math.min(100, percent),
+    status,
+    detail: rows,
+  };
+};
+
+const SP_NOMINAL_SQL = `(
+    (SELECT SUM(dd.sod_jumlah * (dd.sod_harga - dd.sod_diskon)) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor)
+    - h.so_disc
+    + (h.so_ppn / 100 * ((SELECT SUM(dd.sod_jumlah * (dd.sod_harga - dd.sod_diskon)) FROM tso_dtl dd WHERE dd.sod_so_nomor = h.so_nomor) - h.so_disc))
+    + h.so_bkrm
+  )`;
+
+const SP_NOT_INVOICED_SQL = `NOT EXISTS (
+    SELECT 1 FROM tinv_hdr i WHERE i.inv_nomor_so = h.so_nomor AND i.inv_sts_pro = 0
+  )`;
+
+const SP_READY_QTY_SQL = `IFNULL((
+    SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+    FROM tmasterstokso m
+    WHERE m.mst_aktif = 'Y'
+      AND m.mst_nomor_so = h.so_nomor
+      AND m.mst_brg_kode = d.sod_kode
+      AND m.mst_ukuran = d.sod_ukuran
+  ), 0)`;
+
+const SP_HAS_UNREADY_ITEM_SQL = `EXISTS (
+    SELECT 1 FROM tso_dtl d
+    WHERE d.sod_so_nomor = h.so_nomor
+      AND d.sod_jumlah > ${SP_READY_QTY_SQL}
+  )`;
+
+const SP_HAS_ITEMS_SQL = `EXISTS (SELECT 1 FROM tso_dtl d3 WHERE d3.sod_so_nomor = h.so_nomor)`;
+
+// Definisi kondisi WHERE tambahan per card — dipakai baik untuk hitung
+// jumlah (getSuratPesananWorkSummary) maupun ambil daftar nomor (detail)
+const SP_CARD_WHERE = {
+  sp_belum_invoice: `AND ${SP_NOT_INVOICED_SQL}`,
+  sp_belum_ready: `AND ${SP_NOT_INVOICED_SQL} AND ${SP_HAS_UNREADY_ITEM_SQL}`,
+  sp_over_deadline: `AND h.so_dateline IS NOT NULL AND h.so_dateline < CURDATE() AND ${SP_NOT_INVOICED_SQL}`,
+  sp_belum_dp: `AND ${SP_NOT_INVOICED_SQL} AND IFNULL(h.so_dp, 0) <= 0`,
+  sp_siap_belum_diambil: `AND ${SP_NOT_INVOICED_SQL} AND ${SP_HAS_ITEMS_SQL} AND NOT ${SP_HAS_UNREADY_ITEM_SQL}`,
+  sp_belum_lunas: `AND ${SP_NOT_INVOICED_SQL} AND IFNULL(h.so_dp, 0) > 0 AND IFNULL(h.so_dp, 0) < ${SP_NOMINAL_SQL}`,
+};
+
+/**
+ * SURAT PESANAN WORK SUMMARY: 6 card status Surat Pesanan sesuai definisi
+ * bisnis (bukan getPendingActions yang lama — definisinya berbeda).
+ * KDC lihat semua cabang, Store cuma cabangnya sendiri (pola sama seperti
+ * fungsi dashboard lain).
+ */
+const getSuratPesananWorkSummary = async (user) => {
+  const isKDC = user.cabang === "KDC";
+  const branchFilter = isKDC && !user.cabangOverride ? "" : "AND h.so_cab = ?";
+  const effectiveCabang = isKDC ? user.cabangOverride || null : user.cabang;
+  const branchParam = effectiveCabang ? [effectiveCabang] : [];
+
+  const wrap = (whereExtra) => `
+    SELECT COUNT(*) AS jumlah, IFNULL(SUM(nominal), 0) AS total
+    FROM (
+      SELECT h.so_nomor, ${SP_NOMINAL_SQL} AS nominal
+      FROM tso_hdr h
+      WHERE h.so_aktif = 'Y'
+        ${whereExtra}
+        ${branchFilter}
+    ) x
+  `;
+
+  // BARU — versi khusus utk "Belum Lunas": total-nya SISA KURANG BAYAR (nominal - so_dp), bukan nominal SO penuh
+  const wrapSisaKurang = (whereExtra) => `
+    SELECT COUNT(*) AS jumlah, IFNULL(SUM(sisa), 0) AS total
+    FROM (
+      SELECT h.so_nomor, (${SP_NOMINAL_SQL} - IFNULL(h.so_dp, 0)) AS sisa
+      FROM tso_hdr h
+      WHERE h.so_aktif = 'Y'
+        ${whereExtra}
+        ${branchFilter}
+    ) x
+  `;
+
+  const belumInvoiceQuery = wrap(SP_CARD_WHERE.sp_belum_invoice);
+  const belumReadyQuery = wrap(SP_CARD_WHERE.sp_belum_ready);
+  const overDeadlineQuery = wrap(SP_CARD_WHERE.sp_over_deadline);
+  const belumDpQuery = wrap(SP_CARD_WHERE.sp_belum_dp);
+  const siapBelumDiambilQuery = wrap(SP_CARD_WHERE.sp_siap_belum_diambil);
+  const belumLunasQuery = wrapSisaKurang(SP_CARD_WHERE.sp_belum_lunas); // BARU
+
+  const [
+    [belumInvoiceRows],
+    [belumReadyRows],
+    [overDeadlineRows],
+    [belumDpRows],
+    [belumLunasRows],
+    [siapBelumDiambilRows],
+  ] = await Promise.all([
+    pool.query(belumInvoiceQuery, branchParam),
+    pool.query(belumReadyQuery, branchParam),
+    pool.query(overDeadlineQuery, branchParam),
+    pool.query(belumDpQuery, branchParam),
+    pool.query(belumLunasQuery, branchParam), // BARU — pakai query yang benar
+    pool.query(siapBelumDiambilQuery, branchParam),
+  ]);
+
+  const totalBelumInvoice = Number(belumInvoiceRows[0]?.jumlah || 0);
+
+  const buildNeutralCard = (key, title, icon, row) => {
+    const jumlah = Number(row[0]?.jumlah || 0);
+    const total = Number(row[0]?.total || 0);
+    return {
+      key,
+      title,
+      icon,
+      current: jumlah,
+      total: null,
+      nominal: total,
+      percent: null,
+      status: "netral",
+      type: "so-detail",
+    };
+  };
+
+  const buildComparedCard = (key, title, icon, row, totalPembanding) => {
+    const jumlah = Number(row[0]?.jumlah || 0);
+    const total = Number(row[0]?.total || 0);
+    const percent = totalPembanding > 0 ? (jumlah / totalPembanding) * 100 : 0;
+
+    let status = "baik";
+    if (percent > 50) status = "kritis";
+    else if (percent > 25) status = "perhatian";
+
+    return {
+      key,
+      title,
+      icon,
+      current: jumlah,
+      total: totalPembanding,
+      nominal: total,
+      percent: Math.min(100, percent),
+      status,
+      type: "so-detail",
+    };
+  };
+
+  return [
+    buildNeutralCard(
+      "sp_belum_invoice",
+      "Surat Pesanan Belum Invoice",
+      "mdi-receipt-text-remove-outline",
+      belumInvoiceRows,
+    ),
+    buildComparedCard(
+      "sp_belum_ready",
+      "Surat Pesanan Belum Ready",
+      "mdi-package-variant-closed-remove",
+      belumReadyRows,
+      totalBelumInvoice,
+    ),
+    buildComparedCard(
+      "sp_over_deadline",
+      "Surat Pesanan Over Deadline",
+      "mdi-clock-alert-outline",
+      overDeadlineRows,
+      totalBelumInvoice,
+    ),
+    buildComparedCard(
+      "sp_belum_dp",
+      "Surat Pesanan Belum DP",
+      "mdi-cash-remove",
+      belumDpRows,
+      totalBelumInvoice,
+    ),
+    buildComparedCard(
+      "sp_siap_belum_diambil",
+      "Barang Siap Belum Diambil",
+      "mdi-package-variant-closed-check",
+      siapBelumDiambilRows,
+      totalBelumInvoice,
+    ),
+    buildComparedCard(
+      "sp_belum_lunas",
+      "Surat Pesanan Belum Lunas",
+      "mdi-cash-clock",
+      belumLunasRows,
+      totalBelumInvoice,
+    ),
+  ];
+};
+
+/**
+ * Daftar nomor SO untuk 1 card Surat Pesanan (dipanggil saat dialog
+ * detail dibuka dari Work Summary Dashboard). Dibatasi LIMIT 200 supaya
+ * tidak membebani kalau jumlahnya ribuan — cukup untuk operasional
+ * harian (yang paling perlu perhatian biasanya di urutan atas).
+ */
+const getSuratPesananDetailList = async (key, user, page = 1, limit = 30) => {
+  const isKDC = user.cabang === "KDC";
+  const branchFilter = isKDC && !user.cabangOverride ? "" : "AND h.so_cab = ?";
+  const effectiveCabang = isKDC ? user.cabangOverride || null : user.cabang;
+  const branchParam = effectiveCabang ? [effectiveCabang] : [];
+  const offset = (Number(page) - 1) * Number(limit);
+
+  const whereExtra = SP_CARD_WHERE[key];
+  if (!whereExtra) {
+    throw new Error(`Card key tidak dikenal: ${key}`);
+  }
+
+  // BARU — untuk sp_belum_lunas, nominal yang ditampilkan = SISA kurang bayar
+  const nominalSelectSql =
+    key === "sp_belum_lunas"
+      ? `(${SP_NOMINAL_SQL} - IFNULL(h.so_dp, 0))`
+      : SP_NOMINAL_SQL;
+
+  const query = `
+    SELECT
+      h.so_nomor AS nomor,
+      DATE_FORMAT(h.so_tanggal, '%Y-%m-%d') AS tanggal,
+      DATE_FORMAT(h.so_dateline, '%Y-%m-%d') AS dateline,
+      c.cus_nama AS customer,
+      ${nominalSelectSql} AS nominal
+    FROM tso_hdr h
+    LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
+    WHERE h.so_aktif = 'Y'
+      ${whereExtra}
+      ${branchFilter}
+    ORDER BY h.so_tanggal DESC
+    LIMIT ? OFFSET ?;
+  `;
+  const [rows] = await pool.query(query, [
+    ...branchParam,
+    Number(limit),
+    offset,
+  ]);
+  return rows;
+};
+
+/**
+ * TARGET ACHIEVEMENT SUMMARY untuk hero card Work Summary Dashboard.
+ * KDC: agregat semua toko + breakdown per toko (untuk hover dialog).
+ * Store: cuma cabangnya sendiri, breakdown kosong.
+ * Growth dibandingkan bulan lalu, trend 6 bulan terakhir untuk chart.
+ */
+const getTargetAchievementSummary = async (user) => {
+  const isKDC = user.cabang === "KDC";
+  const effectiveCabang = isKDC ? user.cabangOverride || "ALL" : user.cabang;
+  const isViewingAll =
+    isKDC && (!user.cabangOverride || user.cabangOverride === "ALL");
+
+  const now = new Date();
+  const tahun = now.getFullYear();
+  const bulan = now.getMonth() + 1;
+
+  const trendMonths = [];
+  for (let i = 5; i >= 0; i--) {
+    let t = bulan - i;
+    let y = tahun;
+    while (t <= 0) {
+      t += 12;
+      y -= 1;
+    }
+    trendMonths.push({ tahun: y, bulan: t });
+  }
+
+  let currentRows = [];
+  let prevMonthRows = [];
+  const trendData = [];
+
+  for (let idx = 0; idx < trendMonths.length; idx++) {
+    const m = trendMonths[idx];
+    const rows = await monitoringAchievementService.getMonthlyData({
+      tahun: m.tahun,
+      bulan: m.bulan,
+      cabang: effectiveCabang, // BARU — pakai cabang efektif, bisa "ALL" atau kode spesifik
+    });
+
+    if (idx === trendMonths.length - 1) currentRows = rows;
+    if (idx === trendMonths.length - 2) prevMonthRows = rows;
+
+    const totalNominal = rows.reduce(
+      (acc, r) => acc + Number(r.nominal || 0),
+      0,
+    );
+    const totalTarget = rows.reduce((acc, r) => acc + Number(r.target || 0), 0);
+
+    trendData.push({
+      tahun: m.tahun,
+      bulan: m.bulan,
+      label: monthShortNames[m.bulan - 1],
+      nominal: totalNominal,
+      target: totalTarget,
+      ach: totalTarget > 0 ? (totalNominal / totalTarget) * 100 : 0,
+    });
+  }
+
+  const currentPoint = trendData[trendData.length - 1];
+  const prevPoint = trendData[trendData.length - 2];
+
+  const growthPercent =
+    prevPoint && prevPoint.nominal > 0
+      ? ((currentPoint.nominal - prevPoint.nominal) / prevPoint.nominal) * 100
+      : 0;
+
+  const prevNominalMap = {};
+  prevMonthRows.forEach((r) => {
+    prevNominalMap[r.kode_cabang] = Number(r.nominal || 0);
+  });
+
+  const perStore = currentRows
+    .filter((r) => r.kode_cabang !== "KDC")
+    .map((r) => {
+      const nominal = Number(r.nominal || 0);
+      const prevNominal = prevNominalMap[r.kode_cabang] || 0;
+      const storeGrowth =
+        prevNominal > 0
+          ? ((nominal - prevNominal) / prevNominal) * 100
+          : nominal > 0
+            ? 100
+            : 0;
+
+      return {
+        kode_cabang: r.kode_cabang,
+        nama_cabang: r.nama_cabang,
+        nominal,
+        target: Number(r.target || 0),
+        ach: Number(r.ach || 0),
+        prevNominal,
+        growthPercent: storeGrowth,
+      };
+    })
+    .sort((a, b) => b.growthPercent - a.growthPercent);
+
+  // BARU — label & flag breakdown menyesuaikan apakah sedang lihat "Semua Toko" atau 1 cabang spesifik
+  const cabangLabel = isViewingAll
+    ? "Semua Toko"
+    : currentRows[0]?.nama_cabang || effectiveCabang;
+
+  return {
+    isKDC,
+    isViewingAll, // BARU — dipakai frontend untuk tentukan tampilkan breakdown hover atau tidak
+    cabangLabel,
+    periodeLabel: `${monthShortNames[bulan - 1]} ${tahun}`,
+    tahun,
+    bulan,
+    nominal: currentPoint.nominal,
+    target: currentPoint.target,
+    ach: currentPoint.ach,
+    growthPercent,
+    perStore: isViewingAll ? perStore : [], // BARU — breakdown cuma relevan kalau lihat semua
+    trend: trendData,
+  };
+};
+
+/**
+ * PENAWARAN BELUM FOLLOW UP > 3 HARI: penawaran aktif (belum jadi SO,
+ * belum di-close/alasan kosong) yang usianya sudah lebih dari 3 hari.
+ * Referensi: soFormService.searchAvailablePenawaran (kondisi "penawaran
+ * yang masih bisa ditarik jadi SO").
+ */
+const getPenawaranWorkSummary = async (user) => {
+  const isKDC = user.cabang === "KDC";
+  const branchFilter = isKDC && !user.cabangOverride ? "" : "AND h.pen_cab = ?";
+  const effectiveCabang = isKDC ? user.cabangOverride || null : user.cabang;
+  const branchParam = effectiveCabang ? [effectiveCabang] : [];
+
+  const PEN_AKTIF_SQL = `
+    h.pen_alasan = ""
+    AND NOT EXISTS (SELECT 1 FROM tso_hdr so WHERE so.so_pen_nomor = h.pen_nomor)
+  `;
+
+  const nominalPenSql = `(
+      (SELECT SUM(dd.pend_jumlah * (dd.pend_harga - dd.pend_diskon)) FROM tpenawaran_dtl dd WHERE dd.pend_nomor = h.pen_nomor)
+      - h.pen_disc
+      + (h.pen_ppn / 100 * ((SELECT SUM(dd.pend_jumlah * (dd.pend_harga - dd.pend_diskon)) FROM tpenawaran_dtl dd WHERE dd.pend_nomor = h.pen_nomor) - h.pen_disc))
+      + h.pen_bkrm
+    )`;
+
+  const wrap = (whereExtra) => `
+    SELECT COUNT(*) AS jumlah, IFNULL(SUM(nominal), 0) AS total
+    FROM (
+      SELECT h.pen_nomor, ${nominalPenSql} AS nominal
+      FROM tpenawaran_hdr h
+      WHERE ${whereExtra}
+        ${branchFilter}
+    ) x
+  `;
+
+  const totalAktifQuery = wrap(PEN_AKTIF_SQL);
+  const belumFollowUpQuery = wrap(
+    `${PEN_AKTIF_SQL} AND h.pen_tanggal <= DATE_SUB(NOW(), INTERVAL 3 DAY)`,
+  );
+  const closingQuery = wrap(
+    `EXISTS (SELECT 1 FROM tso_hdr so WHERE so.so_pen_nomor = h.pen_nomor)`,
+  );
+  // BARU — total SELURUH penawaran (closing + aktif), penyebut conversion rate
+  const totalSemuaQuery = wrap(`1 = 1`);
+
+  const [
+    [totalAktifRows],
+    [belumFollowUpRows],
+    [closingRows],
+    [totalSemuaRows],
+  ] = await Promise.all([
+    pool.query(totalAktifQuery, branchParam),
+    pool.query(belumFollowUpQuery, branchParam),
+    pool.query(closingQuery, branchParam),
+    pool.query(totalSemuaQuery, branchParam),
+  ]);
+
+  const totalAktif = Number(totalAktifRows[0]?.jumlah || 0);
+  const totalSemua = Number(totalSemuaRows[0]?.jumlah || 0);
+
+  const buildComparedCard = (
+    key,
+    title,
+    icon,
+    row,
+    totalPembanding,
+    kritisThreshold = 10,
+  ) => {
+    const jumlah = Number(row[0]?.jumlah || 0);
+    const total = Number(row[0]?.total || 0);
+    const percent = totalPembanding > 0 ? (jumlah / totalPembanding) * 100 : 0;
+
+    let status = "baik";
+    if (jumlah > kritisThreshold) status = "kritis";
+    else if (jumlah > 0) status = "perhatian";
+
+    return {
+      key,
+      title,
+      icon,
+      current: jumlah,
+      total: totalPembanding,
+      nominal: total,
+      percent: Math.min(100, percent),
+      status,
+      type: "penawaran-detail",
+    };
+  };
+
+  const buildClosingCard = (row, totalPembanding) => {
+    const jumlah = Number(row[0]?.jumlah || 0);
+    const total = Number(row[0]?.total || 0);
+    const percent = totalPembanding > 0 ? (jumlah / totalPembanding) * 100 : 0;
+
+    // Dibalik: conversion rate TINGGI = baik, RENDAH = perlu perhatian
+    let status = "baik";
+    if (percent < 20) status = "kritis";
+    else if (percent < 50) status = "perhatian";
+
+    return {
+      key: "penawaran_closing",
+      title: "Closing Penawaran",
+      icon: "mdi-handshake-outline",
+      current: jumlah,
+      total: totalPembanding,
+      nominal: total,
+      percent: Math.min(100, percent),
+      status,
+      type: "penawaran-detail",
+    };
+  };
+
+  return [
+    buildComparedCard(
+      "penawaran_belum_follow_up",
+      "Penawaran Belum Follow Up",
+      "mdi-phone-alert-outline",
+      belumFollowUpRows,
+      totalAktif,
+      10,
+    ),
+    buildClosingCard(closingRows, totalSemua), // BARU — pembanding totalSemua, bukan totalAktif
+  ];
+};
+
+const getPenawaranDetailList = async (key, user, page = 1, limit = 30) => {
+  const isKDC = user.cabang === "KDC";
+  const branchFilter = isKDC && !user.cabangOverride ? "" : "AND h.pen_cab = ?";
+  const effectiveCabang = isKDC ? user.cabangOverride || null : user.cabang;
+  const branchParam = effectiveCabang ? [effectiveCabang] : [];
+  const offset = (Number(page) - 1) * Number(limit);
+
+  const PEN_AKTIF_SQL = `
+    h.pen_alasan = ""
+    AND NOT EXISTS (SELECT 1 FROM tso_hdr so WHERE so.so_pen_nomor = h.pen_nomor)
+  `;
+
+  const nominalPenSql = `(
+      (SELECT SUM(dd.pend_jumlah * (dd.pend_harga - dd.pend_diskon)) FROM tpenawaran_dtl dd WHERE dd.pend_nomor = h.pen_nomor)
+      - h.pen_disc
+      + (h.pen_ppn / 100 * ((SELECT SUM(dd.pend_jumlah * (dd.pend_harga - dd.pend_diskon)) FROM tpenawaran_dtl dd WHERE dd.pend_nomor = h.pen_nomor) - h.pen_disc))
+      + h.pen_bkrm
+    )`;
+
+  const whereExtra =
+    key === "penawaran_belum_follow_up"
+      ? `${PEN_AKTIF_SQL} AND h.pen_tanggal <= DATE_SUB(NOW(), INTERVAL 3 DAY)`
+      : `EXISTS (SELECT 1 FROM tso_hdr so WHERE so.so_pen_nomor = h.pen_nomor)`; // penawaran_closing
+
+  const query = `
+    SELECT
+      h.pen_nomor AS nomor,
+      DATE_FORMAT(h.pen_tanggal, '%Y-%m-%d') AS tanggal,
+      c.cus_nama AS customer,
+      ${nominalPenSql} AS nominal
+    FROM tpenawaran_hdr h
+    LEFT JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
+    WHERE ${whereExtra}
+      ${branchFilter}
+    ORDER BY h.pen_tanggal DESC
+    LIMIT ? OFFSET ?;
+  `;
+  const [rows] = await pool.query(query, [
+    ...branchParam,
+    Number(limit),
+    offset,
+  ]);
+  return rows;
+};
+
+/**
+ * PERMINTAAN BARANG STORE BELUM DIPROSES: Minta Barang manual (bukan
+ * auto-replenishment) yang masih aktif (belum closing) dan belum
+ * dibuatkan Packing List oleh DC. Populasi (Y) = seluruh Minta Barang
+ * manual yang masih aktif (baik sudah maupun belum ada packing list),
+ * dihitung dalam pcs & nominal — bukan jumlah dokumen.
+ */
+const getMintaBarangWorkSummary = async (user) => {
+  const isKDC = user.cabang === "KDC";
+  const branchFilter = isKDC && !user.cabangOverride ? "" : "AND h.mt_cab = ?";
+  const effectiveCabang = isKDC ? user.cabangOverride || null : user.cabang;
+  const branchParam = effectiveCabang ? [effectiveCabang] : [];
+
+  const MT_AKTIF_SQL = `h.mt_otomatis = 'N' AND h.mt_closing = 'N'`;
+  const MT_BELUM_PL_SQL = `
+    h.mt_nomor NOT IN (SELECT pl_mt_nomor FROM tpacking_list_hdr WHERE pl_mt_nomor <> '')
+  `;
+
+  // BARU — hitung per DOKUMEN (COUNT DISTINCT so_nomor), bukan cuma pcs
+  const wrap = (whereExtra) => `
+    SELECT
+      COUNT(DISTINCT h.mt_nomor) AS dokumen,
+      IFNULL(SUM(d.mtd_jumlah), 0) AS pcs,
+      IFNULL(SUM(d.mtd_jumlah * IFNULL(b.brgd_harga, 0)), 0) AS nominal
+    FROM tmintabarang_hdr h
+    JOIN tmintabarang_dtl d ON d.mtd_nomor = h.mt_nomor
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mtd_kode AND b.brgd_ukuran = d.mtd_ukuran
+    WHERE ${whereExtra}
+      ${branchFilter}
+  `;
+
+  const totalAktifQuery = wrap(MT_AKTIF_SQL);
+  const belumDiprosesQuery = wrap(`${MT_AKTIF_SQL} AND ${MT_BELUM_PL_SQL}`);
+
+  const [[totalAktifRows], [belumDiprosesRows]] = await Promise.all([
+    pool.query(totalAktifQuery, branchParam),
+    pool.query(belumDiprosesQuery, branchParam),
+  ]);
+
+  const totalDokumenAktif = Number(totalAktifRows[0]?.dokumen || 0);
+  const totalPcsAktif = Number(totalAktifRows[0]?.pcs || 0);
+
+  const dokumenBelumDiproses = Number(belumDiprosesRows[0]?.dokumen || 0);
+  const pcsBelumDiproses = Number(belumDiprosesRows[0]?.pcs || 0);
+  const nominalBelumDiproses = Number(belumDiprosesRows[0]?.nominal || 0);
+
+  const percent =
+    totalDokumenAktif > 0
+      ? (dokumenBelumDiproses / totalDokumenAktif) * 100
+      : 0;
+
+  let status = "baik";
+  if (percent > 30) status = "kritis";
+  else if (percent > 10) status = "perhatian";
+
+  return [
+    {
+      key: "minta_barang_belum_diproses",
+      title: "Permintaan Barang Belum Diproses",
+      icon: "mdi-truck-fast-outline",
+      // Baris utama tetap "current/total" = dokumen (konsisten dgn card lain)
+      current: dokumenBelumDiproses,
+      total: totalDokumenAktif,
+      nominal: nominalBelumDiproses,
+      percent: Math.min(100, percent),
+      status,
+      type: "minta-barang-detail",
+      // BARU — data tambahan khusus card ini, ditampilkan sebagai baris kedua
+      extra: {
+        label: "pcs",
+        current: pcsBelumDiproses,
+        total: totalPcsAktif,
+      },
+    },
+  ];
+};
+
+/**
+ * Daftar dokumen Minta Barang manual yang belum diproses — untuk dialog
+ * detail. Menampilkan per DOKUMEN (bukan per pcs), dengan total qty &
+ * nominal per dokumen supaya user bisa lihat mana yang perlu dikejar DC.
+ */
+const getMintaBarangDetailList = async (user, page = 1, limit = 30) => {
+  const isKDC = user.cabang === "KDC";
+  const branchFilter = isKDC && !user.cabangOverride ? "" : "AND h.mt_cab = ?";
+  const effectiveCabang = isKDC ? user.cabangOverride || null : user.cabang;
+  const branchParam = effectiveCabang ? [effectiveCabang] : [];
+  const offset = (Number(page) - 1) * Number(limit);
+
+  const query = `
+    SELECT
+      h.mt_nomor AS nomor,
+      DATE_FORMAT(h.mt_tanggal, '%Y-%m-%d') AS tanggal,
+      g.gdg_nama AS customer,
+      SUM(d.mtd_jumlah) AS qtyPcs,
+      SUM(d.mtd_jumlah * IFNULL(b.brgd_harga, 0)) AS nominal
+    FROM tmintabarang_hdr h
+    JOIN tmintabarang_dtl d ON d.mtd_nomor = h.mt_nomor
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mtd_kode AND b.brgd_ukuran = d.mtd_ukuran
+    LEFT JOIN tgudang g ON g.gdg_kode = h.mt_cab
+    WHERE h.mt_otomatis = 'N'
+      AND h.mt_closing = 'N'
+      AND h.mt_nomor NOT IN (SELECT pl_mt_nomor FROM tpacking_list_hdr WHERE pl_mt_nomor <> '')
+      ${branchFilter}
+    GROUP BY h.mt_nomor, h.mt_tanggal, g.gdg_nama
+    ORDER BY h.mt_tanggal DESC
+    LIMIT ? OFFSET ?;
+  `;
+  const [rows] = await pool.query(query, [
+    ...branchParam,
+    Number(limit),
+    offset,
+  ]);
+
+  // Samakan bentuk dengan DetailRow lain (nominal, customer, dst) —
+  // qtyPcs disisipkan ke label customer supaya tetap terlihat di tabel
+  // tanpa perlu ubah struktur kolom dialog.
+  return rows.map((r) => ({
+    nomor: r.nomor,
+    tanggal: r.tanggal,
+    customer: `${r.customer || r.nomor} • ${Number(r.qtyPcs).toLocaleString("id-ID")} pcs`,
+    nominal: Number(r.nominal || 0),
+  }));
+};
+
+/**
+ * Helper filter cabang customer — mengikuti pola persis
+ * customerService.getAllCustomers: KPR pakai flag franchise, KDC lihat
+ * semua, cabang lain match prefix kode customer (3 huruf pertama).
+ */
+const getCustomerBranchFilter = (cabang) => {
+  if (!cabang) return { sql: "", params: [] };
+  const branch = cabang.toUpperCase();
+  if (branch === "KPR") {
+    return { sql: "AND c.cus_franchise = 'Y'", params: [] };
+  }
+  return { sql: "AND LEFT(c.cus_kode, 3) = ?", params: [branch] };
+};
+
+/**
+ * CUSTOMER BARU BULAN INI: customer yang date_create-nya jatuh di bulan
+ * berjalan. Neutral — tanpa pembanding, karena "customer baru" tidak
+ * punya populasi total yang relevan untuk dijadikan rasio.
+ */
+const getCustomerBaruWorkSummary = async (user) => {
+  const isKDC = user.cabang === "KDC";
+  const effectiveCabang = isKDC ? user.cabangOverride || null : user.cabang;
+  const branchFilter = getCustomerBranchFilter(effectiveCabang);
+
+  const startOfMonthStr = format(startOfMonth(new Date()), "yyyy-MM-dd");
+
+  const query = `
+    SELECT COUNT(*) AS jumlah
+    FROM tcustomer c
+    WHERE c.date_create >= ?
+      ${branchFilter.sql}
+  `;
+  const [rows] = await pool.query(query, [
+    startOfMonthStr,
+    ...branchFilter.params,
+  ]);
+  const jumlah = Number(rows[0]?.jumlah || 0);
+
+  return {
+    key: "customer_baru",
+    title: "Customer Baru Bulan Ini",
+    icon: "mdi-account-plus-outline",
+    current: jumlah,
+    total: null,
+    nominal: undefined,
+    percent: null,
+    status: "netral",
+    type: "customer-detail",
+  };
+};
+
+/**
+ * Daftar customer baru bulan ini — untuk dialog detail. Cukup kode &
+ * nama customer (sesuai definisi bisnis), tanpa nominal.
+ */
+const getCustomerBaruDetailList = async (user, page = 1, limit = 30) => {
+  const isKDC = user.cabang === "KDC";
+  const effectiveCabang = isKDC ? user.cabangOverride || null : user.cabang;
+  const branchFilter = getCustomerBranchFilter(effectiveCabang);
+  const offset = (Number(page) - 1) * Number(limit);
+
+  const startOfMonthStr = format(startOfMonth(new Date()), "yyyy-MM-dd");
+
+  const query = `
+    SELECT
+      c.cus_kode AS nomor,
+      DATE_FORMAT(c.date_create, '%Y-%m-%d') AS tanggal,
+      c.cus_nama AS customer
+    FROM tcustomer c
+    WHERE c.date_create >= ?
+      ${branchFilter.sql}
+    ORDER BY c.date_create DESC
+    LIMIT ? OFFSET ?;
+  `;
+  const [rows] = await pool.query(query, [
+    startOfMonthStr,
+    ...branchFilter.params,
+    Number(limit),
+    offset,
+  ]);
+  return rows;
+};
+
+/**
+ * REPEAT ORDER BULAN INI: customer (BUKAN "RETAIL" generik) yang closing
+ * (invoice) lebih dari 1 kali di bulan berjalan. Cabang ditentukan dari
+ * inv_cab pada invoice-nya sendiri (bukan prefix kode customer), karena
+ * sebagian customer masih pakai format kode lama (K-XXXXX) tanpa prefix
+ * cabang. Pembanding (Y) = total customer non-Retail pada cabang yang
+ * sama (dari invoice), atau semua customer kalau KDC.
+ */
+const getRepeatOrderWorkSummary = async (user) => {
+  const isKDC = user.cabang === "KDC";
+  const effectiveCabang = isKDC ? user.cabangOverride || null : user.cabang;
+
+  const invBranchFilter = effectiveCabang ? "AND h.inv_cab = ?" : "";
+  const invBranchParam = effectiveCabang ? [effectiveCabang] : [];
+
+  const startOfMonthStr = format(startOfMonth(new Date()), "yyyy-MM-dd");
+  const endOfMonthStr = format(endOfMonth(new Date()), "yyyy-MM-dd");
+
+  const repeatQuery = `
+    SELECT COUNT(*) AS jumlah, IFNULL(SUM(nominal), 0) AS total
+    FROM (
+      SELECT 
+        h.inv_cus_kode,
+        SUM(
+          (SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor)
+          - h.inv_disc
+          + (h.inv_ppn / 100 * ((SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc))
+          + h.inv_bkrm
+        ) AS nominal
+      FROM tinv_hdr h
+      INNER JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+      WHERE h.inv_sts_pro = 0
+        AND h.inv_tanggal BETWEEN ? AND ?
+        AND c.cus_nama NOT LIKE 'RETAIL%'
+        ${invBranchFilter}
+      GROUP BY h.inv_cus_kode
+      HAVING COUNT(DISTINCT h.inv_nomor) > 1
+    ) x
+  `;
+
+  // Total customer pembanding: customer non-Retail yang PERNAH invoice
+  // di cabang ini (ditentukan dari inv_cab, bukan prefix kode).
+  const totalCustomerQuery = `
+    SELECT COUNT(DISTINCT h.inv_cus_kode) AS jumlah
+    FROM tinv_hdr h
+    INNER JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+    WHERE h.inv_sts_pro = 0
+      AND c.cus_nama NOT LIKE 'RETAIL%'
+      ${invBranchFilter}
+  `;
+
+  const [[repeatRows], [totalRows]] = await Promise.all([
+    pool.query(repeatQuery, [
+      startOfMonthStr,
+      endOfMonthStr,
+      ...invBranchParam,
+    ]),
+    pool.query(totalCustomerQuery, invBranchParam),
+  ]);
+
+  const jumlah = Number(repeatRows[0]?.jumlah || 0);
+  const totalNominal = Number(repeatRows[0]?.total || 0);
+  const totalCustomer = Number(totalRows[0]?.jumlah || 0);
+  const percent = totalCustomer > 0 ? (jumlah / totalCustomer) * 100 : 0;
+
+  let status = "baik";
+  if (percent < 5) status = "kritis";
+  else if (percent < 15) status = "perhatian";
+
+  return {
+    key: "repeat_order",
+    title: "Repeat Order Bulan Ini",
+    icon: "mdi-account-sync-outline",
+    current: jumlah,
+    total: totalCustomer,
+    nominal: totalNominal,
+    percent: Math.min(100, percent),
+    status,
+    type: "customer-detail",
+  };
+};
+
+/**
+ * Daftar customer repeat order — kode, nama, jumlah order, dan nominal
+ * total transaksinya (exclude "RETAIL").
+ */
+const getRepeatOrderDetailList = async (user, page = 1, limit = 30) => {
+  const isKDC = user.cabang === "KDC";
+  const effectiveCabang = isKDC ? user.cabangOverride || null : user.cabang;
+  const offset = (Number(page) - 1) * Number(limit);
+
+  const invBranchFilter = effectiveCabang ? "AND h.inv_cab = ?" : "";
+  const invBranchParam = effectiveCabang ? [effectiveCabang] : [];
+
+  const startOfMonthStr = format(startOfMonth(new Date()), "yyyy-MM-dd");
+  const endOfMonthStr = format(endOfMonth(new Date()), "yyyy-MM-dd");
+
+  const query = `
+    SELECT
+      c.cus_kode AS nomor,
+      c.cus_nama AS customer,
+      COUNT(DISTINCT h.inv_nomor) AS jumlahOrder,
+      SUM(
+        (SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor)
+        - h.inv_disc
+        + (h.inv_ppn / 100 * ((SELECT SUM(dd.invd_jumlah * (dd.invd_harga - dd.invd_diskon)) FROM tinv_dtl dd WHERE dd.invd_inv_nomor = h.inv_nomor) - h.inv_disc))
+        + h.inv_bkrm
+      ) AS nominal
+    FROM tinv_hdr h
+    INNER JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+    WHERE h.inv_sts_pro = 0
+      AND h.inv_tanggal BETWEEN ? AND ?
+      AND c.cus_nama NOT LIKE 'RETAIL%'
+      ${invBranchFilter}
+    GROUP BY c.cus_kode, c.cus_nama
+    HAVING COUNT(DISTINCT h.inv_nomor) > 1
+    ORDER BY nominal DESC
+    LIMIT ? OFFSET ?;
+  `;
+  const [rows] = await pool.query(query, [
+    startOfMonthStr,
+    endOfMonthStr,
+    ...invBranchParam,
+    Number(limit),
+    offset,
+  ]);
+
+  return rows.map((r) => ({
+    nomor: r.nomor,
+    tanggal: undefined,
+    customer: `${r.customer} • ${r.jumlahOrder}x order`,
+    nominal: Number(r.nominal || 0),
+  }));
+};
+
+/**
+ * WORK SUMMARY DASHBOARD: agregat semua card "Summary Hasil Pekerjaan".
+ * Bertahap — card lain (Mockup, Random Stok, Permintaan Barang, Omzet
+ * Barang Jadi) menyusul setelah skema tabelnya jelas.
+ */
+const getWorkSummary = async (user) => {
+  const cards = [];
+
+  try {
+    const spCards = await getSuratPesananWorkSummary(user);
+    cards.push(...spCards);
+  } catch (err) {
+    console.error("Gagal load card Surat Pesanan:", err.message);
+  }
+
+  // BARU
+  try {
+    const penawaranCards = await getPenawaranWorkSummary(user);
+    cards.push(...penawaranCards);
+  } catch (err) {
+    console.error("Gagal load card Penawaran:", err.message);
+  }
+
+  try {
+    const mintaBarangCards = await getMintaBarangWorkSummary(user);
+    cards.push(...mintaBarangCards);
+  } catch (err) {
+    console.error("Gagal load card Minta Barang:", err.message);
+  }
+
+  try {
+    const customerBaru = await getCustomerBaruWorkSummary(user);
+    cards.push(customerBaru);
+  } catch (err) {
+    console.error("Gagal load card Customer Baru:", err.message);
+  }
+
+  try {
+    const repeatOrder = await getRepeatOrderWorkSummary(user);
+    cards.push(repeatOrder);
+  } catch (err) {
+    console.error("Gagal load card Repeat Order:", err.message);
+  }
+
+  try {
+    const produksi = await getProduksiTerlambatSummary(user); // BARU — kirim user
+    cards.push(produksi);
+  } catch (err) {
+    console.error("Gagal load card Produksi Terlambat:", err.message);
+  }
+
+  return cards;
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -3047,4 +4121,17 @@ module.exports = {
   getStokKosongFastMoving,
   getDaftarWarna,
   getInvoiceBacklogAnalysis,
+  getProduksiTerlambat,
+  getProduksiTerlambatSummary,
+  getTargetAchievementSummary,
+  getSuratPesananDetailList,
+  getPenawaranWorkSummary,
+  getPenawaranDetailList,
+  getMintaBarangWorkSummary,
+  getMintaBarangDetailList,
+  getCustomerBaruWorkSummary,
+  getCustomerBaruDetailList,
+  getRepeatOrderWorkSummary,
+  getRepeatOrderDetailList,
+  getWorkSummary,
 };

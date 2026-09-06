@@ -323,10 +323,13 @@ const getPrintData = async (nomor) => {
       d.fskd_kdcus AS kdcus,
       c.cus_nama AS nmcus,
       d.fskd_inv AS inv,
+      IFNULL(inv.inv_nomor_so, s.sh_so_nomor) AS nomor_so,
       d.fskd_sh_nomor AS nomor,
       d.fskd_nominal AS nominal
     FROM tform_setorkasir_dtl d
     LEFT JOIN tcustomer c ON c.cus_kode = d.fskd_kdcus
+    LEFT JOIN tsetor_hdr s ON s.sh_nomor = d.fskd_sh_nomor
+    LEFT JOIN tinv_hdr inv ON inv.inv_nomor = d.fskd_inv
     WHERE d.fskd_nomor = ?
     ORDER BY d.fskd_jenis;
   `;

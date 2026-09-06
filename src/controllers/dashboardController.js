@@ -522,6 +522,128 @@ const getStokKosongFastMoving = async (req, res) => {
   }
 };
 
+const getProduksiTerlambat = async (req, res) => {
+  try {
+    const data = await dashboardService.getProduksiTerlambat();
+    res.json(data);
+  } catch (error) {
+    console.error("Error getProduksiTerlambat:", error);
+    res
+      .status(500)
+      .json({ message: "Gagal mengambil data produksi terlambat." });
+  }
+};
+
+const getTargetAchievementSummary = async (req, res) => {
+  try {
+    const userWithOverride = {
+      ...req.user,
+      cabangOverride: req.query.cabang || null,
+    };
+    const data =
+      await dashboardService.getTargetAchievementSummary(userWithOverride);
+    res.json(data);
+  } catch (error) {
+    console.error("Error getTargetAchievementSummary:", error);
+    res
+      .status(500)
+      .json({ message: "Gagal mengambil ringkasan target achievement." });
+  }
+};
+
+const getWorkSummary = async (req, res) => {
+  try {
+    const userWithOverride = {
+      ...req.user,
+      cabangOverride: req.query.cabang || null,
+    };
+    const data = await dashboardService.getWorkSummary(userWithOverride);
+    res.json(data);
+  } catch (error) {
+    console.error("Error getWorkSummary:", error);
+    res.status(500).json({ message: "Gagal mengambil ringkasan pekerjaan." });
+  }
+};
+
+const getWorkSummaryDetail = async (req, res) => {
+  const { key } = req.params;
+  const page = Number(req.query.page) || 1;
+  const limit = Number(req.query.limit) || 30;
+  const userWithOverride = {
+    ...req.user,
+    cabangOverride: req.query.cabang || null,
+  };
+
+  try {
+    if (key === "produksi_terlambat") {
+      const isKDC = req.user.cabang === "KDC";
+      const effectiveCabang = isKDC
+        ? req.query.cabang || null
+        : req.user.cabang;
+      const all = await dashboardService.getProduksiTerlambat(effectiveCabang); // BARU
+      const mapped = all.map((r) => ({
+        nomor: r.nomor, // BARU — sudah berupa nomor SO, bukan spk_nomor lagi
+        tanggal: r.tanggal,
+        dateline: r.dateline,
+        customer: r.nama, // BARU — field nama sudah diganti dari spk_nama
+        nominal: r.nilai,
+      }));
+      const start = (page - 1) * limit;
+      return res.json(mapped.slice(start, start + limit));
+    }
+
+    if (key === "minta_barang_belum_diproses") {
+      const data = await dashboardService.getMintaBarangDetailList(
+        userWithOverride,
+        page,
+        limit,
+      );
+      return res.json(data);
+    }
+
+    // BARU — routing untuk card Penawaran
+    if (key === "penawaran_belum_follow_up" || key === "penawaran_closing") {
+      const data = await dashboardService.getPenawaranDetailList(
+        key,
+        userWithOverride,
+        page,
+        limit,
+      );
+      return res.json(data);
+    }
+
+    if (key === "customer_baru") {
+      const data = await dashboardService.getCustomerBaruDetailList(
+        userWithOverride,
+        page,
+        limit,
+      );
+      return res.json(data);
+    }
+    if (key === "repeat_order") {
+      const data = await dashboardService.getRepeatOrderDetailList(
+        userWithOverride,
+        page,
+        limit,
+      );
+      return res.json(data);
+    }
+
+    const data = await dashboardService.getSuratPesananDetailList(
+      key,
+      userWithOverride,
+      page,
+      limit,
+    );
+    res.json(data);
+  } catch (error) {
+    console.error("Error getWorkSummaryDetail:", error);
+    res
+      .status(500)
+      .json({ message: error.message || "Gagal mengambil detail." });
+  }
+};
+
 module.exports = {
   getTodayStats,
   getSalesChartData,
@@ -562,4 +684,8 @@ module.exports = {
   getAutoMintaAnalytics,
   getRealStockList,
   getStokKosongFastMoving,
+  getProduksiTerlambat,
+  getTargetAchievementSummary,
+  getWorkSummary,
+  getWorkSummaryDetail,
 };

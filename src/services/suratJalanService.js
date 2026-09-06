@@ -27,6 +27,7 @@ const getList = async (filters) => {
             h.sj_tanggal AS Tanggal,
             h.sj_kecab AS Store,
             g.gdg_nama AS Nama_Store,
+            h.sj_kategori AS Kategori,
             h.sj_mt_nomor AS NoMinta,
             IFNULL(h.sj_manifest_nomor, "") AS NoManifest,
             -- FIX: Cari invoice yang inv_nomor_so nya adalah Nomor SJ (sj_nomor)
@@ -230,6 +231,7 @@ const getPrintData = async (nomor) => {
             h.sj_tanggal,
             h.sj_mt_nomor,
             h.sj_so_nomor,
+            h.sj_kategori,
             h.sj_ket,
             h.user_create,
             h.date_create,
