@@ -635,12 +635,11 @@ FROM tso_dtl d
     const hrg = Number(item.harga || 0);
 
     const isJasaMurni = (item.kode || "").toUpperCase().startsWith("JASA");
-    const isPengajuan = !!item.noPengajuanHarga;
-    // DTF/SODTF tidak masuk basis diskon faktur di invoice
-    // (noSoDtf ada di field item tapi di getSoDetailsForGrid field-nya berbeda)
-
-    // Hanya item yang boleh kena diskon faktur
-    if (!isJasaMurni && !isPengajuan) {
+    // [FIX] JANGAN exclude Pengajuan Harga dari basis — SO form
+    // (isDiscountableItem) hanya mengecualikan JASA murni, item Pengajuan
+    // Harga tetap ikut basis diskon faktur di sana. Basis di sini WAJIB
+    // identik, kalau tidak reverse-split Maps di bawah akan salah hitung.
+    if (!isJasaMurni) {
       totalBrutoSo += qty * hrg;
     }
   });
