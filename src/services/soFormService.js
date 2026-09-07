@@ -858,43 +858,62 @@ const getPenawaranDetailsForSo = async (nomor, cabang) => {
     const [detailRows] = await connection.query(
       `
           SELECT d.*, 
-          d.pend_ph_nomor AS noPengajuanHarga,
-          IF(d.pend_custom = 'Y', d.pend_custom_nama,
-              COALESCE(
-                NULLIF(TRIM(CONCAT(
-                  COALESCE(a.brg_jeniskaos,''),' ',COALESCE(a.brg_tipe,''),' ',
-                  COALESCE(a.brg_lengan,''),' ',COALESCE(a.brg_jeniskain,''),' ',
-                  COALESCE(a.brg_warna,'')
-                )), ''),
-                pbd.pbd_deskripsi
-              )) AS nama_barang,
+            d.pend_ph_nomor AS noPengajuanHarga,
+            IF(d.pend_custom = 'Y', d.pend_custom_nama,
+                COALESCE(
+                  NULLIF(TRIM(CONCAT(
+                    COALESCE(a.brg_jeniskaos,''),' ',COALESCE(a.brg_tipe,''),' ',
+                    COALESCE(a.brg_lengan,''),' ',COALESCE(a.brg_jeniskain,''),' ',
+                    COALESCE(a.brg_warna,'')
+                  )), ''),
+                  pbd.pbd_deskripsi
+                )) AS nama_barang,
 
-          IF(d.pend_custom = 'Y', 'PESANAN', IFNULL(a.brg_ktgp, 'REGULER')) AS kategori,
-          b.brgd_barcode AS barcode,
+            IF(d.pend_custom = 'Y', 'PESANAN', IFNULL(a.brg_ktgp, 'REGULER')) AS kategori,
+            b.brgd_barcode AS barcode,
 
-          IFNULL((
-              SELECT SUM(m.mst_stok_in - m.mst_stok_out)
-              FROM tmasterstok m
-              WHERE m.mst_aktif = "Y" AND m.mst_cab = ?
-                AND m.mst_brg_kode = COALESCE(phs.phs_kode, d.pend_kode)
-                AND TRIM(m.mst_ukuran) = TRIM(d.pend_ukuran)
-          ), 0) AS stok,
+            IFNULL((
+                SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+                FROM tmasterstok m
+                WHERE m.mst_aktif = "Y" AND m.mst_cab = ?
+                  AND m.mst_brg_kode = COALESCE(phs.phs_kode, d.pend_kode)
+                  AND TRIM(m.mst_ukuran) = TRIM(d.pend_ukuran)
+            ), 0) AS stok,
 
-          -- override d.pend_kode dengan versi TERKINI dari PH
-          COALESCE(phs.phs_kode, d.pend_kode) AS pend_kode
+            -- override kode dengan versi TERKINI dari PH
+            COALESCE(phs.phs_kode, d.pend_kode) AS pend_kode,
 
-    FROM tpenawaran_dtl d
-    LEFT JOIN tpengajuanharga_size phs
-      ON d.pend_ph_nomor <> ''
-    AND phs.phs_nomor = d.pend_ph_nomor
-    AND phs.phs_size = d.pend_ukuran
-    LEFT JOIN tbarangdc a ON a.brg_kode = COALESCE(phs.phs_kode, d.pend_kode)
-    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = COALESCE(phs.phs_kode, d.pend_kode) AND b.brgd_ukuran = d.pend_ukuran
-    LEFT JOIN tpengajuanharga_barang_draft pbd
-      ON pbd.pbd_nomor = d.pend_ph_nomor
-    AND pbd.pbd_kode_barang_draft = COALESCE(phs.phs_kode, d.pend_kode)
-    WHERE d.pend_nomor = ?
-    ORDER BY d.pend_nourut
+            -- override harga dengan versi TERKINI dari PH: harga dasar size ini +
+            -- semua biaya tambahan/bordir/dtf milik PH-nya (sama basis dengan
+            -- getPriceProposalDetailsForSo). Untuk item non-PH (pend_ph_nomor
+            -- kosong), phs pasti tidak match -> fallback ke d.pend_harga asli.
+            CASE
+              WHEN phs.phs_kode IS NOT NULL THEN
+                phs.phs_harga
+                  + IFNULL(t.tambahan, 0)
+                  + IFNULL(brd.bordir, 0)
+                  + IFNULL(dt.dtf, 0)
+              ELSE d.pend_harga
+            END AS pend_harga
+
+      FROM tpenawaran_dtl d
+      LEFT JOIN tpengajuanharga_size phs
+        ON d.pend_ph_nomor <> ''
+      AND phs.phs_nomor = d.pend_ph_nomor
+      AND phs.phs_size = d.pend_ukuran
+      LEFT JOIN tbarangdc a ON a.brg_kode = COALESCE(phs.phs_kode, d.pend_kode)
+      LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = COALESCE(phs.phs_kode, d.pend_kode) AND b.brgd_ukuran = d.pend_ukuran
+      LEFT JOIN tpengajuanharga_barang_draft pbd
+        ON pbd.pbd_nomor = d.pend_ph_nomor
+      AND pbd.pbd_kode_barang_draft = COALESCE(phs.phs_kode, d.pend_kode)
+      LEFT JOIN (SELECT pht_nomor, SUM(pht_harga) AS tambahan FROM tpengajuanharga_tambahan GROUP BY pht_nomor) t 
+        ON t.pht_nomor = d.pend_ph_nomor
+      LEFT JOIN (SELECT phb_nomor, phb_rpbordir AS bordir FROM tpengajuanharga_bordir GROUP BY phb_nomor) brd 
+        ON brd.phb_nomor = d.pend_ph_nomor
+      LEFT JOIN (SELECT phd_nomor, phd_rpdtf AS dtf FROM tpengajuanharga_dtf GROUP BY phd_nomor) dt 
+        ON dt.phd_nomor = d.pend_ph_nomor
+      WHERE d.pend_nomor = ?
+      ORDER BY d.pend_nourut
     `,
       [activeBranch, nomor],
     );
