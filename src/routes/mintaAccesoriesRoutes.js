@@ -16,6 +16,13 @@ router.get(
   controller.getAll,
 );
 
+router.get(
+  "/export-details",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.exportDetails,
+);
+
 // Ambil Detail Permintaan (Expand Row) - Hak akses: View
 router.get(
   "/:nomor/details",

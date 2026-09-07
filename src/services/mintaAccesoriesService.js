@@ -145,6 +145,57 @@ const getDetails = async (nomor) => {
   };
 };
 
+// --- EXPORT DETAILS (flat rows: 1 baris per item, untuk Excel) ---
+const exportDetails = async (filters) => {
+  const { startDate, endDate, keyword } = filters;
+  const params = [startDate, endDate];
+
+  let searchFilter = "";
+  if (keyword) {
+    searchFilter = ` AND (h.min_nomor LIKE ? OR h.min_ket LIKE ?)`;
+    const searchPattern = `%${keyword}%`;
+    params.push(searchPattern, searchPattern);
+  }
+
+  const query = `
+    SELECT 
+      h.min_nomor      AS Nomor,
+      h.min_tanggal    AS Tanggal,
+      h.min_jenis       AS Jenis,
+      h.min_cab        AS Cabang,
+      h.min_ket        AS KeteranganPermintaan,
+      h.user_create    AS Usr,
+      IF(h.min_close=0, "OPEN", IF(h.min_close=1, "CLOSE", IF(h.min_close=9, "DICLOSE", "PROSES"))) AS Status,
+      h.min_alasanclose AS AlasanClose,
+      d.mind_urut      AS Urut,
+      d.mind_brg_kode  AS Kode,
+      IF(b.brg_note="", b.brg_nama, CONCAT(b.brg_nama," - ",b.brg_note)) AS NamaBarang,
+      b.brg_satuan     AS Satuan,
+      d.mind_jumlah    AS Jumlah,
+      d.mind_ket       AS KeteranganItem,
+      IFNULL((
+        SELECT SUM(i.red_jumlah) 
+        FROM kencanaprint.tgarmenrealisasi_dtl i 
+        INNER JOIN kencanaprint.tgarmenrealisasi_hdr j ON j.re_nomor = i.red_nomor 
+        WHERE j.re_minta = d.mind_nomor AND i.red_brg_kode = d.mind_brg_kode
+      ), 0) AS Realisasi
+    FROM kencanaprint.tgarmenminta_hdr h
+    INNER JOIN kencanaprint.tgarmenminta_dtl d ON d.mind_nomor = h.min_nomor
+    LEFT JOIN kencanaprint.tgarmen_brg b ON b.brg_kode = d.mind_brg_kode
+    WHERE h.min_tanggal >= ? AND h.min_tanggal <= ?
+      AND h.min_jenis IN ('OBAT', 'ACCESORIES')
+      AND h.min_cab = 'P03'
+      ${searchFilter}
+    ORDER BY h.min_nomor DESC, d.mind_urut ASC
+  `;
+
+  const [rows] = await pool.query(query, params);
+  return rows.map((row) => ({
+    ...row,
+    Tanggal: row.Tanggal ? format(new Date(row.Tanggal), "dd/MM/yyyy") : "",
+  }));
+};
+
 // --- DELETE ---
 const deletePermintaan = async (nomor, userCabang) => {
   const connection = await pool.getConnection();
@@ -344,6 +395,7 @@ const approveRealisasi = async (noRealisasi, userKode, userCabang) => {
 module.exports = {
   getAll,
   getDetails,
+  exportDetails,
   deletePermintaan,
   closeManual,
   checkUnapprovedRealisasi,

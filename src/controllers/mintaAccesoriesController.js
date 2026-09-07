@@ -25,6 +25,21 @@ const getDetails = async (req, res) => {
   }
 };
 
+const exportDetails = async (req, res) => {
+  try {
+    const filters = {
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      cabang: req.query.cabang,
+      keyword: req.query.keyword,
+    };
+    const rows = await service.exportDetails(filters, req.user);
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const deletePermintaan = async (req, res) => {
   try {
     const { nomor } = req.params;
@@ -78,6 +93,7 @@ const approveRealisasi = async (req, res) => {
 module.exports = {
   getAll,
   getDetails,
+  exportDetails,
   deletePermintaan,
   closeManual,
   checkUnapproved,
