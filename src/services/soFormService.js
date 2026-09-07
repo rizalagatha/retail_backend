@@ -857,34 +857,44 @@ const getPenawaranDetailsForSo = async (nomor, cabang) => {
     // 2. Ambil Detail dengan Kategori & Stok yang diperbaiki
     const [detailRows] = await connection.query(
       `
-      SELECT d.*, 
-             d.pend_ph_nomor AS noPengajuanHarga,
-             IF(d.pend_custom = 'Y', d.pend_custom_nama,
-                TRIM(CONCAT(
+          SELECT d.*, 
+          d.pend_ph_nomor AS noPengajuanHarga,
+          IF(d.pend_custom = 'Y', d.pend_custom_nama,
+              COALESCE(
+                NULLIF(TRIM(CONCAT(
                   COALESCE(a.brg_jeniskaos,''),' ',COALESCE(a.brg_tipe,''),' ',
                   COALESCE(a.brg_lengan,''),' ',COALESCE(a.brg_jeniskain,''),' ',
                   COALESCE(a.brg_warna,'')
-                ))) AS nama_barang,
-             
-             -- Kategori Otomatis: PESANAN untuk Custom, REGULER untuk Stok
-             IF(d.pend_custom = 'Y', 'PESANAN', IFNULL(a.brg_ktgp, 'REGULER')) AS kategori,
+                )), ''),
+                pbd.pbd_deskripsi
+              )) AS nama_barang,
 
-             b.brgd_barcode AS barcode,
+          IF(d.pend_custom = 'Y', 'PESANAN', IFNULL(a.brg_ktgp, 'REGULER')) AS kategori,
+          b.brgd_barcode AS barcode,
 
-             -- Subquery Stok Real-time berdasarkan Cabang aktif
-             IFNULL((
-                SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
-                FROM tmasterstok m 
-                WHERE m.mst_aktif = "Y" 
-                  AND m.mst_cab = ? 
-                  AND m.mst_brg_kode = d.pend_kode 
-                  AND TRIM(m.mst_ukuran) = TRIM(d.pend_ukuran)
-             ), 0) AS stok
-      FROM tpenawaran_dtl d
-      LEFT JOIN tbarangdc a ON a.brg_kode = d.pend_kode
-      LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.pend_kode AND b.brgd_ukuran = d.pend_ukuran
-      WHERE d.pend_nomor = ? 
-      ORDER BY d.pend_nourut
+          IFNULL((
+              SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+              FROM tmasterstok m
+              WHERE m.mst_aktif = "Y" AND m.mst_cab = ?
+                AND m.mst_brg_kode = COALESCE(phs.phs_kode, d.pend_kode)
+                AND TRIM(m.mst_ukuran) = TRIM(d.pend_ukuran)
+          ), 0) AS stok,
+
+          -- override d.pend_kode dengan versi TERKINI dari PH
+          COALESCE(phs.phs_kode, d.pend_kode) AS pend_kode
+
+    FROM tpenawaran_dtl d
+    LEFT JOIN tpengajuanharga_size phs
+      ON d.pend_ph_nomor <> ''
+    AND phs.phs_nomor = d.pend_ph_nomor
+    AND phs.phs_size = d.pend_ukuran
+    LEFT JOIN tbarangdc a ON a.brg_kode = COALESCE(phs.phs_kode, d.pend_kode)
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = COALESCE(phs.phs_kode, d.pend_kode) AND b.brgd_ukuran = d.pend_ukuran
+    LEFT JOIN tpengajuanharga_barang_draft pbd
+      ON pbd.pbd_nomor = d.pend_ph_nomor
+    AND pbd.pbd_kode_barang_draft = COALESCE(phs.phs_kode, d.pend_kode)
+    WHERE d.pend_nomor = ?
+    ORDER BY d.pend_nourut
     `,
       [activeBranch, nomor],
     );
