@@ -614,15 +614,16 @@ const getSoForEdit = async (nomor) => {
     // =========================================================================
 
     const dpQuery = `
-            SELECT 
-                h.sh_nomor AS nomor,
-                IF(h.sh_jenis=0, "TUNAI", IF(h.sh_jenis=1, "TRANSFER", "GIRO")) AS jenis,
-                h.sh_nominal AS nominal,
-                IF(j.jur_no IS NULL, "BELUM", "SUDAH") AS posting
-            FROM tsetor_hdr h
-            LEFT JOIN finance.tjurnal j ON j.jur_nomor = h.sh_nomor
-            WHERE h.sh_otomatis = "N" AND h.sh_so_nomor = ?
-        `;
+        SELECT 
+            h.sh_nomor AS nomor,
+            DATE_FORMAT(h.sh_tanggal, '%d-%m-%Y') AS tanggal,
+            IF(h.sh_jenis=0, "TUNAI", IF(h.sh_jenis=1, "TRANSFER", "GIRO")) AS jenis,
+            h.sh_nominal AS nominal,
+            IF(j.jur_no IS NULL, "BELUM", "SUDAH") AS posting
+        FROM tsetor_hdr h
+        LEFT JOIN finance.tjurnal j ON j.jur_nomor = h.sh_nomor
+        WHERE h.sh_otomatis = "N" AND h.sh_so_nomor = ?
+    `;
     const [dpRows] = await connection.query(dpQuery, [nomor]);
 
     // Ambil riwayat log qty
@@ -956,6 +957,7 @@ const getPenawaranDetailsForSo = async (nomor, cabang) => {
     const [dpRows] = await connection.query(
       `
       SELECT sk.sh_nomor AS nomor, 
+             DATE_FORMAT(sk.sh_tanggal, '%d-%m-%Y') AS tanggal,
              CASE WHEN sk.sh_jenis = 0 THEN 'TUNAI' WHEN sk.sh_jenis = 1 THEN 'TRANSFER' ELSE 'GIRO' END AS jenis, 
              sk.sh_nominal AS nominal, 'BELUM' as posting, '' as fsk
       FROM tpenawaran_dp link

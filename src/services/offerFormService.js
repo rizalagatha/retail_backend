@@ -732,6 +732,7 @@ const getOfferForEdit = async (nomor) => {
 
     const dpQuery = `
       SELECT sk.sh_nomor AS nomor, 
+             DATE_FORMAT(sk.sh_tanggal, '%d-%m-%Y') AS tanggal,
              IF(sk.sh_jenis=0, 'TUNAI', IF(sk.sh_jenis=1, 'TRANSFER', 'GIRO')) AS jenis,
              sk.sh_nominal AS nominal, 'BELUM' as posting, '' as fsk
       FROM tpenawaran_dp link
