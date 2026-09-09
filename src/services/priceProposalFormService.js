@@ -326,6 +326,15 @@ const getProposalForEdit = async (nomor) => {
     }
   }
 
+  let sublimColorDetails = null;
+  if (headerRows[0].ph_sublim_warna_detail) {
+    try {
+      sublimColorDetails = JSON.parse(headerRows[0].ph_sublim_warna_detail);
+    } catch (e) {
+      sublimColorDetails = null;
+    }
+  }
+
   return {
     header: headerRows[0],
     sizes: sizeRows,
@@ -338,6 +347,7 @@ const getProposalForEdit = async (nomor) => {
     sublimMockupDepanUrl,
     sublimMockupBelakangUrl,
     sublimAnnotations,
+    sublimColorDetails,
   };
 };
 
@@ -1594,9 +1604,9 @@ const saveProposal = async (data) => {
       const headerQuery = `
         INSERT INTO tpengajuanharga 
           (ph_nomor, ph_tanggal, ph_custom, ph_kd_cus, ph_ket, ph_jenis, ph_apv, ph_status, ph_status_updated, ph_diskon, ph_cab,
-          ph_kode_barang_draft, ph_sublim_kain, ph_sublim_katalog_id, ph_sublim_katalog_gambar, ph_sublim_anotasi, ph_celana_kode_barang_draft, 
+          ph_kode_barang_draft, ph_sublim_kain, ph_sublim_katalog_id, ph_sublim_katalog_gambar, ph_sublim_anotasi, ph_sublim_warna_detail, ph_celana_kode_barang_draft, 
           user_create, date_create) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
       `;
       await connection.query(headerQuery, [
         nomor,
@@ -1612,9 +1622,11 @@ const saveProposal = async (data) => {
         isSublim ? data.sublim.kain : null,
         isSublim ? data.sublim.katalogId || null : null,
         isSublim ? katalogGambar : null,
-        // [UBAH] anotasi menggantikan colorDetails
         isSublim && data.sublim.annotations
           ? JSON.stringify(data.sublim.annotations)
+          : null,
+        isSublim && data.sublim.colorDetails // [KEMBALI]
+          ? JSON.stringify(data.sublim.colorDetails)
           : null,
         isSublim ? kodeBarangCelana : null,
         user.kode,
@@ -1632,6 +1644,7 @@ const saveProposal = async (data) => {
           ph_tanggal = ?, ph_custom = ?, ph_kd_cus = ?, ph_ket = ?, ph_jenis = ?, ph_apv = ?, ph_diskon = ?, ph_kode_barang_draft = ?, 
           ph_harga_locked = ?, ph_harga_locked_by = ?, ph_harga_locked_at = ?,
           ph_sublim_anotasi = COALESCE(?, ph_sublim_anotasi),
+          ph_sublim_warna_detail = COALESCE(?, ph_sublim_warna_detail),
           user_modified = ?, date_modified = NOW() 
         WHERE ph_nomor = ?
       `;
@@ -1649,6 +1662,9 @@ const saveProposal = async (data) => {
         finalLockedAt,
         isSublim && data.sublim.annotations
           ? JSON.stringify(data.sublim.annotations)
+          : null,
+        isSublim && data.sublim.colorDetails // [KEMBALI]
+          ? JSON.stringify(data.sublim.colorDetails)
           : null,
         user.kode,
         nomor,
