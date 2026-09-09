@@ -575,9 +575,23 @@ const SIZE_ORDER = [
   "JUMBO",
 ];
 
-const sizeOrderIndex = (size) => {
-  const idx = SIZE_ORDER.indexOf((size || "").toString().trim().toUpperCase());
-  return idx === -1 ? SIZE_ORDER.length : idx; // size tidak dikenal ditaruh paling akhir
+// Ganti SIZE_ORDER & sizeOrderIndex dengan ini
+const getSizeOrderMap = async (connection) => {
+  const [rows] = await connection.query(
+    'SELECT ukuran, kode FROM tukuran WHERE kategori = "" ORDER BY kode',
+  );
+  const map = new Map();
+  rows.forEach((r) =>
+    map.set(r.ukuran.toString().trim().toUpperCase(), r.kode),
+  );
+  return map;
+};
+
+const sizeOrderIndexFromMap = (sizeOrderMap, size) => {
+  const key = (size || "").toString().trim().toUpperCase();
+  return sizeOrderMap.has(key)
+    ? sizeOrderMap.get(key)
+    : Number.MAX_SAFE_INTEGER; // size tak dikenal tetap ditaruh paling akhir
 };
 
 const LENGAN_SUFFIX_TRIGGERS = [
@@ -766,14 +780,13 @@ const resolveOrCreateStokBarang = async (
   if (existingRows.length > 0) {
     kode = existingRows[0].brg_kode;
   } else {
-    // Kombinasi baru — generate kode & insert langsung (bukan draft)
     const { jenisKainKode, warnaKode } = await resolveJenisKainWarnaKode(
       connection,
       jenisKain,
       warna,
     );
     const prefix = `${jeniskaos}-${jenisKainKode}-${warnaKode}`;
-    kode = await generateNewDraftKode(connection, prefix); // reuse counter, walau namanya "draft" cuma generate nomor urut
+    kode = await generateNewDraftKode(connection, prefix);
 
     const year = new Date().getFullYear().toString();
     const [bcdRows] = await connection.query(
@@ -790,9 +803,7 @@ const resolveOrCreateStokBarang = async (
     );
   }
 
-  // 2. Barcode continuation — pola identik finalizeCustomBarang/barangDcFormService:
-  //    kalau kode ini sudah punya varian ukuran, lanjutkan prefix+urutan yang sama;
-  //    kalau belum, generate prefix baru dari bcdId.
+  // 2. Barcode continuation — sama seperti sebelumnya
   const [existingBarcodeRows] = await connection.query(
     `SELECT brgd_barcode FROM tbarangdc_dtl
      WHERE brgd_kode = ? AND brgd_barcode IS NOT NULL AND brgd_barcode <> ''`,
@@ -820,10 +831,18 @@ const resolveOrCreateStokBarang = async (
     nextSeq = 0;
   }
 
-  // 3. Insert varian ukuran yang BELUM ADA saja — kalau ukurannya sudah
-  // pernah dibuat sebelumnya (kasus "cuma nambah size baru"), skip, jangan
-  // dobel/timpa barcode yang sudah ada.
-  for (const item of sizesWithQty) {
+  // [FIX] Urutkan sizesWithQty berdasarkan master tukuran sebelum insert,
+  // supaya barcode selalu ngurut sesuai konvensi (ALLSIZE/XS/S/M/L/XL...)
+  // apapun urutan pengiriman dari frontend.
+  const sizeOrderMap = await getSizeOrderMap(connection);
+  const sortedSizesWithQty = [...sizesWithQty].sort(
+    (a, b) =>
+      sizeOrderIndexFromMap(sizeOrderMap, a.size) -
+      sizeOrderIndexFromMap(sizeOrderMap, b.size),
+  );
+
+  // 3. Insert varian ukuran yang BELUM ADA saja
+  for (const item of sortedSizesWithQty) {
     const [existingVariant] = await connection.query(
       "SELECT 1 FROM tbarangdc_dtl WHERE brgd_kode = ? AND brgd_ukuran = ? LIMIT 1",
       [kode, item.size],
@@ -895,9 +914,17 @@ const finalizeBarangDraft = async (connection, phNomor, user, { newKtgp }) => {
     "SELECT DISTINCT phs_size FROM tpengajuanharga_size WHERE phs_nomor = ?",
     [phNomor],
   );
+
+  // [FIX] Ambil urutan langsung dari master tukuran, bukan array hardcoded
+  // yang bisa basi/typo dibanding master (mis. "OVERSIZED" vs "OVERSIZE").
+  const sizeOrderMap = await getSizeOrderMap(connection);
   const sortedSizes = sizeRowsRaw
     .map((r) => r.phs_size)
-    .sort((a, b) => sizeOrderIndex(a) - sizeOrderIndex(b));
+    .sort(
+      (a, b) =>
+        sizeOrderIndexFromMap(sizeOrderMap, a) -
+        sizeOrderIndexFromMap(sizeOrderMap, b),
+    );
 
   // [UBAH] Karena finalKode SELALU baru (belum pernah ada di tbarangdc
   // sebelumnya), barcode-nya juga selalu mulai dari seq 0 — nggak perlu lagi
