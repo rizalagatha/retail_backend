@@ -814,22 +814,20 @@ const resolveOrCreateStokBarang = async (
   }
 
   // 2. Barcode continuation — sama seperti sebelumnya
+  // Ambil prefix dari barcode existing kalau ada (biar konsisten dengan
+  // varian yang sudah ada), fallback bikin dari bcdId kalau ini kode baru.
   const [existingBarcodeRows] = await connection.query(
     `SELECT brgd_barcode FROM tbarangdc_dtl
-     WHERE brgd_kode = ? AND brgd_barcode IS NOT NULL AND brgd_barcode <> ''`,
+   WHERE brgd_kode = ? AND brgd_barcode IS NOT NULL AND brgd_barcode <> ''
+   LIMIT 1`,
     [kode],
   );
 
   let barcodePrefix;
-  let nextSeq;
   if (existingBarcodeRows.length > 0) {
     const sample = existingBarcodeRows[0].brgd_barcode;
     barcodePrefix =
       sample.length > 2 ? sample.substring(0, sample.length - 2) : sample;
-    nextSeq = existingBarcodeRows.reduce((max, row) => {
-      const seqPart = parseInt(row.brgd_barcode.slice(-2), 10);
-      return isNaN(seqPart) ? max : Math.max(max, seqPart + 1);
-    }, 0);
   } else {
     const [brgRow] = await connection.query(
       "SELECT brg_bcdid FROM tbarangdc WHERE brg_kode = ? LIMIT 1",
@@ -838,12 +836,8 @@ const resolveOrCreateStokBarang = async (
     const bcdId = brgRow[0]?.brg_bcdid || 0;
     const yearYY = new Date().getFullYear().toString().substring(2);
     barcodePrefix = `${yearYY}${bcdId.toString().padStart(4, "0")}`;
-    nextSeq = 0;
   }
 
-  // [FIX] Urutkan sizesWithQty berdasarkan master tukuran sebelum insert,
-  // supaya barcode selalu ngurut sesuai konvensi (ALLSIZE/XS/S/M/L/XL...)
-  // apapun urutan pengiriman dari frontend.
   const sizeOrderMap = await getSizeOrderMap(connection);
   const sortedSizesWithQty = [...sizesWithQty].sort(
     (a, b) =>
@@ -851,7 +845,6 @@ const resolveOrCreateStokBarang = async (
       sizeOrderIndexFromMap(sizeOrderMap, b.size),
   );
 
-  // 3. Insert varian ukuran yang BELUM ADA saja
   for (const item of sortedSizesWithQty) {
     const [existingVariant] = await connection.query(
       "SELECT 1 FROM tbarangdc_dtl WHERE brgd_kode = ? AND brgd_ukuran = ? LIMIT 1",
@@ -859,13 +852,17 @@ const resolveOrCreateStokBarang = async (
     );
     if (existingVariant.length > 0) continue;
 
-    const barcode = `${barcodePrefix}${nextSeq.toString().padStart(2, "0")}`;
-    nextSeq++;
+    // [FIX] Suffix = kode resmi ukuran dari master tukuran, bukan counter
+    const sizeKode = sizeOrderIndexFromMap(sizeOrderMap, item.size);
+    const seqStr = (sizeKode === Number.MAX_SAFE_INTEGER ? 99 : sizeKode)
+      .toString()
+      .padStart(2, "0");
+    const barcode = `${barcodePrefix}${seqStr}`;
 
     await connection.query(
       `INSERT INTO tbarangdc_dtl
         (brgd_kode, brgd_barcode, brgd_ukuran, brgd_hpp, brgd_harga, brgd_min, brgd_max, brgd_mindc, brgd_maxdc)
-       VALUES (?, ?, ?, 0, ?, 0, 0, 0, 0)`,
+      VALUES (?, ?, ?, 0, ?, 0, 0, 0, 0)`,
       [kode, barcode, item.size, item.hargaPcs || 0],
     );
   }
@@ -941,15 +938,22 @@ const finalizeBarangDraft = async (connection, phNomor, user, { newKtgp }) => {
   // cek barcode existing punya kode lain.
   const yearYY = new Date().getFullYear().toString().substring(2);
   const barcodePrefix = `${yearYY}${bcdId.toString().padStart(4, "0")}`;
-  let nextSeq = 0;
 
   for (const size of sortedSizes) {
-    const barcode = `${barcodePrefix}${nextSeq.toString().padStart(2, "0")}`;
-    nextSeq++;
+    // [FIX] Suffix barcode WAJIB pakai kode resmi dari master tukuran
+    // (00=ALLSIZE, 01=XS, 02=S, ...), BUKAN counter berjalan — supaya
+    // ukuran yang sama selalu jatuh di digit yang sama meskipun size
+    // lain di tengahnya kosong/dilewati (mis. 3XL/4XL tidak diorder).
+    const sizeKode = sizeOrderIndexFromMap(sizeOrderMap, size);
+    const seqStr = (sizeKode === Number.MAX_SAFE_INTEGER ? 99 : sizeKode)
+      .toString()
+      .padStart(2, "0");
+    const barcode = `${barcodePrefix}${seqStr}`;
+
     await connection.query(
       `INSERT INTO tbarangdc_dtl
         (brgd_kode, brgd_barcode, brgd_ukuran, brgd_hpp, brgd_harga, brgd_min, brgd_max, brgd_mindc, brgd_maxdc, brgd_ph_nomor)
-       VALUES (?, ?, ?, 0, 0, 0, 0, 0, 0, ?)`,
+      VALUES (?, ?, ?, 0, 0, 0, 0, 0, 0, ?)`,
       [finalKode, barcode, size, phNomor],
     );
   }
