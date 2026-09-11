@@ -219,7 +219,91 @@ const getDynamicCabangOptions = async (filters, user) => {
   return rows;
 };
 
+// BARU: Ringkasan Grand Total untuk rentang bulan (dipakai khusus export sementara)
+const getRangeSummary = async (filters) => {
+  const { tahun, bulanDari, bulanSampai } = filters;
+
+  const query = `
+        WITH V_Nominal AS (
+            SELECT 
+                h.inv_cab AS cabang, YEAR(h.inv_tanggal) AS tahun, MONTH(h.inv_tanggal) AS bulan,
+                SUM(d.invd_jumlah) AS jumlah, 0 AS nominal
+            FROM tinv_hdr h
+            JOIN tinv_dtl d ON h.inv_nomor = d.invd_inv_nomor
+            WHERE h.inv_sts_pro = 0
+            GROUP BY 1, 2, 3
+
+            UNION ALL
+
+            SELECT 
+                cabang, YEAR(tanggal) AS tahun, MONTH(tanggal) AS bulan,
+                0 AS jumlah, SUM(nominal) AS nominal
+            FROM v_sales_harian
+            GROUP BY 1, 2, 3
+
+            UNION ALL
+
+            SELECT 
+                inv_cab AS cabang, YEAR(inv_tanggal) AS tahun, MONTH(inv_tanggal) AS bulan,
+                0 AS jumlah, -SUM(COALESCE(inv_mp_biaya_platform, 0)) AS nominal
+            FROM tinv_hdr
+            WHERE inv_sts_pro = 0
+            GROUP BY 1, 2, 3
+
+            UNION ALL
+
+            SELECT 
+                rh.rj_cab AS cabang, YEAR(rh.rj_tanggal) AS tahun, MONTH(rh.rj_tanggal) AS bulan,
+                0 AS jumlah,
+                -SUM(
+                    CASE 
+                        WHEN rh.rj_jenis = 'N' THEN (
+                            SELECT GREATEST(0, 
+                                IFNULL(SUM(rd.rjd_jumlah * (rd.rjd_harga - rd.rjd_diskon)), 0) - 
+                                IFNULL((SELECT SUM(inv_rj_rp) FROM tinv_hdr WHERE inv_rj_nomor = rh.rj_nomor), 0)
+                            )
+                            FROM trj_dtl rd WHERE rd.rjd_nomor = rh.rj_nomor
+                        )
+                        WHEN rh.rj_jenis = 'Y' THEN (
+                            SELECT IFNULL(SUM(rfd_refund), 0) 
+                            FROM trefund_dtl 
+                            WHERE rfd_notrs = rh.rj_inv
+                        )
+                        ELSE 0
+                    END
+                ) AS nominal
+            FROM trj_hdr rh
+            GROUP BY 1, 2, 3
+        ),
+        V_Nominal_Agg AS (
+            SELECT cabang, tahun, bulan, SUM(jumlah) AS jumlah, SUM(nominal) AS nominal
+            FROM V_Nominal
+            GROUP BY cabang, tahun, bulan
+        ),
+        TargetData AS (
+            SELECT kode_gudang AS cabang, tahun, bulan, SUM(target_omset) AS target
+            FROM kpi.ttarget_kaosan
+            GROUP BY kode_gudang, tahun, bulan
+        )
+
+        SELECT 
+            IFNULL(SUM(n.jumlah), 0) AS total_qty,
+            IFNULL(SUM(n.nominal), 0) AS total_nominal,
+            IFNULL(
+                (SELECT SUM(target) FROM TargetData WHERE tahun = ? AND bulan BETWEEN ? AND ?), 
+                0
+            ) AS total_target
+        FROM V_Nominal_Agg n
+        WHERE n.tahun = ? AND n.bulan BETWEEN ? AND ?;
+    `;
+
+  const params = [tahun, bulanDari, bulanSampai, tahun, bulanDari, bulanSampai];
+  const [rows] = await pool.query(query, params);
+  return rows[0]; // { total_qty, total_nominal, total_target }
+};
+
 module.exports = {
   getList,
   getDynamicCabangOptions,
+  getRangeSummary, // BARU
 };

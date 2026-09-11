@@ -25,7 +25,40 @@ const getDynamicCabangOptions = async (req, res) => {
   }
 };
 
+// BARU
+const getRangeSummary = async (req, res) => {
+  try {
+    const { tahun, bulanDari, bulanSampai } = req.query;
+
+    if (!tahun || !bulanDari || !bulanSampai) {
+      return res
+        .status(400)
+        .json({
+          message: "Parameter tahun, bulanDari, dan bulanSampai diperlukan.",
+        });
+    }
+
+    if (Number(bulanDari) > Number(bulanSampai)) {
+      return res
+        .status(400)
+        .json({
+          message: "Bulan 'Dari' tidak boleh lebih besar dari bulan 'Sampai'.",
+        });
+    }
+
+    const data = await service.getRangeSummary(req.query);
+    res.json(data);
+  } catch (error) {
+    console.error(
+      "Error in getRangeSummary controller for Sales vs Target:",
+      error,
+    );
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getList,
   getDynamicCabangOptions,
+  getRangeSummary, // BARU
 };
