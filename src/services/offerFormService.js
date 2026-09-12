@@ -817,13 +817,16 @@ const searchApprovedPriceProposals = async (params) => {
   const { cabang, customerKode, term, statuses, onlyCustom } = params;
   const searchTerm = `%${term}%`;
 
-  let allowedStatuses = statuses ? statuses.split(",") : ["DRAFT"];
+  // [DIUBAH] Default sekarang termasuk ACC_CUSTOMER selain DRAFT — Pengajuan
+  // Harga yang sudah di-ACC Customer juga boleh ditarik ke Penawaran, sesuai
+  // update flow (sebelumnya cuma DRAFT yang boleh).
+  let allowedStatuses = statuses
+    ? statuses.split(",")
+    : ["DRAFT", "ACC_CUSTOMER"];
 
   // [FIX] Data lama (dibuat sebelum kolom ph_status ada): ph_status tetap
   // 'DRAFT' di DB walau sudah pernah di-approve (ph_apv terisi). Kalau SO
-  // minta ACC_FINANCE, sertakan juga kandidat legacy ini — karena secara
-  // bisnis mereka SUDAH final, cuma datanya belum pernah "dimigrasikan"
-  // ke sistem status baru.
+  // minta ACC_FINANCE, sertakan juga kandidat legacy ini.
   if (allowedStatuses.includes("ACC_FINANCE")) {
     allowedStatuses = [...allowedStatuses, "LEGACY_APPROVED"];
   }
