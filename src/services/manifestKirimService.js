@@ -67,7 +67,7 @@ const getList = async (filters) => {
       h.mp_gudang AS Gudang,
       g.gdg_nama AS NamaGudang,
       h.mp_tujuan AS Tujuan,
-      gt.gdg_nama AS NamaTujuan,
+      IFNULL(gt.gdg_nama, IFNULL(ct.cus_nama, h.mp_tujuan)) AS NamaTujuan,
       h.mp_jenis_kirim AS JenisKirim,
       h.mp_driver AS Driver,
       h.mp_plat_nomor AS PlatNomor,
@@ -82,10 +82,12 @@ const getList = async (filters) => {
       h.user_create AS Usr,
       h.date_create AS DateCreate,
       CASE WHEN h.mp_ttd_pengirim IS NOT NULL AND h.mp_ttd_pengirim != '' THEN 'Y' ELSE 'N' END AS HasTtdPengirim,
-      CASE WHEN h.mp_ttd_driver IS NOT NULL AND h.mp_ttd_driver != '' THEN 'Y' ELSE 'N' END AS HasTtdDriver
+      CASE WHEN h.mp_ttd_driver IS NOT NULL AND h.mp_ttd_driver != '' THEN 'Y' ELSE 'N' END AS HasTtdDriver,
+      CASE WHEN h.mp_ttd_driver IS NOT NULL AND h.mp_ttd_driver != '' THEN 'Y' ELSE 'N' END AS HasTtdPenerima
     FROM tmanifest_pengiriman_hdr h
     LEFT JOIN tgudang g ON g.gdg_kode = h.mp_gudang
     LEFT JOIN tgudang gt ON gt.gdg_kode = h.mp_tujuan
+    LEFT JOIN tcustomer ct ON ct.cus_kode = h.mp_tujuan
     WHERE ${whereConditions.join(" AND ")}
     ORDER BY h.date_create DESC;
   `;
@@ -106,7 +108,7 @@ const getDetails = async (nomor) => {
       h.mp_gudang AS gudang,
       g.gdg_nama AS namaGudang,
       h.mp_tujuan AS tujuan,
-      gt.gdg_nama AS namaTujuan,
+      IFNULL(gt.gdg_nama, IFNULL(ct.cus_nama, h.mp_tujuan)) AS namaTujuan,
       h.mp_jenis_kirim AS jenisKirim,
       h.mp_driver AS driver,
       h.mp_plat_nomor AS platNomor,
@@ -120,6 +122,7 @@ const getDetails = async (nomor) => {
       h.mp_status AS status,
       h.mp_ttd_pengirim AS ttdPengirim,
       h.mp_ttd_driver AS ttdDriver,
+      h.mp_ttd_driver AS ttdPenerima,
       h.user_create AS userCreate,
       h.date_create AS dateCreate,
       h.user_modified AS userModified,
@@ -127,6 +130,7 @@ const getDetails = async (nomor) => {
     FROM tmanifest_pengiriman_hdr h
     LEFT JOIN tgudang g ON g.gdg_kode = h.mp_gudang
     LEFT JOIN tgudang gt ON gt.gdg_kode = h.mp_tujuan
+    LEFT JOIN tcustomer ct ON ct.cus_kode = h.mp_tujuan
     WHERE h.mp_nomor = ?;
   `;
     const [headerRows] = await pool.query(headerQuery, [nomor]);
@@ -142,20 +146,23 @@ const getDetails = async (nomor) => {
       d.mpd_nama_barang AS namaBarang,
       CASE 
         WHEN d.mpd_nama_barang IS NOT NULL AND TRIM(d.mpd_nama_barang) != '' THEN 'Barang Lain-lain' 
+        WHEN d.mpd_sj_nomor LIKE 'KPR.INV%' OR ih.inv_nomor IS NOT NULL THEN 'Invoice KPR'
         ELSE 'Barang SJ' 
       END AS kategori,
-      sjh.sj_tanggal AS sjTanggal,
+      IFNULL(sjh.sj_tanggal, ih.inv_tanggal) AS sjTanggal,
       d.mpd_store AS storeKode,
-      g.gdg_nama AS storeNama,
+      IFNULL(g.gdg_nama, IFNULL(c.cus_nama, d.mpd_store)) AS storeNama,
       d.mpd_koli AS koli,
       d.mpd_qty AS qty,
       d.mpd_ket AS keterangan,
       d.mpd_referensi_gabung AS referensiGabung,
-      sjh.sj_mt_nomor AS noMinta,
-      (SELECT GROUP_CONCAT(DISTINCT pl_nomor SEPARATOR ', ') FROM tpacking_list_hdr WHERE pl_sj_nomor = d.mpd_sj_nomor) AS noPackingList
+      IFNULL(sjh.sj_mt_nomor, ih.inv_nomor_so) AS noMinta,
+      (SELECT GROUP_CONCAT(DISTINCT pl_nomor SEPARATOR ', ') FROM tpacking_list_hdr WHERE pl_sj_nomor = d.mpd_sj_nomor OR pl_sj_nomor = ih.inv_nomor_so) AS noPackingList
     FROM tmanifest_pengiriman_dtl d
     LEFT JOIN tdc_sj_hdr sjh ON sjh.sj_nomor = d.mpd_sj_nomor
+    LEFT JOIN tinv_hdr ih ON ih.inv_nomor = d.mpd_sj_nomor
     LEFT JOIN tgudang g ON g.gdg_kode = d.mpd_store
+    LEFT JOIN tcustomer c ON c.cus_kode = d.mpd_store
     WHERE d.mpd_nomor = ?
     ORDER BY d.mpd_iddrec ASC;
   `;
@@ -215,6 +222,56 @@ const getAvailableSj = async (gudang, storeSearch) => {
 };
 
 /**
+ * Retrieves list of Invoice KPR ready to be assigned to a Manifest.
+ * Filtering: (inv_cab = 'KPR' OR inv_nomor LIKE 'KPR.INV%'), inv_manifest_nomor IS NULL/empty
+ */
+const getAvailableInvKpr = async (gudang, search) => {
+    let params = [];
+    let whereConditions = [
+        "(h.inv_cab = 'KPR' OR h.inv_nomor LIKE 'KPR.INV%')",
+        "(h.inv_manifest_nomor IS NULL OR TRIM(h.inv_manifest_nomor) = '')",
+    ];
+
+    if (search && search.trim() !== "") {
+        whereConditions.push(
+            "(h.inv_nomor LIKE ? OR h.inv_cus_kode LIKE ? OR c.cus_nama LIKE ? OR h.inv_nomor_so LIKE ?)",
+        );
+        const pattern = `%${search.trim()}%`;
+        params.push(pattern, pattern, pattern, pattern);
+    }
+
+    const query = `
+    SELECT 
+      h.inv_nomor AS sjNomor,
+      h.inv_nomor AS invNomor,
+      h.inv_tanggal AS sjTanggal,
+      h.inv_tanggal AS invTanggal,
+      h.inv_cus_kode AS storeKode,
+      h.inv_cus_kode AS customerKode,
+      IFNULL(c.cus_nama, h.inv_cus_kode) AS storeNama,
+      IFNULL(c.cus_nama, h.inv_cus_kode) AS customerNama,
+      c.cus_alamat AS customerAlamat,
+      c.cus_kota AS customerKota,
+      h.inv_nomor_so AS noMinta,
+      h.inv_nomor_so AS noRefSj,
+      h.inv_ket AS keterangan,
+      'Invoice KPR' AS tipeDokumen,
+      IFNULL(SUM(d.invd_jumlah), 0) AS totalQty,
+      (SELECT GROUP_CONCAT(DISTINCT pl_nomor SEPARATOR ', ') FROM tpacking_list_hdr WHERE pl_sj_nomor = h.inv_nomor OR pl_sj_nomor = h.inv_nomor_so) AS noPackingList
+    FROM tinv_hdr h
+    LEFT JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+    LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+    WHERE ${whereConditions.join(" AND ")}
+    GROUP BY h.inv_nomor, h.inv_tanggal, h.inv_cus_kode, c.cus_nama, c.cus_alamat, c.cus_kota, h.inv_nomor_so, h.inv_ket
+    ORDER BY h.date_create DESC, h.inv_tanggal DESC, h.inv_nomor DESC
+    LIMIT 200;
+  `;
+
+    const [rows] = await pool.query(query, params);
+    return rows;
+};
+
+/**
  * Saves (Create/Update) Manifest Kirim.
  */
 const saveData = async (payload, user) => {
@@ -235,23 +292,23 @@ const saveData = async (payload, user) => {
                 .toUpperCase();
             if (!primaryStore) {
                 throw new Error(
-                    `Surat Jalan ${sjItems[0].sjNomor} tidak memiliki kode toko tujuan.`,
+                    `Dokumen ${sjItems[0].sjNomor} tidak memiliki kode tujuan (store/customer).`,
                 );
             }
 
-            // Pastikan semua SJ dalam manifest menuju ke toko yang sama
-            for (const sj of sjItems) {
-                const curStore = String(sj.storeKode || "")
+            // Pastikan semua dokumen dalam manifest menuju ke tujuan yang sama
+            for (const doc of sjItems) {
+                const curStore = String(doc.storeKode || "")
                     .trim()
                     .toUpperCase();
                 if (curStore !== primaryStore) {
                     throw new Error(
-                        `Surat Jalan ${sj.sjNomor} bertujuan ke "${curStore}", tidak sama dengan tujuan manifest (${primaryStore}). Semua SJ dalam satu manifest harus menuju ke store yang sama.`,
+                        `Dokumen ${doc.sjNomor} bertujuan ke "${curStore}", tidak sama dengan tujuan manifest (${primaryStore}). Semua dokumen dalam satu manifest harus menuju ke store/customer yang sama.`,
                     );
                 }
             }
 
-            // Selaraskan header.tujuan dengan store tujuan SJ
+            // Selaraskan header.tujuan dengan store/customer tujuan
             header.tujuan = primaryStore;
         } else {
             if (!header.tujuan || String(header.tujuan).trim() === "") {
@@ -296,6 +353,13 @@ const saveData = async (payload, user) => {
         const hasBothTtd = Boolean(header.ttdPengirim && header.ttdDriver);
         const finalStatus = header.status || (hasBothTtd ? "DIKIRIM" : "DRAFT");
 
+        const parseBerat = (val) => {
+            if (val === undefined || val === null || val === "") return 0;
+            const num = parseFloat(String(val).replace(",", "."));
+            return isNaN(num) ? 0 : Math.max(0, num);
+        };
+        const beratKgVal = parseBerat(header.beratKg);
+
         if (isNew) {
             manifestNomor = await generateNewManifestNumber(
                 header.gudang,
@@ -322,7 +386,7 @@ const saveData = async (payload, user) => {
                 totalSj,
                 totalKoli,
                 totalQty,
-                header.beratKg || 0,
+                beratKgVal,
                 header.keterangan || "",
                 finalStatus,
                 header.ttdPengirim || null,
@@ -341,16 +405,12 @@ const saveData = async (payload, user) => {
             }
 
             const existing = existingRows[0];
-            const hasSignedBoth = Boolean(
-                existing.mp_ttd_pengirim &&
-                String(existing.mp_ttd_pengirim).trim() !== "" &&
+            // Sesuai aturan: Dokumen hanya terkunci (tidak bisa diedit) ketika sudah ada TTD Penerima
+            const hasTtdPenerima = Boolean(
                 existing.mp_ttd_driver &&
                 String(existing.mp_ttd_driver).trim() !== "",
             );
-            const isDikirimOrDone = ["DIKIRIM", "SELESAI", "TERKIRIM"].includes(
-                String(existing.mp_status || "").toUpperCase(),
-            );
-            const isLocked = hasSignedBoth || isDikirimOrDone;
+            const isLocked = hasTtdPenerima;
 
             if (isLocked) {
                 if (existing.mp_jenis_kirim === "EKSPEDISI") {
@@ -370,7 +430,7 @@ const saveData = async (payload, user) => {
                     };
                 } else {
                     throw new Error(
-                        "Manifest sudah dikirim / ditandatangani oleh pengirim dan penerima. Perubahan data tidak diizinkan.",
+                        "Manifest sudah ditandatangani oleh penerima. Perubahan data tidak diizinkan.",
                     );
                 }
             }
@@ -378,6 +438,11 @@ const saveData = async (payload, user) => {
             // Release SJ lama yang terikat ke manifest ini
             await connection.query(
                 "UPDATE tdc_sj_hdr SET sj_manifest_nomor = NULL WHERE sj_manifest_nomor = ?",
+                [manifestNomor],
+            );
+            // Release Invoice KPR lama yang terikat ke manifest ini
+            await connection.query(
+                "UPDATE tinv_hdr SET inv_manifest_nomor = NULL WHERE inv_manifest_nomor = ?",
                 [manifestNomor],
             );
 
@@ -402,7 +467,7 @@ const saveData = async (payload, user) => {
                 totalSj,
                 totalKoli,
                 totalQty,
-                header.beratKg || 0,
+                beratKgVal,
                 header.keterangan || "",
                 finalStatus,
                 header.ttdPengirim || null,
@@ -455,14 +520,32 @@ const saveData = async (payload, user) => {
             await connection.query(detailSql, [detailValues]);
         }
 
-        // Bind Surat Jalan yang dipilih ke Manifest (hanya yang memiliki nomor SJ)
-        const sjList = items
+        // Bind Dokumen (Surat Jalan & Invoice KPR) yang dipilih ke Manifest
+        const docList = items
             .filter((i) => i.sjNomor && String(i.sjNomor).trim() !== "")
             .map((i) => String(i.sjNomor).trim());
+
+        const sjList = [];
+        const invList = [];
+
+        for (const docNo of docList) {
+            if (docNo.toUpperCase().startsWith("KPR.INV")) {
+                invList.push(docNo);
+            } else {
+                sjList.push(docNo);
+            }
+        }
+
         if (sjList.length > 0) {
             await connection.query(
                 "UPDATE tdc_sj_hdr SET sj_manifest_nomor = ? WHERE sj_nomor IN (?)",
                 [manifestNomor, sjList],
+            );
+        }
+        if (invList.length > 0) {
+            await connection.query(
+                "UPDATE tinv_hdr SET inv_manifest_nomor = ? WHERE inv_nomor IN (?)",
+                [manifestNomor, invList],
             );
         }
 
@@ -488,7 +571,7 @@ const remove = async (nomor) => {
         await connection.beginTransaction();
 
         const [headers] = await connection.query(
-            "SELECT mp_status FROM tmanifest_pengiriman_hdr WHERE mp_nomor = ?",
+            "SELECT mp_status, mp_ttd_driver FROM tmanifest_pengiriman_hdr WHERE mp_nomor = ?",
             [nomor],
         );
 
@@ -496,9 +579,20 @@ const remove = async (nomor) => {
             throw new Error("Manifest Kirim tidak ditemukan.");
         }
 
-        // Lepaskan keterikatan SJ dari Manifest ini
+        const existing = headers[0];
+        if (existing.mp_ttd_driver && String(existing.mp_ttd_driver).trim() !== "") {
+            throw new Error(
+                "Manifest sudah ditandatangani oleh penerima. Data tidak dapat dihapus.",
+            );
+        }
+
+        // Lepaskan keterikatan SJ & Invoice KPR dari Manifest ini
         await connection.query(
             "UPDATE tdc_sj_hdr SET sj_manifest_nomor = NULL WHERE sj_manifest_nomor = ?",
+            [nomor],
+        );
+        await connection.query(
+            "UPDATE tinv_hdr SET inv_manifest_nomor = NULL WHERE inv_manifest_nomor = ?",
             [nomor],
         );
 
@@ -599,6 +693,8 @@ const exportDetails = async (filters) => {
         );
     }
 
+    const whereClause = whereConditions.join(" AND ");
+
     const query = `
     SELECT 
       h.mp_nomor AS 'Nomor Manifest',
@@ -606,38 +702,179 @@ const exportDetails = async (filters) => {
       h.mp_jam AS 'Jam',
       h.mp_status AS 'Status',
       g.gdg_nama AS 'Gudang Pengirim',
-      IFNULL(gt.gdg_nama, h.mp_tujuan) AS 'Tujuan Manifest',
       h.mp_jenis_kirim AS 'Jenis Kirim',
       h.mp_driver AS 'Driver',
       h.mp_plat_nomor AS 'Plat Nomor',
       h.mp_ekspedisi AS 'Ekspedisi',
       h.mp_no_resi AS 'No Resi',
-      d.mpd_sj_nomor AS 'Nomor SJ',
-      sjh.sj_tanggal AS 'Tanggal SJ',
-      d.mpd_store AS 'Kode Store SJ',
-      gs.gdg_nama AS 'Nama Store SJ',
-      sjh.sj_mt_nomor AS 'No Minta Barang',
-      d.mpd_koli AS 'Jml Koli',
-      d.mpd_qty AS 'Qty',
-      d.mpd_nama_barang AS 'Item / Barang',
+      IFNULL(d.mpd_sj_nomor, d.mpd_nama_barang) AS 'Nomer Dokumen',
+      d.mpd_sj_nomor AS _rawSjNomor,
+      d.mpd_nama_barang AS _rawNamaBarang,
+      COALESCE(sjh.sj_tanggal, ih.inv_tanggal, h.mp_tanggal) AS 'Tgl Dokumen',
+      d.mpd_store AS 'Kode Tujuan',
+      IFNULL(gs.gdg_nama, IFNULL(cs.cus_nama, d.mpd_store)) AS 'Nama Tujuan',
+      COALESCE(sjh.sj_mt_nomor, ih.inv_nomor_so, '-') AS 'No Minta / Ref',
+      IFNULL((
+        SELECT GROUP_CONCAT(DISTINCT pl_nomor SEPARATOR ', ') 
+        FROM tpacking_list_hdr 
+        WHERE pl_sj_nomor = d.mpd_sj_nomor OR (ih.inv_nomor_so IS NOT NULL AND pl_sj_nomor = ih.inv_nomor_so)
+      ), '-') AS 'No Packing List',
+      d.mpd_qty AS 'Qty (Pcs)',
+      d.mpd_koli AS 'Koli',
+      h.mp_berat_kg AS 'Berat (Kg)',
       CASE 
-        WHEN d.mpd_nama_barang IS NOT NULL AND TRIM(d.mpd_nama_barang) != '' THEN 'Barang Lain-lain' 
-        ELSE 'Barang SJ' 
+        WHEN d.mpd_sj_nomor IS NULL OR TRIM(d.mpd_sj_nomor) = '' THEN 'Barang Lain-lain'
+        WHEN UPPER(d.mpd_sj_nomor) LIKE '%INV%' THEN 'Barang Invoice'
+        ELSE 'Barang SJ'
       END AS 'Kategori',
-      d.mpd_ket AS 'Keterangan SJ',
+      d.mpd_ket AS 'Keterangan',
       h.user_create AS 'User Create'
     FROM tmanifest_pengiriman_hdr h
     INNER JOIN tmanifest_pengiriman_dtl d ON d.mpd_nomor = h.mp_nomor
     LEFT JOIN tgudang g ON g.gdg_kode = h.mp_gudang
-    LEFT JOIN tgudang gt ON gt.gdg_kode = h.mp_tujuan
     LEFT JOIN tgudang gs ON gs.gdg_kode = d.mpd_store
+    LEFT JOIN tcustomer cs ON cs.cus_kode = d.mpd_store
     LEFT JOIN tdc_sj_hdr sjh ON sjh.sj_nomor = d.mpd_sj_nomor
-    WHERE ${whereConditions.join(" AND ")}
+    LEFT JOIN tinv_hdr ih ON ih.inv_nomor = d.mpd_sj_nomor
+    WHERE ${whereClause}
     ORDER BY h.mp_tanggal DESC, h.mp_nomor DESC, d.mpd_iddrec ASC;
   `;
 
     const [rows] = await pool.query(query, params);
-    return rows;
+    if (!rows || rows.length === 0) return [];
+
+    const sjSet = new Set();
+    const invSet = new Set();
+    for (const r of rows) {
+        const doc = r._rawSjNomor;
+        if (doc && String(doc).trim() !== "") {
+            const cleanDoc = String(doc).trim();
+            if (cleanDoc.toUpperCase().includes("INV")) {
+                invSet.add(cleanDoc);
+            } else {
+                sjSet.add(cleanDoc);
+            }
+        }
+    }
+
+    const sjList = Array.from(sjSet);
+    const invList = Array.from(invSet);
+    const docItemsMap = {};
+
+    // 1. Batch query rincian isi item Surat Jalan
+    if (sjList.length > 0) {
+        const [sjRows] = await pool.query(
+            `
+            SELECT 
+                sjd.sjd_nomor,
+                COALESCE(
+                    NULLIF(TRIM(CONCAT(
+                        IFNULL(b.brg_jeniskaos,''), ' ',
+                        IFNULL(b.brg_tipe,''), ' ',
+                        IFNULL(b.brg_lengan,''), ' ',
+                        IFNULL(b.brg_jeniskain,''), ' ',
+                        IFNULL(b.brg_warna,'')
+                    )), ''),
+                    sjd.sjd_kode
+                ) AS nama_barang,
+                SUM(sjd.sjd_jumlah) AS subtotal_qty,
+                GROUP_CONCAT(CONCAT(sjd.sjd_ukuran, ': ', sjd.sjd_jumlah) ORDER BY sjd.sjd_ukuran SEPARATOR ', ') AS rincian_ukuran
+            FROM tdc_sj_dtl sjd
+            LEFT JOIN tbarangdc b ON b.brg_kode = sjd.sjd_kode
+            WHERE sjd.sjd_nomor IN (?)
+            GROUP BY sjd.sjd_nomor, nama_barang
+        `,
+            [sjList],
+        );
+
+        for (const item of sjRows) {
+            if (!docItemsMap[item.sjd_nomor]) docItemsMap[item.sjd_nomor] = [];
+            const detailStr = item.rincian_ukuran
+                ? ` (${item.subtotal_qty} pcs: ${item.rincian_ukuran})`
+                : ` (${item.subtotal_qty} pcs)`;
+            docItemsMap[item.sjd_nomor].push(`${item.nama_barang}${detailStr}`);
+        }
+    }
+
+    // 2. Batch query rincian isi item Invoice KPR
+    if (invList.length > 0) {
+        const [invRows] = await pool.query(
+            `
+            SELECT 
+                invd.invd_inv_nomor,
+                COALESCE(
+                    NULLIF(TRIM(CONCAT(
+                        IFNULL(b.brg_jeniskaos,''), ' ',
+                        IFNULL(b.brg_tipe,''), ' ',
+                        IFNULL(b.brg_lengan,''), ' ',
+                        IFNULL(b.brg_jeniskain,''), ' ',
+                        IFNULL(b.brg_warna,'')
+                    )), ''),
+                    sodtf.sd_nama,
+                    invd.invd_kode
+                ) AS nama_barang,
+                SUM(invd.invd_jumlah) AS subtotal_qty,
+                GROUP_CONCAT(CONCAT(invd.invd_ukuran, ': ', invd.invd_jumlah) ORDER BY invd.invd_ukuran SEPARATOR ', ') AS rincian_ukuran
+            FROM tinv_dtl invd
+            LEFT JOIN tbarangdc b ON b.brg_kode = invd.invd_kode
+            LEFT JOIN tsodtf_hdr sodtf ON sodtf.sd_nomor = invd.invd_kode
+            WHERE invd.invd_inv_nomor IN (?)
+            GROUP BY invd.invd_inv_nomor, nama_barang
+        `,
+            [invList],
+        );
+
+        for (const item of invRows) {
+            if (!docItemsMap[item.invd_inv_nomor])
+                docItemsMap[item.invd_inv_nomor] = [];
+            const detailStr = item.rincian_ukuran
+                ? ` (${item.subtotal_qty} pcs: ${item.rincian_ukuran})`
+                : ` (${item.subtotal_qty} pcs)`;
+            docItemsMap[item.invd_inv_nomor].push(
+                `${item.nama_barang}${detailStr}`,
+            );
+        }
+    }
+
+    // 3. Susun data final dengan kolom 'Isi Dokumen'
+    return rows.map((r) => {
+        let isiDokumen = "-";
+        const docNo = r._rawSjNomor;
+        if (!docNo || String(docNo).trim() === "") {
+            isiDokumen = r._rawNamaBarang || "-";
+        } else if (docItemsMap[docNo] && docItemsMap[docNo].length > 0) {
+            isiDokumen = docItemsMap[docNo].join("; ");
+        }
+
+        delete r._rawSjNomor;
+        delete r._rawNamaBarang;
+
+        return {
+            "Nomor Manifest": r["Nomor Manifest"],
+            Tanggal: r["Tanggal"],
+            Jam: r["Jam"],
+            Status: r["Status"],
+            "Gudang Pengirim": r["Gudang Pengirim"],
+            "Jenis Kirim": r["Jenis Kirim"],
+            Driver: r["Driver"],
+            "Plat Nomor": r["Plat Nomor"],
+            Ekspedisi: r["Ekspedisi"],
+            "No Resi": r["No Resi"],
+            "Nomer Dokumen": r["Nomer Dokumen"],
+            "Isi Dokumen": isiDokumen,
+            "Tgl Dokumen": r["Tgl Dokumen"],
+            "Kode Tujuan": r["Kode Tujuan"],
+            "Nama Tujuan": r["Nama Tujuan"],
+            "No Minta / Ref": r["No Minta / Ref"],
+            "No Packing List": r["No Packing List"],
+            "Qty (Pcs)": r["Qty (Pcs)"],
+            Koli: r["Koli"],
+            "Berat (Kg)": Number(r["Berat (Kg)"]) || 0,
+            Kategori: r["Kategori"],
+            Keterangan: r["Keterangan"],
+            "User Create": r["User Create"],
+        };
+    });
 };
 
 module.exports = {
@@ -645,6 +882,7 @@ module.exports = {
     getList,
     getDetails,
     getAvailableSj,
+    getAvailableInvKpr,
     saveData,
     remove,
     updateStatus,
