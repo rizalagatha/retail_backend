@@ -38,15 +38,16 @@ const getForEdit = async (nomor) => {
   const itemsQuery = `
     SELECT 
       d.mskd_kode AS kode,
-      b.brgd_barcode AS barcode,
-      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+      MAX(b.brgd_barcode) AS barcode,
+      MAX(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna))) AS nama,
       d.mskd_ukuran AS ukuran,
-      d.mskd_jumlah AS jumlah,
-      (IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_brg_kode=d.mskd_kode AND m.mst_ukuran=d.mskd_ukuran), 0) + d.mskd_jumlah) AS stok
+      SUM(d.mskd_jumlah) AS jumlah,
+      (IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_brg_kode=d.mskd_kode AND m.mst_ukuran=d.mskd_ukuran), 0) + SUM(d.mskd_jumlah)) AS stok
     FROM tmsk_dtl d
     LEFT JOIN tbarangdc a ON a.brg_kode = d.mskd_kode
     LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mskd_kode AND b.brgd_ukuran = d.mskd_ukuran
-    WHERE d.mskd_nomor = ?;
+    WHERE d.mskd_nomor = ?
+    GROUP BY d.mskd_kode, d.mskd_ukuran;
   `;
   const [items] = await pool.query(itemsQuery, [gudangAsal, nomor]);
 
@@ -79,7 +80,6 @@ const save = async (payload, user) => {
 
     if (isNew) {
       nomorDokumen = await generateNewNomor(user.cabang, header.tanggal);
-      // 1. Generate IDREC baru untuk Transaksi Baru
       currentIdRec = generateIdRec(user.cabang);
       const headerInsertQuery = `
         INSERT INTO tmsk_hdr (
@@ -98,19 +98,14 @@ const save = async (payload, user) => {
         user.kode,
       ]);
     } else {
-      // 2. Jika Edit, kita harus ambil IDREC yang sudah ada di database
-      // agar IDDREC detail tetap konsisten dengan Header-nya
       const [existingHeader] = await connection.query(
         "SELECT msk_idrec FROM tmsk_hdr WHERE msk_nomor = ? AND msk_cab = ?",
         [nomorDokumen, user.cabang],
       );
-
-      if (existingHeader.length > 0) {
-        currentIdRec = existingHeader[0].msk_idrec;
-      } else {
-        // Fallback jika data lama tidak punya idrec (jarang terjadi)
-        currentIdRec = generateIdRec(user.cabang);
-      }
+      currentIdRec =
+        existingHeader.length > 0
+          ? existingHeader[0].msk_idrec
+          : generateIdRec(user.cabang);
 
       const headerUpdateQuery = `
         UPDATE tmsk_hdr SET msk_tanggal = ?, msk_kecab = ?, msk_ket = ?, user_modified = ?, date_modified = NOW()
@@ -124,43 +119,93 @@ const save = async (payload, user) => {
         nomorDokumen,
         user.cabang,
       ]);
+
+      // BARU: revert status unit lama sebelum detail diganti
+      const [oldSerials] = await connection.query(
+        `SELECT mskd_unit_serial FROM tmsk_dtl WHERE mskd_nomor = ? AND mskd_unit_serial IS NOT NULL`,
+        [nomorDokumen],
+      );
+      if (oldSerials.length > 0) {
+        await connection.query(
+          `UPDATE tbarangdc_unit SET unit_status = 'DI_TOKO', unit_lokasi_saat_ini = ? WHERE unit_serial IN (?)`,
+          [user.cabang, oldSerials.map((r) => r.mskd_unit_serial)],
+        );
+      }
     }
 
-    // Hapus detail lama
     await connection.query("DELETE FROM tmsk_dtl WHERE mskd_nomor = ?", [
       nomorDokumen,
     ]);
 
-    // Insert detail baru
+    const movedSerials = [];
+
     if (items.length > 0) {
-      const itemInsertQuery = `
-        INSERT INTO tmsk_dtl (
-            mskd_idrec,    -- Menghubungkan ke Header IDREC
-            mskd_iddrec,   -- ID Unik Baris Detail
-            mskd_nomor, 
-            mskd_kode, 
-            mskd_ukuran, 
-            mskd_jumlah
-        ) VALUES ?;
-      `;
+      const itemValues = [];
+      let rowCounter = 0;
 
-      // 3. Mapping data detail dengan IDDREC
-      const itemValues = items.map((item, index) => {
-        // Format IDDREC: IDREC_HEADER + Index (1, 2, 3...)
-        // Contoh: K08MSK20251204155447.1341
-        const iddrec = `${currentIdRec}${index + 1}`;
+      for (const item of items) {
+        const qty = Number(item.jumlah) || 0;
+        if (qty <= 0) continue;
 
-        return [
-          currentIdRec, // Isi mskd_idrec dengan ID Header
-          iddrec, // Isi mskd_iddrec dengan ID Detail Unik
-          nomorDokumen,
-          item.kode,
-          item.ukuran,
-          item.jumlah,
-        ];
-      });
+        // BARU: FIFO-pick unit DI_TOKO, WAJIB filter lokasi = cabang
+        // sendiri (DI_TOKO adalah status bersama semua toko)
+        const [rows] = await connection.query(
+          `SELECT unit_serial FROM tbarangdc_unit
+           WHERE unit_kode = ? AND unit_ukuran = ? AND unit_status = 'DI_TOKO' AND unit_lokasi_saat_ini = ?
+           ORDER BY date_create ASC, unit_serial ASC
+           LIMIT ? FOR UPDATE`,
+          [item.kode, item.ukuran, user.cabang, qty],
+        );
+        const pickedSerials = rows.map((r) => r.unit_serial);
 
-      await connection.query(itemInsertQuery, [itemValues]);
+        for (const serial of pickedSerials) {
+          rowCounter++;
+          const iddrec = `${currentIdRec}${rowCounter}`;
+          itemValues.push([
+            currentIdRec,
+            iddrec,
+            nomorDokumen,
+            item.kode,
+            item.ukuran,
+            1,
+            serial,
+          ]);
+          movedSerials.push(serial);
+        }
+
+        const sisaQty = qty - pickedSerials.length;
+        if (sisaQty > 0) {
+          rowCounter++;
+          const iddrec = `${currentIdRec}${rowCounter}`;
+          itemValues.push([
+            currentIdRec,
+            iddrec,
+            nomorDokumen,
+            item.kode,
+            item.ukuran,
+            sisaQty,
+            null,
+          ]);
+        }
+      }
+
+      if (itemValues.length > 0) {
+        const itemInsertQuery = `
+          INSERT INTO tmsk_dtl (
+              mskd_idrec, mskd_iddrec, mskd_nomor, mskd_kode, mskd_ukuran, mskd_jumlah, mskd_unit_serial
+          ) VALUES ?;
+        `;
+        await connection.query(itemInsertQuery, [itemValues]);
+      }
+    }
+
+    if (movedSerials.length > 0) {
+      await connection.query(
+        `UPDATE tbarangdc_unit SET unit_status = 'TRANSIT_ANTAR_STORE', unit_lokasi_saat_ini = ?,
+           date_modified = NOW(), user_modified = ?
+         WHERE unit_serial IN (?)`,
+        [header.storeTujuanKode, user.kode, movedSerials],
+      );
     }
 
     await connection.commit();
@@ -229,40 +274,38 @@ const findByBarcode = async (barcode, gudang) => {
 };
 
 const getPrintData = async (nomor, user) => {
-  // [PERBAIKAN KUNCI]: Hapus validasi h.msk_cab = user.cabang agar dokumen bisa diprint oleh user Admin Pusat/ESTU
   const query = `
     SELECT 
-      h.msk_nomor,
-      h.msk_tanggal,
-      h.msk_kecab,
-      g_tujuan.gdg_nama,
-      h.msk_ket,
-      DATE_FORMAT(h.date_create, '%d-%m-%Y %H:%i:%s') AS created,
-      h.user_create,
+      MAX(h.msk_nomor) AS msk_nomor,
+      MAX(h.msk_tanggal) AS msk_tanggal,
+      MAX(h.msk_kecab) AS msk_kecab,
+      MAX(g_tujuan.gdg_nama) AS gdg_nama,
+      MAX(h.msk_ket) AS msk_ket,
+      MAX(DATE_FORMAT(h.date_create, '%d-%m-%Y %H:%i:%s')) AS created,
+      MAX(h.user_create) AS user_create,
       d.mskd_kode,
-      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama_barang,
+      MAX(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna))) AS nama_barang,
       d.mskd_ukuran,
-      d.mskd_jumlah,
-      g_asal.gdg_inv_nama,
-      g_asal.gdg_inv_alamat, 
-      g_asal.gdg_inv_kota,
-      g_asal.gdg_inv_telp
+      SUM(d.mskd_jumlah) AS mskd_jumlah,
+      MAX(g_asal.gdg_inv_nama) AS gdg_inv_nama,
+      MAX(g_asal.gdg_inv_alamat) AS gdg_inv_alamat, 
+      MAX(g_asal.gdg_inv_kota) AS gdg_inv_kota,
+      MAX(g_asal.gdg_inv_telp) AS gdg_inv_telp
     FROM tmsk_hdr h
     LEFT JOIN tmsk_dtl d ON d.mskd_nomor = h.msk_nomor
     LEFT JOIN tgudang g_tujuan ON g_tujuan.gdg_kode = h.msk_kecab
     LEFT JOIN tgudang g_asal ON g_asal.gdg_kode = h.msk_cab
     LEFT JOIN tbarangdc a ON a.brg_kode = d.mskd_kode
     WHERE h.msk_nomor = ?
+    GROUP BY d.mskd_kode, d.mskd_ukuran
     ORDER BY nama_barang, d.mskd_ukuran;
   `;
 
-  // [PERBAIKAN]: Hapus user.cabang dari parameter query
   const [rows] = await pool.query(query, [nomor]);
   if (rows.length === 0) {
     throw new Error("Data untuk dicetak tidak ditemukan");
   }
 
-  // Proses data menjadi format { header, details }
   const header = {
     nomor: rows[0].msk_nomor,
     tanggal: rows[0].msk_tanggal,
@@ -270,16 +313,13 @@ const getPrintData = async (nomor, user) => {
     keterangan: rows[0].msk_ket,
     created: rows[0].created,
     user_create: rows[0].user_create,
-    // Gunakan data dinamis dari query
     perush_nama: rows[0].gdg_inv_nama,
-    perush_alamat: `${rows[0].gdg_inv_alamat || ""}, ${
-      rows[0].gdg_inv_kota || ""
-    }`, // Gabungkan alamat & kota
+    perush_alamat: `${rows[0].gdg_inv_alamat || ""}, ${rows[0].gdg_inv_kota || ""}`,
     perush_telp: rows[0].gdg_inv_telp,
   };
 
   const details = rows
-    .filter((row) => row.mskd_kode) // Hanya proses baris yang memiliki detail
+    .filter((row) => row.mskd_kode)
     .map((row) => ({
       kode: row.mskd_kode,
       nama: row.nama_barang,

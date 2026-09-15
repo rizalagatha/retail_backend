@@ -135,33 +135,20 @@ const save = async (data, user) => {
   await connection.beginTransaction();
   try {
     let moNomor = header.nomor;
-    // --- GENERATE IDREC HEADER ---
-    // Format: K01MO20251008151934.268 (CAB + MO + TIMESTAMP)
-    // Jika Edit, ambil IDREC lama agar tidak berubah. Jika Baru, generate.
     let mo_idrec;
     if (isNew) {
       const now = new Date();
       mo_idrec = `${user.cabang}MO${format(now, "yyyyMMddHHmmss.SSS")}`;
-    } else {
-      // Ambil IDREC lama (opsional, untuk konsistensi update)
-      // const [existing] = await connection.query("SELECT mo_idrec FROM tmutasiout_hdr WHERE mo_nomor = ?", [moNomor]);
-      // mo_idrec = existing[0]?.mo_idrec;
     }
 
     if (isNew) {
-      const prefix = `${user.cabang}MO${format(
-        new Date(header.tanggal),
-        "yyMM",
-      )}`;
-
-      // Locking row untuk penomoran
+      const prefix = `${user.cabang}MO${format(new Date(header.tanggal), "yyMM")}`;
       const [maxRows] = await connection.query(
         `SELECT IFNULL(MAX(RIGHT(mo_nomor, 5)), 0) as maxNum 
          FROM tmutasiout_hdr 
          WHERE LEFT(mo_nomor, 9) = ? FOR UPDATE`,
         [prefix],
       );
-
       const nextNum = parseInt(maxRows[0].maxNum, 10) + 1;
       moNomor = `${prefix}${String(100000 + nextNum).slice(1)}`;
 
@@ -170,7 +157,7 @@ const save = async (data, user) => {
          (mo_idrec, mo_nomor, mo_tanggal, mo_so_nomor, mo_cab, mo_kecab, mo_ket, user_create, date_create) 
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
-          mo_idrec, // [BARU]
+          mo_idrec,
           moNomor,
           header.tanggal,
           header.soNomor,
@@ -193,48 +180,89 @@ const save = async (data, user) => {
           moNomor,
         ],
       );
+
+      // BARU: revert status unit lama sebelum detail diganti
+      const [oldSerials] = await connection.query(
+        `SELECT mod_unit_serial FROM tmutasiout_dtl WHERE mod_nomor = ? AND mod_unit_serial IS NOT NULL`,
+        [moNomor],
+      );
+      if (oldSerials.length > 0) {
+        await connection.query(
+          `UPDATE tbarangdc_unit SET unit_status = 'DI_TOKO', unit_lokasi_saat_ini = ? WHERE unit_serial IN (?)`,
+          [user.cabang, oldSerials.map((r) => r.mod_unit_serial)],
+        );
+      }
     }
 
-    // Hapus detail lama
     await connection.query("DELETE FROM tmutasiout_dtl WHERE mod_nomor = ?", [
       moNomor,
     ]);
 
     const validItems = items.filter((item) => (item.jumlah || 0) > 0);
+    const itemValues = [];
+    const movedSerials = [];
+    let rowCounter = 0;
 
-    // Insert Detail Baru
-    if (validItems.length > 0) {
-      const itemValues = validItems.map((item, index) => {
-        // --- GENERATE IDREC DETAIL ---
-        // 1. mod_idrec: Sesuai request, formatnya "Nomor Mutasi" (sama dengan mod_nomor)
-        // Contoh: K01MO250700047
-        const mod_idrec = moNomor;
+    for (const item of validItems) {
+      const qty = Number(item.jumlah) || 0;
 
-        // 2. mod_iddrec: Sesuai request, formatnya "Nomor Mutasi" + "Digit Unik"
-        // Contoh: K01MO250700047620
-        // Kita bisa gunakan kombinasi Index atau Timestamp kecil agar unik per baris
-        // Di sini saya gunakan suffix index agar mudah dibaca & pasti unik dalam satu transaksi
-        // Atau bisa random string 3 digit jika ingin lebih acak seperti contoh "620"
-        const uniqueSuffix = String(index + 1).padStart(3, "0"); // 001, 002...
-        // ATAU pakai milidetik random: String(Math.floor(Math.random() * 900) + 100);
+      // BARU: FIFO-pick unit DI_TOKO — WAJIB filter lokasi = cabang
+      // sendiri, supaya tidak comot unit yang fisiknya ada di toko lain
+      const [rows] = await connection.query(
+        `SELECT unit_serial FROM tbarangdc_unit
+         WHERE unit_kode = ? AND unit_ukuran = ? AND unit_status = 'DI_TOKO' AND unit_lokasi_saat_ini = ?
+         ORDER BY date_create ASC, unit_serial ASC
+         LIMIT ? FOR UPDATE`,
+        [item.kode, item.ukuran, user.cabang, qty],
+      );
+      const pickedSerials = rows.map((r) => r.unit_serial);
 
-        const mod_iddrec = `${moNomor}${uniqueSuffix}`;
-
-        return [
-          mod_idrec, // ID Ref
-          mod_iddrec, // ID Unik Detail
+      for (const serial of pickedSerials) {
+        rowCounter++;
+        const mod_iddrec = `${moNomor}${String(rowCounter).padStart(3, "0")}`;
+        itemValues.push([
+          moNomor,
+          mod_iddrec,
           moNomor,
           item.kode,
           item.ukuran,
-          item.jumlah,
-        ];
-      });
+          1,
+          serial,
+        ]);
+        movedSerials.push(serial);
+      }
 
+      const sisaQty = qty - pickedSerials.length;
+      if (sisaQty > 0) {
+        rowCounter++;
+        const mod_iddrec = `${moNomor}${String(rowCounter).padStart(3, "0")}`;
+        itemValues.push([
+          moNomor,
+          mod_iddrec,
+          moNomor,
+          item.kode,
+          item.ukuran,
+          sisaQty,
+          null,
+        ]);
+      }
+    }
+
+    if (itemValues.length > 0) {
       await connection.query(
         `INSERT INTO tmutasiout_dtl 
-             (mod_idrec, mod_iddrec, mod_nomor, mod_kode, mod_ukuran, mod_jumlah) 
+             (mod_idrec, mod_iddrec, mod_nomor, mod_kode, mod_ukuran, mod_jumlah, mod_unit_serial) 
              VALUES ?`,
         [itemValues],
+      );
+    }
+
+    if (movedSerials.length > 0) {
+      await connection.query(
+        `UPDATE tbarangdc_unit SET unit_status = 'TRANSIT_PRODUKSI', unit_lokasi_saat_ini = ?,
+           date_modified = NOW(), user_modified = ?
+         WHERE unit_serial IN (?)`,
+        [header.keCabang, user.kode, movedSerials],
       );
     }
 
@@ -270,15 +298,21 @@ const loadForEdit = async (nomor, user) => {
       "SELECT * FROM tmutasiout_dtl WHERE mod_nomor = ?",
       [nomor],
     );
+
+    // BARU: agregasi savedDetails per kode+ukuran
+    const savedMap = new Map();
+    for (const d of savedDetails) {
+      const key = `${d.mod_kode}|${d.mod_ukuran}`;
+      savedMap.set(key, (savedMap.get(key) || 0) + Number(d.mod_jumlah));
+    }
+
     const templateItems = await getSoDetailsForGrid(header.mo_so_nomor, user);
 
     const items = templateItems.map((item) => {
-      const savedItem = savedDetails.find(
-        (d) => d.mod_kode === item.kode && d.mod_ukuran === item.ukuran,
-      );
+      const key = `${item.kode}|${item.ukuran}`;
       return {
         ...item,
-        jumlah: savedItem ? savedItem.mod_jumlah : 0,
+        jumlah: savedMap.get(key) || 0,
       };
     });
 
@@ -289,19 +323,19 @@ const loadForEdit = async (nomor, user) => {
 };
 
 const getPrintData = async (nomor, user) => {
-  // Query ini diadaptasi dari query 'cetak' di Delphi Anda
   const query = `
     SELECT 
-        h.mo_nomor, h.mo_tanggal, h.mo_so_nomor, h.mo_kecab, h.mo_ket,
-        g.pab_nama,
-        d.mod_kode, d.mod_ukuran, d.mod_jumlah,
-        b.brgd_barcode,
-        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
-        DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
-        h.user_create,
-        src.gdg_inv_nama AS perush_nama,
-        src.gdg_inv_alamat AS perush_alamat,
-        src.gdg_inv_telp AS perush_telp
+        MAX(h.mo_nomor) AS mo_nomor, MAX(h.mo_tanggal) AS mo_tanggal, MAX(h.mo_so_nomor) AS mo_so_nomor,
+        MAX(h.mo_kecab) AS mo_kecab, MAX(h.mo_ket) AS mo_ket,
+        MAX(g.pab_nama) AS pab_nama,
+        d.mod_kode, d.mod_ukuran, SUM(d.mod_jumlah) AS mod_jumlah,
+        MAX(b.brgd_barcode) AS brgd_barcode,
+        MAX(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna))) AS nama,
+        MAX(DATE_FORMAT(h.date_create, "%d-%m-%Y %T")) AS created,
+        MAX(h.user_create) AS user_create,
+        MAX(src.gdg_inv_nama) AS perush_nama,
+        MAX(src.gdg_inv_alamat) AS perush_alamat,
+        MAX(src.gdg_inv_telp) AS perush_telp
     FROM tmutasiout_hdr h
     LEFT JOIN tmutasiout_dtl d ON d.mod_nomor = h.mo_nomor
     LEFT JOIN tbarangdc a ON a.brg_kode = d.mod_kode
@@ -309,7 +343,8 @@ const getPrintData = async (nomor, user) => {
     LEFT JOIN kencanaprint.tpabrik g ON g.pab_kode = h.mo_kecab
     LEFT JOIN tgudang src ON src.gdg_kode = h.mo_cab
     WHERE h.mo_nomor = ?
-    ORDER BY d.mod_kode, right(b.brgd_barcode, 1);
+    GROUP BY d.mod_kode, d.mod_ukuran
+    ORDER BY d.mod_kode;
     `;
 
   const [rows] = await pool.query(query, [nomor]);
@@ -317,10 +352,7 @@ const getPrintData = async (nomor, user) => {
     throw new Error("Data Mutasi Out tidak ditemukan.");
   }
 
-  // Olah data menjadi format header dan details
-  const header = {
-    ...rows[0], // Ambil semua data header dari baris pertama
-  };
+  const header = { ...rows[0] };
   const details = rows.map((row) => ({
     mod_kode: row.mod_kode,
     nama: row.nama,
@@ -336,22 +368,22 @@ const getExportDetails = async (filters) => {
 
   const query = `
     SELECT 
-        h.mo_nomor AS 'Nomor Mutasi',
-        h.mo_tanggal AS 'Tanggal',
-        h.mo_so_nomor AS 'No SO',
-        h.mo_kecab AS 'Ke Cabang',
-        p.pab_nama AS 'Nama Cabang',
-        h.mo_ket AS 'Keterangan',
+        MAX(h.mo_nomor) AS 'Nomor Mutasi',
+        MAX(h.mo_tanggal) AS 'Tanggal',
+        MAX(h.mo_so_nomor) AS 'No SO',
+        MAX(h.mo_kecab) AS 'Ke Cabang',
+        MAX(p.pab_nama) AS 'Nama Cabang',
+        MAX(h.mo_ket) AS 'Keterangan',
         d.mod_kode AS 'Kode Barang',
-        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS 'Nama Barang',
+        MAX(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna))) AS 'Nama Barang',
         d.mod_ukuran AS 'Ukuran',
-        d.mod_jumlah AS 'Qty Out'
+        SUM(d.mod_jumlah) AS 'Qty Out'
     FROM tmutasiout_hdr h
     JOIN tmutasiout_dtl d ON h.mo_nomor = d.mod_nomor
     LEFT JOIN tbarangdc a ON a.brg_kode = d.mod_kode
     LEFT JOIN kencanaprint.tpabrik p ON p.pab_kode = h.mo_kecab
-    -- [FIX] Gunakan DATE()
     WHERE DATE(h.mo_tanggal) BETWEEN ? AND ?
+    GROUP BY h.mo_nomor, d.mod_kode, d.mod_ukuran
     ORDER BY h.mo_nomor;
     `;
 

@@ -129,6 +129,12 @@ router.get(
   controller.getSalesCounters,
 );
 
+router.get(
+  "/lookup/unit-for-sale/:barcode",
+  verifyToken,
+  controller.getUnitForSale,
+);
+
 router.get("/by-barcode/:barcode", verifyToken, controller.getByBarcode);
 
 router.get(

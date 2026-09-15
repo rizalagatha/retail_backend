@@ -98,9 +98,12 @@ const createCustomer = async (customerData, user) => {
 
     const toNull = (v) => (v === "" || v === undefined ? null : v);
 
+    // Jika user login dari cabang KPR, otomatis tandai customer sebagai franchise
+    const cusFranchise = userCabang.toUpperCase() === "KPR" ? "Y" : "N";
+
     await connection.query(
-      `INSERT INTO tcustomer (cus_kode, cus_nama, cus_alamat, cus_kota, cus_telp, cus_nama_kontak, cus_tgllahir, cus_top, cus_aktif, cus_npwp, cus_nama_npwp, cus_alamat_npwp, cus_kota_npwp, cus_limit, date_create) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      `INSERT INTO tcustomer (cus_kode, cus_nama, cus_alamat, cus_kota, cus_telp, cus_nama_kontak, cus_tgllahir, cus_top, cus_aktif, cus_npwp, cus_nama_npwp, cus_alamat_npwp, cus_kota_npwp, cus_limit, cus_franchise, date_create) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
         newKode,
         nama,
@@ -116,6 +119,7 @@ const createCustomer = async (customerData, user) => {
         toNull(alamatNpwp),
         toNull(kotaNpwp),
         limitTrans || 0,
+        cusFranchise,
       ],
     );
 

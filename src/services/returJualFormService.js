@@ -20,19 +20,26 @@ const generateIdRec = (cabang) => {
 const loadFromInvoice = async (nomorInvoice) => {
   const query = `
         SELECT 
-            h.inv_nomor, h.inv_tanggal, h.inv_cus_kode, h.inv_ppn, h.inv_disc, h.inv_disc1, h.inv_disc2,
-            c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp,
-            d.invd_kode, d.invd_ukuran, d.invd_jumlah, d.invd_harga, d.invd_disc, d.invd_diskon,
-            b.brgd_barcode,
-            TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS nama_barang,
-            -- Menghitung jumlah yang sudah pernah diretur untuk item ini (meniru getsudah)
+            MAX(h.inv_nomor) AS inv_nomor, MAX(h.inv_tanggal) AS inv_tanggal,
+            MAX(h.inv_cus_kode) AS inv_cus_kode, MAX(h.inv_ppn) AS inv_ppn,
+            MAX(h.inv_disc) AS inv_disc, MAX(h.inv_disc1) AS inv_disc1, MAX(h.inv_disc2) AS inv_disc2,
+            MAX(c.cus_nama) AS cus_nama, MAX(c.cus_alamat) AS cus_alamat,
+            MAX(c.cus_kota) AS cus_kota, MAX(c.cus_telp) AS cus_telp,
+            d.invd_kode, d.invd_ukuran,
+            SUM(d.invd_jumlah) AS invd_jumlah,
+            MAX(d.invd_harga) AS invd_harga,
+            MAX(d.invd_disc) AS invd_disc,
+            MAX(d.invd_diskon) AS invd_diskon,
+            MAX(b.brgd_barcode) AS brgd_barcode,
+            MAX(TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna))) AS nama_barang,
             (SELECT IFNULL(SUM(rd.rjd_jumlah), 0) FROM trj_dtl rd JOIN trj_hdr rh ON rd.rjd_nomor = rh.rj_nomor WHERE rh.rj_inv = h.inv_nomor AND rd.rjd_kode = d.invd_kode AND rd.rjd_ukuran = d.invd_ukuran) AS sudah_retur
         FROM tinv_hdr h
         INNER JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
         LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
         LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
         LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.invd_kode AND b.brgd_ukuran = d.invd_ukuran
-        WHERE h.inv_nomor = ?;
+        WHERE h.inv_nomor = ?
+        GROUP BY d.invd_kode, d.invd_ukuran;
     `;
   const [rows] = await pool.query(query, [nomorInvoice]);
   if (rows.length === 0) throw new Error("Invoice tidak ditemukan.");
@@ -58,8 +65,8 @@ const loadFromInvoice = async (nomorInvoice) => {
     barcode: row.brgd_barcode,
     qtyInv: row.invd_jumlah,
     harga: row.invd_harga,
-    disc: row.invd_disc, // disc % dari invoice
-    diskon: row.invd_diskon, // disc Rp dari invoice
+    disc: row.invd_disc,
+    diskon: row.invd_diskon,
     sudah: row.sudah_retur,
   }));
 
@@ -146,25 +153,92 @@ const save = async (payload, user) => {
       nomorDokumen,
     ]);
 
-    for (let index = 0; index < items.length; index++) {
-      const item = items[index];
-      const nourut = index + 1;
+    let rowCounter = 0;
+    const returnedSerials = [];
 
-      // a. Insert ke Detail Retur
+    for (const item of items) {
+      const qtyRetur = Number(item.jumlah) || 0;
+      if (qtyRetur <= 0) continue;
+
+      let pickedSerials = [];
+
+      // BARU: cari unit_serial spesifik yang memang terjual lewat
+      // invoice ini (bukan sekadar unit TERJUAL sembarang), dikurangi
+      // yang sudah pernah diretur di dokumen retur lain untuk invoice
+      // yang sama
+      if (header.invoice) {
+        const [candidateRows] = await connection.query(
+          `SELECT d.invd_unit_serial AS serial
+           FROM tinv_dtl d
+           WHERE d.invd_inv_nomor = ? AND d.invd_kode = ? AND d.invd_ukuran = ?
+             AND d.invd_unit_serial IS NOT NULL
+             AND d.invd_unit_serial NOT IN (
+               SELECT rd.rjd_unit_serial FROM trj_dtl rd
+               INNER JOIN trj_hdr rh ON rh.rj_nomor = rd.rjd_nomor
+               WHERE rh.rj_inv = ? AND rd.rjd_unit_serial IS NOT NULL
+             )
+           ORDER BY d.invd_unit_serial ASC
+           LIMIT ? FOR UPDATE`,
+          [header.invoice, item.kode, item.ukuran, header.invoice, qtyRetur],
+        );
+        pickedSerials = candidateRows.map((r) => r.serial);
+      }
+
+      for (const serial of pickedSerials) {
+        rowCounter++;
+        await connection.query(
+          `INSERT INTO trj_dtl (rjd_idrec, rjd_nomor, rjd_kode, rjd_ukuran, rjd_jumlah, rjd_harga, rjd_disc, rjd_diskon, rjd_nourut, rjd_unit_serial) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            currentIdRec,
+            nomorDokumen,
+            item.kode,
+            item.ukuran,
+            1,
+            item.harga,
+            item.disc,
+            item.diskon,
+            rowCounter,
+            serial,
+          ],
+        );
+        returnedSerials.push(serial);
+      }
+
+      // Baris sisa (legacy agregat, tanpa unit_serial) — kalau serial
+      // yang ketemu kurang dari qty retur yang diminta
+      const sisaQty = qtyRetur - pickedSerials.length;
+      if (sisaQty > 0) {
+        rowCounter++;
+        await connection.query(
+          `INSERT INTO trj_dtl (rjd_idrec, rjd_nomor, rjd_kode, rjd_ukuran, rjd_jumlah, rjd_harga, rjd_disc, rjd_diskon, rjd_nourut) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            currentIdRec,
+            nomorDokumen,
+            item.kode,
+            item.ukuran,
+            sisaQty,
+            item.harga,
+            item.disc,
+            item.diskon,
+            rowCounter,
+          ],
+        );
+      }
+    }
+
+    // Unit yang benar-benar balik fisik → DI_TOKO. Sesuai kesepakatan
+    // sebelumnya: tukar (N) & pengembalian (Y) treatment sama di sini,
+    // beda cuma ada/tidaknya invoice pasangan (dibuat terpisah, di
+    // luar form ini). Retur Online (O) juga disamakan untuk sekarang
+    // — ⚠️ ASUMSI, lihat catatan di bawah.
+    if (returnedSerials.length > 0) {
       await connection.query(
-        `INSERT INTO trj_dtl (rjd_idrec, rjd_nomor, rjd_kode, rjd_ukuran, rjd_jumlah, rjd_harga, rjd_disc, rjd_diskon, rjd_nourut) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          currentIdRec,
-          nomorDokumen,
-          item.kode,
-          item.ukuran,
-          item.jumlah,
-          item.harga,
-          item.disc,
-          item.diskon,
-          nourut,
-        ],
+        `UPDATE tbarangdc_unit SET unit_status = 'DI_TOKO', unit_lokasi_saat_ini = ?,
+           date_modified = NOW(), user_modified = ?
+         WHERE unit_serial IN (?)`,
+        [header.cabangKode, user.kode, returnedSerials],
       );
     }
 

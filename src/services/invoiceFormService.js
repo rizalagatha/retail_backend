@@ -60,6 +60,13 @@ const getCustomerSpecificDiscount = (cusKode, namaBarang) => {
   return rule.defaultDiscountPersen;
 };
 
+// [BARU] Customer yang TIDAK BOLEH punya diskon faktur persen di header
+// (inv_disc1). Diskon untuk customer ini WAJIB hanya di level item (invd_disc).
+const CUSTOMERS_NO_HEADER_DISCOUNT = ["KPR00014"];
+
+const isNoHeaderDiscountCustomer = (cusKode) =>
+  CUSTOMERS_NO_HEADER_DISCOUNT.includes((cusKode || "").toUpperCase());
+
 // --- HELPER DISKON PRIORITAS KPR ---
 const getKprItemDiscount = (namaBarang, kategori, cusKode = "") => {
   const nama = (namaBarang || "").toUpperCase();
@@ -105,12 +112,24 @@ const getKprItemDiscount = (namaBarang, kategori, cusKode = "") => {
       /\bPOLO\b/.test(nama);
 
     if (isEligible15) {
+      // [BARU] Customer K-00110 dapat rate khusus 10% HANYA untuk
+      // Combed 24S dan Polo Lacos CVC — item lain yang masuk bucket 15%
+      // (misal Combed 30S, Hoodie, Tunik, Anak) tetap 15% seperti biasa.
+      if (cusKode === "K-00110") {
+        const isCombed24s =
+          kat === "REGULER" && nama.includes("COMBED") && nama.includes("24S");
+        const isPoloLacosCvc =
+          /\bPOLO\b/.test(nama) &&
+          nama.includes("LACOS") &&
+          nama.includes("CVC");
+        if (isCombed24s || isPoloLacosCvc) return 10;
+      }
+
       // [BARU] Customer KPR00022 dapat rate khusus 12,5% menggantikan 15% umum
       if (cusKode === "KPR00022") return 12.5;
       return 15;
     }
   }
-
   // ==============================================================================
   // PRIORITAS 3: DEFAULT SESIONAL
   // ==============================================================================
@@ -761,21 +780,24 @@ const loadForEdit = async (nomor, user) => {
      ============================ */
   const itemsQuery = `
     SELECT 
-        d.*,
+        d.invd_kode,
+        d.invd_ukuran,
+        d.invd_jumlah,
+        d.invd_harga,
+        d.invd_disc,
+        d.invd_diskon,
         d.invd_is_free_gift AS isFreeGiftRaw,
+        d.invd_nourut,
 
-        /* Nama barang */
         COALESCE(
             TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan,
                         ' ', a.brg_jeniskain, ' ', a.brg_warna)),
             f.sd_nama
         ) AS nama_barang,
 
-        /* barcode */
         b.brgd_barcode AS barcode,
         a.brg_ktgp AS kategori,
 
-        /* stok gudang */
         IFNULL((
             SELECT SUM(m.mst_stok_in - m.mst_stok_out)
             FROM tmasterstok m
@@ -785,7 +807,6 @@ const loadForEdit = async (nomor, user) => {
               AND m.mst_ukuran = d.invd_ukuran
         ), 0) AS stok,
 
-        /* stok SO */
         IFNULL((
             SELECT SUM(m.mst_stok_in - m.mst_stok_out)
             FROM tmasterstokso m
@@ -796,7 +817,6 @@ const loadForEdit = async (nomor, user) => {
               AND m.mst_nomor_so = d.invd_kode
         ), 0) AS stokSO,
 
-        /* qty SO (open order) */
         IFNULL((
             SELECT SUM(dd.sod_jumlah)
             FROM tso_dtl dd
@@ -805,31 +825,44 @@ const loadForEdit = async (nomor, user) => {
               AND dd.sod_ukuran = d.invd_ukuran
         ), 0) AS qtySO,
 
-        /* PROMO LIPAT (ambil dari invoice header) */
         (SELECT p.pro_lipat 
          FROM tpromo p 
          WHERE p.pro_nomor = h.inv_pro_nomor LIMIT 1) AS lipat,
 
-        /* Hitung jumlah item diskon sebelumnya (logika promo Tidak Kelipatan) */
         (
-          SELECT COUNT(*)
-          FROM tinv_dtl x
-          WHERE x.invd_inv_nomor = h.inv_nomor
-            AND x.invd_diskon > 0
-            AND x.invd_nourut < d.invd_nourut
+          SELECT COUNT(*) FROM (
+            SELECT invd_kode, invd_ukuran, MAX(invd_diskon) AS agg_diskon, MIN(invd_nourut) AS agg_nourut
+            FROM tinv_dtl
+            WHERE invd_inv_nomor = h.inv_nomor
+            GROUP BY invd_kode, invd_ukuran, invd_harga, invd_diskon
+          ) y
+          WHERE y.agg_diskon > 0 AND y.agg_nourut < d.invd_nourut
         ) AS prevDiscountCount
 
-    FROM tinv_dtl d
-    LEFT JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+    FROM tinv_hdr h
+    LEFT JOIN (
+      SELECT
+        invd_inv_nomor, invd_kode, invd_ukuran,
+        SUM(invd_jumlah) AS invd_jumlah,
+        MAX(invd_harga) AS invd_harga,
+        MAX(invd_disc) AS invd_disc,
+        MAX(invd_diskon) AS invd_diskon,
+        MAX(invd_is_free_gift) AS invd_is_free_gift,
+        MIN(invd_nourut) AS invd_nourut
+      FROM tinv_dtl
+      WHERE invd_inv_nomor = ?
+      GROUP BY invd_kode, invd_ukuran, invd_harga, invd_diskon
+    ) d ON d.invd_inv_nomor = h.inv_nomor
     LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
-    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.invd_kode AND b.brgd_ukuran = d.invd_ukuran
     LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
-    WHERE d.invd_inv_nomor = ?
+    LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.invd_kode AND b.brgd_ukuran = d.invd_ukuran
+    WHERE h.inv_nomor = ?
     ORDER BY d.invd_nourut
   `;
   const [rawItems] = await pool.query(itemsQuery, [
     user.cabang,
     user.cabang,
+    nomor,
     nomor,
   ]);
 
@@ -905,6 +938,52 @@ const loadForEdit = async (nomor, user) => {
   return { header, items, dps, isLockedFsk };
 };
 
+/**
+ * BARU: cari unit by serial buat proses scan-jual langsung (walk-in,
+ * tanpa SO). Validasi status harus DI_TOKO (showroom, siap dijual).
+ */
+const findUnitForSale = async (serial, gudang) => {
+  const [unitRows] = await pool.query(
+    `SELECT unit_serial, unit_kode, unit_ukuran, unit_status
+     FROM tbarangdc_unit WHERE unit_serial = ?`,
+    [serial],
+  );
+  if (unitRows.length === 0) {
+    const err = new Error("QR tidak dikenali.");
+    err.statusCode = 404;
+    throw err;
+  }
+  const unit = unitRows[0];
+  if (unit.unit_status !== "DI_TOKO") {
+    throw new Error(
+      `Unit ini berstatus '${unit.unit_status}', bukan stok showroom yang bisa dijual langsung.`,
+    );
+  }
+
+  const [detail] = await pool.query(
+    `SELECT
+       TRIM(CONCAT(h.brg_jeniskaos," ",h.brg_tipe," ",h.brg_lengan," ",h.brg_jeniskain," ",h.brg_warna)) AS nama,
+       d.brgd_barcode AS barcode, d.brgd_harga AS harga, d.brgd_hrg3 AS harga3, d.brgd_hpp AS hpp,
+       h.brg_ktgp AS kategori
+     FROM tbarangdc_dtl d
+     LEFT JOIN tbarangdc h ON h.brg_kode = d.brgd_kode
+     WHERE d.brgd_kode = ? AND d.brgd_ukuran = ?`,
+    [unit.unit_kode, unit.unit_ukuran],
+  );
+
+  return {
+    unitSerial: unit.unit_serial,
+    kode: unit.unit_kode,
+    ukuran: unit.unit_ukuran,
+    nama: detail[0]?.nama || "",
+    barcode: detail[0]?.barcode || "",
+    harga: Number(detail[0]?.harga) || 0,
+    harga3: Number(detail[0]?.harga3) || 0,
+    hpp: Number(detail[0]?.hpp) || 0,
+    kategori: detail[0]?.kategori || "",
+  };
+};
+
 const saveData = async (payload, user) => {
   const connection = await pool.getConnection();
   try {
@@ -959,6 +1038,13 @@ const saveData = async (payload, user) => {
     const { header, items, dps, payment, isNew, pins, totals, tipeKunjungan } =
       payload;
     const nomorInv = header.nomor;
+
+    // [BARU] ⬇️⬇️⬇️ TARUH DI SINI ⬇️⬇️⬇️
+    // Paksa inv_disc1 = 0 untuk customer tertentu — diskon faktur
+    // persen tidak boleh nempel di header, cukup di detail per item.
+    const diskonPersen1ForHdr = isNoHeaderDiscountCustomer(header.customer.kode)
+      ? 0
+      : header.diskonPersen1 || 0;
 
     // [BARU] Logika Penggabungan ID Promo
     // Jika header.nomorPromo ada (Promo Bulanan), dan diskonPersen2 ada (Promo Maps), gabungkan ID-nya!
@@ -1324,7 +1410,7 @@ const saveData = async (payload, user) => {
         finalTop,
 
         // [PERBAIKAN] DISKON FAKTUR & PROMO
-        header.diskonPersen1 || 0, // inv_disc1
+        diskonPersen1ForHdr, // inv_disc1 (0 khusus KPR00014)
         header.diskonPersen2 || 0, // inv_disc2
         totalDiskon, // inv_disc (Total Rupiah)
         finalPromoID, // inv_pro_nomor (Gabungan ID Promo)
@@ -1389,7 +1475,7 @@ const saveData = async (payload, user) => {
         header.keterangan,
         header.salesCounter,
         finalTop,
-        header.diskonPersen1 || 0, // [BARU]
+        diskonPersen1ForHdr, // [BARU] inv_disc1 (0 khusus KPR00014)
         header.diskonPersen2 || 0, // [BARU]
         totalDiskon,
         finalPromoID, // [BARU]
@@ -1500,18 +1586,17 @@ const saveData = async (payload, user) => {
           invd_jumlah,
           invd_mstpesan, invd_mststok,
           invd_harga, invd_hpp, invd_disc, invd_diskon,
-          invd_sd_nomor, invd_nourut, invd_is_free_gift
+          invd_sd_nomor, invd_nourut, invd_is_free_gift, invd_unit_serial
         ) VALUES ?
       `;
 
-      const nowTs = format(new Date(), "yyyyMMddHHmmssSSS");
-
       const detailValues = [];
+      const soldSerials = [];
+      let rowCounter = 0;
 
       for (let index = 0; index < validItems.length; index++) {
         const item = validItems[index];
         const jumlah = Number(item.jumlah || 0);
-        // [REVISI] Tentukan flag KPR/KDC
         const isKprOrKdc =
           header.gudang.kode === "KPR" || header.gudang.kode === "KDC";
         const hargaAsli = applyRoundingPolicy(Number(item.harga || 0));
@@ -1524,31 +1609,18 @@ const saveData = async (payload, user) => {
           );
         }
 
-        const invdIdrec = `${invNomor.replace(/\./g, "")}${String(
-          index + 1,
-        ).padStart(3, "0")}`;
-
-        // =================================================================
-        // [FIX FINAL] AMBIL HPP DARI FRONTEND (PRIORITAS SJ/SO)
-        // =================================================================
         let hppAsli = Number(item.hpp || 0);
-
-        // Jika hpp dari frontend 0 (misal hasil Scan Barcode manual), baru tarik dari DB Master
         if (hppAsli === 0) {
           const [brgRows] = await connection.query(
             "SELECT brgd_hpp FROM tbarangdc_dtl WHERE brgd_kode = ? AND brgd_ukuran = ? LIMIT 1",
             [item.kode, item.ukuran || ""],
           );
-          if (brgRows.length > 0) {
-            hppAsli = Number(brgRows[0].brgd_hpp || 0);
-          }
+          if (brgRows.length > 0) hppAsli = Number(brgRows[0].brgd_hpp || 0);
         }
-        // =================================================================
 
         let invd_mstpesan = 0;
         let invd_mststok = jumlah;
 
-        // Logika: Hanya hitung stok SO jika BUKAN KPR/KDC dan ada nomor SO asli
         if (!isKprOrKdc && header.nomorSo && header.nomorSo !== "") {
           const sisaSO = await getSisaStokSO(
             connection,
@@ -1559,31 +1631,157 @@ const saveData = async (payload, user) => {
           invd_mstpesan = Math.min(jumlah, sisaSO);
           invd_mststok = jumlah - invd_mstpesan;
         } else {
-          // Untuk KPR, KDC, atau transaksi tanpa SO:
-          // Paksa semua masuk ke stok showroom (Fisik)
           invd_mstpesan = 0;
           invd_mststok = jumlah;
         }
 
-        detailValues.push([
-          invdIdrec,
-          invNomor,
-          item.kode,
-          item.ukuran || "",
-          jumlah,
-          invd_mstpesan, // Akan bernilai 0 untuk KPR
-          invd_mststok, // Akan bernilai FULL Qty untuk KPR
-          hargaAsli,
-          hppAsli,
-          Number(item.diskonPersen || 0),
-          diskonRp,
-          item.noSoDtf || "",
-          index + 1,
-          item.isFreeGift ? "Y" : "N",
-        ]);
+        // Kasus 1: baris sudah punya unitSerial eksplisit (scan
+        // langsung, walk-in tanpa SO) — insert 1 baris, skip FIFO
+        if (item.unitSerial) {
+          const [unitCheck] = await connection.query(
+            `SELECT unit_status FROM tbarangdc_unit WHERE unit_serial = ? FOR UPDATE`,
+            [item.unitSerial],
+          );
+          const unitStatus = unitCheck[0]?.unit_status;
+          const mstp = unitStatus === "RESERVED" ? 1 : 0;
+          const mstt = unitStatus === "RESERVED" ? 0 : 1;
+          rowCounter++;
+          const invdIdrec = `${invNomor.replace(/\./g, "")}${String(rowCounter).padStart(3, "0")}`;
+          detailValues.push([
+            invdIdrec,
+            invNomor,
+            item.kode,
+            item.ukuran || "",
+            1,
+            mstp,
+            mstt,
+            hargaAsli,
+            hppAsli,
+            Number(item.diskonPersen || 0),
+            diskonRp,
+            item.noSoDtf || "",
+            rowCounter,
+            item.isFreeGift ? "Y" : "N",
+            item.unitSerial,
+          ]);
+          soldSerials.push(item.unitSerial);
+          continue;
+        }
+
+        // Kasus 2: Invoice dari SO/SJ (qty agregat) — FIFO-pick unit
+        // dari 2 pool: RESERVED milik SO ini (untuk porsi mstpesan)
+        // dan DI_TOKO showroom (untuk porsi mststok). Soft fallback:
+        // sisa yang tidak ketemu unit-nya tetap masuk baris agregat.
+        let pickedReserved = [];
+        let pickedShowroom = [];
+
+        if (invd_mstpesan > 0 && header.nomorSo) {
+          const [rows] = await connection.query(
+            `SELECT unit_serial FROM tbarangdc_unit
+             WHERE unit_kode = ? AND unit_ukuran = ? AND unit_status = 'RESERVED' AND unit_so_nomor = ?
+             ORDER BY date_create ASC, unit_serial ASC
+             LIMIT ? FOR UPDATE`,
+            [item.kode, item.ukuran, header.nomorSo, invd_mstpesan],
+          );
+          pickedReserved = rows.map((r) => r.unit_serial);
+        }
+
+        if (invd_mststok > 0) {
+          const [rows] = await connection.query(
+            `SELECT unit_serial FROM tbarangdc_unit
+             WHERE unit_kode = ? AND unit_ukuran = ? AND unit_status = 'DI_TOKO' AND unit_lokasi_saat_ini = ?
+             ORDER BY date_create ASC, unit_serial ASC
+             LIMIT ? FOR UPDATE`,
+            [item.kode, item.ukuran, header.gudang.kode, invd_mststok],
+          );
+          pickedShowroom = rows.map((r) => r.unit_serial);
+        }
+
+        for (const serial of pickedReserved) {
+          rowCounter++;
+          const invdIdrec = `${invNomor.replace(/\./g, "")}${String(rowCounter).padStart(3, "0")}`;
+          detailValues.push([
+            invdIdrec,
+            invNomor,
+            item.kode,
+            item.ukuran || "",
+            1,
+            1,
+            0,
+            hargaAsli,
+            hppAsli,
+            Number(item.diskonPersen || 0),
+            diskonRp,
+            item.noSoDtf || "",
+            rowCounter,
+            item.isFreeGift ? "Y" : "N",
+            serial,
+          ]);
+          soldSerials.push(serial);
+        }
+
+        for (const serial of pickedShowroom) {
+          rowCounter++;
+          const invdIdrec = `${invNomor.replace(/\./g, "")}${String(rowCounter).padStart(3, "0")}`;
+          detailValues.push([
+            invdIdrec,
+            invNomor,
+            item.kode,
+            item.ukuran || "",
+            1,
+            0,
+            1,
+            hargaAsli,
+            hppAsli,
+            Number(item.diskonPersen || 0),
+            diskonRp,
+            item.noSoDtf || "",
+            rowCounter,
+            item.isFreeGift ? "Y" : "N",
+            serial,
+          ]);
+          soldSerials.push(serial);
+        }
+
+        const remainderMstpesan = invd_mstpesan - pickedReserved.length;
+        const remainderMststok = invd_mststok - pickedShowroom.length;
+        const remainderJumlah = remainderMstpesan + remainderMststok;
+
+        if (remainderJumlah > 0) {
+          rowCounter++;
+          const invdIdrec = `${invNomor.replace(/\./g, "")}${String(rowCounter).padStart(3, "0")}`;
+          detailValues.push([
+            invdIdrec,
+            invNomor,
+            item.kode,
+            item.ukuran || "",
+            remainderJumlah,
+            remainderMstpesan,
+            remainderMststok,
+            hargaAsli,
+            hppAsli,
+            Number(item.diskonPersen || 0),
+            diskonRp,
+            item.noSoDtf || "",
+            rowCounter,
+            item.isFreeGift ? "Y" : "N",
+            null,
+          ]);
+        }
       }
 
-      await connection.query(detailSql, [detailValues]);
+      if (detailValues.length > 0) {
+        await connection.query(detailSql, [detailValues]);
+      }
+
+      if (soldSerials.length > 0) {
+        await connection.query(
+          `UPDATE tbarangdc_unit SET unit_status = 'TERJUAL', unit_so_nomor = NULL,
+             date_modified = NOW(), user_modified = ?
+           WHERE unit_serial IN (?)`,
+          [user.kode, soldSerials],
+        );
+      }
     }
 
     // =========================================================================
@@ -2503,7 +2701,19 @@ const getPrintData = async (nomor) => {
       src.gdg_transferbank,
       src.gdg_inv_komplain
     FROM tinv_hdr h
-    LEFT JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+    LEFT JOIN (
+      -- BARU: agregasi balik per SKU — tinv_dtl sekarang bisa punya
+      -- banyak baris per SKU (hasil FIFO-split saat serialisasi unit)
+      SELECT
+        invd_inv_nomor, invd_kode, invd_ukuran,
+        SUM(invd_jumlah) AS invd_jumlah,
+        MAX(invd_harga) AS invd_harga,
+        MAX(invd_diskon) AS invd_diskon,
+        MIN(invd_nourut) AS invd_nourut
+      FROM tinv_dtl
+      WHERE invd_inv_nomor = ?
+      GROUP BY invd_kode, invd_ukuran, invd_harga, invd_diskon
+    ) d ON d.invd_inv_nomor = h.inv_nomor
     LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
     LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
     LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
@@ -2516,7 +2726,7 @@ const getPrintData = async (nomor) => {
     ORDER BY d.invd_nourut;
   `;
 
-  const [rows] = await pool.query(query, [nomor]);
+  const [rows] = await pool.query(query, [nomor, nomor]);
   if (rows.length === 0) throw new Error("Data Invoice tidak ditemukan.");
 
   const header = { ...rows[0] };
@@ -3511,29 +3721,8 @@ const getPrintDataKasir = async (nomor) => {
         d.invd_harga,
         COALESCE(d.invd_diskon, 0) AS invd_diskon,
 
-        -- ------------------------------------------
-        -- Harga asli sebelum diskon (per pcs)
         d.invd_harga AS harga_asli,
 
-        -- Harga setelah diskon (per pcs), tapi ikuti aturan promo NOL-LIPAT
-        CASE
-    WHEN (
-      SELECT p.pro_lipat
-      FROM tpromo p
-      WHERE p.pro_nomor = h.inv_pro_nomor LIMIT 1
-    ) = 'N'
-    AND (
-      SELECT COUNT(*)
-      FROM tinv_dtl x
-      WHERE x.invd_inv_nomor = h.inv_nomor
-        AND x.invd_diskon > 0
-        AND x.invd_nourut < d.invd_nourut
-    ) > 0
-    THEN d.invd_harga  -- item tidak dapat diskon
-    ELSE (d.invd_harga - d.invd_diskon) -- item dapat diskon
-END AS harga_setelah_diskon,
-
-        -- Total diskon item
         CASE
             WHEN (
               SELECT p.pro_lipat 
@@ -3542,35 +3731,58 @@ END AS harga_setelah_diskon,
               LIMIT 1
             ) = 'N'
             AND (
-              SELECT COUNT(*) 
-              FROM tinv_dtl x 
-              WHERE x.invd_inv_nomor = h.inv_nomor
-                AND x.invd_diskon > 0
-                AND x.invd_nourut < d.invd_nourut
+              SELECT COUNT(*) FROM (
+                SELECT invd_kode, invd_ukuran, MAX(invd_diskon) AS agg_diskon, MIN(invd_nourut) AS agg_nourut
+                FROM tinv_dtl
+                WHERE invd_inv_nomor = h.inv_nomor
+                GROUP BY invd_kode, invd_ukuran, invd_harga, invd_diskon
+              ) y
+              WHERE y.agg_diskon > 0 AND y.agg_nourut < d.invd_nourut
             ) > 0
-            THEN 0  -- tidak dapat diskon
+            THEN d.invd_harga
+            ELSE (d.invd_harga - d.invd_diskon)
+        END AS harga_setelah_diskon,
+
+        CASE
+            WHEN (
+              SELECT p.pro_lipat 
+              FROM tpromo p 
+              WHERE p.pro_nomor = h.inv_pro_nomor 
+              LIMIT 1
+            ) = 'N'
+            AND (
+              SELECT COUNT(*) FROM (
+                SELECT invd_kode, invd_ukuran, MAX(invd_diskon) AS agg_diskon, MIN(invd_nourut) AS agg_nourut
+                FROM tinv_dtl
+                WHERE invd_inv_nomor = h.inv_nomor
+                GROUP BY invd_kode, invd_ukuran, invd_harga, invd_diskon
+              ) y
+              WHERE y.agg_diskon > 0 AND y.agg_nourut < d.invd_nourut
+            ) > 0
+            THEN 0
             ELSE (COALESCE(d.invd_diskon,0) * d.invd_jumlah)
         END AS total_diskon,
 
-        -- TOTAL SETELAH DISKON (dipakai struk)
         CASE
-    WHEN (
-      SELECT p.pro_lipat
-      FROM tpromo p
-      WHERE p.pro_nomor = h.inv_pro_nomor LIMIT 1
-    ) = 'N'
-    AND (
-      SELECT COUNT(*)
-      FROM tinv_dtl x
-      WHERE x.invd_inv_nomor = h.inv_nomor
-        AND x.invd_diskon > 0
-        AND x.invd_nourut < d.invd_nourut
-    ) > 0
-    THEN (d.invd_jumlah * d.invd_harga)  -- item tidak dapat diskon
-    ELSE (d.invd_jumlah * (d.invd_harga - d.invd_diskon))
-END AS total,
+            WHEN (
+              SELECT p.pro_lipat 
+              FROM tpromo p 
+              WHERE p.pro_nomor = h.inv_pro_nomor 
+              LIMIT 1
+            ) = 'N'
+            AND (
+              SELECT COUNT(*) FROM (
+                SELECT invd_kode, invd_ukuran, MAX(invd_diskon) AS agg_diskon, MIN(invd_nourut) AS agg_nourut
+                FROM tinv_dtl
+                WHERE invd_inv_nomor = h.inv_nomor
+                GROUP BY invd_kode, invd_ukuran, invd_harga, invd_diskon
+              ) y
+              WHERE y.agg_diskon > 0 AND y.agg_nourut < d.invd_nourut
+            ) > 0
+            THEN (d.invd_jumlah * d.invd_harga)
+            ELSE (d.invd_jumlah * (d.invd_harga - d.invd_diskon))
+        END AS total,
 
-        -- Nama barang
         COALESCE(
           NULLIF(TRIM(CONCAT(
             IFNULL(a.brg_jeniskaos,''), ' ',
@@ -3599,7 +3811,17 @@ END AS total,
         src.gdg_inv_komplain
 
     FROM tinv_hdr h
-    LEFT JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+    LEFT JOIN (
+      SELECT
+        invd_inv_nomor, invd_kode, invd_ukuran,
+        SUM(invd_jumlah) AS invd_jumlah,
+        MAX(invd_harga) AS invd_harga,
+        MAX(invd_diskon) AS invd_diskon,
+        MIN(invd_nourut) AS invd_nourut
+      FROM tinv_dtl
+      WHERE invd_inv_nomor = ?
+      GROUP BY invd_kode, invd_ukuran, invd_harga, invd_diskon
+    ) d ON d.invd_inv_nomor = h.inv_nomor
     LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
     LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
     LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
@@ -3609,7 +3831,7 @@ END AS total,
     ORDER BY d.invd_nourut;
   `;
 
-  const [rows] = await pool.query(query, [nomor]);
+  const [rows] = await pool.query(query, [nomor, nomor]);
   if (rows.length === 0) throw new Error("Data Invoice tidak ditemukan.");
 
   const header = { ...rows[0] };
@@ -3934,7 +4156,6 @@ const getVoucherPrintData = async (nomorInvoice) => {
 };
 
 const getDataForSjPrint = async (nomorInvoice) => {
-  // Query ini mengambil data dari Invoice, tapi hanya field yang relevan untuk SJ
   const query = `
         SELECT 
             h.inv_nomor AS nomor_sj, 
@@ -3956,7 +4177,17 @@ const getDataForSjPrint = async (nomorInvoice) => {
             src.gdg_inv_alamat AS perush_alamat,
             src.gdg_inv_telp AS perush_telp
         FROM tinv_hdr h
-        LEFT JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+        LEFT JOIN (
+          SELECT
+            invd_inv_nomor, invd_kode, invd_ukuran,
+            SUM(invd_jumlah) AS invd_jumlah,
+            MAX(invd_harga) AS invd_harga,
+            MAX(invd_diskon) AS invd_diskon,
+            MIN(invd_nourut) AS invd_nourut
+          FROM tinv_dtl
+          WHERE invd_inv_nomor = ?
+          GROUP BY invd_kode, invd_ukuran, invd_harga, invd_diskon
+        ) d ON d.invd_inv_nomor = h.inv_nomor
         LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
         LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
         LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
@@ -3964,8 +4195,7 @@ const getDataForSjPrint = async (nomorInvoice) => {
         WHERE h.inv_nomor = ?
         ORDER BY d.invd_nourut;
     `;
-  const [rows] = await pool.query(query, [nomorInvoice]);
-  if (rows.length === 0) throw new Error("Data Invoice tidak ditemukan.");
+  const [rows] = await pool.query(query, [nomorInvoice, nomorInvoice]);
 
   // Proses data menjadi format header dan details
   const header = { ...rows[0] };
@@ -4126,6 +4356,11 @@ const updateHeaderOnly = async (nomor, payload, user) => {
       }
     }
 
+    // [BARU] Paksa inv_disc1 = 0 untuk customer tertentu
+    const diskonPersen1ForHdr = isNoHeaderDiscountCustomer(customer)
+      ? 0
+      : diskonPersen1 || 0;
+
     const sql = `
       UPDATE tinv_hdr SET 
         inv_cus_kode = ?,
@@ -4153,7 +4388,7 @@ const updateHeaderOnly = async (nomor, payload, user) => {
       top || 0,
       toSqlDate(tanggal),
       biayaKirim || 0,
-      diskonPersen1 || 0,
+      diskonPersen1ForHdr,
       diskonPersen2 || 0, // [BARU]
       diskonRp || 0,
       finalPromoID, // [BARU]
@@ -4495,4 +4730,5 @@ module.exports = {
   renameReviewProofImage,
   getHargaKhususList,
   recalcKprDiscountForItems,
+  findUnitForSale,
 };

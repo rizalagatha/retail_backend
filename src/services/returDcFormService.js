@@ -53,17 +53,18 @@ const getForEdit = async (nomor) => {
   const gudangAsal = row.rb_cab;
   const itemsQuery = `
     SELECT
-      d.rbd_kode AS kode, b.brgd_barcode AS barcode,
-      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+      d.rbd_kode AS kode,
+      MAX(b.brgd_barcode) AS barcode,
+      MAX(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna))) AS nama,
       d.rbd_ukuran AS ukuran,
-      d.rbd_jumlah AS jumlah,
-      -- Stok saat ini + jumlah yang sedang diretur (untuk validasi edit)
-      (IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif='Y' AND m.mst_cab=? AND m.mst_brg_kode=d.rbd_kode AND m.mst_ukuran=d.rbd_ukuran), 0) + d.rbd_jumlah) AS stok
+      SUM(d.rbd_jumlah) AS jumlah,
+      (IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif='Y' AND m.mst_cab=? AND m.mst_brg_kode=d.rbd_kode AND m.mst_ukuran=d.rbd_ukuran), 0) + SUM(d.rbd_jumlah)) AS stok
     FROM trbdc_dtl d
     LEFT JOIN tbarangdc a ON a.brg_kode = d.rbd_kode
     LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.rbd_kode AND b.brgd_ukuran = d.rbd_ukuran
     WHERE d.rbd_nomor = ?
-    ORDER BY d.rbd_iddrec ASC`; // Tambahkan order agar urutan tidak berubah saat simpan
+    GROUP BY d.rbd_kode, d.rbd_ukuran
+    ORDER BY MIN(d.rbd_iddrec) ASC`;
 
   const [items] = await pool.query(itemsQuery, [gudangAsal, nomor]);
 
@@ -188,6 +189,20 @@ const save = async (payload, user) => {
         ],
       );
 
+      // BARU: mode edit — kembalikan status unit lama sebelum
+      // detailnya diganti, supaya tidak nyangkut di DI_DC kalau
+      // barisnya dihapus/diubah saat edit
+      const [oldSerials] = await connection.query(
+        `SELECT rbd_unit_serial FROM trbdc_dtl WHERE rbd_nomor = ? AND rbd_unit_serial IS NOT NULL`,
+        [nomorDokumen],
+      );
+      if (oldSerials.length > 0) {
+        await connection.query(
+          `UPDATE tbarangdc_unit SET unit_status = 'DI_TOKO' WHERE unit_serial IN (?)`,
+          [oldSerials.map((r) => r.rbd_unit_serial)],
+        );
+      }
+
       // Hapus detail lama
       await connection.query("DELETE FROM trbdc_dtl WHERE rbd_nomor = ?", [
         nomorDokumen,
@@ -196,34 +211,84 @@ const save = async (payload, user) => {
 
     // --- INSERT DETAIL ITEMS ---
     if (items.length > 0) {
-      // Siapkan array values dengan IDREC
-      const itemValues = items.map((item, index) => {
-        // Generate IDREC Detail (Unik per baris)
-        // Format: IDREC_HEADER + Urutan (3 digit)
-        // Contoh: K01RB2023102500001.001
-        const idrecDetail = `${idrecHeader}.${String(index + 1).padStart(
-          3,
-          "0",
-        )}`;
+      const itemValues = [];
+      const movedSerials = [];
+      let rowCounter = 0;
 
-        return [
-          idrecHeader, // rbd_idrec (Ref ke Header)
-          idrecDetail, // rbd_iddrec (ID Unik Detail)
-          nomorDokumen,
-          item.kode,
-          item.ukuran,
-          item.jumlah,
-        ];
-      });
+      for (const item of items) {
+        const qty = Number(item.jumlah) || 0;
+        if (qty <= 0) continue;
 
-      // Insert ke trbdc_dtl
-      // Pastikan urutan kolom sesuai dengan tabel database Anda
-      await connection.query(
-        `INSERT INTO trbdc_dtl 
-          (rbd_idrec, rbd_iddrec, rbd_nomor, rbd_kode, rbd_ukuran, rbd_jumlah) 
-         VALUES ?`,
-        [itemValues],
-      );
+        let pickedSerials = [];
+
+        // Kasus 1: baris bawa unitSerial tunggal (scan QR langsung)
+        if (item.unitSerial) {
+          pickedSerials = [item.unitSerial];
+        }
+        // Kasus 2: baris dari "Ambil dari Retur Online" — sudah bawa
+        // daftar unit_serial spesifik dari dokumen retur jual itu
+        else if (item.unitSerials && item.unitSerials.length > 0) {
+          pickedSerials = item.unitSerials.slice(0, qty);
+        }
+        // Kasus 3: baris manual (F1/F2/scan barcode lama) — FIFO-pick
+        // dari pool showroom, soft fallback
+        else {
+          const [rows] = await connection.query(
+            `SELECT unit_serial FROM tbarangdc_unit
+             WHERE unit_kode = ? AND unit_ukuran = ? AND unit_status = 'DI_TOKO' AND unit_lokasi_saat_ini = ?
+             ORDER BY date_create ASC, unit_serial ASC
+             LIMIT ? FOR UPDATE`,
+            [item.kode, item.ukuran, user.cabang, qty],
+          );
+          pickedSerials = rows.map((r) => r.unit_serial);
+        }
+
+        for (const serial of pickedSerials) {
+          rowCounter++;
+          const idrecDetail = `${idrecHeader}.${String(rowCounter).padStart(3, "0")}`;
+          itemValues.push([
+            idrecHeader,
+            idrecDetail,
+            nomorDokumen,
+            item.kode,
+            item.ukuran,
+            1,
+            serial,
+          ]);
+          movedSerials.push(serial);
+        }
+
+        const sisaQty = qty - pickedSerials.length;
+        if (sisaQty > 0) {
+          rowCounter++;
+          const idrecDetail = `${idrecHeader}.${String(rowCounter).padStart(3, "0")}`;
+          itemValues.push([
+            idrecHeader,
+            idrecDetail,
+            nomorDokumen,
+            item.kode,
+            item.ukuran,
+            sisaQty,
+            null,
+          ]);
+        }
+      }
+
+      if (itemValues.length > 0) {
+        await connection.query(
+          `INSERT INTO trbdc_dtl (rbd_idrec, rbd_iddrec, rbd_nomor, rbd_kode, rbd_ukuran, rbd_jumlah, rbd_unit_serial) VALUES ?`,
+          [itemValues],
+        );
+      }
+
+      if (movedSerials.length > 0) {
+        await connection.query(
+          `UPDATE tbarangdc_unit SET unit_status = 'DI_DC', unit_lokasi_saat_ini = ?,
+             date_modified = NOW(), user_modified = ?
+           WHERE unit_serial IN (?)`,
+          [header.gudangDc.kode, user.kode, movedSerials],
+        );
+      }
     }
 
     await connection.commit();
@@ -282,25 +347,27 @@ const lookupGudangDc = async (filters) => {
 const getPrintData = async (nomor) => {
   const query = `
     SELECT 
-      h.rb_nomor, h.rb_tanggal, h.rb_ket, h.rb_cab,
-      DATE_FORMAT(h.date_create, '%d-%m-%Y %H:%i:%s') AS created,
-      h.user_create,
+      MAX(h.rb_nomor) AS rb_nomor, MAX(h.rb_tanggal) AS rb_tanggal,
+      MAX(h.rb_ket) AS rb_ket, MAX(h.rb_cab) AS rb_cab,
+      MAX(DATE_FORMAT(h.date_create, '%d-%m-%Y %H:%i:%s')) AS created,
+      MAX(h.user_create) AS user_create,
       d.rbd_kode,
-      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama_barang,
+      MAX(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna))) AS nama_barang,
       d.rbd_ukuran,
-      d.rbd_jumlah,
-      g_asal.gdg_nama AS dari_gudang,
-      g_tujuan.gdg_nama AS ke_gudang,
-      g_asal.gdg_inv_nama,
-      g_asal.gdg_inv_alamat,
-      g_asal.gdg_inv_kota,
-      g_asal.gdg_inv_telp
+      SUM(d.rbd_jumlah) AS rbd_jumlah,
+      MAX(g_asal.gdg_nama) AS dari_gudang,
+      MAX(g_tujuan.gdg_nama) AS ke_gudang,
+      MAX(g_asal.gdg_inv_nama) AS gdg_inv_nama,
+      MAX(g_asal.gdg_inv_alamat) AS gdg_inv_alamat,
+      MAX(g_asal.gdg_inv_kota) AS gdg_inv_kota,
+      MAX(g_asal.gdg_inv_telp) AS gdg_inv_telp
     FROM trbdc_hdr h
     LEFT JOIN trbdc_dtl d ON d.rbd_nomor = h.rb_nomor
     LEFT JOIN tgudang g_asal ON g_asal.gdg_kode = h.rb_cab
     LEFT JOIN tgudang g_tujuan ON g_tujuan.gdg_kode = h.rb_kecab
     LEFT JOIN tbarangdc a ON a.brg_kode = d.rbd_kode
-    WHERE h.rb_nomor = ?;
+    WHERE h.rb_nomor = ?
+    GROUP BY d.rbd_kode, d.rbd_ukuran;
   `;
   const [rows] = await pool.query(query, [nomor]);
   if (rows.length === 0) throw new Error("Data untuk dicetak tidak ditemukan.");
@@ -313,11 +380,8 @@ const getPrintData = async (nomor) => {
     user_create: rows[0].user_create,
     dariStore: rows[0].dari_gudang,
     keGudang: rows[0].ke_gudang,
-    // Info Perusahaan dari Cabang Asal
     perush_nama: rows[0].gdg_inv_nama,
-    perush_alamat: `${rows[0].gdg_inv_alamat || ""}, ${
-      rows[0].gdg_inv_kota || ""
-    }`,
+    perush_alamat: `${rows[0].gdg_inv_alamat || ""}, ${rows[0].gdg_inv_kota || ""}`,
     perush_telp: rows[0].gdg_inv_telp,
   };
   const details = rows
@@ -353,19 +417,82 @@ const lookupReturJualKON = async (cabang) => {
 const getItemsFromReturJual = async (nomorRetur, cabang) => {
   const query = `
     SELECT 
-        d.rjd_kode AS kode, 
-        b.brgd_barcode AS barcode,
-        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+        d.rjd_kode AS kode,
         d.rjd_ukuran AS ukuran,
-        d.rjd_jumlah AS jumlah,
+        SUM(d.rjd_jumlah) AS jumlah,
+        MAX(b.brgd_barcode) AS barcode,
+        MAX(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna))) AS nama,
         IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m WHERE m.mst_aktif='Y' AND m.mst_cab=? AND m.mst_brg_kode=d.rjd_kode AND m.mst_ukuran=d.rjd_ukuran), 0) AS stok
     FROM trj_dtl d
     LEFT JOIN tbarangdc a ON a.brg_kode = d.rjd_kode
     LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.rjd_kode AND b.brgd_ukuran = d.rjd_ukuran
-    WHERE d.rjd_nomor = ?;
+    WHERE d.rjd_nomor = ?
+    GROUP BY d.rjd_kode, d.rjd_ukuran;
   `;
   const [rows] = await pool.query(query, [cabang, nomorRetur]);
-  return rows;
+
+  // BARU: ambil daftar unit_serial spesifik per kode+ukuran (kalau
+  // ada) — supaya Retur ke DC mindahin unit yang PERSIS sama, bukan
+  // tebakan FIFO
+  const [serialRows] = await pool.query(
+    `SELECT rjd_kode, rjd_ukuran, rjd_unit_serial
+     FROM trj_dtl
+     WHERE rjd_nomor = ? AND rjd_unit_serial IS NOT NULL`,
+    [nomorRetur],
+  );
+  const serialMap = new Map();
+  for (const r of serialRows) {
+    const key = `${r.rjd_kode}|${r.rjd_ukuran}`;
+    if (!serialMap.has(key)) serialMap.set(key, []);
+    serialMap.get(key).push(r.rjd_unit_serial);
+  }
+
+  return rows.map((row) => ({
+    ...row,
+    unitSerials: serialMap.get(`${row.kode}|${row.ukuran}`) || [],
+  }));
+};
+
+const findUnitForReturDc = async (serial, cabang) => {
+  const [unitRows] = await pool.query(
+    `SELECT unit_serial, unit_kode, unit_ukuran, unit_status, unit_lokasi_saat_ini
+     FROM tbarangdc_unit WHERE unit_serial = ?`,
+    [serial],
+  );
+  if (unitRows.length === 0) {
+    const err = new Error("QR tidak dikenali.");
+    err.statusCode = 404;
+    throw err;
+  }
+  const unit = unitRows[0];
+  if (unit.unit_status !== "DI_TOKO") {
+    throw new Error(
+      `Unit ini berstatus '${unit.unit_status}', bukan stok showroom.`,
+    );
+  }
+  if (unit.unit_lokasi_saat_ini && unit.unit_lokasi_saat_ini !== cabang) {
+    throw new Error(
+      `Unit ini tercatat di cabang ${unit.unit_lokasi_saat_ini}, bukan cabang Anda.`,
+    );
+  }
+
+  const [detail] = await pool.query(
+    `SELECT
+       TRIM(CONCAT(h.brg_jeniskaos," ",h.brg_tipe," ",h.brg_lengan," ",h.brg_jeniskain," ",h.brg_warna)) AS nama,
+       d.brgd_barcode AS barcode
+     FROM tbarangdc_dtl d
+     LEFT JOIN tbarangdc h ON h.brg_kode = d.brgd_kode
+     WHERE d.brgd_kode = ? AND d.brgd_ukuran = ?`,
+    [unit.unit_kode, unit.unit_ukuran],
+  );
+
+  return {
+    unitSerial: unit.unit_serial,
+    kode: unit.unit_kode,
+    ukuran: unit.unit_ukuran,
+    nama: detail[0]?.nama || "",
+    barcode: detail[0]?.barcode || "",
+  };
 };
 
 module.exports = {
@@ -378,4 +505,5 @@ module.exports = {
   getPrintData,
   lookupReturJualKON,
   getItemsFromReturJual,
+  findUnitForReturDc,
 };

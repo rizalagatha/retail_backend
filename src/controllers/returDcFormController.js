@@ -141,6 +141,17 @@ const loadFromRJ = async (req, res) => {
   }
 };
 
+const findUnitForReturDc = async (req, res) => {
+  try {
+    const { serial } = req.params;
+    const { gudang } = req.query;
+    const data = await service.findUnitForReturDc(serial, gudang);
+    res.json(data);
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   loadAllStock,
   getForEdit,
@@ -151,4 +162,5 @@ module.exports = {
   getPrintData,
   lookupReturJualKON,
   loadFromRJ,
+  findUnitForReturDc,
 };

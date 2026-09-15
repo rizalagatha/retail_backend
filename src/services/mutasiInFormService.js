@@ -39,20 +39,19 @@ const loadFromMo = async (nomorMo, user) => {
   if (headerRows.length === 0)
     throw new Error("Data Mutasi Out tidak ditemukan.");
 
-  // --- PERBAIKAN DI SINI: Tambahkan subquery 'sudah' ---
   const itemsQuery = `
     SELECT
       d.mod_kode AS kode,
-      b.brgd_barcode AS barcode,
-      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+      MAX(b.brgd_barcode) AS barcode,
+      MAX(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna))) AS nama,
       d.mod_ukuran AS ukuran,
-      d.mod_jumlah AS qtyMo,
+      SUM(d.mod_jumlah) AS qtyMo,
       IFNULL((
         SELECT SUM(dd.mid_jumlah) FROM tmutasiin_dtl dd 
         JOIN tmutasiin_hdr hh ON hh.mi_nomor = dd.mid_nomor 
         WHERE hh.mi_mo_nomor = ? AND dd.mid_kode = d.mod_kode AND dd.mid_ukuran = d.mod_ukuran
       ), 0) AS sudah,
-      (d.mod_jumlah - IFNULL((
+      (SUM(d.mod_jumlah) - IFNULL((
       SELECT SUM(dd.mid_jumlah)
       FROM tmutasiin_dtl dd
       JOIN tmutasiin_hdr hh ON hh.mi_nomor = dd.mid_nomor
@@ -63,7 +62,8 @@ const loadFromMo = async (nomorMo, user) => {
     FROM tmutasiout_dtl d
     LEFT JOIN tbarangdc a ON a.brg_kode = d.mod_kode
     LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mod_kode AND b.brgd_ukuran = d.mod_ukuran
-    WHERE d.mod_nomor = ?;
+    WHERE d.mod_nomor = ?
+    GROUP BY d.mod_kode, d.mod_ukuran;
   `;
   const [items] = await pool.query(itemsQuery, [nomorMo, nomorMo, nomorMo]);
   return { header: headerRows[0], items };
@@ -78,7 +78,6 @@ const saveData = async (payload, user) => {
   try {
     await connection.beginTransaction();
 
-    // Validasi
     if (!header.nomorMutasiOut)
       throw new Error("Nomor Mutasi Out harus diisi.");
     if (items.length === 0) throw new Error("Detail barang harus diisi.");
@@ -115,24 +114,85 @@ const saveData = async (payload, user) => {
         user.kode,
         miNomor,
       ]);
+
+      // BARU: revert status unit lama sebelum detail diganti
+      const [oldSerials] = await connection.query(
+        `SELECT mid_unit_serial FROM tmutasiin_dtl WHERE mid_nomor = ? AND mid_unit_serial IS NOT NULL`,
+        [miNomor],
+      );
+      if (oldSerials.length > 0) {
+        await connection.query(
+          `UPDATE tbarangdc_unit SET unit_status = 'TRANSIT_PRODUKSI' WHERE unit_serial IN (?)`,
+          [oldSerials.map((r) => r.mid_unit_serial)],
+        );
+      }
     }
 
     await connection.query("DELETE FROM tmutasiin_dtl WHERE mid_nomor = ?", [
       miNomor,
     ]);
 
-    const detailSql = `
-      INSERT INTO tmutasiin_dtl (mid_idrec, mid_iddrec, mid_nomor, mid_kode, mid_ukuran, mid_jumlah) 
-      VALUES ?;
-    `;
-    const detailValues = items.map((item, index) => {
-      const nourut = index + 1;
-      const iddrec = `${idrec}${nourut}`;
-      return [idrec, iddrec, miNomor, item.kode, item.ukuran, item.qtyIn];
-    });
+    const returnedSerials = [];
+    let rowCounter = 0;
 
-    if (detailValues.length > 0) {
-      await connection.query(detailSql, [detailValues]);
+    for (const item of items) {
+      const qty = Number(item.qtyIn) || 0;
+      if (qty <= 0) continue;
+
+      // BARU: cari unit_serial spesifik yang keluar lewat Mutasi Out
+      // ini, dikurangi yang sudah pernah masuk lewat Mutasi In lain
+      // untuk mo_nomor yang sama
+      const [candidateRows] = await connection.query(
+        `SELECT mod_unit_serial FROM tmutasiout_dtl
+         WHERE mod_nomor = ? AND mod_kode = ? AND mod_ukuran = ?
+           AND mod_unit_serial IS NOT NULL
+           AND mod_unit_serial NOT IN (
+             SELECT dd.mid_unit_serial FROM tmutasiin_dtl dd
+             INNER JOIN tmutasiin_hdr hh ON hh.mi_nomor = dd.mid_nomor
+             WHERE hh.mi_mo_nomor = ? AND dd.mid_unit_serial IS NOT NULL
+           )
+         ORDER BY mod_unit_serial ASC
+         LIMIT ? FOR UPDATE`,
+        [
+          header.nomorMutasiOut,
+          item.kode,
+          item.ukuran,
+          header.nomorMutasiOut,
+          qty,
+        ],
+      );
+      const pickedSerials = candidateRows.map((r) => r.mod_unit_serial);
+
+      for (const serial of pickedSerials) {
+        rowCounter++;
+        const iddrec = `${idrec}${rowCounter}`;
+        await connection.query(
+          `INSERT INTO tmutasiin_dtl (mid_idrec, mid_iddrec, mid_nomor, mid_kode, mid_ukuran, mid_jumlah, mid_unit_serial) 
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [idrec, iddrec, miNomor, item.kode, item.ukuran, 1, serial],
+        );
+        returnedSerials.push(serial);
+      }
+
+      const sisaQty = qty - pickedSerials.length;
+      if (sisaQty > 0) {
+        rowCounter++;
+        const iddrec = `${idrec}${rowCounter}`;
+        await connection.query(
+          `INSERT INTO tmutasiin_dtl (mid_idrec, mid_iddrec, mid_nomor, mid_kode, mid_ukuran, mid_jumlah, mid_unit_serial) 
+           VALUES (?, ?, ?, ?, ?, ?, NULL)`,
+          [idrec, iddrec, miNomor, item.kode, item.ukuran, sisaQty],
+        );
+      }
+    }
+
+    if (returnedSerials.length > 0) {
+      await connection.query(
+        `UPDATE tbarangdc_unit SET unit_status = 'DI_TOKO', unit_lokasi_saat_ini = ?,
+           date_modified = NOW(), user_modified = ?
+         WHERE unit_serial IN (?)`,
+        [user.cabang, user.kode, returnedSerials],
+      );
     }
 
     await connection.commit();
@@ -154,7 +214,6 @@ const saveData = async (payload, user) => {
 const loadForEdit = async (nomorMi, user) => {
   const connection = await pool.getConnection();
   try {
-    // 1. Ambil header Mutasi In
     const [headerRows] = await connection.query(
       `SELECT 
          h.mi_nomor AS nomor, h.mi_tanggal AS tanggal, h.mi_mo_nomor AS nomorMutasiOut,
@@ -164,33 +223,33 @@ const loadForEdit = async (nomorMi, user) => {
        LEFT JOIN tmutasiout_hdr o ON o.mo_nomor = h.mi_mo_nomor
        LEFT JOIN kencanaprint.tpabrik p ON p.pab_kode = o.mo_kecab
        WHERE h.mi_nomor = ?`,
-      [nomorMi]
+      [nomorMi],
     );
     if (headerRows.length === 0)
       throw new Error("Data Mutasi In tidak ditemukan.");
     const header = headerRows[0];
     const nomorMo = header.nomorMutasiOut;
 
-    // 2. Ambil SEMUA item dari Mutasi Out (sebagai template)
     const moItemsQuery = `
       SELECT
         d.mod_kode AS kode,
-        b.brgd_barcode AS barcode,
-        TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+        MAX(b.brgd_barcode) AS barcode,
+        MAX(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna))) AS nama,
         d.mod_ukuran AS ukuran,
-        d.mod_jumlah AS qtyMo, -- [PENTING] Alias ini harus 'qtyMo'
+        SUM(d.mod_jumlah) AS qtyMo,
         IFNULL((
             SELECT SUM(dd.mid_jumlah) FROM tmutasiin_dtl dd 
             JOIN tmutasiin_hdr hh ON hh.mi_nomor = dd.mid_nomor 
             WHERE hh.mi_mo_nomor = ? 
               AND dd.mid_kode = d.mod_kode 
               AND dd.mid_ukuran = d.mod_ukuran
-              AND hh.mi_nomor <> ? -- [PENTING] Hitung 'sudah' di MI LAIN
+              AND hh.mi_nomor <> ?
         ), 0) AS sudah
       FROM tmutasiout_dtl d
       LEFT JOIN tbarangdc a ON a.brg_kode = d.mod_kode
       LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mod_kode AND b.brgd_ukuran = d.mod_ukuran
-      WHERE d.mod_nomor = ?;
+      WHERE d.mod_nomor = ?
+      GROUP BY d.mod_kode, d.mod_ukuran;
     `;
     const [moItems] = await connection.query(moItemsQuery, [
       nomorMo,
@@ -198,24 +257,23 @@ const loadForEdit = async (nomorMi, user) => {
       nomorMo,
     ]);
 
-    // 3. Ambil item yang SUDAH TERSIMPAN di Mutasi In ini
-    const [miItems] = await connection.query(
+    const [miItemsRaw] = await connection.query(
       "SELECT mid_kode, mid_ukuran, mid_jumlah FROM tmutasiin_dtl WHERE mid_nomor = ?",
-      [nomorMi]
+      [nomorMi],
     );
 
-    // 4. Gabungkan data (seperti di Delphi)
-    const items = moItems.map((item) => {
-      // Cari item yang tersimpan di Mutasi In ini
-      const savedItem = miItems.find(
-        (d) => d.mid_kode === item.kode && d.mid_ukuran === item.ukuran
-      );
+    // BARU: agregasi miItemsRaw per kode+ukuran
+    const miMap = new Map();
+    for (const d of miItemsRaw) {
+      const key = `${d.mid_kode}|${d.mid_ukuran}`;
+      miMap.set(key, (miMap.get(key) || 0) + Number(d.mid_jumlah));
+    }
 
+    const items = moItems.map((item) => {
+      const key = `${item.kode}|${item.ukuran}`;
       return {
         ...item,
-        qtyIn: savedItem ? savedItem.mid_jumlah : 0, // Ini adalah 'jumlah' (Qty In)
-        // 'sudah' sudah dihitung oleh SQL
-        // 'belum' akan dihitung di frontend
+        qtyIn: miMap.get(key) || 0,
       };
     });
 
@@ -226,19 +284,18 @@ const loadForEdit = async (nomorMi, user) => {
 };
 
 const getPrintData = async (nomor) => {
-  // Query ini diadaptasi dari query 'cetak' di Delphi Anda
   const query = `
     SELECT 
-      h.mi_nomor, h.mi_tanggal, h.mi_so_nomor, h.mi_ket,
-      i.mo_kecab AS dari_cabang_kode,
-      p.pab_nama AS dari_cabang_nama,
-      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
-      d.mid_kode, d.mid_ukuran, d.mid_jumlah,
-      DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
-      h.user_create,
-      src.gdg_inv_nama AS perush_nama,
-      src.gdg_inv_alamat AS perush_alamat,
-      src.gdg_inv_telp AS perush_telp
+      MAX(h.mi_nomor) AS mi_nomor, MAX(h.mi_tanggal) AS mi_tanggal, MAX(h.mi_so_nomor) AS mi_so_nomor, MAX(h.mi_ket) AS mi_ket,
+      MAX(i.mo_kecab) AS dari_cabang_kode,
+      MAX(p.pab_nama) AS dari_cabang_nama,
+      MAX(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna))) AS nama,
+      d.mid_kode, d.mid_ukuran, SUM(d.mid_jumlah) AS mid_jumlah,
+      MAX(DATE_FORMAT(h.date_create, "%d-%m-%Y %T")) AS created,
+      MAX(h.user_create) AS user_create,
+      MAX(src.gdg_inv_nama) AS perush_nama,
+      MAX(src.gdg_inv_alamat) AS perush_alamat,
+      MAX(src.gdg_inv_telp) AS perush_telp
     FROM tmutasiin_hdr h
     LEFT JOIN tmutasiin_dtl d ON d.mid_nomor = h.mi_nomor
     LEFT JOIN tmutasiout_hdr i ON i.mo_nomor = h.mi_mo_nomor
@@ -246,7 +303,8 @@ const getPrintData = async (nomor) => {
     LEFT JOIN tbarangdc a ON a.brg_kode = d.mid_kode
     LEFT JOIN tgudang src ON src.gdg_kode = h.mi_cab
     WHERE h.mi_nomor = ?
-    ORDER BY d.mid_kode, d.mid_ukuran;
+    GROUP BY d.mid_kode, d.mid_ukuran
+    ORDER BY d.mid_kode;
   `;
 
   const [rows] = await pool.query(query, [nomor]);
@@ -326,15 +384,15 @@ const getExportDetails = async (filters) => {
   const { startDate, endDate, cabang } = filters;
   const query = `
     SELECT 
-      h.mi_nomor AS 'Nomor Mutasi In',
-      h.mi_tanggal AS 'Tanggal',
-      h.mi_mo_nomor AS 'Nomor Mutasi Out',
-      h.mi_so_nomor AS 'Nomor SO',
-      c.cus_nama AS 'Customer',
+      MAX(h.mi_nomor) AS 'Nomor Mutasi In',
+      MAX(h.mi_tanggal) AS 'Tanggal',
+      MAX(h.mi_mo_nomor) AS 'Nomor Mutasi Out',
+      MAX(h.mi_so_nomor) AS 'Nomor SO',
+      MAX(c.cus_nama) AS 'Customer',
       d.mid_kode AS 'Kode Barang',
-      TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS 'Nama Barang',
+      MAX(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna))) AS 'Nama Barang',
       d.mid_ukuran AS 'Ukuran',
-      d.mid_jumlah AS 'Qty'
+      SUM(d.mid_jumlah) AS 'Qty'
     FROM tmutasiin_hdr h
     JOIN tmutasiin_dtl d ON h.mi_nomor = d.mid_nomor
     LEFT JOIN tso_hdr o ON o.so_nomor = h.mi_so_nomor
@@ -342,6 +400,7 @@ const getExportDetails = async (filters) => {
     LEFT JOIN tbarangdc a ON a.brg_kode = d.mid_kode
     WHERE h.mi_cab = ? 
       AND h.mi_tanggal BETWEEN ? AND ?
+    GROUP BY h.mi_nomor, d.mid_kode, d.mid_ukuran
     ORDER BY h.mi_nomor;
   `;
   const [rows] = await pool.query(query, [cabang, startDate, endDate]);

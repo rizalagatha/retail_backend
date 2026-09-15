@@ -239,6 +239,20 @@ const getPrintData = async (req, res) => {
   }
 };
 
+const getUnitForSale = async (req, res) => {
+  try {
+    const { barcode } = req.params;
+    const { gudang } = req.query;
+    if (!gudang) {
+      return res.status(400).json({ message: "Parameter gudang diperlukan." });
+    }
+    const unit = await service.findUnitForSale(barcode, gudang);
+    res.json(unit);
+  } catch (error) {
+    res.status(error.statusCode || 404).json({ message: error.message });
+  }
+};
+
 const getByBarcode = async (req, res) => {
   try {
     const { barcode } = req.params;
@@ -571,6 +585,7 @@ module.exports = {
   saveMember,
   getDefaultCustomer,
   getPrintData,
+  getUnitForSale,
   getByBarcode,
   searchProducts,
   getProductPanelList,

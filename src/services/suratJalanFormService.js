@@ -169,26 +169,43 @@ const saveData = async (payload, user) => {
       sjNomor,
     ]);
 
-    // --- PERBAIKAN DI SINI ---
-    // 1. Ganti 'sjd_nourut' menjadi 'sjd_iddrec'
+    // BARU: sertakan sjd_unit_serial — null untuk baris non-serialized
+    // (bahan penolong, scan barcode manual, Terima RB, dst)
     const detailSql = `
-            INSERT INTO tdc_sj_dtl (sjd_iddrec, sjd_nomor, sjd_kode, sjd_ukuran, sjd_jumlah)
+            INSERT INTO tdc_sj_dtl (sjd_iddrec, sjd_nomor, sjd_kode, sjd_ukuran, sjd_jumlah, sjd_unit_serial)
             VALUES ?;
         `;
 
-    // 2. Sesuaikan data yang akan di-insert
     const detailValues = items
       .filter((item) => item.kode && item.jumlah > 0)
       .map((item, index) => {
         const nourut = index + 1;
-        // Buat iddrec sesuai logika Delphi (Nomor + No Urut)
         const iddrec = `${sjNomor}${nourut}`;
-        return [iddrec, sjNomor, item.kode, item.ukuran, item.jumlah];
+        return [
+          iddrec,
+          sjNomor,
+          item.kode,
+          item.ukuran,
+          item.jumlah,
+          item.unitSerial || null,
+        ];
       });
-    // --- AKHIR PERBAIKAN ---
 
     if (detailValues.length > 0) {
       await connection.query(detailSql, [detailValues]);
+
+      // BARU: update status unit yang ikut SJ ini (cuma yang punya
+      // unitSerial, sumbernya dari Packing List)
+      const serialsToUpdate = detailValues
+        .map((row) => row[5])
+        .filter((s) => s !== null);
+      if (serialsToUpdate.length > 0) {
+        await connection.query(
+          `UPDATE tbarangdc_unit SET unit_status = 'DIKIRIM', date_modified = NOW(), user_modified = ?
+           WHERE unit_serial IN (?)`,
+          [user.kode, serialsToUpdate],
+        );
+      }
     }
 
     if (header.permintaan) {
@@ -443,6 +460,7 @@ const loadItemsFromPackingList = async (nomorPL) => {
       d.pld_ukuran AS ukuran,
       d.pld_jumlah AS jumlah, 
       d.pld_jumlah AS minta,
+      d.pld_unit_serial AS unitSerial,
       b.brgd_barcode AS barcode,
       IFNULL(b.brgd_min, 0) AS stokmin,
       IFNULL(b.brgd_max, 0) AS stokmax,
@@ -455,9 +473,7 @@ const loadItemsFromPackingList = async (nomorPL) => {
            AND m.mst_brg_kode=d.pld_kode AND m.mst_ukuran=d.pld_ukuran
       ), 0) AS stok,
 
-      -- [PERBAIKAN] Ambil Kategori untuk filter validasi di Frontend
       IFNULL(a.brg_ktgp, '') AS kategori,
-
       IFNULL(b.brgd_harga, 0) AS harga,
       IFNULL(b.brgd_hpp, 0) AS hpp
 

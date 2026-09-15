@@ -35,6 +35,13 @@ router.get(
   controller.getProductDetails,
 );
 
+router.get(
+  "/lookup/unit-for-retur/:serial",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.findUnitForReturDc,
+);
+
 // GET: Lookup untuk mencari produk via scan barcode
 router.get(
   "/lookup/by-barcode/:barcode",

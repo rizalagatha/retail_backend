@@ -170,13 +170,11 @@ const saveData = async (payload, user) => {
   try {
     await connection.beginTransaction();
 
-    // Validasi (Sudah benar)
     if (!header.nomorSo) throw new Error("No. Pesanan harus diisi.");
     const validItems = items.filter(
       (item) => item.kode && (item.jumlah || 0) > 0,
     );
     if (validItems.length === 0) throw new Error("Detail barang harus diisi.");
-    // (Validasi Qty vs Stok sudah ada di frontend/service, itu bagus)
 
     let msoNomor = header.nomor;
     const timestamp = format(new Date(), "yyyyMMddHHmmssSSS");
@@ -200,7 +198,6 @@ const saveData = async (payload, user) => {
         user.kode,
       ]);
     } else {
-      // Logika update header (sesuai Delphi)
       const headerSql = `
         UPDATE tmutasistok_hdr SET
           mso_tanggal = ?, mso_so_nomor = ?, mso_ket = ?, mso_jenis = ?,
@@ -216,46 +213,130 @@ const saveData = async (payload, user) => {
         msoNomor,
         user.cabang,
       ]);
-      // (Catatan: Delphi mengambil idrec dari select, kita bisa asumsikan idrec tidak berubah saat edit)
     }
 
-    // Hapus detail lama (sesuai Delphi)
+    // ═══════════ DI SINI blok yang saya kasih terakhir masuk ═══════════
+    // Mode edit — kembalikan status unit yang sebelumnya kepakai di
+    // dokumen ini, TERMASUK unit_so_nomor-nya
+    if (!isNew) {
+      const [oldSerials] = await connection.query(
+        `SELECT msod_unit_serial FROM tmutasistok_dtl WHERE msod_nomor = ? AND msod_unit_serial IS NOT NULL`,
+        [msoNomor],
+      );
+      if (oldSerials.length > 0) {
+        const serials = oldSerials.map((r) => r.msod_unit_serial);
+        if (header.jenisMutasi === "SP") {
+          await connection.query(
+            `UPDATE tbarangdc_unit SET unit_status = 'DI_TOKO', unit_so_nomor = NULL WHERE unit_serial IN (?)`,
+            [serials],
+          );
+        } else {
+          await connection.query(
+            `UPDATE tbarangdc_unit SET unit_status = 'RESERVED', unit_so_nomor = ? WHERE unit_serial IN (?)`,
+            [header.nomorSo, serials],
+          );
+        }
+      }
+    }
+
     await connection.query("DELETE FROM tmutasistok_dtl WHERE msod_nomor = ?", [
       msoNomor,
     ]);
 
-    // --- PENYESUAIAN DENGAN LOGIKA DELPHI ---
     if (validItems.length > 0) {
-      // 1. Buat 'msod_nomorin' (mutin) satu kali (sesuai Delphi)
       const msodNomorIn = await generateNewMsodNomorIn(
         connection,
         user.cabang,
         header.tanggal,
       );
 
-      // 2. Siapkan detail values DENGAN msod_nomorin dan msod_nourut
+      const sourceStatus = header.jenisMutasi === "SP" ? "DI_TOKO" : "RESERVED";
+      const targetStatus = header.jenisMutasi === "SP" ? "RESERVED" : "DI_TOKO";
+
+      const detailValues = [];
+      const unitSerialsToUpdate = [];
+      let nourut = 0;
+
+      for (const item of validItems) {
+        const qty = Number(item.jumlah) || 0;
+        let remaining = qty;
+
+        const params = [item.kode, item.ukuran, sourceStatus];
+        let extraFilter = "";
+        if (header.jenisMutasi === "PS") {
+          extraFilter = "AND unit_so_nomor = ?";
+          params.push(header.nomorSo);
+        } else {
+          // BARU: arah SP — sumbernya DI_TOKO, wajib filter lokasi
+          // cabang sendiri (DI_TOKO adalah status bersama semua toko)
+          extraFilter = "AND unit_lokasi_saat_ini = ?";
+          params.push(user.cabang);
+        }
+        params.push(qty);
+
+        const [availableUnits] = await connection.query(
+          `SELECT unit_serial FROM tbarangdc_unit
+           WHERE unit_kode = ? AND unit_ukuran = ? AND unit_status = ? ${extraFilter}
+           ORDER BY date_create ASC, unit_serial ASC
+           LIMIT ? FOR UPDATE`,
+          params,
+        );
+
+        for (const u of availableUnits) {
+          nourut++;
+          detailValues.push([
+            idrec,
+            msoNomor,
+            msodNomorIn,
+            item.kode,
+            item.ukuran,
+            1,
+            nourut,
+            u.unit_serial,
+          ]);
+          unitSerialsToUpdate.push(u.unit_serial);
+          remaining--;
+        }
+
+        if (remaining > 0) {
+          nourut++;
+          detailValues.push([
+            idrec,
+            msoNomor,
+            msodNomorIn,
+            item.kode,
+            item.ukuran,
+            remaining,
+            nourut,
+            null,
+          ]);
+        }
+      }
+
       const detailSql = `
         INSERT INTO tmutasistok_dtl (
-          msod_idrec, msod_nomor, msod_nomorin, msod_kode, msod_ukuran, msod_jumlah, msod_nourut
+          msod_idrec, msod_nomor, msod_nomorin, msod_kode, msod_ukuran, msod_jumlah, msod_nourut, msod_unit_serial
         ) VALUES ?;
       `;
-
-      const detailValues = validItems.map((item, index) => [
-        idrec,
-        msoNomor,
-        msodNomorIn, // <-- Kolom baru dari Delphi
-        item.kode,
-        item.ukuran,
-        item.jumlah,
-        index + 1, // <-- Kolom baru 'msod_nourut' dari Delphi
-      ]);
-
       await connection.query(detailSql, [detailValues]);
-    }
 
-    // --- BLOK YANG DIHAPUS ---
-    // Semua blok 'INSERT INTO tmasterstok' dan 'INSERT INTO tmasterstokso'
-    // yang saya tambahkan sebelumnya DIHAPUS dari sini.
+      if (unitSerialsToUpdate.length > 0) {
+        if (header.jenisMutasi === "SP") {
+          await connection.query(
+            `UPDATE tbarangdc_unit SET unit_status = ?, unit_so_nomor = ?, date_modified = NOW(), user_modified = ?
+             WHERE unit_serial IN (?)`,
+            [targetStatus, header.nomorSo, user.kode, unitSerialsToUpdate],
+          );
+        } else {
+          await connection.query(
+            `UPDATE tbarangdc_unit SET unit_status = ?, unit_so_nomor = NULL, date_modified = NOW(), user_modified = ?
+             WHERE unit_serial IN (?)`,
+            [targetStatus, user.kode, unitSerialsToUpdate],
+          );
+        }
+      }
+    }
+    // ═══════════════════════ akhir blok ═══════════════════════
 
     await connection.commit();
     return {
@@ -394,7 +475,7 @@ const STICKER_DTF_LOCKED_KODE = ["2500053", "2500060"]; // Reguler & Premium
  * DENGAN LOGIKA PENCEGAH DOUBLE MUTASI (SMART SYNC)
  */
 const autoMutasiScan = async (payload, user) => {
-  const { nomor_so, kode_barang, ukuran, qty } = payload;
+  const { nomor_so, kode_barang, ukuran, qty, unit_serial } = payload;
   const connection = await pool.getConnection();
 
   try {
@@ -403,9 +484,38 @@ const autoMutasiScan = async (payload, user) => {
     const cabang = user.cabang;
     const tanggal = format(new Date(), "yyyy-MM-dd");
 
-    // =======================================================================
-    // 1. AMBIL STATUS ITEM DI SO SAAT INI (Scanned & Mutasi Sebelumnya)
-    // =======================================================================
+    let resolvedKode = kode_barang;
+    let resolvedUkuran = ukuran;
+    let resolvedQty = qty;
+
+    // BARU: mode unit_serial (QR baru) — validasi dulu, resolve
+    // kode+ukuran dari data unit, qty selalu 1
+    if (unit_serial) {
+      const [unitRows] = await connection.query(
+        `SELECT unit_serial, unit_kode, unit_ukuran, unit_status
+         FROM tbarangdc_unit WHERE unit_serial = ? FOR UPDATE`,
+        [unit_serial],
+      );
+      if (unitRows.length === 0) {
+        await connection.rollback();
+        const err = new Error("QR tidak dikenali.");
+        err.statusCode = 404;
+        throw err;
+      }
+      const unit = unitRows[0];
+      if (unit.unit_status !== "DI_TOKO") {
+        await connection.rollback();
+        throw new Error(
+          `Unit ini berstatus '${unit.unit_status}', bukan stok showroom yang tersedia.`,
+        );
+      }
+      resolvedKode = unit.unit_kode;
+      resolvedUkuran = unit.unit_ukuran;
+      resolvedQty = 1;
+    }
+
+    // --- Validasi & update sod_scanned (SAMA seperti sebelumnya,
+    // cuma pakai resolvedKode/resolvedUkuran/resolvedQty) ---
     const [itemSo] = await connection.query(
       `
       SELECT 
@@ -421,44 +531,45 @@ const autoMutasiScan = async (payload, user) => {
       FROM tso_dtl
       WHERE sod_so_nomor = ? AND sod_kode = ? AND sod_ukuran = ? LIMIT 1
     `,
-      [cabang, kode_barang, ukuran, nomor_so, nomor_so, kode_barang, ukuran],
+      [
+        cabang,
+        resolvedKode,
+        resolvedUkuran,
+        nomor_so,
+        nomor_so,
+        resolvedKode,
+        resolvedUkuran,
+      ],
     );
 
     if (itemSo.length === 0) {
-      throw new Error(
+      await connection.rollback();
+      const err = new Error(
         "Barang tidak ditemukan di dalam dokumen Surat Pesanan ini.",
       );
+      throw err;
     }
 
     const sod_jumlah = itemSo[0].sod_jumlah;
     const sod_scanned = itemSo[0].sod_scanned;
     const total_mutasi = itemSo[0].total_mutasi;
-
-    const new_scanned = sod_scanned + qty;
+    const new_scanned = sod_scanned + resolvedQty;
 
     if (new_scanned > sod_jumlah) {
+      await connection.rollback();
       throw new Error(
         `Gagal: Qty scan (${new_scanned}) melebihi jumlah pesanan (${sod_jumlah}).`,
       );
     }
 
-    // =======================================================================
-    // 2. UPDATE PROGRESS SCAN DI tso_dtl AGAR BISA TERBACA DI INVOICE
-    // =======================================================================
     await connection.query(
       "UPDATE tso_dtl SET sod_scanned = ? WHERE sod_so_nomor = ? AND sod_kode = ? AND sod_ukuran = ?",
-      [new_scanned, nomor_so, kode_barang, ukuran],
+      [new_scanned, nomor_so, resolvedKode, resolvedUkuran],
     );
 
-    // =======================================================================
-    // 3. HITUNG BERAPA YANG PERLU DIMUTASI (Cegah Double Mutasi)
-    // =======================================================================
     const qty_to_mutate = Math.max(0, new_scanned - total_mutasi);
 
-    // =======================================================================
-    // [BARU] 3.5. VALIDASI STOK FISIK — KHUSUS STICKER DTF, WAJIB CUKUP
-    // =======================================================================
-    if (qty_to_mutate > 0 && STICKER_DTF_LOCKED_KODE.includes(kode_barang)) {
+    if (qty_to_mutate > 0 && STICKER_DTF_LOCKED_KODE.includes(resolvedKode)) {
       const [stokRows] = await connection.query(
         `SELECT IFNULL(SUM(m.mst_stok_in - m.mst_stok_out), 0) AS stok_fisik
          FROM tmasterstok m
@@ -467,7 +578,7 @@ const autoMutasiScan = async (payload, user) => {
            AND m.mst_brg_kode = ? 
            AND m.mst_ukuran = ?
          FOR UPDATE`,
-        [cabang, kode_barang, ukuran],
+        [cabang, resolvedKode, resolvedUkuran],
       );
       const stokFisik = Number(stokRows[0]?.stok_fisik || 0);
 
@@ -511,36 +622,9 @@ const autoMutasiScan = async (payload, user) => {
         );
       }
 
-      const [existingDetail] = await connection.query(
-        `SELECT msod_nomorin, msod_nourut, msod_jumlah 
-         FROM tmutasistok_dtl 
-         WHERE msod_nomor = ? AND msod_kode = ? AND msod_ukuran = ? LIMIT 1`,
-        [msoNomor, kode_barang, ukuran],
-      );
-
-      if (existingDetail.length > 0) {
-        const currentQty = existingDetail[0].msod_jumlah;
-        const newQty = currentQty + qty_to_mutate;
-        const msodNomorIn = existingDetail[0].msod_nomorin;
-        const nourut = existingDetail[0].msod_nourut;
-
-        await connection.query(
-          `UPDATE tmutasistok_dtl SET msod_jumlah = ? WHERE msod_nomor = ? AND msod_kode = ? AND msod_ukuran = ?`,
-          [newQty, msoNomor, kode_barang, ukuran],
-        );
-
-        const idrecMaster = `${msoNomor}${nourut}`;
-        await connection.query(
-          `UPDATE tmasterstok SET mst_stok_out = ? WHERE mst_idrec = ?`,
-          [newQty, idrecMaster],
-        );
-
-        const idrecMasterSo = `${msodNomorIn}${nourut}`;
-        await connection.query(
-          `UPDATE tmasterstokso SET mst_stok_in = ? WHERE mst_idrec = ?`,
-          [newQty, idrecMasterSo],
-        );
-      } else {
+      if (unit_serial) {
+        // BARU: unit serialized — SELALU insert baris baru (1 unit =
+        // 1 baris), bukan akumulasi seperti jalur lama
         const [urutRows] = await connection.query(
           "SELECT IFNULL(MAX(msod_nourut), 0) + 1 AS nextUrut FROM tmutasistok_dtl WHERE msod_nomor = ?",
           [msoNomor],
@@ -554,18 +638,85 @@ const autoMutasiScan = async (payload, user) => {
 
         await connection.query(
           `INSERT INTO tmutasistok_dtl (
-            msod_idrec, msod_nomor, msod_nomorin, msod_kode, msod_ukuran, msod_jumlah, msod_nourut
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            msod_idrec, msod_nomor, msod_nomorin, msod_kode, msod_ukuran, msod_jumlah, msod_nourut, msod_unit_serial
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             idrec,
             msoNomor,
             msodNomorIn,
-            kode_barang,
-            ukuran,
+            resolvedKode,
+            resolvedUkuran,
             qty_to_mutate,
             nextUrut,
+            unit_serial,
           ],
         );
+
+        await connection.query(
+          `UPDATE tbarangdc_unit SET unit_status = 'RESERVED', unit_so_nomor = ?, date_modified = NOW(), user_modified = ?
+           WHERE unit_serial = ?`,
+          [nomor_so, user.kode, unit_serial],
+        );
+      } else {
+        // Jalur lama (barcode agregat) — TIDAK BERUBAH, cuma tambah
+        // filter msod_unit_serial IS NULL supaya tidak numpuk ke baris
+        // unit yang sudah ada
+        const [existingDetail] = await connection.query(
+          `SELECT msod_nomorin, msod_nourut, msod_jumlah 
+           FROM tmutasistok_dtl 
+           WHERE msod_nomor = ? AND msod_kode = ? AND msod_ukuran = ? AND msod_unit_serial IS NULL LIMIT 1`,
+          [msoNomor, resolvedKode, resolvedUkuran],
+        );
+
+        if (existingDetail.length > 0) {
+          const currentQty = existingDetail[0].msod_jumlah;
+          const newQty = currentQty + qty_to_mutate;
+          const msodNomorIn = existingDetail[0].msod_nomorin;
+          const nourut = existingDetail[0].msod_nourut;
+
+          await connection.query(
+            `UPDATE tmutasistok_dtl SET msod_jumlah = ? WHERE msod_nomor = ? AND msod_kode = ? AND msod_ukuran = ? AND msod_unit_serial IS NULL`,
+            [newQty, msoNomor, resolvedKode, resolvedUkuran],
+          );
+
+          const idrecMaster = `${msoNomor}${nourut}`;
+          await connection.query(
+            `UPDATE tmasterstok SET mst_stok_out = ? WHERE mst_idrec = ?`,
+            [newQty, idrecMaster],
+          );
+
+          const idrecMasterSo = `${msodNomorIn}${nourut}`;
+          await connection.query(
+            `UPDATE tmasterstokso SET mst_stok_in = ? WHERE mst_idrec = ?`,
+            [newQty, idrecMasterSo],
+          );
+        } else {
+          const [urutRows] = await connection.query(
+            "SELECT IFNULL(MAX(msod_nourut), 0) + 1 AS nextUrut FROM tmutasistok_dtl WHERE msod_nomor = ?",
+            [msoNomor],
+          );
+          const nextUrut = urutRows[0].nextUrut;
+          const msodNomorIn = await generateNewMsodNomorIn(
+            connection,
+            cabang,
+            tanggal,
+          );
+
+          await connection.query(
+            `INSERT INTO tmutasistok_dtl (
+              msod_idrec, msod_nomor, msod_nomorin, msod_kode, msod_ukuran, msod_jumlah, msod_nourut
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [
+              idrec,
+              msoNomor,
+              msodNomorIn,
+              resolvedKode,
+              resolvedUkuran,
+              qty_to_mutate,
+              nextUrut,
+            ],
+          );
+        }
       }
     }
 
@@ -578,13 +729,17 @@ const autoMutasiScan = async (payload, user) => {
           ? `Item otomatis dimutasi ke dokumen ${msoNomor}`
           : `Item berhasil discan (Mutasi di-skip karena sudah tercover mutasi manual).`,
       mso_nomor: msoNomor,
+      kode: resolvedKode,
+      ukuran: resolvedUkuran,
     };
   } catch (error) {
     await connection.rollback();
     console.error("Error Auto Mutasi Scan:", error);
-    throw new Error(
+    const e = new Error(
       "Gagal mengeksekusi Auto-Mutasi di database: " + error.message,
     );
+    e.statusCode = error.statusCode || 500;
+    throw e;
   } finally {
     connection.release();
   }
