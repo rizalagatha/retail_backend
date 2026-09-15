@@ -3739,7 +3739,7 @@ const getPrintDataKasir = async (nomor) => {
             ELSE (d.invd_harga - d.invd_diskon)
         END AS harga_setelah_diskon,
 
-        CASE
+                CASE
             WHEN (
               SELECT p.pro_lipat 
               FROM tpromo p 
@@ -3747,13 +3747,11 @@ const getPrintDataKasir = async (nomor) => {
               LIMIT 1
             ) = 'N'
             AND (
-              SELECT COUNT(*) FROM (
-                SELECT invd_kode, invd_ukuran, MAX(invd_diskon) AS agg_diskon, MIN(invd_nourut) AS agg_nourut
-                FROM tinv_dtl
-                WHERE invd_inv_nomor = h.inv_nomor
-                GROUP BY invd_kode, invd_ukuran, invd_harga, invd_diskon
-              ) y
-              WHERE y.agg_diskon > 0 AND y.agg_nourut < d.invd_nourut
+              SELECT COUNT(*) 
+              FROM tinv_dtl t2
+              WHERE t2.invd_inv_nomor = h.inv_nomor
+                AND t2.invd_diskon > 0
+                AND t2.invd_nourut < d.invd_nourut
             ) > 0
             THEN 0
             ELSE (COALESCE(d.invd_diskon,0) * d.invd_jumlah)
@@ -3767,13 +3765,11 @@ const getPrintDataKasir = async (nomor) => {
               LIMIT 1
             ) = 'N'
             AND (
-              SELECT COUNT(*) FROM (
-                SELECT invd_kode, invd_ukuran, MAX(invd_diskon) AS agg_diskon, MIN(invd_nourut) AS agg_nourut
-                FROM tinv_dtl
-                WHERE invd_inv_nomor = h.inv_nomor
-                GROUP BY invd_kode, invd_ukuran, invd_harga, invd_diskon
-              ) y
-              WHERE y.agg_diskon > 0 AND y.agg_nourut < d.invd_nourut
+              SELECT COUNT(*) 
+              FROM tinv_dtl t2
+              WHERE t2.invd_inv_nomor = h.inv_nomor
+                AND t2.invd_diskon > 0
+                AND t2.invd_nourut < d.invd_nourut
             ) > 0
             THEN (d.invd_jumlah * d.invd_harga)
             ELSE (d.invd_jumlah * (d.invd_harga - d.invd_diskon))
