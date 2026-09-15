@@ -1334,11 +1334,10 @@ const saveProposal = async (data) => {
     await connection.beginTransaction();
 
     let nomor = header.nomor;
-    // [BARU] State kunci harga — orthogonal dari ph_status, cuma relevan
-    // di mode edit (proposal baru selalu mulai unlocked)
     let isCurrentlyLocked = false;
     let existingLockedBy = null;
     let existingLockedAt = null;
+    let currentStatus = "DRAFT"; // [BARU] hoist ke luar supaya bisa dipakai di blok kode barang nanti
 
     if (isNew) {
       nomor = await generateNewProposalNumber(user.cabang, header.tanggal);
@@ -1350,18 +1349,17 @@ const saveProposal = async (data) => {
       if (statusRows.length === 0) {
         throw new Error("Pengajuan harga tidak ditemukan.");
       }
-      const currentStatus = statusRows[0].ph_status || "DRAFT";
-      if (currentStatus === "ACC_CUSTOMER") {
-        if (!user.canApprovePrice) {
-          throw new Error(
-            "Pengajuan harga berstatus ACC_CUSTOMER hanya bisa diubah oleh user dengan hak approval Finance.",
-          );
-        }
-      } else if (currentStatus !== "DRAFT") {
+      currentStatus = statusRows[0].ph_status || "DRAFT";
+
+      // [UBAH] Generalisasi: status apapun selain DRAFT hanya boleh diedit oleh
+      // Finance (canApprovePrice) — sebelumnya cuma dibolehkan saat ACC_CUSTOMER,
+      // sekarang berlaku juga untuk ACC_FINANCE/CLOSED/dst.
+      if (currentStatus !== "DRAFT" && !user.canApprovePrice) {
         throw new Error(
-          `Pengajuan harga dengan status "${currentStatus}" tidak bisa diubah lewat form ini.`,
+          `Pengajuan harga berstatus "${currentStatus}" hanya bisa diubah oleh user dengan hak approval Finance.`,
         );
       }
+
       isCurrentlyLocked = statusRows[0].ph_harga_locked === "Y";
       existingLockedBy = statusRows[0].ph_harga_locked_by;
       existingLockedAt = statusRows[0].ph_harga_locked_at;
@@ -1372,7 +1370,20 @@ const saveProposal = async (data) => {
     let kodeBarangDraft = null;
     let kodeBarangDeskripsi = null;
 
-    if (isCustom || isStokMode) {
+    // [BARU] Kode barang sudah final (di-generate saat approveFinance, linked ke
+    // tbarangdc_dtl.brgd_ph_nomor) begitu status lewat ACC_CUSTOMER. Draftnya di
+    // tpengajuanharga_barang_draft sudah ditandai FINAL, jadi pencarian draft
+    // aktif (status='DRAFT') di bawah TIDAK akan ketemu apa-apa dan malah bikin
+    // kode baru yang orphan — tidak nyambung ke barang fisik yang sudah ada.
+    // Begitu status sudah final, JANGAN regenerasi — pakai kode yang sudah
+    // tersimpan apa adanya, meskipun Finance mengedit qty/harga/biaya tambahan.
+    const isKodeSudahFinal =
+      !isNew && currentStatus !== "DRAFT" && currentStatus !== "ACC_CUSTOMER";
+
+    if ((isCustom || isStokMode) && isKodeSudahFinal) {
+      kodeBarangDraft = header.kodeBarangDraft || null;
+      kodeBarangDeskripsi = header.kodeBarangDeskripsi || null;
+    } else if (isCustom || isStokMode) {
       if (isStokMode) {
         if (!header.jenisKain)
           throw new Error("Jenis Kain harus diisi untuk Pengajuan Stok.");
