@@ -41,6 +41,7 @@ const getList = async (filters) => {
             
             MAX(tf.ptd_nomor) AS pck_pth_nomor,
             MAX(tf.ptd_jur_no) AS pck_bbk_finance,
+            MAX(k.pck_bkk_nomor) AS pck_bkk_nomor,
 
             CASE 
                 WHEN MAX(h.pc_status) = 'RECEIVED' THEN 'RECEIVED'
@@ -355,11 +356,20 @@ const receiveKlaim = async (pck_nomor, payload, user) => {
   try {
     await connection.beginTransaction();
 
-    // [PERBAIKAN] Tangkap bbk_finance dari payload
-    const { tanggal, nominal, bbk_finance } = payload;
-    const safeBbkFinance = bbk_finance || null;
+    // Ambil data existing klaim, untuk cek apakah BKK Finance sudah diinput
+    const [[pckRow]] = await connection.query(
+      "SELECT pck_bkk_nomor, pck_total FROM tpettycash_klaim_hdr WHERE pck_nomor = ?",
+      [pck_nomor],
+    );
+    if (!pckRow) throw new Error("Data klaim tidak ditemukan.");
 
-    // 1. Generate Nomor Kas Masuk (Contoh: BKM.K01.2603.0001)
+    // Kalau nomor BKK sudah ada (diinput dari sisi Finance), pakai otomatis
+    // supaya Store cukup klik "Terima Dana" tanpa isi ulang nominal/nomor.
+    const tanggal = payload?.tanggal || format(new Date(), "yyyy-MM-dd");
+    const nominal = payload?.nominal ?? pckRow.pck_total;
+    const bbk_finance = pckRow.pck_bkk_nomor || payload?.bbk_finance || null;
+
+    // 1. Generate Nomor Kas Masuk (BKM)
     const yearMonth = format(new Date(tanggal), "yyMM");
     const prefixBkm = `${user.cabang}.BKM.${yearMonth}.`;
     const [nomorRows] = await connection.query(
@@ -368,7 +378,7 @@ const receiveKlaim = async (pck_nomor, payload, user) => {
     );
     const bkm_nomor = `${prefixBkm}${nomorRows[0].next_num.toString().padStart(4, "0")}`;
 
-    // 2. Update status PCK, simpan nomor BKM, dan simpan nomor BBK Finance
+    // 2. Update status PCK
     const updatePck = `
       UPDATE tpettycash_klaim_hdr 
       SET pck_status = 'RECEIVED', 
@@ -379,14 +389,13 @@ const receiveKlaim = async (pck_nomor, payload, user) => {
           date_received = NOW(), 
           user_modified = ?, 
           date_modified = NOW() 
-      -- [PERBAIKAN KUNCI]: Izinkan status APPROVED juga, karena kadang Delphi Finance lupa update status web
       WHERE pck_nomor = ? AND pck_status IN ('ON_TRANSFER', 'APPROVED')
     `;
     const [resPck] = await connection.query(updatePck, [
       tanggal,
       nominal,
       bkm_nomor,
-      safeBbkFinance, // [BARU]
+      bbk_finance,
       user.kode,
       pck_nomor,
     ]);
@@ -394,13 +403,13 @@ const receiveKlaim = async (pck_nomor, payload, user) => {
     if (resPck.affectedRows === 0)
       throw new Error("Gagal. Dokumen belum masuk antrean transfer.");
 
-    // 3. Update status semua PC yang terikat
+    // 3. Update status semua PC yang terikat (tetap sama)
     await connection.query(
       "UPDATE tpettycash_hdr SET pc_status = 'RECEIVED', user_modified = ?, date_modified = NOW() WHERE pck_nomor = ?",
       [user.kode, pck_nomor],
     );
 
-    // 4. [PENTING] CATAT SEBAGAI DEBET DI BUKU BESAR
+    // 4. Catat sebagai DEBET di buku besar (tetap sama)
     await connection.query(
       `INSERT INTO tpettycash_mutasi (mut_cabang, mut_tanggal, mut_nomor_bukti, mut_tipe, mut_nominal, mut_keterangan) 
        VALUES (?, ?, ?, 'DEBET', ?, ?)`,
