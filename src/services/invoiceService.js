@@ -1019,8 +1019,18 @@ const changePaymentMethod = async (payload, user) => {
     // STEP A: BERSIHKAN DATA LAMA (ANTI-DOUBLE)
     // =========================================================
 
+    // [FIX] Nominal riil yang sudah dibayar: TUNAI dari inv_rptunai,
+    // TRANSFER/QRIS dari inv_rpcard. Ambil SEBELUM direset ke 0.
+    const nominalBayar =
+      Number(inv.inv_rptunai || 0) + Number(inv.inv_rpcard || 0);
+
+    if (nominalBayar <= 0) {
+      throw new Error(
+        "Invoice ini tidak memiliki nominal pembayaran kasir (Tunai/Transfer/QRIS) yang bisa diubah.",
+      );
+    }
+
     // 1. Hapus Setoran Lama (Non-DP)
-    // [PERBAIKAN KUNCI] Masukkan juga 'PEMBAYARAN TUNAI KASIR' agar bersih
     const [oldSetor] = await connection.query(
       `SELECT sd_sh_nomor FROM tsetor_dtl 
        WHERE sd_inv = ? AND sd_ket IN ('PEMBAYARAN DARI KASIR', 'PEMBAYARAN QRIS KASIR', 'PEMBAYARAN TUNAI KASIR')`,
@@ -1046,13 +1056,6 @@ const changePaymentMethod = async (payload, user) => {
          AND pd_uraian IN ('Bayar Tunai Langsung', 'Pembayaran Card', 'Pembayaran QRIS', 'Bayar Voucher')`,
       [piutangNomor],
     );
-
-    // =========================================================
-    // STEP B: BUAT DATA BARU
-    // =========================================================
-
-    let nominalBayar = Number(inv.inv_bayar) - Number(inv.inv_dp || 0);
-    if (nominalBayar <= 0) nominalBayar = Number(inv.inv_bayar); // Jaga-jaga jika DP null
 
     // Reset kolom di Header Invoice
     let updateHdrSql = `
@@ -1232,8 +1235,11 @@ const changeMarketplaceFee = async (payload, user) => {
   const connection = await pool.getConnection();
 
   try {
+    // 1. Validasi Invoice
     const [invRows] = await connection.query(
-      "SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor = ?",
+      `SELECT inv_nomor, inv_tanggal, inv_cus_kode, inv_bayar, inv_dp, 
+              inv_rptunai, inv_rpcard 
+       FROM tinv_hdr WHERE inv_nomor = ?`,
       [nomor],
     );
 
