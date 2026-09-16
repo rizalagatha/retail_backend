@@ -28,10 +28,18 @@ const loadFromStbj = async (nomorStbj) => {
   return { header: headerData[0], summaryItems, allocationItems };
 };
 
-// BARU: ambil N unit fisik status DICETAK untuk SPK+kode+ukuran, FIFO
-// berdasarkan waktu cetak. Melempar error kalau stok unit tercetak
-// tidak cukup — operator harus cetak barcode dulu sebelum bisa terima.
-const selectAvailableUnits = async (connection, spk, kode, ukuran, count) => {
+// UBAH: soft-fallback — ambil unit fisik status DICETAK sebanyak yang
+// TERSEDIA (bisa kurang dari count kalau barang ini masih pakai barcode
+// format lama / belum sempat dicetak sebagai unit unik). Sisa yang tidak
+// ketemu unit-nya nanti dicatat sebagai baris agregat legacy
+// (unit_serial=NULL), BUKAN ditolak total seperti sebelumnya.
+const selectAvailableUnitsSoft = async (
+  connection,
+  spk,
+  kode,
+  ukuran,
+  count,
+) => {
   const [units] = await connection.query(
     `SELECT unit_serial FROM tbarangdc_unit
      WHERE unit_spk_nomor = ? AND unit_kode = ? AND unit_ukuran = ?
@@ -40,13 +48,6 @@ const selectAvailableUnits = async (connection, spk, kode, ukuran, count) => {
      FOR UPDATE`,
     [spk, kode, ukuran],
   );
-  if (units.length < count) {
-    throw new Error(
-      `Unit barcode belum cukup untuk SPK ${spk} / ${kode} / ${ukuran}: ` +
-        `butuh ${count}, baru tercetak ${units.length}. Cetak barcode dulu ` +
-        `sebelum menerima STBJ ini.`,
-    );
-  }
   return units.slice(0, count).map((u) => u.unit_serial);
 };
 
@@ -76,23 +77,27 @@ const save = async (payload, user) => {
         ],
       );
 
-      // BARU: assign unit_serial per item, pecah jadi 1 baris = 1 unit
+      // UBAH: dual-mode — sebanyak mungkin diserialisasi per unit,
+      // sisanya (barang masih barcode lama / belum sempat dicetak
+      // sebagai unit) masuk sebagai 1 baris agregat legacy per item
+      // (unit_serial=NULL), bukan menolak transaksi total.
       const stbjDtlValues = [];
-      const itemUnitMap = []; // simpan sisa serial per item, dipakai lagi di tahap mutasi/SJ di bawah
+      const itemUnitMap = []; // simpan sisa serial & sisa qty legacy per item, dipakai lagi di tahap mutasi/SJ di bawah
       let stbjDtlIdx = 0;
 
       for (const item of allocationItems) {
         const jumlah = Number(item.jumlah) || 0;
         if (jumlah <= 0) continue;
 
-        const serials = await selectAvailableUnits(
+        const serials = await selectAvailableUnitsSoft(
           connection,
           item.spk,
           item.kode,
           item.ukuran,
           jumlah,
         );
-        itemUnitMap.push({ item, serials: [...serials] });
+        const legacyQty = jumlah - serials.length;
+        itemUnitMap.push({ item, serials: [...serials], legacyQty });
 
         for (const serial of serials) {
           stbjDtlIdx++;
@@ -104,6 +109,19 @@ const save = async (payload, user) => {
             item.ukuran,
             1,
             serial,
+          ]);
+        }
+
+        if (legacyQty > 0) {
+          stbjDtlIdx++;
+          stbjDtlValues.push([
+            nomorTerima + stbjDtlIdx.toString().padStart(3, "0"),
+            nomorTerima,
+            item.spk,
+            item.kode,
+            item.ukuran,
+            legacyQty,
+            null, // tsd_unit_serial NULL — baris agregat legacy
           ]);
         }
       }
@@ -134,12 +152,18 @@ const save = async (payload, user) => {
         const itemsForCabang = allocationItems.filter((item) => item[key] > 0);
         if (itemsForCabang.length === 0) continue;
 
-        // ambil serial yang sudah dialokasikan ke DC di atas, sejumlah
-        // item[key], dari sisa yang belum kepakai cabang lain
-        const pickSerialsForItem = (item, qty) => {
+        // UBAH: ambil dari pool unit_serial dulu, sisanya dari pool
+        // legacy (qty agregat) — dua-duanya sudah dialokasikan ke DC
+        // di atas, sejumlah item[key], dari sisa yang belum kepakai
+        // cabang lain.
+        const pickForCabang = (item, qty) => {
           const found = itemUnitMap.find((m) => m.item === item);
-          if (!found) return [];
-          return found.serials.splice(0, qty);
+          if (!found) return { serials: [], legacyQty: 0 };
+          const serials = found.serials.splice(0, qty);
+          const remaining = qty - serials.length;
+          const legacyQty = Math.min(remaining, found.legacyQty);
+          found.legacyQty -= legacyQty;
+          return { serials, legacyQty };
         };
 
         if (["KBS", "KPS"].includes(cabang)) {
@@ -160,7 +184,8 @@ const save = async (payload, user) => {
           for (const item of itemsForCabang) {
             const qty = Number(item[key]) || 0;
             if (qty <= 0) continue;
-            const serials = pickSerialsForItem(item, qty);
+            const { serials, legacyQty } = pickForCabang(item, qty);
+
             for (const serial of serials) {
               mtsIdx++;
               // BARU: mtsd_iddrec unik per baris — dulu tidak diisi (bug,
@@ -178,6 +203,23 @@ const save = async (payload, user) => {
               ]);
               mutasiSerials.push(serial);
             }
+
+            // UBAH: sisa qty yang tidak ketemu unit_serial — tetap
+            // masuk sebagai 1 baris agregat legacy (unit_serial NULL)
+            if (legacyQty > 0) {
+              mtsIdx++;
+              const mtsdIddrec = `${nomorMutasi}${mtsIdx.toString().padStart(3, "0")}`;
+              mutasiDtlValues.push([
+                mtsdIddrec,
+                nomorMutasi,
+                `${cabang}.MTS.${format(new Date(tanggal), "yyMM")}${mtsIdx.toString().padStart(5, "0")}`,
+                item.spk,
+                item.kode,
+                item.ukuran,
+                legacyQty,
+                null,
+              ]);
+            }
           }
 
           if (mutasiDtlValues.length > 0) {
@@ -185,12 +227,14 @@ const save = async (payload, user) => {
               "INSERT INTO tdc_mts_dtl (mtsd_iddrec, mtsd_nomor, mtsd_nomorin, mtsd_spk, mtsd_kode, mtsd_ukuran, mtsd_jumlah, mtsd_unit_serial) VALUES ?",
               [mutasiDtlValues],
             );
-            await connection.query(
-              `UPDATE tbarangdc_unit SET unit_status = ?, unit_lokasi_saat_ini = ?,
-                 date_modified = NOW(), user_modified = ?
-               WHERE unit_serial IN (?)`,
-              [`DI_${cabang}`, cabang, user.kode, mutasiSerials],
-            );
+            if (mutasiSerials.length > 0) {
+              await connection.query(
+                `UPDATE tbarangdc_unit SET unit_status = ?, unit_lokasi_saat_ini = ?,
+                   date_modified = NOW(), user_modified = ?
+                 WHERE unit_serial IN (?)`,
+                [`DI_${cabang}`, cabang, user.kode, mutasiSerials],
+              );
+            }
           }
         } else {
           // KPR — SJ Otomatis ke Store
@@ -211,7 +255,8 @@ const save = async (payload, user) => {
           for (const item of itemsForCabang) {
             const qty = Number(item[key]) || 0;
             if (qty <= 0) continue;
-            const serials = pickSerialsForItem(item, qty);
+            const { serials, legacyQty } = pickForCabang(item, qty);
+
             for (const serial of serials) {
               sjIdx++;
               // BARU: sjd_iddrec unik per baris — sama, dulu tidak diisi
@@ -227,6 +272,21 @@ const save = async (payload, user) => {
               ]);
               sjSerials.push(serial);
             }
+
+            // UBAH: sisa qty tanpa unit_serial — baris agregat legacy
+            if (legacyQty > 0) {
+              sjIdx++;
+              const sjdIddrec = `${nomorSj}${sjIdx.toString().padStart(3, "0")}`;
+              sjDtlValues.push([
+                sjdIddrec,
+                nomorSj,
+                item.spk,
+                item.kode,
+                item.ukuran,
+                legacyQty,
+                null,
+              ]);
+            }
           }
 
           if (sjDtlValues.length > 0) {
@@ -234,12 +294,14 @@ const save = async (payload, user) => {
               "INSERT INTO tdc_sj_dtl (sjd_iddrec, sjd_nomor, sjd_spk, sjd_kode, sjd_ukuran, sjd_jumlah, sjd_unit_serial) VALUES ?",
               [sjDtlValues],
             );
-            await connection.query(
-              `UPDATE tbarangdc_unit SET unit_status = 'DIKIRIM',
-                 date_modified = NOW(), user_modified = ?
-               WHERE unit_serial IN (?)`,
-              [user.kode, sjSerials],
-            );
+            if (sjSerials.length > 0) {
+              await connection.query(
+                `UPDATE tbarangdc_unit SET unit_status = 'DIKIRIM',
+                   date_modified = NOW(), user_modified = ?
+                 WHERE unit_serial IN (?)`,
+                [user.kode, sjSerials],
+              );
+            }
           }
         }
       }
