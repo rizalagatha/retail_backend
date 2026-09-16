@@ -192,13 +192,12 @@ const checkLhkStatus = async (req, res) => {
 
 const autoMutasiScan = async (req, res) => {
   try {
-    const { nomor_so, kode_barang, ukuran, qty } = req.body;
+    const { nomor_so, kode_barang, unit_serial } = req.body;
 
-    if (!nomor_so || !kode_barang) {
+    if (!nomor_so || (!kode_barang && !unit_serial)) {
       return res.status(400).json({ message: "Parameter tidak lengkap." });
     }
 
-    // Panggil fungsi autoMutasiScan dari service
     const result = await mutasiStokService.autoMutasiScan(req.body, req.user);
     res.json(result);
   } catch (error) {
