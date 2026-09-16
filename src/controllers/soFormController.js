@@ -202,7 +202,7 @@ const autoMutasiScan = async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error("Controller Error (autoMutasiScan):", error);
-    res.status(500).json({ message: error.message });
+    res.status(error.statusCode || 500).json({ message: error.message });
   }
 };
 
