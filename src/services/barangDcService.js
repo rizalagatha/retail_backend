@@ -95,13 +95,15 @@ const getExportHeaders = async (filters) => {
     SELECT 
         a.brg_kode AS 'Kode',
         TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS 'Nama Barang',
-        a.brg_ktg AS 'Kategori',
+        a.brg_ktgp AS 'Kategori',
         a.date_create AS 'DateCreate',
-        a.brg_otomatis AS 'Otomatis',
-        IF(a.brg_stok='Y', 'Y', 'N') AS 'AdaStok',
+        IF(a.brg_otomatis=1, 'YA', '') AS 'Otomatis',
+        IF(a.brg_logstok='Y', 'Y', 'N') AS 'AdaStok',
         IF(a.brg_aktif=0, 'AKTIF', 'PASIF') AS 'Status'
     FROM tbarangdc a
-    WHERE DATE(a.date_create) BETWEEN ? AND ? ${searchFilter}
+    WHERE a.brg_ktg = ''
+      AND a.date_create BETWEEN ? AND DATE_ADD(?, INTERVAL 1 DAY)
+      ${searchFilter}
     ORDER BY a.date_create DESC, a.brg_kode ASC;
   `;
 
