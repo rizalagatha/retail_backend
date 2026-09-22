@@ -34,6 +34,20 @@ const getPermissions = async (userKode) => {
   }));
 };
 
+const GUEST_KODE = "GUEST";
+const GUEST_WORK_START_HOUR = 8; // 08:00
+const GUEST_WORK_END_HOUR = 16; // 16:00
+
+// Detik tersisa dari sekarang sampai jam 16:00 di hari yang sama.
+// Dipakai sebagai masa berlaku token GUEST, supaya sesi otomatis
+// mati tepat di akhir jam kerja walau login-nya jam 08:00 pagi.
+const getSecondsUntilGuestCutoff = () => {
+  const now = new Date();
+  const cutoff = new Date(now);
+  cutoff.setHours(GUEST_WORK_END_HOUR, 0, 0, 0);
+  return Math.max(60, Math.floor((cutoff - now) / 1000)); // minimal 60 detik
+};
+
 /**
  * Membuat payload final untuk login (token, user, permissions).
  * @param {object} user - Objek data user dari database.
@@ -71,12 +85,21 @@ const generateFinalPayload = async (user, selectedCabang) => {
   };
 
   // --- LOGIKA EXPIRATION TOKEN KHUSUS ---
-  // Jika user adalah SETYO, berikan masa aktif 1 tahun ('365d').
-  // User lainnya tetap menggunakan standar 12 jam ('12h').
-  const tokenExpiry = userKodeUpper === "SETYO" ? "365d" : "12h";
+  // SETYO: masa aktif 1 tahun.
+  // GUEST: token dipotong pas jam 16:00 hari ini, berapa pun sisa
+  //        jam kerja saat dia login — bukan durasi tetap.
+  // User lainnya: standar 12 jam.
+  let tokenExpiry;
+  if (userKodeUpper === "SETYO") {
+    tokenExpiry = "365d";
+  } else if (userKodeUpper === GUEST_KODE) {
+    tokenExpiry = getSecondsUntilGuestCutoff();
+  } else {
+    tokenExpiry = "12h";
+  }
 
   const token = jwt.sign(userForToken, process.env.JWT_SECRET, {
-    expiresIn: tokenExpiry, // Menggunakan variabel dinamis
+    expiresIn: tokenExpiry,
   });
 
   const permissions = await getPermissions(user.user_kode);
@@ -111,30 +134,48 @@ const loginUser = async (kodeUser, password) => {
     throw new Error("User ini sudah tidak aktif.");
   }
 
+  const isGuest = kodeUser.toUpperCase() === GUEST_KODE;
+
+  // --- [LOGIC BARU: GUEST HANYA BOLEH LOGIN JAM 08:00–16:00] ---
+  if (isGuest) {
+    const currentHour = new Date().getHours();
+    if (
+      currentHour < GUEST_WORK_START_HOUR ||
+      currentHour >= GUEST_WORK_END_HOUR
+    ) {
+      throw new Error(
+        `Akun GUEST hanya bisa login pada jam kerja (${String(GUEST_WORK_START_HOUR).padStart(2, "0")}:00 - ${String(GUEST_WORK_END_HOUR).padStart(2, "0")}:00).`,
+      );
+    }
+  }
+  // --- [AKHIR LOGIC BARU] ---
+
   // --- [LOGIC BARU: CEK USIA PASSWORD] ---
-  const lastUpdate = firstUser.user_pass_last_update || firstUser.date_create;
-  const daysSinceUpdate = differenceInDays(new Date(), new Date(lastUpdate));
+  // GUEST dikecualikan — masa aktifnya sudah dibatasi jam kerja di atas.
+  if (!isGuest) {
+    const lastUpdate = firstUser.user_pass_last_update || firstUser.date_create;
+    const daysSinceUpdate = differenceInDays(new Date(), new Date(lastUpdate));
 
-  // Jika lebih dari 90 hari (3 bulan), interupsi login
-  if (daysSinceUpdate >= 90) {
-    const tempToken = jwt.sign(
-      { kode: kodeUser, isChangingPassword: true },
-      process.env.JWT_SECRET,
-      { expiresIn: "10m" }, // Token pendek khusus ganti password
-    );
+    // Jika lebih dari 90 hari (3 bulan), interupsi login
+    if (daysSinceUpdate >= 90) {
+      const tempToken = jwt.sign(
+        { kode: kodeUser, isChangingPassword: true },
+        process.env.JWT_SECRET,
+        { expiresIn: "10m" },
+      );
 
-    return {
-      requiresPasswordChange: true,
-      message:
-        "Password Anda sudah lebih dari 3 bulan. Harap perbarui password Anda.",
-      tempToken,
-    };
+      return {
+        requiresPasswordChange: true,
+        message:
+          "Password Anda sudah lebih dari 3 bulan. Harap perbarui password Anda.",
+        tempToken,
+      };
+    }
   }
   // --- [AKHIR LOGIC BARU] ---
 
   // 2. Cek jumlah cabang
   if (users.length > 1) {
-    // User punya banyak cabang, minta frontend untuk memilih
     const branchCodes = users.map((user) => user.user_cab);
     const [gudangRows] = await pool.query(
       "SELECT gdg_kode, gdg_nama FROM tgudang WHERE gdg_kode IN (?)",
@@ -153,13 +194,11 @@ const loginUser = async (kodeUser, password) => {
 
     if (priorityUsers.includes(userUpper)) {
       detailedBranches.sort((a, b) => {
-        // Tentukan kriteria prioritas (KDC atau Nama mengandung DC PUSAT)
         const isAPriority =
           a.kode === "KDC" || a.nama.toUpperCase().includes("DC PUSAT");
         const isBPriority =
           b.kode === "KDC" || b.nama.toUpperCase().includes("DC PUSAT");
 
-        // Geser ke atas jika memenuhi kriteria
         if (isAPriority && !isBPriority) return -1;
         if (!isAPriority && isBPriority) return 1;
         return 0;
@@ -167,7 +206,6 @@ const loginUser = async (kodeUser, password) => {
     }
     // ------------------------------------------
 
-    // Buat token temporer
     const tempToken = jwt.sign(
       { kode: kodeUser, password },
       process.env.JWT_SECRET,
@@ -180,7 +218,6 @@ const loginUser = async (kodeUser, password) => {
       tempToken,
     };
   } else {
-    // User hanya punya satu cabang, langsung login
     const finalPayload = await generateFinalPayload(
       firstUser,
       firstUser.user_cab,
