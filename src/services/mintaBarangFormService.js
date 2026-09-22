@@ -375,11 +375,19 @@ const save = async (data, user) => {
       ]);
     } else {
       const [idrecRows] = await connection.query(
-        "SELECT mt_idrec FROM tmintabarang_hdr WHERE mt_nomor = ?",
+        "SELECT mt_idrec, mt_cab FROM tmintabarang_hdr WHERE mt_nomor = ?",
         [mtNomor],
       );
       if (idrecRows.length === 0)
         throw new Error("Nomor Minta Barang tidak ditemukan.");
+
+      const docCabang = idrecRows[0].mt_cab;
+      // Hak edit: pemilik cabang sendiri ATAU KDC
+      if (user.cabang !== docCabang && user.cabang !== "KDC") {
+        throw new Error(
+          "Anda tidak memiliki akses untuk mengubah data Permintaan Barang cabang lain.",
+        );
+      }
       idrec = idrecRows[0].mt_idrec;
 
       const updateHeaderQuery = `
@@ -390,7 +398,7 @@ const save = async (data, user) => {
           mt_ket=?,
           user_modified=?,
           date_modified=NOW()
-        WHERE mt_nomor=? AND mt_cab=?
+        WHERE mt_nomor=?
       `;
       await connection.query(updateHeaderQuery, [
         header.tanggal,
@@ -399,7 +407,6 @@ const save = async (data, user) => {
         header.keterangan,
         user.kode,
         mtNomor,
-        user.cabang,
       ]);
     }
 
@@ -444,10 +451,30 @@ const save = async (data, user) => {
 const loadForEdit = async (nomor, user) => {
   const connection = await pool.getConnection();
   try {
-    // Query ini adalah migrasi dari 'loaddataall' di Delphi
+    // 1. Cari dulu cabang pemilik dokumen ini secara independen dari user.cabang
+    const [ownerRows] = await connection.query(
+      "SELECT mt_cab FROM tmintabarang_hdr WHERE mt_nomor = ?",
+      [nomor],
+    );
+    if (ownerRows.length === 0) {
+      throw new Error("Data Permintaan Barang tidak ditemukan.");
+    }
+    const docCabang = ownerRows[0].mt_cab;
+
+    // 2. Hak akses: pemilik cabang sendiri ATAU KDC boleh membuka
+    if (user.cabang !== docCabang && user.cabang !== "KDC") {
+      throw new Error(
+        "Anda tidak memiliki akses untuk membuka data Permintaan Barang cabang lain.",
+      );
+    }
+
+    // 3. Query detail — pakai docCabang (bukan user.cabang) untuk semua
+    //    kalkulasi stok/sudahminta/sj, supaya tetap merepresentasikan
+    //    kondisi gudang toko pemilik dokumen, sekalipun yang membuka
+    //    adalah KDC
     const query = `
       SELECT 
-        h.mt_nomor, h.mt_tanggal, h.mt_so, h.mt_cus, h.mt_ket,
+        h.mt_nomor, h.mt_tanggal, h.mt_so, h.mt_cus, h.mt_ket, h.mt_cab,
         c.cus_nama, c.cus_alamat,
         d.mtd_kode, d.mtd_ukuran, d.mtd_jumlah,
         b.brgd_barcode, 
@@ -475,14 +502,13 @@ const loadForEdit = async (nomor, user) => {
         LEFT JOIN tbarangdc a ON a.brg_kode = d.mtd_kode
         LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.mtd_kode AND b.brgd_ukuran = d.mtd_ukuran
         LEFT JOIN tcustomer c ON c.cus_kode = h.mt_cus
-        WHERE h.mt_nomor = ? AND h.mt_cab = ?
+        WHERE h.mt_nomor = ?
       `;
     const [rows] = await connection.query(query, [
-      user.cabang,
+      docCabang,
       nomor,
-      user.cabang,
+      docCabang,
       nomor,
-      user.cabang,
     ]);
     if (rows.length === 0) {
       throw new Error("Data Permintaan Barang tidak ditemukan.");
@@ -493,6 +519,7 @@ const loadForEdit = async (nomor, user) => {
       nomor: rows[0].mt_nomor,
       tanggal: rows[0].mt_tanggal,
       soNomor: rows[0].mt_so,
+      cabangKode: rows[0].mt_cab,
       customer: {
         kode: rows[0].mt_cus,
         nama: rows[0].cus_nama,

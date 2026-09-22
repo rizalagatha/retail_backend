@@ -14,6 +14,11 @@ const BUFFER_TABLE = {
 // murni untuk preview prediksi buffer sebelum toko fisiknya dibuka.
 const VIRTUAL_NEW_STORE_KODE = "TOKO_BARU";
 
+// Toko dengan mix barang yang beda total dari toko reguler lain —
+// dikecualikan sepenuhnya dari panel buffer (tidak muncul di dropdown,
+// tidak ikut dihitung/ditimpa oleh cron bulanan).
+const EXCLUDED_BUFFER_CABANG = ["KF1", "SL1"];
+
 // [BARU] Nama barang yang TETAP di-nolkan buffernya kalau stok toko 0 —
 // ini bahan pendukung/consumable, bukan barang jadi/kaos, jadi tidak
 // relevan dipaksa punya buffer walau kategorinya REGULER. Dicocokkan
@@ -69,11 +74,14 @@ const getSalesCategory = (avgPerBulan) => {
 
 // ── Ambil Daftar Cabang untuk Buffer Panel ────────────────
 const getCabangList = async () => {
+  const placeholders = EXCLUDED_BUFFER_CABANG.map(() => "?").join(",");
   const [rows] = await pool.query(
     `SELECT gdg_kode AS kode, gdg_nama AS nama 
      FROM tgudang 
      WHERE (gdg_dc = 0 OR gdg_kode IN ('KPR', 'KDC')) 
+       AND gdg_kode NOT IN (${placeholders})
      ORDER BY gdg_kode`,
+    EXCLUDED_BUFFER_CABANG,
   );
 
   // [BARU] Tambahkan opsi Simulasi Toko Baru — BUKAN cabang asli di
@@ -846,6 +854,12 @@ const saveCalculatedBuffer = async (cabang, itemsArray, userKode) => {
     );
   }
 
+  if (EXCLUDED_BUFFER_CABANG.includes(cabang)) {
+    throw new Error(
+      `Cabang ${cabang} dikecualikan dari panel buffer karena mix barangnya berbeda dari toko reguler.`,
+    );
+  }
+
   if (!itemsArray || itemsArray.length === 0)
     return { message: "Tidak ada data untuk disimpan." };
 
@@ -1079,9 +1093,14 @@ const generateMonthlyLog = async () => {
   const now = new Date();
   const periode = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
-  // [UBAH] KPR dikecualikan dari loop toko biasa — KPR tidak dipasangi buffer
+  // [UBAH] KPR dikecualikan dari loop toko biasa — KPR tidak dipasangi buffer.
+  // KF1 & SL1 juga dikecualikan — mix barang beda total, tidak relevan
+  // dihitung dengan rumus buffer toko reguler.
+  const excludePlaceholders = EXCLUDED_BUFFER_CABANG.map(() => "?").join(",");
   const [cabangRows] = await pool.query(
-    "SELECT gdg_kode FROM tgudang WHERE gdg_dc = 0 AND gdg_kode NOT IN ('KDC', 'KPR')",
+    `SELECT gdg_kode FROM tgudang 
+     WHERE gdg_dc = 0 AND gdg_kode NOT IN ('KDC', 'KPR', ${excludePlaceholders})`,
+    EXCLUDED_BUFFER_CABANG,
   );
 
   const results = { success: [], failed: [] };
@@ -1262,6 +1281,7 @@ module.exports = {
   getPeriodeOptions,
   getAllCabangPreviewData,
   EXCLUDED_KODES_VIRTUAL_CABANG,
+  EXCLUDED_BUFFER_CABANG,
   getDetailSpkByItem,
   getConfig,
   saveConfig,
