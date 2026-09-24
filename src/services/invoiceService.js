@@ -55,6 +55,63 @@ const getCabangList = async (user) => {
   return rows;
 };
 
+// Distribusikan overpayment (SaldoAkhir negatif — kredit/retur melebihi
+// piutang invoice itu sendiri) ke invoice LAIN milik customer yang sama
+// dalam hasil query ini, urut dari invoice TERLAMA dulu (FIFO), supaya
+// total Sisa Piutang per customer akurat — bukan sekadar di-floor ke 0
+// per baris seperti sebelumnya.
+//
+// CATATAN: fungsi ini hanya bisa menetralkan overpayment terhadap invoice
+// lain yang SAMA-SAMA ada di hasil query (halaman) ini. Kalau invoice yang
+// kelebihan bayar dan invoice yang seharusnya menyerap kelebihan itu
+// terpisah halaman (pagination), distribusinya tidak akan lintas halaman.
+// Untuk hasil paling akurat, filter/cari berdasarkan customer tertentu
+// (semua invoice-nya otomatis masuk 1 halaman) seperti di contoh kasus ini.
+const distributeOverpaymentToInvoices = (rows) => {
+  const groupedByCustomer = {};
+  rows.forEach((r) => {
+    const key = r.Kdcus || "";
+    if (!groupedByCustomer[key]) groupedByCustomer[key] = [];
+    groupedByCustomer[key].push(r);
+  });
+
+  Object.values(groupedByCustomer).forEach((group) => {
+    // Urut dari tanggal TERLAMA -> TERBARU, supaya kelebihan bayar
+    // melunasi piutang yang paling lama dulu (FIFO)
+    group.sort((a, b) => new Date(a.Tanggal) - new Date(b.Tanggal));
+
+    let totalOverpayment = 0;
+
+    // 1) Kumpulkan semua overpayment, invoice yang overpayment sendiri
+    //    otomatis lunas (Sisa Piutang = 0)
+    group.forEach((r) => {
+      const raw = Number(r.SisaPiutangRaw) || 0;
+      if (raw < 0) {
+        totalOverpayment += Math.abs(raw);
+        r.SisaPiutang = 0;
+      } else {
+        r.SisaPiutang = raw;
+      }
+    });
+
+    // 2) Salurkan overpayment ke invoice lain yang masih py piutang,
+    //    urut FIFO, sampai overpayment habis
+    for (const r of group) {
+      if (totalOverpayment <= 0) break;
+      const raw = Number(r.SisaPiutangRaw) || 0;
+      if (raw > 0) {
+        const potongan = Math.min(raw, totalOverpayment);
+        r.SisaPiutang = raw - potongan;
+        totalOverpayment -= potongan;
+      }
+    }
+
+    group.forEach((r) => delete r.SisaPiutangRaw);
+  });
+
+  return rows;
+};
+
 const getList = async (filters) => {
   const {
     startDate,
@@ -393,10 +450,11 @@ const getList = async (filters) => {
         -- Langsung ambil jumlah uang yang dibayarkan di kartu piutang.
         COALESCE(PR.TotalBayarUang, 0) AS Bayar,
 
-        -- [LOGIC SISA PIUTANG] (Tetap, agar sisa jadi 0)
-        IF(COALESCE(PR.SaldoAkhir, 0) < 0, 0, 
-           COALESCE(PR.SaldoAkhir, (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0)))
-        ) AS SisaPiutang,
+        -- [BARU] Nilai mentah (boleh negatif kalau overpayment dari retur) —
+        -- akan diproses lebih lanjut di JS (distributeOverpaymentToInvoices)
+        -- untuk didistribusikan ke invoice lain milik customer yang sama,
+        -- bukan sekadar di-floor ke 0 seperti versi sebelumnya.
+        COALESCE(PR.SaldoAkhir, (COALESCE(DC.TotalItemNetto, 0) - COALESCE(h.inv_disc, 0) + h.inv_ppn + h.inv_bkrm - COALESCE(h.inv_mp_biaya_platform, 0))) AS SisaPiutangRaw,
 
         -- Customer Info
         h.inv_cus_kode AS Kdcus,
@@ -458,6 +516,10 @@ const getList = async (filters) => {
   params.push(parseInt(limit), parseInt(offset));
 
   const [rows] = await pool.query(query, params);
+
+  // [BARU] Distribusikan overpayment (retur/kredit melebihi piutang invoice
+  // itu sendiri) ke invoice lain milik customer yang sama dalam hasil ini
+  distributeOverpaymentToInvoices(rows);
 
   // --- QUERY TOTAL (Untuk Pagination) ---
   // Kita harus duplicate logic JOIN PagedInvoices agar filter COUNT akurat
