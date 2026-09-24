@@ -105,6 +105,30 @@ const checkSalesOrderEditPermission = async (userKode) => {
   return rows[0].hak_men_edit === "Y";
 };
 
+/**
+ * Cek apakah salah satu SO Kaosan yang terkait PH ini sudah punya
+ * otorisasi "SO Tanpa DP" — sama seperti so_accdp di soFormService.js.
+ * Kalau ada, syarat minimal DP dianggap terpenuhi lewat jalur otorisasi,
+ * bukan lewat nominal DP yang benar-benar masuk.
+ */
+const checkNoDpAuthorization = async (soNomors) => {
+  if (!soNomors || soNomors.length === 0) {
+    return { hasAuth: false, approver: null, soNomor: null };
+  }
+  const placeholders = soNomors.map(() => "?").join(",");
+  const [rows] = await pool.query(
+    `SELECT so_nomor, so_accdp FROM tso_hdr WHERE so_nomor IN (${placeholders}) AND so_accdp IS NOT NULL AND so_accdp <> '' LIMIT 1`,
+    soNomors,
+  );
+  if (rows.length === 0)
+    return { hasAuth: false, approver: null, soNomor: null };
+  return {
+    hasAuth: true,
+    approver: rows[0].so_accdp,
+    soNomor: rows[0].so_nomor,
+  };
+};
+
 // [BARU] Ambil permintaan revisi DC yang masih terbuka (belum ditindaklanjuti
 // toko) untuk PH tertentu — dasar penentu apakah form edit SO MANKSI di
 // Retail boleh dibuka atau terkunci.
@@ -381,7 +405,13 @@ const checkSoEligibility = async (phNomor) => {
   }
 
   const minimalDpNominal = Math.ceil((minimalDpPersen / 100) * totalHargaPh);
-  const isDpTerpenuhi = totalHargaPh > 0 && totalDp >= minimalDpNominal;
+  const isDpNominalTerpenuhi = totalHargaPh > 0 && totalDp >= minimalDpNominal;
+
+  // [BARU] Cek otorisasi "SO Tanpa DP" — SO khusus (customer khusus/case
+  // khusus) yang sudah di-ACC manager di form SO Kaosan boleh lolos syarat
+  // DP walau nominal DP fisiknya belum mencukupi.
+  const noDpAuth = await checkNoDpAuthorization(soRows.map((r) => r.so_nomor));
+  const isDpTerpenuhi = isDpNominalTerpenuhi || noDpAuth.hasAuth;
 
   return {
     eligible: isAccFinance && isMasukSuratPesanan && isDpTerpenuhi,
@@ -389,12 +419,16 @@ const checkSoEligibility = async (phNomor) => {
       isAccFinance,
       isMasukSuratPesanan,
       isDpTerpenuhi,
+      isDpNominalTerpenuhi,
+      isDpViaOtorisasi: noDpAuth.hasAuth,
     },
     isCustomProduction,
     totalHargaPh,
     totalDp,
     minimalDpNominal,
     minimalDpPersen,
+    dpAuthApprover: noDpAuth.approver,
+    dpAuthSoNomor: noDpAuth.soNomor,
     soNomorTerkait: soRows.map((r) => r.so_nomor),
   };
 };
@@ -779,7 +813,7 @@ const getSalesOrderForEdit = async (phNomor, user) => {
      FROM kencanaprint.tsalesorder_size WHERE sos_so_nomor = ? ORDER BY sos_size`,
     [soNomor],
   );
-    // [FIX] revisiTerbuka WAJIB disertakan di sini juga (sama seperti
+  // [FIX] revisiTerbuka WAJIB disertakan di sini juga (sama seperti
   // getSoPrefill) — tanpa ini, frontend selalu menganggap SO terkunci
   // walaupun DC sudah kirim permintaan revisi lewat requestRevisionFromDc.
   const revisiTerbuka = await getOpenRevision(phNomor);
