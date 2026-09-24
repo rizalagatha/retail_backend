@@ -688,21 +688,72 @@ const getStagnantStockSummary = async (user) => {
 };
 
 /**
- * @description Menghitung total sisa piutang (Sisa >= 500).
+ * Distribusikan overpayment (retur/kredit yang melebihi piutang invoice
+ * itu sendiri) ke invoice LAIN milik customer yang sama — sinkron dengan
+ * logika yang sama persis dipakai di Browse Invoice. Tanpa ini,
+ * overpayment di 1 invoice cuma di-floor ke 0 dan "menguap", padahal
+ * seharusnya mengurangi piutang invoice lain milik customer yang sama
+ * (termasuk di cabang lain, karena identitas customer sama).
+ *
+ * @param {Array<{cus_kode:string, tanggal:string|Date, saldo:number}>} rows
+ * @returns {Array} rows yang sama, ditambah properti `sisaPiutang`
+ */
+const distributeOverpaymentByCustomer = (rows) => {
+  const groupedByCustomer = {};
+  rows.forEach((r) => {
+    const key = r.cus_kode || "";
+    if (!groupedByCustomer[key]) groupedByCustomer[key] = [];
+    groupedByCustomer[key].push(r);
+  });
+
+  Object.values(groupedByCustomer).forEach((group) => {
+    // FIFO: invoice terlama dilunasi duluan oleh kelebihan bayar
+    group.sort((a, b) => new Date(a.tanggal) - new Date(b.tanggal));
+
+    let totalOverpayment = 0;
+    group.forEach((r) => {
+      const raw = Number(r.saldo) || 0;
+      if (raw < 0) {
+        totalOverpayment += Math.abs(raw);
+        r.sisaPiutang = 0;
+      } else {
+        r.sisaPiutang = raw;
+      }
+    });
+
+    for (const r of group) {
+      if (totalOverpayment <= 0) break;
+      const raw = Number(r.saldo) || 0;
+      if (raw > 0) {
+        const potongan = Math.min(raw, totalOverpayment);
+        r.sisaPiutang = raw - potongan;
+        totalOverpayment -= potongan;
+      }
+    }
+  });
+
+  return rows;
+};
+
+/**
+ * @description Menghitung total sisa piutang (net setelah overpayment
+ * customer yang sama didistribusikan ke invoice lain miliknya).
  */
 const getTotalSisaPiutang = async (user) => {
   let branchFilter = "AND u.ph_cab = ?";
   let params = [user.cabang];
 
   if (user.cabang === "KDC") {
-    // [PERBAIKAN] Kecualikan invoice KDC agar angka total sinkron
     branchFilter = "AND u.ph_inv_nomor NOT LIKE 'KDC.INV.%'";
     params = [];
   }
 
   const query = `
-    SELECT 
-      SUM(GREATEST(0, IFNULL(v.debet, 0) - IFNULL(v.kredit, 0))) AS totalSisaPiutang
+    SELECT
+      u.ph_nomor,
+      h.inv_cus_kode AS cus_kode,
+      h.inv_tanggal AS tanggal,
+      (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) AS saldo
     FROM tpiutang_hdr u
     LEFT JOIN (
         SELECT pd_ph_nomor, 
@@ -711,22 +762,29 @@ const getTotalSisaPiutang = async (user) => {
         FROM tpiutang_dtl 
         GROUP BY pd_ph_nomor
     ) v ON v.pd_ph_nomor = u.ph_nomor
-    WHERE (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) >= 500 ${branchFilter};
+    LEFT JOIN tinv_hdr h ON h.inv_nomor = u.ph_inv_nomor
+    WHERE 1=1 ${branchFilter};
   `;
 
   const [rows] = await pool.query(query, params);
-  return rows[0];
+  distributeOverpaymentByCustomer(rows);
+
+  const totalSisaPiutang = rows.reduce(
+    (acc, r) => acc + (Number(r.sisaPiutang) || 0),
+    0,
+  );
+
+  return { totalSisaPiutang };
 };
 
 /**
- * @description Menghitung sisa piutang per cabang (HANYA UNTUK KDC, Sisa >= 500).
+ * @description Sisa piutang per cabang (HANYA UNTUK KDC). Overpayment
+ * customer didistribusikan secara GLOBAL (lintas cabang) baru dijumlah
+ * per cabang, supaya sinkron dengan Browse Invoice.
  */
 const getPiutangPerCabang = async (user, cabangFilter = null) => {
   if (user.cabang !== "KDC") return [];
 
-  // [BARU] Filter opsional ke 1 baris cabang/channel spesifik (mis. KPR, KON,
-  // atau kode toko biasa) — dipakai AI tool. Parameter opsional, backward
-  // compatible dengan pemanggilan lama tanpa argumen kedua.
   let filterSql = "";
   const params = [];
   if (cabangFilter && cabangFilter !== "ALL") {
@@ -738,7 +796,9 @@ const getPiutangPerCabang = async (user, cabangFilter = null) => {
     SELECT 
       u.ph_cab AS cabang_kode,
       g.gdg_nama AS cabang_nama,
-      SUM(v.debet - v.kredit) AS sisa_piutang
+      h.inv_cus_kode AS cus_kode,
+      h.inv_tanggal AS tanggal,
+      (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) AS saldo
     FROM tpiutang_hdr u
     LEFT JOIN (
         SELECT pd_ph_nomor, 
@@ -748,19 +808,35 @@ const getPiutangPerCabang = async (user, cabangFilter = null) => {
         GROUP BY pd_ph_nomor
     ) v ON v.pd_ph_nomor = u.ph_nomor
     LEFT JOIN tgudang g ON g.gdg_kode = u.ph_cab
-    WHERE (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) >= 500
-      AND u.ph_inv_nomor NOT LIKE 'KDC.INV.%'
+    LEFT JOIN tinv_hdr h ON h.inv_nomor = u.ph_inv_nomor
+    WHERE u.ph_inv_nomor NOT LIKE 'KDC.INV.%'
       ${filterSql}
-    GROUP BY u.ph_cab, g.gdg_nama
-    ORDER BY sisa_piutang DESC;
   `;
 
   const [rows] = await pool.query(query, params);
-  return rows;
+  distributeOverpaymentByCustomer(rows);
+
+  const grouped = {};
+  rows.forEach((r) => {
+    const sisa = Number(r.sisaPiutang) || 0;
+    if (sisa < 500) return; // ambang tampilan sama seperti sebelumnya
+    const key = r.cabang_kode || "";
+    if (!grouped[key]) {
+      grouped[key] = {
+        cabang_kode: r.cabang_kode,
+        cabang_nama: r.cabang_nama,
+        sisa_piutang: 0,
+      };
+    }
+    grouped[key].sisa_piutang += sisa;
+  });
+
+  return Object.values(grouped).sort((a, b) => b.sisa_piutang - a.sisa_piutang);
 };
 
 /**
- * @description Invoice yang masih punya sisa piutang untuk store tertentu (Sisa >= 500 + Nama Customer).
+ * @description Invoice yang masih punya sisa piutang untuk store
+ * tertentu — sudah net overpayment per customer, sinkron Browse Invoice.
  */
 const getPiutangPerInvoice = async (user, targetCabang) => {
   let invoiceFilter = "";
@@ -768,15 +844,12 @@ const getPiutangPerInvoice = async (user, targetCabang) => {
 
   if (user.cabang === "KDC") {
     if (targetCabang && targetCabang !== "ALL") {
-      // Jika KDC melihat rincian cabang spesifik
       invoiceFilter = "AND u.ph_inv_nomor LIKE ?";
       params.push(`${targetCabang}.INV.%`);
     } else {
-      // Jika KDC melihat semua, KECUALIKAN invoice KDC
       invoiceFilter = "AND u.ph_inv_nomor NOT LIKE 'KDC.INV.%'";
     }
   } else {
-    // Toko hanya melihat miliknya sendiri
     invoiceFilter = "AND u.ph_inv_nomor LIKE ?";
     params.push(`${user.cabang}.INV.%`);
   }
@@ -785,8 +858,9 @@ const getPiutangPerInvoice = async (user, targetCabang) => {
         SELECT 
             u.ph_inv_nomor AS invoice,
             DATE_FORMAT(h.inv_tanggal, '%Y-%m-%d') AS tanggal,
+            h.inv_cus_kode AS cus_kode,
             c.cus_nama AS customer_nama,
-            IFNULL(v.debet - v.kredit, 0) AS sisa_piutang
+            IFNULL(v.debet - v.kredit, 0) AS saldo
         FROM tpiutang_hdr u
         LEFT JOIN (
             SELECT pd_ph_nomor, 
@@ -797,13 +871,22 @@ const getPiutangPerInvoice = async (user, targetCabang) => {
         ) v ON v.pd_ph_nomor = u.ph_nomor
         LEFT JOIN tinv_hdr h ON h.inv_nomor = u.ph_inv_nomor
         LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
-        WHERE (IFNULL(v.debet, 0) - IFNULL(v.kredit, 0)) >= 500 
+        WHERE 1=1
           ${invoiceFilter}
-        ORDER BY sisa_piutang DESC;
     `;
 
   const [rows] = await pool.query(query, params);
-  return rows;
+  distributeOverpaymentByCustomer(rows);
+
+  return rows
+    .filter((r) => Number(r.sisaPiutang) >= 500)
+    .map((r) => ({
+      invoice: r.invoice,
+      tanggal: r.tanggal,
+      customer_nama: r.customer_nama,
+      sisa_piutang: r.sisaPiutang,
+    }))
+    .sort((a, b) => b.sisa_piutang - a.sisa_piutang);
 };
 
 const getTotalStock = async (user) => {
