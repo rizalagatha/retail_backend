@@ -56,19 +56,18 @@ const getSecondsUntilGuestCutoff = () => {
  */
 const generateFinalPayload = async (user, selectedCabang) => {
   const [gudangRows] = await pool.query(
-    "SELECT gdg_nama FROM tgudang WHERE gdg_kode = ?",
+    "SELECT gdg_nama, gdg_inv_nama FROM tgudang WHERE gdg_kode = ?",
     [selectedCabang],
   );
   const cabangNama = gudangRows.length > 0 ? gudangRows[0].gdg_nama : "";
+  const cabangInvNama = gudangRows.length > 0 ? gudangRows[0].gdg_inv_nama : "";
 
   // [LOGIC BARU] Daftar User Gudang (Hanya lihat stok)
   const warehouseUsers = ["LUTFI", "ADIN"];
   const userKodeUpper = user.user_kode.toUpperCase();
   const isWarehouseUser = warehouseUsers.includes(userKodeUpper);
 
-  // [LOGIC BARU] Daftar User Finance
   const financeUsers = ["DARUL", "LIA", "HANI", "DEVI"];
-  // Cek apakah user termasuk Finance
   const isFinance = financeUsers.includes(userKodeUpper);
 
   const userForToken = {
@@ -76,10 +75,9 @@ const generateFinalPayload = async (user, selectedCabang) => {
     nama: user.user_nama,
     cabang: selectedCabang,
     cabangNama: cabangNama,
+    cabangInvNama: cabangInvNama, // <-- baru
     isWarehouseUser: isWarehouseUser,
-    // Flag khusus Refund
     canApproveRefund: isFinance,
-    // Flag existing Anda
     canApproveCorrection: isFinance,
     canApprovePrice: isFinance,
   };

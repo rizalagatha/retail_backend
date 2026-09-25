@@ -1750,13 +1750,21 @@ const getCashflowSummary = async (user, targetDate = null) => {
  */
 const getBranchInfo = async (cabang) => {
   const query = `
-    SELECT gdg_kode, gdg_nama, gdg_place_id, gdg_lat, gdg_long -- Tambahkan lat long di sini
+    SELECT gdg_kode, gdg_nama, gdg_inv_nama, gdg_place_id, gdg_lat, gdg_long
     FROM tgudang 
     WHERE gdg_kode = ?
   `;
 
   const [rows] = await pool.query(query, [cabang]);
-  return rows[0] || { gdg_place_id: null, gdg_lat: null, gdg_long: null };
+  return (
+    rows[0] || {
+      gdg_nama: null,
+      gdg_inv_nama: null,
+      gdg_place_id: null,
+      gdg_lat: null,
+      gdg_long: null,
+    }
+  );
 };
 
 // --- JADWAL BORDIR ---
