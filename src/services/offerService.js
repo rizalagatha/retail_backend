@@ -18,59 +18,70 @@ const getOffers = async (startDate, endDate, cabang) => {
   }
 
   const query = `
-        SELECT 
-            h.pen_nomor AS nomor,
-            h.pen_tanggal AS tanggal,
-            IFNULL((SELECT so.so_nomor 
-                    FROM tso_hdr so 
-                    WHERE so.so_pen_nomor = h.pen_nomor 
-                    LIMIT 1), '') AS noSO,
-            (SELECT so.so_tanggal 
-             FROM tso_hdr so 
-             WHERE so.so_pen_nomor = h.pen_nomor 
-             LIMIT 1) AS tanggalSO,
-            h.pen_top AS top,
-            DATE_ADD(h.pen_tanggal, INTERVAL h.pen_top DAY) as tempo,
-            h.pen_ppn AS ppn,
-            h.pen_disc1 AS \`disc%\`,
-            h.pen_disc AS diskon,
-            h.pen_cus_kode AS kdcus,
-            c.cus_nama AS nama,
-            c.cus_alamat AS alamat,
-            c.cus_kota AS kota,
-            c.cus_telp AS telp,
-            CONCAT(h.pen_cus_level, ' - ', l.level_nama) AS level,
-            h.pen_ket AS keterangan,
-            h.pen_alasan AS alasan,
-            h.user_create AS created,
-            h.user_modified AS userModified,
-            h.date_modified AS dateModified,
-            (
-                SELECT ROUND(SUM(dd.pend_jumlah * (dd.pend_harga - dd.pend_diskon)) - hh.pen_disc 
-                    + (hh.pen_ppn/100 * (SUM(dd.pend_jumlah * (dd.pend_harga - dd.pend_diskon)) - hh.pen_disc)) 
-                    + hh.pen_bkrm)
-                FROM tpenawaran_dtl dd
-                LEFT JOIN tpenawaran_hdr hh ON hh.pen_nomor = dd.pend_nomor
-                WHERE hh.pen_nomor = h.pen_nomor
-            ) AS nominal,
-            h.pen_alasan AS alasanClose,
-            (
-                SELECT inv.inv_nomor 
-                FROM tinv_hdr inv 
-                WHERE inv.inv_nomor_so = (
-                    SELECT so.so_nomor 
-                    FROM tso_hdr so 
-                    WHERE so.so_pen_nomor = h.pen_nomor 
-                    LIMIT 1
-                )
+    SELECT 
+        h.pen_nomor AS nomor,
+        h.pen_tanggal AS tanggal,
+        IFNULL((SELECT so.so_nomor 
+                FROM tso_hdr so 
+                WHERE so.so_pen_nomor = h.pen_nomor 
+                LIMIT 1), '') AS noSO,
+        (SELECT so.so_tanggal 
+         FROM tso_hdr so 
+         WHERE so.so_pen_nomor = h.pen_nomor 
+         LIMIT 1) AS tanggalSO,
+        h.pen_top AS top,
+        DATE_ADD(h.pen_tanggal, INTERVAL h.pen_top DAY) as tempo,
+        h.pen_ppn AS ppn,
+        h.pen_disc1 AS \`disc%\`,
+        h.pen_disc AS diskon,
+        h.pen_cus_kode AS kdcus,
+        c.cus_nama AS nama,
+        c.cus_alamat AS alamat,
+        c.cus_kota AS kota,
+        c.cus_telp AS telp,
+        CONCAT(h.pen_cus_level, ' - ', l.level_nama) AS level,
+        h.pen_ket AS keterangan,
+        h.pen_alasan AS alasan,
+        h.pen_tgl_close AS tanggalCloseManual,
+        h.user_create AS created,
+        h.user_modified AS userModified,
+        h.date_modified AS dateModified,
+        (
+            SELECT ROUND(SUM(dd.pend_jumlah * (dd.pend_harga - dd.pend_diskon)) - hh.pen_disc 
+                + (hh.pen_ppn/100 * (SUM(dd.pend_jumlah * (dd.pend_harga - dd.pend_diskon)) - hh.pen_disc)) 
+                + hh.pen_bkrm)
+            FROM tpenawaran_dtl dd
+            LEFT JOIN tpenawaran_hdr hh ON hh.pen_nomor = dd.pend_nomor
+            WHERE hh.pen_nomor = h.pen_nomor
+        ) AS nominal,
+        h.pen_alasan AS alasanClose,
+        (
+            SELECT inv.inv_nomor 
+            FROM tinv_hdr inv 
+            WHERE inv.inv_nomor_so = (
+                SELECT so.so_nomor 
+                FROM tso_hdr so 
+                WHERE so.so_pen_nomor = h.pen_nomor 
                 LIMIT 1
-            ) AS noINV
-        FROM tpenawaran_hdr h
-        LEFT JOIN tcustomer c ON h.pen_cus_kode = c.cus_kode
-        LEFT JOIN tcustomer_level l ON l.level_kode = h.pen_cus_level
-        WHERE h.pen_tanggal BETWEEN ? AND ?
-        ${branchFilter}
-    `;
+            )
+            LIMIT 1
+        ) AS noINV,
+        CASE 
+            WHEN (SELECT so.so_tanggal FROM tso_hdr so WHERE so.so_pen_nomor = h.pen_nomor LIMIT 1) IS NOT NULL 
+                THEN DATEDIFF(
+                    (SELECT so.so_tanggal FROM tso_hdr so WHERE so.so_pen_nomor = h.pen_nomor LIMIT 1),
+                    h.pen_tanggal
+                )
+            WHEN h.pen_tgl_close IS NOT NULL 
+                THEN DATEDIFF(h.pen_tgl_close, h.pen_tanggal)
+            ELSE NULL
+        END AS lamaHari
+    FROM tpenawaran_hdr h
+    LEFT JOIN tcustomer c ON h.pen_cus_kode = c.cus_kode
+    LEFT JOIN tcustomer_level l ON l.level_kode = h.pen_cus_level
+    WHERE h.pen_tanggal BETWEEN ? AND ?
+    ${branchFilter}
+`;
 
   try {
     const [rows] = await pool.query(query, params);
@@ -319,7 +330,7 @@ const getBranchOptions = async (userCabang) => {
 const closeOffer = async (nomor, alasan) => {
   const query = `
         UPDATE tpenawaran_hdr 
-        SET pen_alasan = ? 
+        SET pen_alasan = ?, pen_tgl_close = NOW()
         WHERE pen_nomor = ?;
     `;
   await pool.query(query, [alasan, nomor]);
