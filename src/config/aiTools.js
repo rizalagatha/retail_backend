@@ -36,10 +36,9 @@ const ENABLED_TOOLS = [
   "get_sales_forecast",
   "get_invoice_backlog_analysis",
   "get_so_belum_invoice",
+  "get_open_so_list",
   "get_penawaran_belum_followup",
   "lookup_document",
-  "get_conversion_funnel",
-  "track_order_timeline",
   "get_conversion_funnel",
   "track_order_timeline",
   "get_buffer_recommendation",
@@ -787,7 +786,7 @@ const buildTools = (
       function: {
         name: "get_so_belum_invoice",
         description:
-          "Cari SO yang barangnya SUDAH SEPENUHNYA DIAMBIL/DISCAN customer tapi BELUM ADA invoice sama sekali. WAJIB dipakai saat investigasi 'kenapa omset naik/tinggi' SEBAGAI PENCEGAHAN — kalau ada banyak SO di sini, itu tanda ada backlog invoice yang BELUM terjadi tapi berpotensi bikin lonjakan mendadak begitu diinvoice.",
+          "Cari SO yang barangnya SUDAH SEPENUHNYA DIAMBIL/DISCAN customer tapi BELUM ADA invoice sama sekali (siap diinvoice). Hasilnya SUDAH berisi nominal tiap SO, umur (hari), dan ringkasan total. HANYA untuk pertanyaan 'SO yang sudah siap tapi belum diinvoice'. Untuk pertanyaan 'SO yang masih open' secara umum, pakai get_open_so_list. Juga dipakai saat investigasi 'kenapa omset naik' sebagai pencegahan backlog invoice.",
         parameters: {
           type: "object",
           properties: {
@@ -800,6 +799,51 @@ const buildTools = (
               type: "number",
               description:
                 "Minimal umur SO dalam hari sejak so_tanggal. Default 1.",
+            },
+            limit: {
+              type: "number",
+              description:
+                "Jumlah SO yang ditampilkan. Default 15, maksimal 50.",
+            },
+          },
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_open_so_list",
+        description:
+          "Daftar SO yang MASIH OPEN (belum ditutup dan belum sepenuhnya diinvoice) beserta nominal, umur (hari sejak SO dibuat), tahap proses, dateline, dan RINGKASAN (jumlah SO, total nominal, rata-rata umur, SO tertua, sebaran umur). Gunakan untuk: 'berapa SO open di cabang X', 'berapa lama umurnya', 'SO paling lama belum selesai', 'total nilai SO open', 'SO customer Y yang masih open', 'SO open terbesar'. Angka ringkasan sudah dihitung sistem, JANGAN dihitung ulang.",
+        parameters: {
+          type: "object",
+          properties: {
+            cabang: {
+              type: "string",
+              enum: [...cabangEnum, "ALL"],
+              description: cabangDesc,
+            },
+            search: {
+              type: "string",
+              description:
+                "Opsional. Nama customer ATAU potongan nomor SO. Kosongkan jika user tidak menyebut customer tertentu.",
+            },
+            minUmurHari: {
+              type: "number",
+              description:
+                "Opsional. Hanya SO yang umurnya minimal sekian hari (mis. 'lebih dari 30 hari' = 30). Default 0.",
+            },
+            sortBy: {
+              type: "string",
+              enum: ["umur", "nominal"],
+              description:
+                "'umur' (default, yang paling lama dulu) atau 'nominal' (yang nilainya terbesar dulu).",
+            },
+            limit: {
+              type: "number",
+              description:
+                "Jumlah SO yang dirinci. Default 15, maksimal 50. Ringkasan selalu mencakup SEMUA SO open, bukan hanya yang dirinci.",
             },
           },
           required: [],
@@ -1232,6 +1276,17 @@ const buildTools = (
       return aiLookupService.getSoBelumInvoice(user, {
         cabang: cabang || "ALL",
         minUmurHari: args.minUmurHari || 1,
+        limit: args.limit || 15,
+      });
+    },
+    get_open_so_list: async (args) => {
+      const cabang = args.cabang || cabangOverride;
+      return aiLookupService.getOpenSoList(user, {
+        cabang: cabang || "ALL",
+        search: args.search || "",
+        minUmurHari: args.minUmurHari || 0,
+        sortBy: args.sortBy || "umur",
+        limit: args.limit || 15,
       });
     },
     get_penawaran_belum_followup: async (args) => {

@@ -1886,17 +1886,17 @@ const getActivePromos = async (filters) => {
   }
 };
 
-/**
- * @description Mengambil daftar Store (Gudang Cabang) untuk Publik
- */
+// Cabang yang tidak ditampilkan di halaman publik (katalog stok & pusat bantuan)
+const HIDDEN_PUBLIC_BRANCHES = ["K04", "SL1"];
+
 const getPublicStores = async () => {
   const query = `
       SELECT gdg_kode AS kode, gdg_nama AS nama 
       FROM tgudang 
-      WHERE gdg_dc = 0 AND gdg_kode != 'K04' 
+      WHERE gdg_dc = 0 AND gdg_kode NOT IN (?) 
       ORDER BY gdg_nama
   `;
-  const [rows] = await pool.query(query);
+  const [rows] = await pool.query(query, [HIDDEN_PUBLIC_BRANCHES]);
   return rows;
 };
 
@@ -1984,10 +1984,10 @@ const getPublicContacts = async () => {
           gdg_inv_telp AS telepon,
           gdg_inv_alamat AS alamat
       FROM tgudang 
-      WHERE gdg_dc = 0 AND gdg_kode != 'K04' 
+      WHERE gdg_dc = 0 AND gdg_kode NOT IN (?) 
       ORDER BY gdg_nama
   `;
-  const [rows] = await pool.query(query);
+  const [rows] = await pool.query(query, [HIDDEN_PUBLIC_BRANCHES]);
 
   // Bersihkan format nomor HP agar valid untuk link wa.me
   return rows.map((row) => {

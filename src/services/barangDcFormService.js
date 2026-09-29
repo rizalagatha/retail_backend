@@ -240,19 +240,24 @@ const uploadImage = async (kode, file) => {
 
 const searchWarnaKain = async (filters) => {
   const { term, page, itemsPerPage } = filters;
-  const pageNum = parseInt(page, 10) || 1;
-  const limit = parseInt(itemsPerPage, 10) || 10;
-  const offset = (pageNum - 1) * limit;
+  const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+  const requested = parseInt(itemsPerPage, 10);
+
+  // -1 = "ALL" dari Vuetify. Batasi supaya tidak menarik tabel tanpa batas.
+  const MAX_ALL = 1000;
+  const limit =
+    requested === -1
+      ? MAX_ALL
+      : Math.min(Math.max(requested || 10, 1), MAX_ALL);
+  const offset = requested === -1 ? 0 : (pageNum - 1) * limit;
   const searchTerm = `%${term || ""}%`;
 
   const whereClause = `WHERE Warna LIKE ?`;
 
-  // Query untuk menghitung total data
   const countQuery = `SELECT COUNT(*) as total FROM twarna ${whereClause}`;
   const [countRows] = await pool.query(countQuery, [searchTerm]);
   const total = countRows[0].total;
 
-  // Query untuk mengambil data per halaman
   const dataQuery = `
         SELECT Warna AS nama, Kode 
         FROM twarna 
@@ -262,7 +267,6 @@ const searchWarnaKain = async (filters) => {
     `;
   const [items] = await pool.query(dataQuery, [searchTerm, limit, offset]);
 
-  // Kembalikan dalam format objek yang benar
   return { items, total };
 };
 

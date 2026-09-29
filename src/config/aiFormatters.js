@@ -536,6 +536,50 @@ const aiFormatters = {
     return `Status buffer cabang ${result.cabang}:\n\n${lines}`;
   },
 
+  get_open_so_list: (args, result) => {
+    const r = result?.ringkasan;
+    const cabangLabel =
+      args.cabang && args.cabang !== "ALL" ? ` cabang ${args.cabang}` : "";
+    if (!r || r.jumlahSO === 0) {
+      return `Tidak ada SO yang masih open${cabangLabel}${
+        args.search ? ` untuk "${args.search}"` : ""
+      }.`;
+    }
+    const lines = result.data
+      .map(
+        (s, i) =>
+          `${i + 1}. ${s.so_nomor} — ${s.customer} • umur ${s.umur_hari} hari • ${formatRupiah(s.nominal)} • ${s.tahap}${
+            s.telat_dateline_hari > 0
+              ? ` • lewat dateline ${s.telat_dateline_hari} hari`
+              : ""
+          }`,
+      )
+      .join("\n");
+    const b = r.sebaranUmur;
+    let text = `Ada ${r.jumlahSO} SO masih open${cabangLabel}, total nilai ${formatRupiah(r.totalNominal)}. Rata-rata umur ${r.rataRataUmurHari} hari, yang tertua ${r.umurTertuaHari} hari.\n\nSebaran umur: ≤7 hari: ${b.sampai7Hari} | 8–30 hari: ${b.hari8sd30} | 31–90 hari: ${b.hari31sd90} | >90 hari: ${b.lebih90Hari}\n\nRincian (urut ${result.urutan}, ${result.tampilkan} dari ${r.jumlahSO}):\n${lines}`;
+    if (r.mungkinTerpotong) {
+      text +=
+        "\n\n(Catatan: data sangat banyak, hasil dibatasi 500 SO terlama.)";
+    }
+    return text;
+  },
+
+  get_so_belum_invoice: (args, result) => {
+    const r = result?.ringkasan;
+    const cabangLabel =
+      args.cabang && args.cabang !== "ALL" ? ` cabang ${args.cabang}` : "";
+    if (!r || r.jumlahSO === 0) {
+      return `Tidak ada SO yang sudah siap tapi belum diinvoice${cabangLabel}.`;
+    }
+    const lines = result.data
+      .map(
+        (s, i) =>
+          `${i + 1}. ${s.so_nomor} — ${s.customer} • umur ${s.umur_hari} hari • ${formatRupiah(s.nominal)} • ${s.total_qty} pcs`,
+      )
+      .join("\n");
+    return `Ada ${r.jumlahSO} SO${cabangLabel} yang barangnya sudah siap tapi belum diinvoice, total nilai ${formatRupiah(r.totalNominal)} (rata-rata umur ${r.rataRataUmurHari} hari, tertua ${r.umurTertuaHari} hari).\n\nRincian (${result.tampilkan} dari ${r.jumlahSO}):\n${lines}`;
+  },
+
   get_product_price: (args, result) => {
     if (result?.error) return result.error;
     if (!Array.isArray(result) || result.length === 0) {

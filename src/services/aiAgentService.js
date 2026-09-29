@@ -10,6 +10,21 @@ const { correctUserTypo } = require("../config/typoCorrector");
 
 const MAX_TOOL_ROUNDS = 3;
 
+// Batas ukuran hasil tool yang dikirim balik ke model. Hasil yang lebih besar
+// dipotong supaya tidak membengkakkan konteks/token.
+const MAX_TOOL_RESULT_CHARS = 14000;
+
+const serializeToolResult = (result) => {
+  const json = JSON.stringify(result);
+  if (json.length <= MAX_TOOL_RESULT_CHARS) return json;
+  console.warn(`[AI] Hasil tool dipotong (${json.length} karakter).`);
+  return JSON.stringify({
+    truncated: true,
+    note: "Hasil terlalu besar dan dipotong. Beri tahu user bahwa data hanya sebagian dan tawarkan filter lebih spesifik (cabang/customer/periode).",
+    preview: json.slice(0, MAX_TOOL_RESULT_CHARS),
+  });
+};
+
 // [BARU] Model routing — eskalasi ke Sonnet HANYA untuk round narasi final
 // pada pertanyaan yang butuh reasoning analitik (bukan sekadar tarik data).
 // Sengaja pakai keyword heuristic (bukan minta Haiku self-flag) supaya
@@ -262,7 +277,7 @@ Konteks tetap:
           role: "tool",
           tool_call_id: call.id,
           name: fnName,
-          content: JSON.stringify(resultContent),
+          content: serializeToolResult(resultContent),
         });
         executedResults.push({ fnName, args, resultContent });
       }

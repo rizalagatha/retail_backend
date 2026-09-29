@@ -6,22 +6,6 @@ const priceProposalSoService = require("../services/priceProposalSoService");
 
 const getAll = async (req, res) => {
   try {
-    // [BARU] Jalankan semua sync status otomatis sebelum ambil data browse.
-    // Masing-masing dibungkus try-catch terpisah — kalau satu gagal (misal
-    // ada tabel yang belum ada), sync lain & browse tetap jalan.
-    for (const syncFn of [
-      priceProposalService.syncDcApprovalStatus,
-      priceProposalService.syncProduksiStatus,
-      priceProposalService.syncBarangDiterimaDcStatus,
-      priceProposalService.syncReadyStoreStatus,
-    ]) {
-      try {
-        await syncFn();
-      } catch (syncError) {
-        console.error("Gagal sync status pengajuan harga:", syncError.message);
-      }
-    }
-
     const filters = {
       startDate: req.query.startDate,
       endDate: req.query.endDate,
@@ -35,6 +19,14 @@ const getAll = async (req, res) => {
         .status(400)
         .json({ message: "Parameter tanggal dan cabang diperlukan." });
     }
+
+    // Sync status otomatis: throttle 60 detik + single-flight.
+    // force=true dikirim frontend dari tombol refresh manual.
+    // Error di dalam sync sudah ditangkap per langkah di syncAllStatuses,
+    // jadi browse tetap jalan walau salah satu sync gagal.
+    await priceProposalService.syncAllStatuses({
+      force: req.query.forceSync === "true",
+    });
 
     const proposals = await priceProposalService.getPriceProposals(filters);
     res.json(proposals);

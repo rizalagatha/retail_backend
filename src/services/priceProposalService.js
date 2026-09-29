@@ -98,7 +98,11 @@ const getPriceProposals = async (filters) => {
       h.ph_status_updated AS statusUpdated,
       h.ph_ref_so_spk AS refSoSpk,
       h.ph_ref_invoice AS refInvoice,
-      so.soNomor AS soKaosanNomor,
+      (
+        SELECT MIN(d.sod_so_nomor)
+        FROM tso_dtl d
+        WHERE d.sod_ph_nomor = h.ph_nomor
+      ) AS soKaosanNomor,
       h.ph_cab AS cabang,
       h.user_create AS created,
       CASE 
@@ -106,26 +110,30 @@ const getPriceProposals = async (filters) => {
         WHEN h.ph_custom = 'Y' THEN 'Custom'
         ELSE 'Stok'
       END AS ketersediaan,
-      COALESCE(bd.kodeDraft, h.ph_kode_barang_draft) AS kodeBarangDraft,
-      bd.kodeFinal AS kodeBarangFinal,
+      COALESCE(
+        (
+          SELECT b.pbd_kode_barang_draft
+          FROM tpengajuanharga_barang_draft b
+          WHERE b.pbd_nomor = h.ph_nomor
+            AND b.pbd_kategori = 'UTAMA'
+            AND b.pbd_kode_barang_draft IS NOT NULL
+          ORDER BY b.pbd_id DESC
+          LIMIT 1
+        ),
+        h.ph_kode_barang_draft
+      ) AS kodeBarangDraft,
+      (
+        SELECT b.pbd_finalized_kode
+        FROM tpengajuanharga_barang_draft b
+        WHERE b.pbd_nomor = h.ph_nomor
+          AND b.pbd_kategori = 'UTAMA'
+          AND b.pbd_finalized_kode IS NOT NULL
+        ORDER BY b.pbd_id DESC
+        LIMIT 1
+      ) AS kodeBarangFinal,
       h.ph_celana_kode_barang_draft AS kodeCelanaDraft
     FROM tpengajuanharga h
     LEFT JOIN tcustomer c ON c.cus_kode = h.ph_kd_cus
-    LEFT JOIN (
-      SELECT sod_ph_nomor, MIN(sod_so_nomor) AS soNomor
-      FROM tso_dtl
-      WHERE sod_ph_nomor IS NOT NULL
-      GROUP BY sod_ph_nomor
-    ) so ON so.sod_ph_nomor = h.ph_nomor
-    LEFT JOIN (
-      SELECT 
-        pbd_nomor,
-        SUBSTRING_INDEX(GROUP_CONCAT(pbd_kode_barang_draft ORDER BY pbd_id DESC), ',', 1) AS kodeDraft,
-        SUBSTRING_INDEX(GROUP_CONCAT(pbd_finalized_kode ORDER BY pbd_id DESC), ',', 1) AS kodeFinal
-      FROM tpengajuanharga_barang_draft
-      WHERE pbd_kategori = 'UTAMA'
-      GROUP BY pbd_nomor
-    ) bd ON bd.pbd_nomor = h.ph_nomor
     WHERE h.ph_tanggal BETWEEN ? AND ?
   `;
 
@@ -193,11 +201,26 @@ const getSizeDetails = async (nomor) => {
     FROM tpengajuanharga_size s
     LEFT JOIN tbarangdc a ON a.brg_kode = s.phs_kode
     LEFT JOIN tpengajuanharga_barang_draft pbd ON pbd.pbd_kode_barang_draft = s.phs_kode
-    LEFT JOIN (SELECT pht_nomor, SUM(pht_harga) AS tambahan FROM tpengajuanharga_tambahan GROUP BY pht_nomor) t ON t.pht_nomor = s.phs_nomor
-    LEFT JOIN (SELECT phb_nomor, phb_rpbordir AS bordir FROM tpengajuanharga_bordir GROUP BY phb_nomor) brd ON brd.phb_nomor = s.phs_nomor
-    LEFT JOIN (SELECT phd_nomor, phd_rpdtf AS dtf FROM tpengajuanharga_dtf GROUP BY phd_nomor) dt ON dt.phd_nomor = s.phs_nomor
+    LEFT JOIN (
+      SELECT pht_nomor, SUM(pht_harga) AS tambahan
+      FROM tpengajuanharga_tambahan
+      WHERE pht_nomor = ?
+      GROUP BY pht_nomor
+    ) t ON t.pht_nomor = s.phs_nomor
+    LEFT JOIN (
+      SELECT phb_nomor, MAX(phb_rpbordir) AS bordir
+      FROM tpengajuanharga_bordir
+      WHERE phb_nomor = ?
+      GROUP BY phb_nomor
+    ) brd ON brd.phb_nomor = s.phs_nomor
+    LEFT JOIN (
+      SELECT phd_nomor, MAX(phd_rpdtf) AS dtf
+      FROM tpengajuanharga_dtf
+      WHERE phd_nomor = ?
+      GROUP BY phd_nomor
+    ) dt ON dt.phd_nomor = s.phs_nomor
     WHERE s.phs_nomor = ?`,
-    [nomor],
+    [nomor, nomor, nomor, nomor],
   );
   return rows.sort((a, b) => sizeOrderIdx(a.ukuran) - sizeOrderIdx(b.ukuran));
 };
@@ -687,6 +710,48 @@ const deleteProposal = async (nomor) => {
   return { message: "Pengajuan harga berhasil dihapus." };
 };
 
+const SYNC_INTERVAL_MS = 60 * 1000;
+let lastSyncAt = 0;
+let syncInFlight = null;
+
+/**
+ * Jalankan keempat sync berurutan (urutan penting: DC -> Produksi ->
+ * Barang Diterima -> Ready Store). Maksimal 1x per 60 detik, dan kalau
+ * sedang berjalan, request lain menunggu hasil yang sama.
+ */
+const syncAllStatuses = async ({ force = false } = {}) => {
+  if (syncInFlight) return syncInFlight;
+  if (!force && Date.now() - lastSyncAt < SYNC_INTERVAL_MS) {
+    return { skipped: true };
+  }
+
+  syncInFlight = (async () => {
+    const result = {};
+    const steps = [
+      ["dc", syncDcApprovalStatus],
+      ["produksi", syncProduksiStatus],
+      ["barangDiterima", syncBarangDiterimaDcStatus],
+      ["readyStore", syncReadyStoreStatus],
+    ];
+    try {
+      for (const [key, fn] of steps) {
+        try {
+          result[key] = await fn();
+        } catch (err) {
+          console.error(`Sync ${key} gagal:`, err.message);
+          result[key] = { error: err.message };
+        }
+      }
+      return result;
+    } finally {
+      lastSyncAt = Date.now();
+      syncInFlight = null;
+    }
+  })();
+
+  return syncInFlight;
+};
+
 module.exports = {
   STATUS,
   STATUS_LABEL,
@@ -710,5 +775,6 @@ module.exports = {
   syncProduksiStatus,
   syncBarangDiterimaDcStatus,
   syncReadyStoreStatus,
+  syncAllStatuses,
   deleteProposal,
 };
