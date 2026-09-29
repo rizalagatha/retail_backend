@@ -4,22 +4,41 @@ const pool = require("../config/database");
  * Mengambil daftar Packing List.
  */
 const getList = async (filters) => {
-  const { startDate, endDate, kodeBarang, cabang } = filters;
+  const { startDate, endDate, kodeBarang, cabang, status, search } = filters;
 
-  let params = [startDate, endDate];
-  let itemFilter = "";
-  let branchFilter = "";
+  const conditions = ["h.pl_tanggal BETWEEN ? AND ?"];
+  const params = [startDate, endDate];
 
   // Filter Cabang Tujuan (Store)
   if (cabang && cabang !== "KDC" && cabang !== "ALL") {
-    branchFilter = "AND h.pl_cab_tujuan = ?";
+    conditions.push("h.pl_cab_tujuan = ?");
     params.push(cabang);
   }
 
-  // Filter Item (Jika user mencari berdasarkan barang tertentu)
+  // Filter status di level DB (O = Open, C = Closed)
+  if (status === "O" || status === "C") {
+    conditions.push("h.pl_status = ?");
+    params.push(status);
+  }
+
+  // Pencarian nomor PL / keterangan
+  const keyword = search ? String(search).trim() : "";
+  if (keyword) {
+    conditions.push("(h.pl_nomor LIKE ? OR h.pl_ket LIKE ?)");
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  // Filter item: EXISTS menggantikan INNER JOIN + GROUP BY
   if (kodeBarang) {
-    itemFilter = "AND d.pld_kode = ?";
+    conditions.push(
+      "EXISTS (SELECT 1 FROM tpacking_list_dtl d WHERE d.pld_nomor = h.pl_nomor AND d.pld_kode = ?)",
+    );
     params.push(kodeBarang);
+  } else {
+    // Perilaku lama: hanya PL yang punya detail
+    conditions.push(
+      "EXISTS (SELECT 1 FROM tpacking_list_dtl d WHERE d.pld_nomor = h.pl_nomor)",
+    );
   }
 
   const query = `
@@ -33,9 +52,7 @@ const getList = async (filters) => {
         m.mt_tanggal AS TglMinta,
         CASE 
             WHEN h.pl_status = 'O' THEN 'OPEN'
-            -- Jika Closed tapi belum ada No Terima di SJ, berarti masih dikirim (OTW)
             WHEN h.pl_status = 'C' AND (sj.sj_noterima IS NULL OR sj.sj_noterima = '') THEN 'SENT'
-            -- Jika Closed dan sudah ada No Terima, berarti sudah sampai
             WHEN h.pl_status = 'C' AND sj.sj_noterima <> '' THEN 'RECEIVED'
             ELSE h.pl_status 
         END AS Status,
@@ -44,14 +61,10 @@ const getList = async (filters) => {
         h.pl_ket AS Keterangan,
         h.user_create AS Usr
     FROM tpacking_list_hdr h
-    INNER JOIN tpacking_list_dtl d ON d.pld_nomor = h.pl_nomor
     LEFT JOIN tgudang g ON g.gdg_kode = h.pl_cab_tujuan
     LEFT JOIN tdc_sj_hdr sj ON sj.sj_nomor = h.pl_sj_nomor
     LEFT JOIN tmintabarang_hdr m ON m.mt_nomor = h.pl_mt_nomor
-    WHERE h.pl_tanggal BETWEEN ? AND ?
-      ${branchFilter}
-      ${itemFilter}
-    GROUP BY h.pl_nomor 
+    WHERE ${conditions.join("\n      AND ")}
     ORDER BY h.pl_tanggal DESC, h.pl_nomor DESC
   `;
 
