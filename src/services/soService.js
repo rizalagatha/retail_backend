@@ -2018,7 +2018,7 @@ const getPublicCatalog = async () => {
       MIN(NULLIF(dtl.brgd_harga, 0)) AS harga_min,
       MAX(dtl.brgd_harga) AS harga_max,
       GROUP_CONCAT(DISTINCT dtl.brgd_ukuran ORDER BY dtl.brgd_ukuran SEPARATOR ',') AS ukuran,
-      COALESCE(img_group.img_utama, b.brg_gambar_url) AS gambar_url,
+      img_group.img_utama AS gambar_url,
       IFNULL(b.brg_urutan_tampil, 9999) AS urutan,
       img_group.galeri AS galeri
     FROM tbarangdc b
@@ -2031,7 +2031,7 @@ const getPublicCatalog = async () => {
       FROM tbarangdc_images t
       GROUP BY img_brg_kode
     ) img_group ON img_group.img_brg_kode = b.brg_kode
-    WHERE img_group.img_brg_kode IS NOT NULL OR b.brg_gambar_url IS NOT NULL
+    WHERE img_group.img_brg_kode IS NOT NULL
     GROUP BY b.brg_kode
     ORDER BY urutan ASC, nama ASC
   `;
