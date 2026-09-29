@@ -2016,8 +2016,9 @@ const getPublicCatalog = async () => {
       IFNULL(b.brg_lengan, '') AS lengan,
       TRIM(CONCAT(IFNULL(b.brg_jeniskaos,''), ' ', IFNULL(b.brg_tipe,''), ' ', IFNULL(b.brg_lengan,''), ' ', IFNULL(b.brg_jeniskain,''), ' ', IFNULL(b.brg_warna,''))) AS nama,
       MIN(NULLIF(dtl.brgd_harga, 0)) AS harga_min,
-      MAX(dtl.brgd_harga) AS harga_max,
+      MAX(NULLIF(dtl.brgd_harga, 0)) AS harga_max,
       GROUP_CONCAT(DISTINCT dtl.brgd_ukuran ORDER BY dtl.brgd_ukuran SEPARATOR ',') AS ukuran,
+      CONCAT('[', GROUP_CONCAT(DISTINCT JSON_OBJECT('ukuran', dtl.brgd_ukuran, 'harga', IFNULL(dtl.brgd_harga, 0)) SEPARATOR ','), ']') AS ukuran_harga,
       img_group.img_utama AS gambar_url,
       IFNULL(b.brg_urutan_tampil, 9999) AS urutan,
       img_group.galeri AS galeri
