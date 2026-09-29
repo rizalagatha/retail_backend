@@ -193,6 +193,14 @@ const getPublicContacts = async (req, res) => {
   }
 };
 
+const getPublicCatalog = async (req, res) => {
+  try {
+    res.json(await soService.getPublicCatalog());
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getAll,
   getDetails,
@@ -207,4 +215,5 @@ module.exports = {
   getPublicStores,
   getPublicStock,
   getPublicContacts,
+  getPublicCatalog,
 };

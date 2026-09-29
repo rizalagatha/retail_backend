@@ -16,6 +16,8 @@ router.get("/public/cek-stok", soController.getPublicStock);
 
 router.get("/public/contacts", soController.getPublicContacts);
 
+router.get("/public/katalog", soController.getPublicCatalog);
+
 // GET: Mengambil daftar Surat Pesanan berdasarkan filter
 router.get(
   "/",

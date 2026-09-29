@@ -2003,6 +2003,42 @@ const getPublicContacts = async () => {
   });
 };
 
+/**
+ * Katalog publik: produk + harga + foto, TANPA stok dan TANPA toko.
+ * Hanya produk yang punya foto yang ditampilkan.
+ */
+const getPublicCatalog = async () => {
+  const query = `
+    SELECT
+      b.brg_kode AS kode,
+      IFNULL(b.brg_jeniskain, '') AS jenis_kain,
+      IFNULL(b.brg_jeniskaos, '') AS jenis_kaos,
+      IFNULL(b.brg_lengan, '') AS lengan,
+      TRIM(CONCAT(IFNULL(b.brg_jeniskaos,''), ' ', IFNULL(b.brg_tipe,''), ' ', IFNULL(b.brg_lengan,''), ' ', IFNULL(b.brg_jeniskain,''), ' ', IFNULL(b.brg_warna,''))) AS nama,
+      MIN(NULLIF(dtl.brgd_harga, 0)) AS harga_min,
+      MAX(dtl.brgd_harga) AS harga_max,
+      GROUP_CONCAT(DISTINCT dtl.brgd_ukuran ORDER BY dtl.brgd_ukuran SEPARATOR ',') AS ukuran,
+      COALESCE(img_group.img_utama, b.brg_gambar_url) AS gambar_url,
+      IFNULL(b.brg_urutan_tampil, 9999) AS urutan,
+      img_group.galeri AS galeri
+    FROM tbarangdc b
+    LEFT JOIN tbarangdc_dtl dtl ON dtl.brgd_kode = b.brg_kode
+    LEFT JOIN (
+      SELECT
+        img_brg_kode,
+        (SELECT s.img_url FROM tbarangdc_images s WHERE s.img_brg_kode = t.img_brg_kode ORDER BY s.img_index ASC LIMIT 1) AS img_utama,
+        CONCAT('[', GROUP_CONCAT(JSON_OBJECT('url', img_url, 'index', img_index) ORDER BY img_index ASC), ']') AS galeri
+      FROM tbarangdc_images t
+      GROUP BY img_brg_kode
+    ) img_group ON img_group.img_brg_kode = b.brg_kode
+    WHERE img_group.img_brg_kode IS NOT NULL OR b.brg_gambar_url IS NOT NULL
+    GROUP BY b.brg_kode
+    ORDER BY urutan ASC, nama ASC
+  `;
+  const [rows] = await pool.query(query);
+  return rows;
+};
+
 module.exports = {
   getList,
   getCabangList,
@@ -2017,4 +2053,5 @@ module.exports = {
   getPublicStores,
   getPublicStock,
   getPublicContacts,
+  getPublicCatalog,
 };
