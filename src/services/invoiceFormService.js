@@ -3023,6 +3023,7 @@ const findByBarcode = async (barcode, gudang) => {
       d.brgd_hrg1 AS harga1,
       IF(? = 'KDC', d.brgd_hpp, d.brgd_harga) AS harga,
       h.brg_ktgp AS kategori,
+      h.brg_ktg AS ktg,
       d.brgd_hpp AS hpp,
       IFNULL((
         SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
@@ -3178,7 +3179,8 @@ const searchProducts = async (filters, user) => {
       b.brgd_hrg3 AS harga3,
       b.brgd_hrg1 AS harga1,
       ${hargaSelect},
-      a.brg_ktgp AS kategori
+      a.brg_ktgp AS kategori,
+      a.brg_ktg AS ktg
     ${baseFrom}
     ${promoFilterJoin}
     ${baseWhere}
