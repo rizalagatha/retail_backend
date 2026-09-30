@@ -177,7 +177,7 @@ const getPublicStock = async (req, res) => {
     // Wajib ada cabang
     if (!cabang) return res.json([]);
 
-    const data = await soService.getPublicStock(cabang, q || "");
+    const data = await soService.getPublicStockLive(cabang, q || "");
     res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });

@@ -1973,6 +1973,36 @@ const getPublicStock = async (cabang, keyword) => {
   return rows;
 };
 
+// Stok pameran: stok B02 (tmasterstok) dikurangi penjualan bazar yang belum di-klerek.
+// Setelah klerek, tmasterstok sudah berkurang, jadi invoice itu tidak dihitung lagi.
+const PAMERAN_BRANCHES = ["B02"];
+
+const getPublicStockLive = async (cabang, q) => {
+  const rows = await getPublicStock(cabang, q);
+  if (!PAMERAN_BRANCHES.includes(cabang) || rows.length === 0) return rows;
+
+  const [sold] = await pool.query(
+    `SELECT d.invd_kode AS kode, d.invd_ukuran AS ukuran, SUM(d.invd_jumlah) AS qty
+       FROM tinv_hdr_tmp h
+       JOIN tinv_dtl_tmp d ON d.invd_id = h.inv_id
+      WHERE h.inv_nomor LIKE CONCAT(?, '-%')
+        AND h.inv_klerek = ''
+        AND h.inv_tanggal >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)
+      GROUP BY d.invd_kode, d.invd_ukuran`,
+    [cabang],
+  );
+
+  const key = (k, u) => `${String(k).trim()}|${String(u).trim()}`.toUpperCase();
+  const soldMap = new Map(
+    sold.map((s) => [key(s.kode, s.ukuran), Number(s.qty)]),
+  );
+
+  return rows.map((r) => {
+    const qty = soldMap.get(key(r.kode, r.ukuran)) || 0;
+    return qty ? { ...r, stok: Math.max(0, r.stok - qty) } : r;
+  });
+};
+
 /**
  * @description Mengambil kontak (WhatsApp) masing-masing cabang untuk pusat bantuan
  */
@@ -2053,6 +2083,7 @@ module.exports = {
   getActivePromos,
   getPublicStores,
   getPublicStock,
+  getPublicStockLive,
   getPublicContacts,
   getPublicCatalog,
 };
