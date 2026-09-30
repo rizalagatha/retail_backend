@@ -2068,8 +2068,9 @@ const getPublicCatalog = async () => {
         CONCAT('[', GROUP_CONCAT(JSON_OBJECT('url', img_url, 'index', img_index) ORDER BY img_index ASC), ']') AS galeri
       FROM tbarangdc_images t
       GROUP BY img_brg_kode
-   ) img_group ON img_group.img_brg_kode = b.brg_kode
+    ) img_group ON img_group.img_brg_kode = b.brg_kode
     WHERE b.brg_aktif = 0
+      AND b.brg_logstok = 'Y'
       AND IFNULL(b.brg_ktgp, '') <> 'PESANAN'
     GROUP BY b.brg_kode
     ORDER BY (gambar_url IS NULL), urutan ASC, nama ASC
