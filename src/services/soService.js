@@ -76,6 +76,7 @@ const getList = async (filters) => {
         -- [BARU] Basis pengecekan DP minimal
         y.Netto,
         y.HasCustomOrDtf,
+        y.DpOtorisasi,
         ROUND((CASE WHEN y.HasCustomOrDtf = 1 THEN 0.5 ELSE 0.3 END) * IFNULL(y.Netto, 0)) AS MinimalDp,
 
         -- [BARU] Flag DP kurang — pasif & di-close dianggap tidak relevan (selalu 'N')
@@ -262,6 +263,12 @@ const getList = async (filters) => {
                 h.so_close AS sts,
                 h.so_aktif AS Aktif,
                 h.so_alasan AS AlasanClose,
+                (SELECT IF(EXISTS(
+                    SELECT 1 FROM totorisasi o
+                    WHERE o.o_status = 'Y'
+                      AND o.o_jenis = 'SO_TANPA_DP'
+                      AND o.o_transaksi = h.so_nomor
+                ), 1, 0)) AS DpOtorisasi,
                 h.so_sc AS SC,
                 (
                   SELECT 'Y' FROM tsodtf_hdr d
