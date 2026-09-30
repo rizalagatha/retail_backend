@@ -3021,7 +3021,11 @@ const findByBarcode = async (barcode, gudang) => {
       d.brgd_ukuran AS ukuran,
       d.brgd_hrg3 AS harga3,
       d.brgd_hrg1 AS harga1,
-      IF(? = 'KDC', d.brgd_hpp, d.brgd_harga) AS harga,
+      IF(? = 'KDC', d.brgd_hpp, COALESCE(
+        (SELECT hc.hc_harga FROM tbarangdc_harga_cabang hc
+          WHERE hc.hc_cab = ? AND hc.hc_brg_kode = d.brgd_kode
+            AND hc.hc_ukuran = d.brgd_ukuran AND hc.hc_aktif = 1 LIMIT 1),
+        d.brgd_harga)) AS harga,
       h.brg_ktgp AS kategori,
       h.brg_ktg AS ktg,
       d.brgd_hpp AS hpp,
@@ -3043,6 +3047,7 @@ const findByBarcode = async (barcode, gudang) => {
 
   // Masukkan parameter: [gudang_kdc, gudang_stok, barcode_asli, barcode_bersih]
   const [rows] = await pool.query(query, [
+    gudang,
     gudang,
     gudang,
     barcode,
@@ -3074,7 +3079,13 @@ const searchProducts = async (filters, user) => {
 
   let promoFilterJoin = "";
   let hargaSelect =
-    user.cabang === "KDC" ? "b.brgd_hpp AS harga" : "b.brgd_harga AS harga";
+    user.cabang === "KDC"
+      ? "b.brgd_hpp AS harga"
+      : `COALESCE(
+           (SELECT hc.hc_harga FROM tbarangdc_harga_cabang hc
+             WHERE hc.hc_cab = ${pool.escape(user.cabang)} AND hc.hc_brg_kode = b.brgd_kode
+               AND hc.hc_ukuran = b.brgd_ukuran AND hc.hc_aktif = 1 LIMIT 1),
+           b.brgd_harga) AS harga`;
 
   // ---------- PROMO ----------
   if (promoNomor === "PRO-2025-005") {
@@ -3403,7 +3414,13 @@ const getProductPanelList = async (filters, user) => {
   const kodeList = kodeRows.map((r) => r.kode);
 
   const hargaSelect =
-    user.cabang === "KDC" ? "b.brgd_hpp AS harga" : "b.brgd_harga AS harga";
+    user.cabang === "KDC"
+      ? "b.brgd_hpp AS harga"
+      : `COALESCE(
+           (SELECT hc.hc_harga FROM tbarangdc_harga_cabang hc
+             WHERE hc.hc_cab = ${pool.escape(user.cabang)} AND hc.hc_brg_kode = b.brgd_kode
+               AND hc.hc_ukuran = b.brgd_ukuran AND hc.hc_aktif = 1 LIMIT 1),
+           b.brgd_harga) AS harga`;
 
   // Filter "ukuran reguler" cuma dipakai untuk mempersempit ORDER
   // (biar S,M,L,XL urut rapi), TAPI tidak boleh MEMBUANG baris ukuran yang
