@@ -2062,9 +2062,8 @@ const getPublicCatalog = async () => {
       FROM tbarangdc_images t
       GROUP BY img_brg_kode
     ) img_group ON img_group.img_brg_kode = b.brg_kode
-    WHERE img_group.img_brg_kode IS NOT NULL
     GROUP BY b.brg_kode
-    ORDER BY urutan ASC, nama ASC
+    ORDER BY (gambar_url IS NULL), urutan ASC, nama ASC
   `;
   const [rows] = await pool.query(query);
   return rows;
