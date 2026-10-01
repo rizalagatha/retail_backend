@@ -2071,7 +2071,7 @@ const getPublicCatalog = async () => {
     ) img_group ON img_group.img_brg_kode = b.brg_kode
     WHERE b.brg_aktif = 0
       AND b.brg_logstok = 'Y'
-      AND IFNULL(b.brg_ktgp, '') <> 'PESANAN'
+      AND IFNULL(b.brg_ktgp, '') NOT IN ('PESANAN', 'PROMO', 'REJECT', 'DISPLAY')
     GROUP BY b.brg_kode
     ORDER BY (gambar_url IS NULL), urutan ASC, nama ASC
   `;
