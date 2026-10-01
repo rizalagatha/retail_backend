@@ -833,6 +833,7 @@ const trackOrderTimeline = async (nomorSO) => {
               d.sod_sd_nomor, d.sod_custom, d.sod_custom_nama, d.sod_scanned, 
               TRIM(CONCAT(IFNULL(a.brg_jeniskaos,''), " ", IFNULL(a.brg_tipe,''), " ", IFNULL(a.brg_lengan,''), " ", IFNULL(a.brg_jeniskain,''), " ", IFNULL(a.brg_warna,''))) AS nama_normal,
               f.sd_nama AS nama_dtf,
+              (SELECT i.img_url FROM tbarangdc_images i WHERE i.img_brg_kode = d.sod_kode ORDER BY i.img_index ASC LIMIT 1) AS gambar_produk,
               
               (SELECT s.spk_nama 
                FROM kencanaprint.tspk s 
@@ -917,6 +918,8 @@ const trackOrderTimeline = async (nomorSO) => {
         if (r.sod_sd_nomor) {
           const cabang = r.sod_sd_nomor.substring(0, 3);
           imageUrl = `https://103.94.238.252/images/${cabang}/${r.sod_sd_nomor}.jpg`;
+        } else if (r.gambar_produk) {
+          imageUrl = r.gambar_produk;
         }
 
         groupedItemsMap.set(groupKey, {
