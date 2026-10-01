@@ -2074,7 +2074,7 @@ const getPublicCatalog = async () => {
     WHERE b.brg_aktif = 0
       AND b.brg_logstok = 'Y'
       AND IFNULL(b.brg_ktgp, '') NOT IN ('PESANAN', 'PROMO', 'REJECT', 'DISPLAY')
-      AND IFNULL(b.brg_ktg, '') NOT IN ('DTF METERAN', 'EMBLEM BORDIR')
+      AND IFNULL(b.brg_ktg, '') IN ('', 'KIDDIFY')
     GROUP BY b.brg_kode
     ORDER BY (gambar_url IS NULL), urutan ASC, nama ASC
   `;
