@@ -2075,6 +2075,7 @@ const getPublicCatalog = async () => {
       GROUP BY img_brg_kode
     ) img_group ON img_group.img_brg_kode = b.brg_kode
     WHERE b.brg_aktif = 0
+      AND b.brg_katalog = 1
       AND b.brg_logstok = 'Y'
       AND IFNULL(b.brg_ktgp, '') NOT IN ('PESANAN', 'PROMO', 'REJECT', 'DISPLAY')
       AND IFNULL(b.brg_ktg, '') IN ('', 'KIDDIFY')
