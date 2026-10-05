@@ -803,7 +803,9 @@ const trackOrderTimeline = async (nomorSO) => {
         case "DP":
           return "DTF PREMIUM";
         case "SB":
-          return "SABLON MANUAL";
+          return "PLATISOL";
+        case "TG":
+          return "DTG";
         default:
           return "PRODUKSI";
       }
@@ -1697,6 +1699,7 @@ const trackOrderTimeline = async (nomorSO) => {
     const jenisProduksiStr =
       jenisProduksiArr.length > 0 ? jenisProduksiArr.join(" + ") : "";
     const isProduksiActive = hasDtf || hasSpk;
+    const isReady = qtyScanned >= qtySO && qtySO > 0;
 
     const milestones = [
       {
@@ -1733,15 +1736,24 @@ const trackOrderTimeline = async (nomorSO) => {
       },
       {
         id: 4,
-        kode: "READY",
-        title: "Barang Selesai",
-        icon: "mdi-package-check",
-        waktu: getWaktu("Ready") || getWaktu("Diterima DC"),
-        isActive: qtyScanned >= qtySO && qtySO > 0,
+        kode: "QC",
+        title: "QC Selesai",
+        icon: "mdi-clipboard-check-outline",
+        waktu: isReady ? getWaktu("Ready") : null,
+        isActive: isReady,
         isCurrent: false,
       },
       {
         id: 5,
+        kode: "READY",
+        title: "Barang Selesai",
+        icon: "mdi-package-check",
+        waktu: getWaktu("Ready") || getWaktu("Diterima DC"),
+        isActive: isReady,
+        isCurrent: false,
+      },
+      {
+        id: 6,
         kode: "SELESAI",
         title: "Diambil / Invoice",
         icon: "mdi-truck-delivery-outline",
@@ -1751,10 +1763,14 @@ const trackOrderTimeline = async (nomorSO) => {
       },
     ];
 
-    if (invRows.length > 0 || so.so_close === 2) milestones[4].isCurrent = true;
-    else if (qtyScanned >= qtySO && qtySO > 0) milestones[3].isCurrent = true;
-    else if (isProduksiActive) milestones[2].isCurrent = true;
-    else milestones[1].isCurrent = true;
+    const setCurrent = (kode) => {
+      const m = milestones.find((x) => x.kode === kode);
+      if (m) m.isCurrent = true;
+    };
+    if (invRows.length > 0 || so.so_close === 2) setCurrent("SELESAI");
+    else if (isReady) setCurrent("READY");
+    else if (isProduksiActive) setCurrent("PRODUKSI");
+    else setCurrent("SO");
 
     return {
       nomorSo: nomorSO,
