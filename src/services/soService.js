@@ -2011,13 +2011,14 @@ const getPublicStockLive = async (cabang, q) => {
   if (!PAMERAN_BRANCHES.includes(cabang) || rows.length === 0) return rows;
 
   const [sold] = await pool.query(
-    `SELECT d.invd_kode AS kode, d.invd_ukuran AS ukuran, SUM(d.invd_jumlah) AS qty
+    `SELECT b.brgd_kode AS kode, b.brgd_ukuran AS ukuran, SUM(d.invd_jumlah) AS qty
        FROM tinv_hdr_tmp h
-       JOIN tinv_dtl_tmp d ON d.invd_id = h.inv_id
+       JOIN tinv_dtl_tmp d ON d.invd_inv_nomor = h.inv_nomor
+       JOIN tbarangdc_dtl b ON TRIM(b.brgd_barcode) = d.invd_kode
       WHERE h.inv_nomor LIKE CONCAT(?, '-%')
-        AND h.inv_klerek = ''
+        AND h.inv_klerek IN ('', '0')
         AND h.inv_tanggal >= ?
-      GROUP BY d.invd_kode, d.invd_ukuran`,
+      GROUP BY b.brgd_kode, b.brgd_ukuran`,
     [cabang, PAMERAN_MULAI],
   );
 
