@@ -1926,6 +1926,45 @@ const getPublicStores = async () => {
   return rows;
 };
 
+// ===== Harga setelah promo (diskon per barang) untuk halaman publik =====
+const PROMO_HARGA = ["PRO-2026-010", "PRO-2026-011", "PRO-2026-012"];
+const PROMO_KATALOG_CABANG = "B02"; // acuan promo untuk katalog (tanpa toko)
+
+const promoKey = (kode, ukuran) =>
+  `${String(kode).trim()}|${String(ukuran).trim()}`.toUpperCase();
+
+// Peta kode|ukuran -> { persen, rp } untuk promo yang sedang berlaku di cabang itu
+const getPromoDiskonMap = async (cabang) => {
+  const [rows] = await pool.query(
+    `SELECT pb.pb_brg_kode AS kode, pb.pb_ukuran AS ukuran,
+            MAX(pb.pb_disc) AS persen, MAX(pb.pb_diskon) AS rp
+       FROM tpromo p
+       JOIN tpromo_cabang c ON c.pc_nomor = p.pro_nomor AND c.pc_cab = ?
+       JOIN tpromo_barang pb ON pb.pb_nomor = p.pro_nomor
+      WHERE p.pro_nomor IN (?)
+        AND p.pro_f1 = 'N'
+        AND CURDATE() BETWEEN p.pro_tanggal1 AND p.pro_tanggal2
+      GROUP BY pb.pb_brg_kode, pb.pb_ukuran`,
+    [cabang, PROMO_HARGA],
+  );
+  const map = new Map();
+  rows.forEach((r) =>
+    map.set(promoKey(r.kode, r.ukuran), {
+      persen: Number(r.persen) || 0,
+      rp: Number(r.rp) || 0,
+    }),
+  );
+  return map;
+};
+
+// Sama dengan unitDiscount di aplikasi mobile: nominal Rp diutamakan, lalu persen
+const hargaSetelahPromo = (harga, disc) => {
+  if (!disc || !harga) return harga;
+  const potong =
+    disc.rp > 0 ? disc.rp : Math.round((harga * disc.persen) / 100);
+  return harga - Math.max(0, Math.min(potong, harga));
+};
+
 /**
  * @description Pencarian stok publik berdasarkan cabang (Telah dikurangi Booking/SO)
  */
@@ -2012,7 +2051,13 @@ const getPublicStock = async (
     term,
     term,
   ]);
-  return rows;
+  const promo = await getPromoDiskonMap(cabang);
+  if (promo.size === 0) return rows;
+  return rows.map((r) => {
+    const harga = Number(r.harga) || 0;
+    const hp = hargaSetelahPromo(harga, promo.get(promoKey(r.kode, r.ukuran)));
+    return hp < harga ? { ...r, harga_promo: hp } : r;
+  });
 };
 
 // Stok pameran: stok B02 (tmasterstok) dikurangi penjualan bazar yang belum di-klerek.
@@ -2126,7 +2171,46 @@ const getPublicCatalog = async () => {
     ORDER BY (gambar_url IS NULL), urutan ASC, nama ASC
   `;
   const [rows] = await pool.query(query);
-  return rows;
+
+  const promo = await getPromoDiskonMap(PROMO_KATALOG_CABANG);
+  if (promo.size === 0) return rows;
+
+  return rows.map((r) => {
+    let list = [];
+    try {
+      list = r.ukuran_harga ? JSON.parse(r.ukuran_harga) : [];
+    } catch {
+      list = [];
+    }
+    const dengan = list.map((u) => {
+      const harga = Number(u.harga) || 0;
+      const hp = hargaSetelahPromo(
+        harga,
+        promo.get(promoKey(r.kode, u.ukuran)),
+      );
+      return { ...u, harga_promo: hp < harga ? hp : null };
+    });
+    const berpromo = dengan.filter((u) => u.harga_promo !== null);
+    if (!berpromo.length) return r;
+
+    const akhir = dengan
+      .map((u) =>
+        u.harga_promo !== null ? u.harga_promo : Number(u.harga) || 0,
+      )
+      .filter((h) => h > 0);
+    const persen = Math.max(
+      ...berpromo.map((u) =>
+        Math.round((1 - u.harga_promo / Number(u.harga)) * 100),
+      ),
+    );
+    return {
+      ...r,
+      ukuran_harga: JSON.stringify(dengan),
+      promo_min: Math.min(...akhir),
+      promo_max: Math.max(...akhir),
+      promo_persen: persen,
+    };
+  });
 };
 
 module.exports = {
