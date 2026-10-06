@@ -1929,9 +1929,22 @@ const getPublicStores = async () => {
 /**
  * @description Pencarian stok publik berdasarkan cabang (Telah dikurangi Booking/SO)
  */
-const getPublicStock = async (cabang, keyword) => {
+const getPublicStock = async (
+  cabang,
+  keyword,
+  { includeBooking = true } = {},
+) => {
   if (!cabang) return [];
   const term = keyword ? `%${keyword}%` : "%";
+
+  // Stok pesanan (booking SO) ditambahkan ke stok toko. Pameran memakai tmasterstok saja.
+  const bookingSql = includeBooking
+    ? `+ IFNULL((
+                  SELECT SUM(so.mst_stok_in - so.mst_stok_out)
+                  FROM tmasterstokso so
+                  WHERE so.mst_aktif='Y' AND so.mst_cab=m.mst_cab AND so.mst_brg_kode=m.mst_brg_kode AND so.mst_ukuran=m.mst_ukuran
+              ), 0)`
+    : "";
 
   const query = `
       SELECT 
@@ -1951,14 +1964,7 @@ const getPublicStock = async (cabang, keyword) => {
           -- [OPTIMASI] Ambil galeri JSON langsung dari LEFT JOIN
           img_group.galeri AS galeri,
 
-          (
-              SUM(m.mst_stok_in - m.mst_stok_out) +
-              IFNULL((
-                  SELECT SUM(so.mst_stok_in - so.mst_stok_out) 
-                  FROM tmasterstokso so 
-                  WHERE so.mst_aktif='Y' AND so.mst_cab=m.mst_cab AND so.mst_brg_kode=m.mst_brg_kode AND so.mst_ukuran=m.mst_ukuran
-              ), 0)
-          ) AS stok,
+          (SUM(m.mst_stok_in - m.mst_stok_out) ${bookingSql}) AS stok,
           
           IFNULL((
               SELECT SUM(d.invd_jumlah)
@@ -2007,7 +2013,9 @@ const PAMERAN_BRANCHES = ["B02"];
 const PAMERAN_MULAI = "2026-01-01";
 
 const getPublicStockLive = async (cabang, q) => {
-  const rows = await getPublicStock(cabang, q);
+  const rows = await getPublicStock(cabang, q, {
+    includeBooking: !PAMERAN_BRANCHES.includes(cabang),
+  });
   if (!PAMERAN_BRANCHES.includes(cabang) || rows.length === 0) return rows;
 
   const [sold] = await pool.query(
