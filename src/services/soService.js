@@ -2003,6 +2003,8 @@ const getPublicStock = async (cabang, keyword) => {
 // Stok pameran: stok B02 (tmasterstok) dikurangi penjualan bazar yang belum di-klerek.
 // Setelah klerek, tmasterstok sudah berkurang, jadi invoice itu tidak dihitung lagi.
 const PAMERAN_BRANCHES = ["B02"];
+// Penjualan bazar sebelum tanggal ini tidak ikut mengurangi stok pameran
+const PAMERAN_MULAI = "2026-01-01";
 
 const getPublicStockLive = async (cabang, q) => {
   const rows = await getPublicStock(cabang, q);
@@ -2014,9 +2016,9 @@ const getPublicStockLive = async (cabang, q) => {
        JOIN tinv_dtl_tmp d ON d.invd_id = h.inv_id
       WHERE h.inv_nomor LIKE CONCAT(?, '-%')
         AND h.inv_klerek = ''
-        AND h.inv_tanggal >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)
+        AND h.inv_tanggal >= ?
       GROUP BY d.invd_kode, d.invd_ukuran`,
-    [cabang],
+    [cabang, PAMERAN_MULAI],
   );
 
   const key = (k, u) => `${String(k).trim()}|${String(u).trim()}`.toUpperCase();
