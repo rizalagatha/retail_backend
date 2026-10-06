@@ -1932,7 +1932,7 @@ const getPublicStores = async () => {
 const getPublicStock = async (
   cabang,
   keyword,
-  { includeBooking = true } = {},
+  { includeBooking = true, sejak = null } = {},
 ) => {
   if (!cabang) return [];
   const term = keyword ? `%${keyword}%` : "%";
@@ -1945,6 +1945,9 @@ const getPublicStock = async (
                   WHERE so.mst_aktif='Y' AND so.mst_cab=m.mst_cab AND so.mst_brg_kode=m.mst_brg_kode AND so.mst_ukuran=m.mst_ukuran
               ), 0)`
     : "";
+
+  // Pameran: hanya gerakan stok sejak tanggal ini yang dihitung
+  const sejakSql = sejak ? "AND m.mst_tanggal >= ?" : "";
 
   const query = `
       SELECT 
@@ -1994,6 +1997,7 @@ const getPublicStock = async (
 
       WHERE m.mst_aktif = 'Y' 
         AND m.mst_cab = ?
+        ${sejakSql}
         AND (
             b.brg_kode LIKE ? 
             OR TRIM(CONCAT(IFNULL(b.brg_jeniskaos,''), " ", IFNULL(b.brg_tipe,''), " ", IFNULL(b.brg_lengan,''), " ", IFNULL(b.brg_jeniskain,''), " ", IFNULL(b.brg_warna,''))) LIKE ?
@@ -2002,7 +2006,12 @@ const getPublicStock = async (
       ORDER BY urutan ASC, total_terjual DESC, nama ASC, ukuran ASC
   `;
 
-  const [rows] = await pool.query(query, [cabang, term, term]);
+  const [rows] = await pool.query(query, [
+    cabang,
+    ...(sejak ? [sejak] : []),
+    term,
+    term,
+  ]);
   return rows;
 };
 
@@ -2013,19 +2022,24 @@ const PAMERAN_BRANCHES = ["B02"];
 const PAMERAN_MULAI = "2026-01-01";
 
 const getPublicStockLive = async (cabang, q) => {
+  const isPameran = PAMERAN_BRANCHES.includes(cabang);
   const rows = await getPublicStock(cabang, q, {
-    includeBooking: !PAMERAN_BRANCHES.includes(cabang),
+    includeBooking: !isPameran,
+    sejak: isPameran ? PAMERAN_MULAI : null,
   });
-  if (!PAMERAN_BRANCHES.includes(cabang) || rows.length === 0) return rows;
+  if (!isPameran || rows.length === 0) return rows;
 
+  // invd_kode di tinv_dtl_tmp berisi BARCODE -> dipetakan ke kode barang.
+  // Nota dari mobile ber-inv_klerek '0' (belum klerek); '' juga dianggap belum klerek.
   const [sold] = await pool.query(
-    `SELECT d.invd_kode AS kode, d.invd_ukuran AS ukuran, SUM(d.invd_jumlah) AS qty
+    `SELECT b.brgd_kode AS kode, b.brgd_ukuran AS ukuran, SUM(d.invd_jumlah) AS qty
        FROM tinv_hdr_tmp h
-       JOIN tinv_dtl_tmp d ON d.invd_id = h.inv_id
+       JOIN tinv_dtl_tmp d ON d.invd_inv_nomor = h.inv_nomor
+       JOIN tbarangdc_dtl b ON TRIM(b.brgd_barcode) = d.invd_kode
       WHERE h.inv_nomor LIKE CONCAT(?, '-%')
-        AND h.inv_klerek = ''
+        AND h.inv_klerek IN ('', '0')
         AND h.inv_tanggal >= ?
-      GROUP BY d.invd_kode, d.invd_ukuran`,
+      GROUP BY b.brgd_kode, b.brgd_ukuran`,
     [cabang, PAMERAN_MULAI],
   );
 
