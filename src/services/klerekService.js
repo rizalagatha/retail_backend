@@ -162,11 +162,15 @@ const prosesKlerek = async (items, cabang, user) => {
         const ayymm = format(tgl, "yyMM");
         const cusKode = h.inv_cus_kode || "";
 
-        // 2. Detail tmp + HPP
+        // 2. Detail tmp. invd_kode di tmp bisa berisi barcode, jadi dipetakan ke kode + ukuran asli
         const [dtlRows] = await connection.query(
-          `SELECT d.*, b.brgd_hpp
+          `SELECT d.*,
+                  COALESCE(bb.brgd_kode, bk.brgd_kode)     AS kode_real,
+                  COALESCE(bb.brgd_ukuran, bk.brgd_ukuran) AS ukuran_real,
+                  COALESCE(bb.brgd_hpp, bk.brgd_hpp, 0)    AS hpp_real
              FROM tinv_dtl_tmp d
-             LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.invd_kode AND b.brgd_ukuran = d.invd_ukuran
+             LEFT JOIN tbarangdc_dtl bb ON TRIM(bb.brgd_barcode) = TRIM(d.invd_kode)
+             LEFT JOIN tbarangdc_dtl bk ON bk.brgd_kode = d.invd_kode AND bk.brgd_ukuran = d.invd_ukuran
             WHERE d.invd_inv_nomor = ?
             ORDER BY d.invd_nourut`,
           [h.inv_nomor],
@@ -174,6 +178,12 @@ const prosesKlerek = async (items, cabang, user) => {
         if (dtlRows.length === 0) {
           skipped.push({ nomor: invId, alasan: "Detail barang kosong." });
           continue;
+        }
+        const tidakDikenal = dtlRows.filter((d) => !d.kode_real);
+        if (tidakDikenal.length > 0) {
+          throw new Error(
+            `Barang tidak dikenali: ${tidakDikenal.map((d) => d.invd_kode).join(", ")}.`,
+          );
         }
 
         // 3. Hitung ulang nilai tagihan dari DB (tidak percaya nominal klien)
@@ -320,15 +330,17 @@ const prosesKlerek = async (items, cabang, user) => {
           },
         ]);
 
-        // 7. Detail permanen (idrec unik per baris, sama pola saveData)
+        // 7. Detail permanen. invd_mststok memicu pemotongan stok rak (sama seperti saveData tanpa SO)
         const detailValues = dtlRows.map((d, i) => [
           `${cklerek.replace(/\./g, "")}${String(i + 1).padStart(3, "0")}`,
           cklerek,
-          d.invd_kode,
-          d.invd_ukuran,
+          d.kode_real,
+          d.ukuran_real,
           d.invd_jumlah,
+          0, // invd_mstpesan: penjualan bazar tidak memakai SO
+          d.invd_jumlah, // invd_mststok
           d.invd_harga,
-          d.brgd_hpp || 0,
+          d.hpp_real,
           d.invd_disc,
           d.invd_diskon,
           d.invd_pro_nomor,
@@ -337,6 +349,7 @@ const prosesKlerek = async (items, cabang, user) => {
         await connection.query(
           `INSERT INTO tinv_dtl
              (invd_idrec, invd_inv_nomor, invd_kode, invd_ukuran, invd_jumlah,
+              invd_mstpesan, invd_mststok,
               invd_harga, invd_hpp, invd_disc, invd_diskon, invd_pro_nomor, invd_nourut)
            VALUES ?`,
           [detailValues],
