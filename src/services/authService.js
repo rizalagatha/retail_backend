@@ -67,7 +67,7 @@ const generateFinalPayload = async (user, selectedCabang) => {
   const userKodeUpper = user.user_kode.toUpperCase();
   const isWarehouseUser = warehouseUsers.includes(userKodeUpper);
 
-  const financeUsers = ["DARUL", "LIA", "HANI", "DEVI"];
+  const financeUsers = ["DARUL", "LIA", "HANI", "DEVI", "ADMIN"];
   const isFinance = financeUsers.includes(userKodeUpper);
 
   const userForToken = {

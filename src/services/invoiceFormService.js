@@ -4101,24 +4101,59 @@ const validateVoucher = async ({ voucherNo, invoiceNo }, user) => {
   return { nominal: voucherRows[0].invk_nominal };
 };
 
+const isEligibleByBasis = (r) => {
+  const kat = String(r.kategori || "")
+    .trim()
+    .toUpperCase();
+  const nama = String(r.nama || "").toUpperCase();
+
+  // Basis KATEGORI = hanya barang REGULER (sama dengan label di master promo)
+  if (r.pro_basis === "KATEGORI" && kat !== "REGULER") return false;
+
+  const include = String(r.pro_include_kata || "")
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+  if (include.length && !include.some((k) => nama.includes(k))) return false;
+
+  const exclude = String(r.pro_exclude_kode || "")
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+  if (
+    exclude.includes(
+      String(r.kode || "")
+        .trim()
+        .toUpperCase(),
+    )
+  )
+    return false;
+
+  return true;
+};
+
 const getApplicableItemPromo = async ({ kode, ukuran, tanggal }, user) => {
-  // Query ini meniru logika "cek promo" di cljumlahPropertiesEditValueChanged
-  const query = `
-        SELECT o.pb_disc, o.pb_diskon
-        FROM tpromo p
-        INNER JOIN tpromo_cabang c ON c.pc_nomor = p.pro_nomor AND c.pc_cab = ?
-        INNER JOIN tpromo_barang o ON o.pb_nomor = p.pro_nomor
-        WHERE ? BETWEEN p.pro_tanggal1 AND p.pro_tanggal2 
-          
-          -- UBAH BARIS INI
-          AND p.pro_jenis IN (3, 4) -- Izinkan 'Lain-lain' (3) DAN 'Diskon Item' (4)
-          -- BATAS PERUBAHAN
-          
-          AND o.pb_brg_kode = ? AND o.pb_ukuran = ?
-        LIMIT 1;
-    `;
-  const [rows] = await pool.query(query, [user.cabang, tanggal, kode, ukuran]);
-  return rows[0]; // Akan undefined jika tidak ada promo
+  // Meniru logika "cek promo" di cljumlahPropertiesEditValueChanged
+  const [rows] = await pool.query(
+    `SELECT o.pb_brg_kode AS kode, o.pb_disc, o.pb_diskon,
+            p.pro_nomor, p.pro_basis, p.pro_include_kata, p.pro_exclude_kode,
+            a.brg_ktgp AS kategori,
+            TRIM(CONCAT(a.brg_jeniskaos, ' ', a.brg_tipe, ' ', a.brg_lengan, ' ', a.brg_jeniskain, ' ', a.brg_warna)) AS nama
+       FROM tpromo p
+       INNER JOIN tpromo_cabang c ON c.pc_nomor = p.pro_nomor AND c.pc_cab = ?
+       INNER JOIN tpromo_barang o ON o.pb_nomor = p.pro_nomor
+       LEFT JOIN tbarangdc a ON a.brg_kode = o.pb_brg_kode
+      WHERE ? BETWEEN p.pro_tanggal1 AND p.pro_tanggal2
+        AND p.pro_f1 = 'N'
+        AND p.pro_jenis IN (3, 4) -- 'Lain-lain' (3) dan 'Diskon Item' (4)
+        AND o.pb_brg_kode = ? AND o.pb_ukuran = ?
+      ORDER BY (o.pb_diskon > 0) DESC, o.pb_disc DESC`,
+    [user.cabang, tanggal, kode, ukuran],
+  );
+  const cocok = rows.find(isEligibleByBasis);
+  return cocok
+    ? { pb_disc: cocok.pb_disc, pb_diskon: cocok.pb_diskon }
+    : undefined;
 };
 
 const checkPrintables = async (nomor) => {
