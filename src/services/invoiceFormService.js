@@ -488,7 +488,13 @@ const getSoDetailsForGrid = async (soNomor, user) => {
                 TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
                 d.sjd_ukuran AS ukuran,
                 d.sjd_jumlah AS qtyso,
-                IFNULL(i.sod_harga, b.brgd_harga) AS harga,
+                COALESCE(
+                  i.sod_harga,
+                  (SELECT hc.hc_harga FROM tbarangdc_harga_cabang hc
+                    WHERE hc.hc_cab = ${pool.escape(user.cabang)} AND hc.hc_brg_kode = d.sjd_kode
+                      AND hc.hc_ukuran = d.sjd_ukuran AND hc.hc_aktif = 1 LIMIT 1),
+                  b.brgd_harga
+                ) AS harga,
                 IFNULL(i.sod_diskon, 0) AS diskonRp,
                 IFNULL(i.sod_disc, 0) AS diskonPersen,
                 i.sod_ph_nomor AS noPengajuanHarga,
@@ -4574,7 +4580,13 @@ const getSjDetails = async (nomor, user, currentInvNomor = "") => {
         ifnull(trim(concat(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)), f.sd_nama) as nama_barang,
         b.brgd_barcode as barcode, 
         -- [BARU] Kalau ada harga khusus utk customer ini, itu yang menang — final, sudah net
-        COALESCE(chk.chk_harga, b.brgd_harga) AS harga,
+        COALESCE(
+          chk.chk_harga,
+          (SELECT hc.hc_harga FROM tbarangdc_harga_cabang hc
+            WHERE hc.hc_cab = ${pool.escape(user.cabang)} AND hc.hc_brg_kode = d.sjd_kode
+              AND hc.hc_ukuran = d.sjd_ukuran AND hc.hc_aktif = 1 LIMIT 1),
+          b.brgd_harga
+        ) AS harga,
         (chk.chk_harga IS NOT NULL) AS isHargaKhusus, -- [BARU]
         b.brgd_hpp AS hpp,     
         a.brg_ktgp as kategori,
