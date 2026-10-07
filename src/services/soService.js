@@ -2077,7 +2077,7 @@ const getPublicStockLive = async (cabang, q) => {
   });
   if (!isPameran || rows.length === 0) return rows;
 
-  // 1) Terjual BELUM klerek (tmp). invd_kode di tmp = barcode.
+  // Terjual BELUM klerek (tmp). invd_kode di tmp = barcode.
   const [soldTmp] = await pool.query(
     `SELECT b.brgd_kode AS kode, b.brgd_ukuran AS ukuran, SUM(d.invd_jumlah) AS qty
        FROM tinv_hdr_tmp h
@@ -2090,9 +2090,7 @@ const getPublicStockLive = async (cabang, q) => {
     [cabang, PAMERAN_MULAI],
   );
 
-  // 2) Terjual SUDAH klerek (invoice real). Pakai prefix nomor, bukan inv_cab,
-  //    karena klerek lama tidak mengisi inv_cab. COALESCE: kalau invd_kode ternyata
-  //    barcode -> dipetakan ke kode; kalau sudah kode -> dipakai apa adanya.
+  // Terjual SUDAH klerek (invoice real). Pakai prefix nomor karena klerek lama tidak mengisi inv_cab.
   const [soldReal] = await pool.query(
     `SELECT COALESCE(bb.brgd_kode, d.invd_kode)     AS kode,
             COALESCE(bb.brgd_ukuran, d.invd_ukuran) AS ukuran,
@@ -2103,18 +2101,6 @@ const getPublicStockLive = async (cabang, q) => {
       WHERE h.inv_nomor LIKE CONCAT(?, '.INV.%')
         AND h.inv_tanggal >= ?
       GROUP BY COALESCE(bb.brgd_kode, d.invd_kode), COALESCE(bb.brgd_ukuran, d.invd_ukuran)`,
-    [cabang, PAMERAN_MULAI],
-  );
-
-  // 3) Box dari keterangan SJ yang sudah diterima.
-  const [boxRows] = await pool.query(
-    `SELECT DISTINCT d.sjd_kode AS kode, d.sjd_ukuran AS ukuran, TRIM(h.sj_ket) AS ket
-       FROM tdc_sj_hdr h
-       JOIN tdc_sj_dtl d ON d.sjd_nomor = h.sj_nomor
-      WHERE h.sj_kecab = ?
-        AND h.sj_noterima <> ''
-        AND h.sj_tanggal >= ?
-        AND TRIM(h.sj_ket) <> ''`,
     [cabang, PAMERAN_MULAI],
   );
 
@@ -2131,14 +2117,6 @@ const getPublicStockLive = async (cabang, q) => {
   const tmpMap = toMap(soldTmp);
   const realMap = toMap(soldReal);
 
-  const boxMap = new Map();
-  for (const b of boxRows) {
-    const k = key(b.kode, b.ukuran);
-    const set = boxMap.get(k) || new Set();
-    set.add(String(b.ket).toUpperCase());
-    boxMap.set(k, set);
-  }
-
   return rows.map((r) => {
     const k = key(r.kode, r.ukuran);
     const tmpQty = tmpMap.get(k) || 0;
@@ -2147,7 +2125,6 @@ const getPublicStockLive = async (cabang, q) => {
       ...r,
       stok: Math.max(0, r.stok - tmpQty),
       total_terjual: tmpQty + realQty,
-      box: [...(boxMap.get(k) || [])].sort(naturalSort),
     };
   });
 };
