@@ -74,248 +74,452 @@ const getList = async (filters, user) => {
  * Menerjemahkan TfrmKlerek.btnKlerektempClick
  */
 const prosesKlerek = async (items, cabang, user) => {
+  if (!Array.isArray(items) || items.length === 0) {
+    return {
+      message: "Tidak ada data.",
+      processed: 0,
+      skipped: [],
+      warnings: [],
+    };
+  }
+
+  // Cabang mengikuti user (KDC boleh memilih), bukan dipercaya dari klien
+  const finalCabang = user.cabang === "KDC" ? cabang : user.cabang;
+  if (!finalCabang) throw new Error("Cabang harus dipilih.");
+
+  // ID unik berbasis milidetik yang selalu naik, panjangnya sama dengan format lama
+  let lastMs = 0;
+  const uid = (tag) => {
+    let ms = Date.now();
+    if (ms <= lastMs) ms = lastMs + 1;
+    lastMs = ms;
+    return `${finalCabang}${tag}${format(new Date(ms), "yyyyMMddHHmmssSSS")}`;
+  };
+
+  const toDate = (v) => (isDate(v) ? v : parseISO(String(v)));
+  const round = (n) => Math.round(Number(n) || 0);
+
   const connection = await pool.getConnection();
-  let processedCount = 0;
+  const processed = [];
+  const skipped = [];
+  const warnings = [];
+
+  // Counter nomor per prefix (invoice & setoran), dikunci sekali per prefix
+  let counters = new Map();
+  const peekNumber = async (table, col, prefix) => {
+    if (!counters.has(prefix)) {
+      const [rows] = await connection.query(
+        `SELECT IFNULL(MAX(CAST(RIGHT(${col}, 4) AS UNSIGNED)), 0) AS m FROM ${table} WHERE ${col} LIKE ? FOR UPDATE`,
+        [`${prefix}%`],
+      );
+      counters.set(prefix, Number(rows[0].m));
+    }
+    return `${prefix}${String(counters.get(prefix) + 1).padStart(4, "0")}`;
+  };
+  const bumpNumber = (prefix) => counters.set(prefix, counters.get(prefix) + 1);
 
   try {
     await connection.beginTransaction();
-    if (!items || items.length === 0) return { message: "Tidak ada data." };
 
-    const tglGrup = items[0].tanggal;
-    const ayymm = format(
-      isDate(tglGrup) ? tglGrup : parseISO(String(tglGrup)),
-      "yyMM",
-    );
+    // Nomor inv_id unik dari klien, hanya dipakai sebagai kunci pencarian
+    const invIds = [
+      ...new Set(
+        items.map((i) => String(i?.nomor || "").trim()).filter(Boolean),
+      ),
+    ];
 
-    // 1. Perbaikan Query MAX Invoice (Gunakan LIKE)
-    const invPrefix = `${cabang}.INV.${ayymm}.`;
-    const [maxInvRows] = await connection.query(
-      "SELECT IFNULL(MAX(CAST(RIGHT(inv_nomor, 4) AS UNSIGNED)), 0) as max_nomor FROM tinv_hdr WHERE inv_nomor LIKE ? FOR UPDATE",
-      [`${invPrefix}%`],
-    );
-    let nextInvNum = parseInt(maxInvRows[0].max_nomor, 10) + 1;
+    for (let idx = 0; idx < invIds.length; idx++) {
+      const invId = invIds[idx];
+      const savepoint = `sp_klerek_${idx}`;
+      const counterSnapshot = new Map(counters);
+      await connection.query(`SAVEPOINT ${savepoint}`);
 
-    // 2. Perbaikan Query MAX Setoran (Gunakan LIKE)
-    const setorPrefix = `${cabang}.STR.${ayymm}.`;
-    const [maxSetorRows] = await connection.query(
-      "SELECT IFNULL(MAX(CAST(RIGHT(sh_nomor, 4) AS UNSIGNED)), 0) as max_nomor FROM tsetor_hdr WHERE sh_nomor LIKE ? FOR UPDATE",
-      [`${setorPrefix}%`],
-    );
-    let nextSetorNum = parseInt(maxSetorRows[0].max_nomor, 10) + 1;
-
-    for (const item of items) {
-      // Hanya proses jika belum diklerek
-      if (!item.klerek || item.klerek === "0" || item.klerek === "") {
-        const cnomor = item.nomor; // ini adalah inv_id
-        const ckdcus = item.kdcus;
-
-        // 1. Get No. Inv Reguler
-        const cklerek = `${invPrefix}${String(nextInvNum).padStart(4, "0")}`;
-        nextInvNum++;
-
-        // 2. Header Inv Bazar
-        const [tsql] = await connection.query(
-          `SELECT h.*, r.rek_kode, 
-                IFNULL(h.Inv_top, 0) AS Inv_top_safe,
-                IFNULL(h.Inv_cus_kode, '') AS Inv_cus_kode_safe,
-                IFNULL(h.Inv_nomor, '') AS Inv_nomor_safe 
-            FROM tinv_hdr_tmp h 
-            LEFT JOIN finance.trekening r ON r.rek_rekening = h.inv_nocard 
-            WHERE inv_id = ?`,
-          [cnomor],
+      try {
+        // 1. Header tmp, dikunci agar tidak diklerek dua kali
+        const [hdrRows] = await connection.query(
+          "SELECT * FROM tinv_hdr_tmp WHERE inv_id = ? FOR UPDATE",
+          [invId],
         );
-        if (tsql.length === 0) continue;
-        const invHeader = tsql[0];
-        const invTanggal = invHeader.inv_tanggal;
-        const tglInv = isDate(invTanggal)
-          ? invTanggal
-          : parseISO(String(invTanggal));
+        if (hdrRows.length === 0) {
+          skipped.push({ nomor: invId, alasan: "Invoice tidak ditemukan." });
+          continue;
+        }
+        const h = hdrRows[0];
 
-        // 3. Insert ke inv_hdr permanen
-        const cidrec = `${cabang}INV${format(new Date(), "yyyyMMddHHmmssSSS")}`;
-        await connection.query(
-          `INSERT INTO tinv_hdr (inv_idrec, inv_nomor, inv_nomor_so, inv_klerek, inv_tanggal, inv_cus_level, Inv_top, inv_ppn, inv_disc, inv_disc1, inv_disc2, inv_bkrm, inv_dp, inv_nodp, Inv_cus_kode, inv_pro_nomor, Inv_ket, inv_rptunai, inv_novoucher, inv_rpvoucher, inv_nocard, inv_rpcard, inv_nosetor, inv_mem_hp, inv_mem_nama, inv_mem_alamat, inv_mem_gender, inv_mem_usia, inv_mem_referensi, inv_print, inv_puas, inv_closing, user_create, date_create, user_modified, date_modified) 
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-          [
-            cidrec,
-            cklerek,
-            invHeader.inv_nomor_so,
-            cnomor,
-            invHeader.inv_tanggal,
-            invHeader.inv_cus_level,
-            invHeader.Inv_top_safe,
-            invHeader.inv_ppn,
-            invHeader.inv_disc,
-            invHeader.inv_disc1,
-            invHeader.inv_disc2,
-            invHeader.inv_bkrm,
-            invHeader.inv_dp,
-            invHeader.inv_nodp,
-            invHeader.Inv_cus_kode_safe,
-            invHeader.inv_pro_nomor,
-            invHeader.Inv_nomor_safe,
-            invHeader.inv_rptunai,
-            invHeader.inv_novoucher,
-            invHeader.inv_rpvoucher,
-            invHeader.inv_nocard,
-            invHeader.inv_rpcard,
-            invHeader.inv_nosetor,
-            invHeader.inv_mem_hp,
-            invHeader.inv_mem_nama,
-            invHeader.inv_mem_alamat,
-            invHeader.inv_mem_gender,
-            invHeader.inv_mem_usia,
-            invHeader.inv_mem_referensi,
-            invHeader.inv_print,
-            invHeader.inv_puas,
-            invHeader.inv_closing,
-            invHeader.user_create,
-            invHeader.date_create,
-            user.kode, // Gunakan user dari session
-          ],
+        if (String(h.inv_nomor || "").slice(0, 3) !== finalCabang) {
+          skipped.push({ nomor: invId, alasan: "Bukan invoice cabang ini." });
+          continue;
+        }
+        if (h.inv_klerek && h.inv_klerek !== "0") {
+          skipped.push({
+            nomor: invId,
+            alasan: `Sudah diklerek (${h.inv_klerek}).`,
+          });
+          continue;
+        }
+
+        const tgl = toDate(h.inv_tanggal);
+        const ayymm = format(tgl, "yyMM");
+        const cusKode = h.inv_cus_kode || "";
+
+        // 2. Detail tmp + HPP
+        const [dtlRows] = await connection.query(
+          `SELECT d.*, b.brgd_hpp
+             FROM tinv_dtl_tmp d
+             LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.invd_kode AND b.brgd_ukuran = d.invd_ukuran
+            WHERE d.invd_inv_nomor = ?
+            ORDER BY d.invd_nourut`,
+          [h.inv_nomor],
         );
+        if (dtlRows.length === 0) {
+          skipped.push({ nomor: invId, alasan: "Detail barang kosong." });
+          continue;
+        }
 
-        // 4. Piutang Header
-        await connection.query(
-          "INSERT INTO tpiutang_hdr (ph_nomor, ph_tanggal, ph_cus_kode, ph_inv_nomor, ph_top, ph_nominal, ph_flag) VALUES (?, ?, ?, ?, 0, ?, 0) ON DUPLICATE KEY UPDATE ph_nominal = ?",
-          [
-            `${ckdcus}${cklerek}`,
-            invHeader.inv_tanggal,
-            invHeader.Inv_cus_kode_safe,
-            cklerek,
-            item.nominal,
-            item.nominal,
-          ],
+        // 3. Hitung ulang nilai tagihan dari DB (tidak percaya nominal klien)
+        const subtotal = dtlRows.reduce(
+          (s, d) =>
+            s +
+            Number(d.invd_jumlah) *
+              (Number(d.invd_harga) - Number(d.invd_diskon)),
+          0,
+        );
+        const dasar = subtotal - Number(h.inv_disc || 0);
+        const nominal = round(dasar + (Number(h.inv_ppn || 0) / 100) * dasar);
+        const biayaKirim = round(h.inv_bkrm);
+        const tagihan = nominal + biayaKirim;
+
+        // 4. Komponen pembayaran
+        const rpCard = round(h.inv_rpcard);
+        const rpVoucher = round(h.inv_rpvoucher);
+        const rpRetur = round(h.inv_rj_rp);
+        const kembali = round(h.inv_kembali);
+        const pundiAmal = round(h.inv_pundiamal);
+
+        // DP hanya dihitung bila setoran DP aslinya ada
+        let dpPakai = 0;
+        let dpSetorIdrec = null;
+        if (round(h.inv_dp) > 0 && h.inv_nodp) {
+          const [dpHdr] = await connection.query(
+            "SELECT sh_idrec FROM tsetor_hdr WHERE sh_nomor = ?",
+            [h.inv_nodp],
+          );
+          if (dpHdr.length > 0) {
+            dpPakai = Math.min(round(h.inv_dp), tagihan);
+            dpSetorIdrec = dpHdr[0].sh_idrec;
+          } else {
+            warnings.push(
+              `${h.inv_nomor}: setoran DP ${h.inv_nodp} tidak ditemukan, DP tidak ditautkan.`,
+            );
+          }
+        }
+
+        // Tunai bersih = sisa tagihan setelah semua pembayaran non-tunai (sama seperti saveData)
+        const bayarTunaiBersih = Math.max(
+          tagihan - dpPakai - rpCard - rpVoucher - rpRetur,
+          0,
         );
 
-        // 5. Piutang Detail Penjualan
-        let cpdidrec = `${cabang}INV${format(
-          new Date(),
-          "yyyyMMddHHmmssSSS",
-        )}D`;
-        await connection.query(
-          'INSERT INTO tpiutang_dtl (pd_sd_angsur, pd_ph_nomor, pd_tanggal, pd_uraian, pd_debet, pd_kredit, pd_ket) VALUES (?, ?, ?, "Penjualan", ?, 0, "")',
-          [
-            cpdidrec,
-            `${ckdcus}${cklerek}`,
-            invHeader.inv_tanggal,
-            item.nominal,
-          ],
+        // Cross-check dengan angka tunai yang tercatat di tmp
+        const tunaiTercatat = Math.max(
+          round(h.inv_rptunai) - kembali - pundiAmal,
+          0,
         );
-
-        let csetornew = "";
-        if (invHeader.inv_rpcard == 0) {
-          // 6a. Bayar Tunai
-          cpdidrec = `${cabang}CASH${format(new Date(), "yyyyMMddHHmmssSSS")}D`;
-          await connection.query(
-            'INSERT INTO tpiutang_dtl (pd_sd_angsur, pd_ph_nomor, pd_tanggal, pd_uraian, pd_debet, pd_kredit, pd_ket) VALUES (?, ?, ?, "Bayar Tunai Langsung", 0, ?, "")',
-            [
-              cpdidrec,
-              `${ckdcus}${cklerek}`,
-              invHeader.inv_tanggal,
-              item.nominal,
-            ],
-          );
-        } else {
-          // 6b. Bayar Card
-          csetornew = `${setorPrefix}${String(nextSetorNum).padStart(4, "0")}`;
-          nextSetorNum++;
-          const cshidrec = `${cabang}SH${format(
-            new Date(),
-            "yyyyMMddHHmmssSSS",
-          )}`;
-
-          // Setor Header
-          await connection.query(
-            `INSERT INTO tsetor_hdr (sh_idrec, sh_nomor, sh_tanggal, sh_jenis, sh_nominal, sh_akun, sh_norek, sh_tgltransfer, sh_cus_kode, sh_otomatis, sh_ket, user_create, date_create) 
-                         VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, "Y", "", ?, ?)`,
-            [
-              cshidrec,
-              csetornew,
-              invHeader.inv_tanggal,
-              invHeader.inv_rpcard,
-              invHeader.rek_kode,
-              invHeader.inv_nocard,
-              invHeader.inv_tanggal,
-              invHeader.Inv_cus_kode_safe,
-              invHeader.user_create,
-              invHeader.date_create,
-            ],
-          );
-
-          // Setor Detail
-          const cAngsur = `${cabang}SD${format(
-            new Date(),
-            "yyyyMMddHHmmssSSS",
-          )}`;
-          await connection.query(
-            'INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut) VALUES (?, ?, ?, ?, ?, "PEMBAYARAN DARI KASIR", ?, 1)',
-            [
-              cshidrec,
-              csetornew,
-              invHeader.inv_tanggal,
-              cklerek,
-              invHeader.inv_rpcard,
-              cAngsur,
-            ],
-          );
-
-          // Link Bayar ke Piutang
-          await connection.query(
-            'INSERT INTO tpiutang_dtl (pd_ph_nomor, pd_tanggal, pd_uraian, pd_kredit, pd_ket, pd_sd_angsur) VALUES (?, ?, "Pembayaran Card", ?, ?, ?)',
-            [
-              `${ckdcus}${cklerek}`,
-              invHeader.inv_tanggal,
-              invHeader.inv_rpcard,
-              csetornew,
-              cAngsur,
-            ],
-          );
-
-          // Update inv_hdr permanen
-          await connection.query(
-            "UPDATE tinv_hdr SET inv_nosetor = ? WHERE inv_klerek = ?",
-            [csetornew, cnomor],
+        if (Math.abs(tunaiTercatat - bayarTunaiBersih) > 1) {
+          warnings.push(
+            `${h.inv_nomor}: tunai dihitung ${bayarTunaiBersih} vs tercatat ${tunaiTercatat}. Cek manual.`,
           );
         }
 
-        // 7. Update inv_hdr_tmp
+        const invBayar =
+          dpPakai +
+          bayarTunaiBersih +
+          kembali +
+          pundiAmal +
+          rpCard +
+          rpVoucher +
+          rpRetur;
+
+        // 5. Nomor invoice & setoran
+        const invPrefix = `${finalCabang}.INV.${ayymm}.`;
+        const setorPrefix = `${finalCabang}.STR.${ayymm}.`;
+
+        const cklerek = await peekNumber("tinv_hdr", "inv_nomor", invPrefix);
+        bumpNumber(invPrefix);
+
+        let nomorSetorCard = "";
+        if (rpCard > 0) {
+          nomorSetorCard = await peekNumber(
+            "tsetor_hdr",
+            "sh_nomor",
+            setorPrefix,
+          );
+          bumpNumber(setorPrefix);
+        }
+
+        // Tunai: cabang KDC tidak punya setoran kasir (sama seperti saveData)
+        let nomorSetorTunai = "";
+        if (bayarTunaiBersih > 0 && finalCabang !== "KDC") {
+          nomorSetorTunai = await peekNumber(
+            "tsetor_hdr",
+            "sh_nomor",
+            setorPrefix,
+          );
+          bumpNumber(setorPrefix);
+        }
+
+        const nomorSetorUtama =
+          nomorSetorCard || nomorSetorTunai || h.inv_nosetor || "";
+        const piutangNomor = `${cusKode}${cklerek}`;
+        const idrec = uid("INV");
+
+        // 6. Header permanen
+        await connection.query("INSERT INTO tinv_hdr SET ?", [
+          {
+            inv_idrec: idrec,
+            inv_nomor: cklerek,
+            inv_nomor_so: h.inv_nomor_so,
+            inv_klerek: invId,
+            inv_tanggal: h.inv_tanggal,
+            inv_cab: finalCabang,
+            inv_cus_kode: cusKode,
+            inv_cus_level: h.inv_cus_level,
+            inv_top: h.inv_top || 0,
+            inv_ppn: h.inv_ppn,
+            inv_disc: h.inv_disc,
+            inv_disc1: h.inv_disc1,
+            inv_disc2: h.inv_disc2,
+            inv_bkrm: h.inv_bkrm,
+            inv_dp: dpPakai,
+            inv_nodp: dpPakai > 0 ? h.inv_nodp : "",
+            inv_pro_nomor: h.inv_pro_nomor,
+            inv_ket: h.inv_nomor || "",
+            inv_bayar: invBayar,
+            inv_pundiamal: pundiAmal,
+            inv_kembali: kembali,
+            inv_rptunai: bayarTunaiBersih,
+            inv_novoucher: h.inv_novoucher,
+            inv_rpvoucher: rpVoucher,
+            inv_rpcard: rpCard,
+            inv_nosetor: nomorSetorUtama,
+            inv_rj_nomor: h.inv_rj_nomor || "",
+            inv_rj_rp: rpRetur,
+            inv_mem_hp: h.inv_mem_hp,
+            inv_mem_nama: h.inv_mem_nama,
+            inv_mem_alamat: h.inv_mem_alamat,
+            inv_mem_gender: h.inv_mem_gender,
+            inv_mem_usia: h.inv_mem_usia,
+            inv_mem_referensi: h.inv_mem_referensi,
+            inv_print: h.inv_print,
+            inv_puas: h.inv_puas,
+            inv_closing: h.inv_closing,
+            user_create: h.user_create,
+            date_create: h.date_create,
+            user_modified: user.kode,
+            date_modified: new Date(),
+          },
+        ]);
+
+        // 7. Detail permanen (idrec unik per baris, sama pola saveData)
+        const detailValues = dtlRows.map((d, i) => [
+          `${cklerek.replace(/\./g, "")}${String(i + 1).padStart(3, "0")}`,
+          cklerek,
+          d.invd_kode,
+          d.invd_ukuran,
+          d.invd_jumlah,
+          d.invd_harga,
+          d.brgd_hpp || 0,
+          d.invd_disc,
+          d.invd_diskon,
+          d.invd_pro_nomor,
+          d.invd_nourut,
+        ]);
         await connection.query(
-          "UPDATE tinv_hdr_tmp SET inv_klerek = ? WHERE inv_id = ?",
-          [cklerek, cnomor],
+          `INSERT INTO tinv_dtl
+             (invd_idrec, invd_inv_nomor, invd_kode, invd_ukuran, invd_jumlah,
+              invd_harga, invd_hpp, invd_disc, invd_diskon, invd_pro_nomor, invd_nourut)
+           VALUES ?`,
+          [detailValues],
         );
 
-        // 8. Insert Detail
-        const [tsql2] = await connection.query(
-          "SELECT d.*, b.brgd_hpp FROM tinv_dtl_tmp d LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.invd_kode AND b.brgd_ukuran = d.invd_ukuran WHERE invd_inv_nomor = ?",
-          [invHeader.inv_nomor],
+        // 8. Piutang header + kartu piutang
+        await connection.query(
+          `INSERT INTO tpiutang_hdr (ph_nomor, ph_tanggal, ph_cus_kode, ph_inv_nomor, ph_top, ph_nominal, ph_flag, ph_cab)
+           VALUES (?, ?, ?, ?, 0, ?, 0, ?)
+           ON DUPLICATE KEY UPDATE ph_nominal = VALUES(ph_nominal)`,
+          [piutangNomor, h.inv_tanggal, cusKode, cklerek, tagihan, finalCabang],
         );
 
-        for (const dtl of tsql2) {
+        const piutangRows = [];
+        const addPiutang = (angsur, uraian, debet, kredit, ket) =>
+          piutangRows.push([
+            angsur,
+            piutangNomor,
+            h.inv_tanggal,
+            uraian,
+            debet,
+            kredit,
+            ket || "",
+          ]);
+
+        addPiutang(uid("INV"), "Penjualan", nominal, 0, "");
+        if (biayaKirim > 0)
+          addPiutang(uid("KRM"), "Biaya Kirim", biayaKirim, 0, "");
+
+        if (bayarTunaiBersih > 0) {
+          addPiutang(
+            uid("CASH"),
+            "Bayar Tunai Langsung",
+            0,
+            bayarTunaiBersih,
+            nomorSetorTunai,
+          );
+        }
+        if (rpVoucher > 0) {
+          addPiutang(
+            uid("VOU"),
+            "Bayar Voucher",
+            0,
+            rpVoucher,
+            h.inv_novoucher || "",
+          );
+        }
+        if (rpRetur > 0) {
+          addPiutang(
+            uid("RJ"),
+            "Pembayaran Retur",
+            0,
+            rpRetur,
+            h.inv_rj_nomor || "",
+          );
+        }
+
+        // 9. Setoran tunai (baru)
+        if (nomorSetorTunai) {
+          const idrecTunai = `${uid("SH")}T`;
           await connection.query(
-            "INSERT INTO tinv_dtl (invd_idrec, Invd_Inv_nomor, Invd_kode, invd_ukuran, Invd_jumlah, invd_harga, invd_hpp, invd_disc, invd_diskon, invd_pro_nomor, invd_nourut) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            `INSERT INTO tsetor_hdr
+               (sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal,
+                sh_otomatis, sh_ket, sh_cab, user_create, date_create)
+             VALUES (?, ?, ?, ?, 0, ?, 'Y', 'PEMBAYARAN TUNAI KASIR', ?, ?, ?)`,
             [
-              cidrec,
+              idrecTunai,
+              nomorSetorTunai,
+              cusKode,
+              h.inv_tanggal,
+              bayarTunaiBersih,
+              finalCabang,
+              h.user_create,
+              h.date_create,
+            ],
+          );
+          await connection.query(
+            `INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut)
+             VALUES (?, ?, ?, ?, ?, 'PEMBAYARAN TUNAI KASIR', ?, 1)`,
+            [
+              idrecTunai,
+              nomorSetorTunai,
+              h.inv_tanggal,
               cklerek,
-              dtl.invd_kode, // GUNAKAN HURUF KECIL (invd_kode)
-              dtl.invd_ukuran, // Sesuai dengan hasil SELECT d.*
-              dtl.invd_jumlah, // Sesuai dengan hasil SELECT d.*
-              dtl.invd_harga,
-              dtl.brgd_hpp || 0, // Tambahkan fallback 0 jika HPP kosong
-              dtl.invd_disc,
-              dtl.invd_diskon,
-              dtl.invd_pro_nomor,
-              dtl.invd_nourut,
+              bayarTunaiBersih,
+              uid("CT"),
             ],
           );
         }
 
-        processedCount++;
+        // 10. Setoran card
+        if (nomorSetorCard) {
+          const [rekRows] = await connection.query(
+            "SELECT rek_kode FROM finance.trekening WHERE rek_rekening = ? LIMIT 1",
+            [h.inv_nocard],
+          );
+          if (rekRows.length === 0 || !rekRows[0].rek_kode) {
+            throw new Error(
+              `Rekening "${h.inv_nocard}" belum terdaftar di master rekening.`,
+            );
+          }
+          const idrecCard = uid("SH");
+          const angsurCard = uid("SD");
+          await connection.query(
+            `INSERT INTO tsetor_hdr
+               (sh_idrec, sh_nomor, sh_cus_kode, sh_tanggal, sh_jenis, sh_nominal, sh_akun, sh_norek,
+                sh_tgltransfer, sh_otomatis, sh_ket, sh_cab, user_create, date_create)
+             VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 'Y', '', ?, ?, ?)`,
+            [
+              idrecCard,
+              nomorSetorCard,
+              cusKode,
+              h.inv_tanggal,
+              rpCard,
+              rekRows[0].rek_kode,
+              h.inv_nocard,
+              h.inv_tanggal,
+              finalCabang,
+              h.user_create,
+              h.date_create,
+            ],
+          );
+          await connection.query(
+            `INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur, sd_nourut)
+             VALUES (?, ?, ?, ?, ?, 'PEMBAYARAN DARI KASIR', ?, 1)`,
+            [
+              idrecCard,
+              nomorSetorCard,
+              h.inv_tanggal,
+              cklerek,
+              rpCard,
+              angsurCard,
+            ],
+          );
+          addPiutang(angsurCard, "Pembayaran Card", 0, rpCard, nomorSetorCard);
+        }
+
+        // 11. Tautan DP (sama seperti penautan DP di saveData)
+        if (dpPakai > 0 && dpSetorIdrec) {
+          const angsurDp = uid("DP");
+          await connection.query(
+            `INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur)
+             VALUES (?, ?, ?, ?, ?, 'DP LINK DARI INV', ?)`,
+            [
+              dpSetorIdrec,
+              h.inv_nodp,
+              h.inv_tanggal,
+              cklerek,
+              dpPakai,
+              angsurDp,
+            ],
+          );
+          addPiutang(angsurDp, "DP", 0, dpPakai, h.inv_nodp);
+        }
+
+        await connection.query(
+          `INSERT INTO tpiutang_dtl (pd_sd_angsur, pd_ph_nomor, pd_tanggal, pd_uraian, pd_debet, pd_kredit, pd_ket)
+           VALUES ?`,
+          [piutangRows],
+        );
+
+        // 12. Tandai tmp sudah diklerek
+        await connection.query(
+          "UPDATE tinv_hdr_tmp SET inv_klerek = ?, inv_nosetor = ? WHERE inv_id = ?",
+          [cklerek, nomorSetorUtama, invId],
+        );
+
+        processed.push(cklerek);
+      } catch (err) {
+        // Gagal satu invoice tidak menggagalkan batch; nomor dikembalikan
+        await connection.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+        counters = counterSnapshot;
+        skipped.push({ nomor: invId, alasan: err.message });
       }
     }
 
     await connection.commit();
-    return { message: `${processedCount} invoice berhasil di-klerek.` };
+    return {
+      message: `${processed.length} invoice berhasil di-klerek, ${skipped.length} dilewati.`,
+      processed: processed.length,
+      skipped,
+      warnings,
+    };
   } catch (error) {
     await connection.rollback();
     throw error;
