@@ -2066,6 +2066,9 @@ const PAMERAN_BRANCHES = ["B02"];
 // Penjualan bazar sebelum tanggal ini tidak ikut mengurangi stok pameran
 const PAMERAN_MULAI = "2026-01-01";
 
+const naturalSort = (a, b) =>
+  a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+
 const getPublicStockLive = async (cabang, q) => {
   const isPameran = PAMERAN_BRANCHES.includes(cabang);
   const rows = await getPublicStock(cabang, q, {
@@ -2074,9 +2077,8 @@ const getPublicStockLive = async (cabang, q) => {
   });
   if (!isPameran || rows.length === 0) return rows;
 
-  // invd_kode di tinv_dtl_tmp berisi BARCODE -> dipetakan ke kode barang.
-  // Nota dari mobile ber-inv_klerek '0' (belum klerek); '' juga dianggap belum klerek.
-  const [sold] = await pool.query(
+  // 1) Terjual BELUM klerek (tmp). invd_kode di tmp = barcode.
+  const [soldTmp] = await pool.query(
     `SELECT b.brgd_kode AS kode, b.brgd_ukuran AS ukuran, SUM(d.invd_jumlah) AS qty
        FROM tinv_hdr_tmp h
        JOIN tinv_dtl_tmp d ON d.invd_inv_nomor = h.inv_nomor
@@ -2088,14 +2090,65 @@ const getPublicStockLive = async (cabang, q) => {
     [cabang, PAMERAN_MULAI],
   );
 
-  const key = (k, u) => `${String(k).trim()}|${String(u).trim()}`.toUpperCase();
-  const soldMap = new Map(
-    sold.map((s) => [key(s.kode, s.ukuran), Number(s.qty)]),
+  // 2) Terjual SUDAH klerek (invoice real). Pakai prefix nomor, bukan inv_cab,
+  //    karena klerek lama tidak mengisi inv_cab. COALESCE: kalau invd_kode ternyata
+  //    barcode -> dipetakan ke kode; kalau sudah kode -> dipakai apa adanya.
+  const [soldReal] = await pool.query(
+    `SELECT COALESCE(bb.brgd_kode, d.invd_kode)     AS kode,
+            COALESCE(bb.brgd_ukuran, d.invd_ukuran) AS ukuran,
+            SUM(d.invd_jumlah) AS qty
+       FROM tinv_hdr h
+       JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+       LEFT JOIN tbarangdc_dtl bb ON TRIM(bb.brgd_barcode) = TRIM(d.invd_kode)
+      WHERE h.inv_nomor LIKE CONCAT(?, '.INV.%')
+        AND h.inv_tanggal >= ?
+      GROUP BY COALESCE(bb.brgd_kode, d.invd_kode), COALESCE(bb.brgd_ukuran, d.invd_ukuran)`,
+    [cabang, PAMERAN_MULAI],
   );
 
+  // 3) Box dari keterangan SJ yang sudah diterima.
+  const [boxRows] = await pool.query(
+    `SELECT DISTINCT d.sjd_kode AS kode, d.sjd_ukuran AS ukuran, TRIM(h.sj_ket) AS ket
+       FROM tdc_sj_hdr h
+       JOIN tdc_sj_dtl d ON d.sjd_nomor = h.sj_nomor
+      WHERE h.sj_kecab = ?
+        AND h.sj_noterima <> ''
+        AND h.sj_tanggal >= ?
+        AND TRIM(h.sj_ket) <> ''`,
+    [cabang, PAMERAN_MULAI],
+  );
+
+  const key = (k, u) => `${String(k).trim()}|${String(u).trim()}`.toUpperCase();
+  const toMap = (arr) => {
+    const m = new Map();
+    for (const s of arr)
+      m.set(
+        key(s.kode, s.ukuran),
+        (m.get(key(s.kode, s.ukuran)) || 0) + Number(s.qty),
+      );
+    return m;
+  };
+  const tmpMap = toMap(soldTmp);
+  const realMap = toMap(soldReal);
+
+  const boxMap = new Map();
+  for (const b of boxRows) {
+    const k = key(b.kode, b.ukuran);
+    const set = boxMap.get(k) || new Set();
+    set.add(String(b.ket).toUpperCase());
+    boxMap.set(k, set);
+  }
+
   return rows.map((r) => {
-    const qty = soldMap.get(key(r.kode, r.ukuran)) || 0;
-    return qty ? { ...r, stok: Math.max(0, r.stok - qty) } : r;
+    const k = key(r.kode, r.ukuran);
+    const tmpQty = tmpMap.get(k) || 0;
+    const realQty = realMap.get(k) || 0;
+    return {
+      ...r,
+      stok: Math.max(0, r.stok - tmpQty),
+      total_terjual: tmpQty + realQty,
+      box: [...(boxMap.get(k) || [])].sort(naturalSort),
+    };
   });
 };
 
