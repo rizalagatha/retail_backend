@@ -3269,7 +3269,7 @@ const getProductPanelList = async (filters, user) => {
   const limitVal = parseInt(itemsPerPage) || 20;
   const offsetVal = (parseInt(page) - 1) * limitVal;
 
-  let baseWhere = ` WHERE a.brg_aktif = 0 AND (a.brg_logstok = 'Y' OR a.brg_kode LIKE 'JASA%') `;
+  let baseWhere = ` WHERE a.brg_aktif = 0 AND (a.brg_logstok IN ('Y', 'J') OR a.brg_kode LIKE 'JASA%') `;
   const params = [];
 
   if (user.cabang === "K04") {
