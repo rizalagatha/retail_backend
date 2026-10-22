@@ -1349,6 +1349,15 @@ const saveData = async (payload, user) => {
           CABANG_BEBAS_LHK.includes(user.cabang),
         );
 
+      // Packaging (plastik/goodie bag/kardus) ditambah dari modal pembayaran,
+      // bukan baris SO: dikeluarkan dulu dari pencocokan baris SO, dikembalikan di akhir blok
+      const itemPackaging = [];
+      for (let i = items.length - 1; i >= 0; i--) {
+        if (items[i].isPackaging === true) {
+          itemPackaging.unshift(...items.splice(i, 1));
+        }
+      }
+
       // Buang baris qty 0 (SC tidak mengambil baris ini di invoice ini)
       for (let i = items.length - 1; i >= 0; i--) {
         if (items[i].kode && Number(items[i].jumlah || 0) <= 0)
@@ -1362,7 +1371,8 @@ const saveData = async (payload, user) => {
         const line = lineMap.get(it.sodIdrec);
         if (!line) {
           throw new Error(
-            `Baris ${it.kode} ${it.ukuran || ""} tidak terhubung ke baris SO ${soNomor}. Muat ulang SO lalu coba lagi.`,
+            `Baris ${it.kode} ${it.ukuran || ""} tidak terhubung ke baris SO ${soNomor} ` +
+              `(sodIdrec diterima: "${it.sodIdrec || "kosong"}"). Muat ulang SO lalu coba lagi.`,
           );
         }
         // Harga & diskon baris SO tidak boleh diubah dari layar; baris bernilai 0 boleh diisi manual
@@ -1469,6 +1479,9 @@ const saveData = async (payload, user) => {
         totalDpSah += dp.nominal;
       }
       totals.totalDp = Math.min(totalDpSah, grandServer);
+
+      // Kembalikan packaging ke daftar item supaya ikut tersimpan di tinv_dtl
+      items.push(...itemPackaging);
     }
 
     const headerTanggal = toSqlDate(header.tanggal);
