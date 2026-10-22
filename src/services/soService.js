@@ -356,16 +356,18 @@ const getDetails = async (nomor) => {
             d.sod_jumlah AS QtySO,
             d.sod_harga AS Harga,
             (d.sod_jumlah * (d.sod_harga - d.sod_diskon)) AS TotalSO,
-           IFNULL((
+            LEAST(d.sod_jumlah, IFNULL((
               SELECT SUM(i.invd_jumlah) 
               FROM tinv_hdr j 
               JOIN tinv_dtl i ON i.invd_inv_nomor = j.inv_nomor
               WHERE j.inv_sts_pro = 0 
                 AND j.inv_nomor_so = h.so_nomor 
-                AND i.invd_kode = d.sod_kode 
-                AND i.invd_ukuran = d.sod_ukuran
+                AND (
+                  i.invd_sod_idrec = d.sod_idrec
+                  OR (i.invd_sod_idrec = '' AND i.invd_kode = d.sod_kode AND i.invd_ukuran = d.sod_ukuran)
+                )
                 AND i.invd_kode NOT IN (SELECT brg_kode FROM kencanaprint.tgarmen_brg WHERE brg_jenis IN ('ACCESORIES','OBAT'))
-          ), 0) AS QtyInvoice,
+          ), 0)) AS QtyInvoice,
 
           -- [BARU] 0 = barang reguler/kaos, 1 = custom order / SO DTF — dipakai buat urutan tampil
           (IF(

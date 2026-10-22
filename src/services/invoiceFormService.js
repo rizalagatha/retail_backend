@@ -337,6 +337,13 @@ const searchSo = async (term, page, itemsPerPage, user) => {
   const offset = (page - 1) * itemsPerPage;
   const searchTerm = `%${term || ""}%`;
 
+  // Baris barang stok: bukan custom, bukan SD, bukan jasa/file
+  const barisStok = `dd.sod_custom = 'N'
+        AND IFNULL(dd.sod_sd_nomor, '') = ''
+        AND dd.sod_kode NOT LIKE 'JASA%'
+        AND dd.sod_kode NOT LIKE '%FILE%'
+        AND IFNULL(ab.brg_logstok, '') <> 'J'`;
+
   // --- SUBQUERY UNTUK KALKULASI SYARAT INVOICE ---
   const subQuery = `
         SELECT 
@@ -397,6 +404,40 @@ const searchSo = async (term, page, itemsPerPage, user) => {
                     FROM tdtf lhk 
                     JOIN tso_dtl dd ON lhk.sodtf = dd.sod_sd_nomor
                     WHERE dd.sod_so_nomor = h.so_nomor), 0) AS lhk_created
+
+            ,
+            -- 7. Qty barang stok di SO
+            IFNULL((SELECT SUM(dd.sod_jumlah)
+                    FROM tso_dtl dd
+                    LEFT JOIN tbarangdc ab ON ab.brg_kode = dd.sod_kode
+                    WHERE dd.sod_so_nomor = h.so_nomor AND ${barisStok}), 0) AS qtyBarangSO,
+
+            -- 8. Qty barang stok yang sudah di-invoice
+            IFNULL((SELECT SUM(id.invd_jumlah)
+                    FROM tinv_dtl id
+                    JOIN tinv_hdr ih ON ih.inv_nomor = id.invd_inv_nomor
+                    LEFT JOIN tbarangdc ac ON ac.brg_kode = id.invd_kode
+                    WHERE ih.inv_sts_pro = 0
+                      AND ih.inv_nomor_so = h.so_nomor
+                      AND IFNULL(id.invd_sd_nomor, '') = ''
+                      AND id.invd_kode <> 'CUSTOM'
+                      AND id.invd_kode NOT LIKE 'JASA%'
+                      AND id.invd_kode NOT LIKE '%FILE%'
+                      AND IFNULL(ac.brg_logstok, '') <> 'J'), 0) AS qtyBarangInv,
+
+            -- 9. Jumlah baris barang stok yang sudah ada di stok pesanan
+            IFNULL((SELECT COUNT(*)
+                    FROM tso_dtl dd
+                    LEFT JOIN tbarangdc ab ON ab.brg_kode = dd.sod_kode
+                    WHERE dd.sod_so_nomor = h.so_nomor
+                      AND ${barisStok}
+                      AND IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+                                    FROM tmasterstokso m
+                                   WHERE m.mst_aktif = 'Y'
+                                     AND m.mst_cab = ${pool.escape(user.cabang)}
+                                     AND m.mst_brg_kode = dd.sod_kode
+                                     AND m.mst_ukuran = dd.sod_ukuran
+                                     AND m.mst_nomor_so = dd.sod_so_nomor), 0) > 0), 0) AS qtyStokSiap
             
         FROM tso_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
@@ -408,10 +449,9 @@ const searchSo = async (term, page, itemsPerPage, user) => {
   // --- FILTER UTAMA (Aturan Bisnis) ---
   const baseQuery = `
         FROM (${subQuery}) AS x 
-        WHERE x.qtyinv < x.qtyso             -- Belum sepenuhnya di-invoice
-          AND x.qtyscanned >= x.qtyso        -- Semua item sudah di-scan (Ready/Auto)
-          AND x.qtymutated >= x.qtyFisikWajibMutasi -- [FIX] Hanya cek mutasi untuk barang reguler
-          AND (x.total_so_dtf = 0 OR x.lhk_created >= x.total_so_dtf) -- [FIX] Pastikan semua SO DTF sudah di LHK
+        WHERE x.qtyinv < x.qtyso                           -- Belum sepenuhnya di-invoice
+          AND (x.qtyStokSiap > 0                           -- Ada barang stok yang sudah siap
+               OR x.qtyBarangSO - x.qtyBarangInv <= 0)     -- Atau tidak ada lagi barang yang menunggu (tinggal layanan)
     `;
 
   const searchWhere = `AND (x.Nomor LIKE ? OR x.Customer LIKE ?)`;
@@ -448,6 +488,176 @@ const searchSo = async (term, page, itemsPerPage, user) => {
   const [items] = await pool.query(dataQuery, dataParams);
 
   return { items, total: countRows[0].total };
+};
+
+const TOLERANSI_TOTAL_RP = 500; // selisih maksimal total layar vs server (pembulatan)
+
+const CABANG_BEBAS_LHK = ["K01", "K03"];
+
+// Pecah diskon SO penuh menjadi komponen base (P1/manual) dan Maps
+const hitungSplitDiskonSo = ({
+  diskonTotal,
+  persenMaps,
+  mapsAktif,
+  brutoNetSo,
+}) => {
+  let base = diskonTotal;
+  let maps = 0;
+  if (mapsAktif && brutoNetSo > 0) {
+    const p2 = persenMaps / 100;
+    base = Math.round((diskonTotal - p2 * brutoNetSo) / (1 - p2));
+    maps = Math.round(diskonTotal - base);
+    if (base < 0) base = 0;
+    if (maps < 0) maps = 0;
+  }
+  return { base, maps };
+};
+
+// Bagian diskon SO untuk satu invoice: proporsional terhadap net baris yang diambil,
+// invoice terakhir (semua sisa qty habis) mengambil sisa diskon.
+const hitungDiskonInvoice = ({
+  diskonSo,
+  diskonMapsSo,
+  brutoNetSo,
+  netDiambil,
+  diskonTerpakai,
+  isTerakhir,
+}) => {
+  const sisaDiskon = Math.max(0, diskonSo - diskonTerpakai);
+  let total = isTerakhir
+    ? sisaDiskon
+    : brutoNetSo > 0
+      ? Math.round((diskonSo * netDiambil) / brutoNetSo)
+      : 0;
+  total = Math.min(total, sisaDiskon);
+  const maps = diskonSo > 0 ? Math.round((total * diskonMapsSo) / diskonSo) : 0;
+  return { total, maps, base: total - maps };
+};
+
+// Alokasi sisa & qty siap tagih per baris SO. db = pool atau connection.
+// items WAJIB urut sod_nourut dan punya: sodIdrec, qtySo, kode, ukuran_asli,
+// isCustomRaw, logstok, noSoDtf, stokPesanan. Hasil ditulis ke item.qtyso (sisa),
+// item.qtySiap, item.alasanTidakSiap.
+const alokasiBarisSo = async (
+  db,
+  soNomor,
+  items,
+  excludeInv = "",
+  lewatiLhk = false,
+) => {
+  const [linkedRows] = await db.query(
+    `SELECT d.invd_sod_idrec AS idrec, SUM(d.invd_jumlah) AS qty
+       FROM tinv_dtl d
+       JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+      WHERE h.inv_nomor_so = ? AND h.inv_sts_pro = 0 AND h.inv_nomor <> ?
+        AND d.invd_sod_idrec <> ''
+      GROUP BY d.invd_sod_idrec`,
+    [soNomor, excludeInv],
+  );
+  // Invoice lama (belum punya penunjuk baris): dihitung per kode+ukuran
+  const [legacyRows] = await db.query(
+    `SELECT d.invd_kode AS kode, d.invd_ukuran AS ukuran, SUM(d.invd_jumlah) AS qty
+       FROM tinv_dtl d
+       JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+      WHERE h.inv_nomor_so = ? AND h.inv_sts_pro = 0 AND h.inv_nomor <> ?
+        AND d.invd_sod_idrec = ''
+      GROUP BY d.invd_kode, d.invd_ukuran`,
+    [soNomor, excludeInv],
+  );
+  const [lhkRows] = await db.query(
+    `SELECT DISTINCT l.nomor_dtf
+       FROM (
+         SELECT sodtf AS nomor_dtf FROM tdtf
+         UNION ALL
+         SELECT spk_nomor AS nomor_dtf FROM kencanaprint.tdtf
+       ) l
+       JOIN tso_dtl d ON d.sod_sd_nomor = l.nomor_dtf
+      WHERE d.sod_so_nomor = ?`,
+    [soNomor],
+  );
+  const [invAktifRows] = await db.query(
+    `SELECT COUNT(*) AS n, IFNULL(SUM(inv_disc), 0) AS diskon
+       FROM tinv_hdr
+      WHERE inv_nomor_so = ? AND inv_sts_pro = 0 AND inv_nomor <> ?`,
+    [soNomor, excludeInv],
+  );
+
+  const linkedMap = new Map(linkedRows.map((r) => [r.idrec, Number(r.qty)]));
+  const legacyPool = new Map(
+    legacyRows.map((r) => [`${r.kode}||${r.ukuran}`, Number(r.qty)]),
+  );
+  const lhkSet = new Set(lhkRows.map((r) => r.nomor_dtf));
+  const stokPesananPool = new Map();
+
+  for (const item of items) {
+    const qtySo = Number(item.qtySo || 0);
+    const key = `${item.kode}||${item.ukuran_asli}`;
+    const kodeUp = String(item.kode || "").toUpperCase();
+    const isCustom = item.isCustomRaw === "Y";
+    // "Layanan": jasa, file, custom, dan baris sablon SO DTF (sod_custom bisa 'N' setelah SD terbentuk)
+    const layanan =
+      isCustom ||
+      !!item.noSoDtf ||
+      item.logstok === "J" ||
+      kodeUp.startsWith("JASA") ||
+      kodeUp.includes("FILE");
+
+    const linked = linkedMap.get(item.sodIdrec) || 0;
+    const legacyAvail = legacyPool.get(key) || 0;
+    const legacyPakai = Math.min(legacyAvail, Math.max(0, qtySo - linked));
+    legacyPool.set(key, legacyAvail - legacyPakai);
+    const sisa = Math.max(0, qtySo - linked - legacyPakai);
+
+    let siap = 0;
+    let alasan = "";
+    if (layanan) {
+      siap = sisa;
+      if (isCustom || item.noSoDtf) {
+        if (!item.noSoDtf) {
+          siap = 0;
+          alasan = "Belum ada SO DTF";
+        } else if (!lewatiLhk && !lhkSet.has(item.noSoDtf)) {
+          siap = 0;
+          alasan = "Belum LHK";
+        } else if (Number(item.sodScanned || 0) < qtySo) {
+          siap = 0;
+          alasan = "Belum ready (belum discan)";
+        }
+      }
+    } else {
+      // Barang stok: siap hanya kalau sudah di stok pesanan (discan + dimutasi)
+      if (!stokPesananPool.has(key)) {
+        stokPesananPool.set(key, Math.max(0, Number(item.stokPesanan || 0)));
+      }
+      const pool = stokPesananPool.get(key);
+      siap = Math.min(sisa, pool);
+      stokPesananPool.set(key, pool - siap);
+      if (siap < sisa) alasan = "Belum masuk stok pesanan";
+    }
+
+    item.isLayanan = layanan;
+    item.qtyso = sisa;
+    item.qtySiap = siap;
+    item.alasanTidakSiap = alasan;
+  }
+
+  // Layanan baru siap kalau ada barang stok yang siap (selama masih ada barang yang belum ditagih)
+  const adaBarangBelumDitagih = items.some((i) => !i.isLayanan && i.qtyso > 0);
+  const adaBarangSiap = items.some((i) => !i.isLayanan && i.qtySiap > 0);
+  if (adaBarangBelumDitagih && !adaBarangSiap) {
+    for (const item of items) {
+      if (item.isLayanan && item.qtySiap > 0) {
+        item.qtySiap = 0;
+        item.alasanTidakSiap = "Menunggu barang siap";
+      }
+    }
+  }
+
+  return {
+    adaInvoiceAktif: Number(invAktifRows[0].n) > 0,
+    diskonTerpakaiRp: Number(invAktifRows[0].diskon || 0),
+    adaBarangBelumDitagih,
+  };
 };
 
 const getSoDetailsForGrid = async (soNomor, user) => {
@@ -589,17 +799,11 @@ const getSoDetailsForGrid = async (soNomor, user) => {
           0
         ) AS stokFisik,
 
-        (d.sod_jumlah - IFNULL(
-            (SELECT SUM(id.invd_jumlah)
-             FROM tinv_dtl id
-             JOIN tinv_hdr ih ON id.invd_inv_nomor = ih.inv_nomor
-             WHERE ih.inv_nomor_so = d.sod_so_nomor
-               AND id.invd_kode = d.sod_kode
-               AND id.invd_ukuran = d.sod_ukuran
-               AND ih.inv_sts_pro = 0
-            ),
-            0
-        )) AS qtyso
+        d.sod_idrec AS sodIdrec,
+        d.sod_scanned AS sodScanned,
+        d.sod_nourut AS nourut,
+        d.sod_jumlah AS qtySo,
+        d.sod_custom AS isCustomRaw
 FROM tso_dtl d
     LEFT JOIN tbarangdc a 
         ON a.brg_kode = d.sod_kode
@@ -609,7 +813,8 @@ FROM tso_dtl d
     LEFT JOIN tsodtf_hdr f 
         ON f.sd_nomor = d.sod_sd_nomor                -- nama dari SO-DTF
 
-    WHERE d.sod_so_nomor = ?;
+    WHERE d.sod_so_nomor = ?
+    ORDER BY d.sod_nourut;
 `;
     itemsParams = [user.cabang, user.cabang, soNomor];
   }
@@ -646,54 +851,51 @@ FROM tso_dtl d
   headerData.so_pro_nama = headerRows[0].so_pro_nama || "";
 
   const [items] = await pool.query(itemsQuery, itemsParams);
+  const isKpr = user.cabang === "KPR";
+
+  // ===== HITUNG SISA & QTY SIAP TAGIH PER BARIS SO =====
+  let adaInvoiceAktif = false;
+  let diskonTerpakaiRp = 0;
+
+  if (!isKpr) {
+    // getSoDetailsForGrid
+    ({ adaInvoiceAktif, diskonTerpakaiRp } = await alokasiBarisSo(
+      pool,
+      soNomor,
+      items,
+      "",
+      CABANG_BEBAS_LHK.includes(user.cabang),
+    ));
+  }
 
   // =======================================================================
-  // --- [FIX MAPS DISCOUNT] EKSTRAK NOMINAL DISKON DASAR SO ---
-  // Karena so_disc di DB menyimpan total gabungan (termasuk 5% Maps),
-  // kita harus mengekstraknya agar Frontend Invoice mendapat nominal murni.
+  // --- NOMINAL DISKON SO (PENUH) — BASIS SAMA DENGAN calculateTotals SoCreateView ---
+  // bruto = SEMUA baris SO (qty penuh) x (harga - diskon item), termasuk jasa
   // =======================================================================
-
-  // 1. Hitung ulang total Bruto dari items yang didapat
-  let totalBrutoSo = 0;
-  items.forEach((item) => {
-    const qty = Number(item.qtyso || 0);
-    const hrg = Number(item.harga || 0);
-
-    const isJasaMurni = (item.kode || "").toUpperCase().startsWith("JASA");
-    // [FIX] JANGAN exclude Pengajuan Harga dari basis — SO form
-    // (isDiscountableItem) hanya mengecualikan JASA murni, item Pengajuan
-    // Harga tetap ikut basis diskon faktur di sana. Basis di sini WAJIB
-    // identik, kalau tidak reverse-split Maps di bawah akan salah hitung.
-    if (!isJasaMurni) {
-      totalBrutoSo += qty * hrg;
-    }
-  });
+  const brutoNetSo = items.reduce((sum, item) => {
+    const qty = isKpr ? Number(item.qtyso || 0) : Number(item.qtySo || 0);
+    return sum + qty * (Number(item.harga || 0) - Number(item.diskonRp || 0));
+  }, 0);
 
   const soDiskonTotal = Number(headerRows[0].diskonRp || 0); // so_disc (gabungan)
-  const soDiskonP1 = Number(headerRows[0].diskonPersen1 || 0); // so_disc1
   const soDiskonP2 = Number(headerRows[0].diskonPersen2 || 0); // so_disc2
   const soNomorPromo = headerRows[0].so_pro_nomor || "";
   const mapsAktif = soNomorPromo.includes("PRO-2026-003") && soDiskonP2 > 0;
 
-  let diskonBaseRp = soDiskonTotal; // default: anggap semua adalah base
-  let diskonMapsRp = 0;
+  const { base: diskonBaseRp, maps: diskonMapsRp } = hitungSplitDiskonSo({
+    diskonTotal: soDiskonTotal,
+    persenMaps: soDiskonP2,
+    mapsAktif,
+    brutoNetSo,
+  });
 
-  if (mapsAktif && totalBrutoSo > 0) {
-    // Rumus balik dari calculateTotals SO:
-    // soDiskonTotal = diskonBase + (p2/100) * (totalBruto - diskonBase)
-    // soDiskonTotal = diskonBase * (1 - p2/100) + (p2/100) * totalBruto
-    // diskonBase    = (soDiskonTotal - (p2/100) * totalBruto) / (1 - p2/100)
-    const p2 = soDiskonP2 / 100;
-    diskonBaseRp = Math.round((soDiskonTotal - p2 * totalBrutoSo) / (1 - p2));
-    diskonMapsRp = Math.round(soDiskonTotal - diskonBaseRp);
-
-    // Safety: pastikan tidak negatif
-    if (diskonBaseRp < 0) diskonBaseRp = 0;
-    if (diskonMapsRp < 0) diskonMapsRp = 0;
-  }
-
-  headerData.diskonBaseRp = diskonBaseRp;
-  headerData.diskonMapsRp = diskonMapsRp;
+  headerData.diskonBaseRp = diskonBaseRp; // diskon SO penuh (komponen P1/manual)
+  headerData.diskonMapsRp = diskonMapsRp; // diskon SO penuh (komponen Maps)
+  headerData.brutoNetSo = brutoNetSo;
+  headerData.diskonTerpakaiRp = diskonTerpakaiRp; // total inv_disc invoice aktif SO ini
+  headerData.adaInvoiceAktif = adaInvoiceAktif;
+  // Biaya kirim hanya ditagih di invoice pertama
+  if (!isKpr && adaInvoiceAktif) headerData.biayaKirim = 0;
 
   const dpQuery = `
         SELECT 
@@ -1072,6 +1274,203 @@ const saveData = async (payload, user) => {
         );
       }
     }
+
+    // Invoice parsial dari SO tidak boleh diubah detailnya (penunjuk baris SO akan putus)
+    if (!isNew && header.nomor) {
+      const [terhubung] = await connection.query(
+        `SELECT 1 FROM tinv_dtl WHERE invd_inv_nomor = ? AND invd_sod_idrec <> '' LIMIT 1`,
+        [header.nomor],
+      );
+      if (terhubung.length > 0) {
+        throw new Error(
+          "Invoice dari SO tidak bisa diubah setelah terbit. Gunakan retur jika ada koreksi.",
+        );
+      }
+    }
+
+    // =========================================================
+    // INVOICE DARI SO (PARSIAL): VALIDASI & HITUNG ULANG DI SERVER
+    // =========================================================
+    const isInvoiceDariSo =
+      isNew &&
+      !!header.nomorSo &&
+      header.gudang.kode !== "KPR" &&
+      header.gudang.kode !== "KDC" &&
+      !(header.isMarketplace === true || header.isMarketplace === "Y");
+
+    if (isInvoiceDariSo) {
+      const soNomor = header.nomorSo;
+      const excludeInv = "";
+
+      // Kunci SO agar dua invoice parsial tidak lolos bersamaan
+      const [soHdrRows] = await connection.query(
+        `SELECT so_disc, so_disc2, so_pro_nomor, so_ppn, so_bkrm, so_close
+           FROM tso_hdr WHERE so_nomor = ? FOR UPDATE`,
+        [soNomor],
+      );
+      if (soHdrRows.length === 0)
+        throw new Error(`SO ${soNomor} tidak ditemukan.`);
+      const soHdr = soHdrRows[0];
+      if (isNew && Number(soHdr.so_close) !== 0) {
+        throw new Error(`SO ${soNomor} sudah ditutup.`);
+      }
+
+      // Invoice retail tidak boleh diubah setelah terbit
+      if (!isNew) {
+        throw new Error(
+          "Invoice yang sudah terbit tidak bisa diubah. Gunakan retur jika ada koreksi.",
+        );
+      }
+
+      const [soLines] = await connection.query(
+        `SELECT d.sod_idrec AS sodIdrec, d.sod_kode AS kode, d.sod_ukuran AS ukuran_asli,
+                d.sod_jumlah AS qtySo, d.sod_harga AS harga, d.sod_diskon AS diskonRp,
+                d.sod_custom AS isCustomRaw, d.sod_sd_nomor AS noSoDtf, d.sod_scanned AS sodScanned,
+                a.brg_logstok AS logstok,
+                IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+                          FROM tmasterstokso m
+                         WHERE m.mst_aktif = 'Y' AND m.mst_cab = ?
+                           AND m.mst_brg_kode = d.sod_kode
+                           AND m.mst_ukuran = d.sod_ukuran
+                           AND m.mst_nomor_so = d.sod_so_nomor), 0) AS stokPesanan
+           FROM tso_dtl d
+           LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
+          WHERE d.sod_so_nomor = ?
+          ORDER BY d.sod_nourut`,
+        [user.cabang, soNomor],
+      );
+
+      const { adaInvoiceAktif, diskonTerpakaiRp, adaBarangBelumDitagih } =
+        await alokasiBarisSo(
+          connection,
+          soNomor,
+          soLines,
+          excludeInv,
+          CABANG_BEBAS_LHK.includes(user.cabang),
+        );
+
+      // Buang baris qty 0 (SC tidak mengambil baris ini di invoice ini)
+      for (let i = items.length - 1; i >= 0; i--) {
+        if (items[i].kode && Number(items[i].jumlah || 0) <= 0)
+          items.splice(i, 1);
+      }
+
+      const lineMap = new Map(soLines.map((l) => [l.sodIdrec, l]));
+      const diambil = new Map();
+      for (const it of items) {
+        if (!it.kode) continue;
+        const line = lineMap.get(it.sodIdrec);
+        if (!line) {
+          throw new Error(
+            `Baris ${it.kode} ${it.ukuran || ""} tidak terhubung ke baris SO ${soNomor}. Muat ulang SO lalu coba lagi.`,
+          );
+        }
+        // Harga & diskon baris SO tidak boleh diubah dari layar; baris bernilai 0 boleh diisi manual
+        const hargaSo = Number(line.harga || 0);
+        it.harga = hargaSo !== 0 ? hargaSo : Math.max(0, Number(it.harga || 0));
+        it.diskonRp = Number(line.diskonRp || 0);
+        line.hargaPakai = it.harga;
+        diambil.set(
+          line.sodIdrec,
+          (diambil.get(line.sodIdrec) || 0) + Number(it.jumlah),
+        );
+      }
+      if (diambil.size === 0) throw new Error("Qty Invoice kosong semua.");
+
+      // Invoice tidak boleh hanya berisi jasa/sablon selama masih ada barang yang belum ditagih
+      if (isNew && adaBarangBelumDitagih) {
+        const qtyBarang = soLines.reduce(
+          (s, l) => s + (l.isLayanan ? 0 : diambil.get(l.sodIdrec) || 0),
+          0,
+        );
+        if (qtyBarang <= 0) {
+          throw new Error(
+            "Invoice harus memuat minimal satu barang yang sudah siap. Jasa dan sablon tidak bisa ditagih sendiri.",
+          );
+        }
+      }
+
+      let netDiambil = 0;
+      let semuaHabis = true;
+      for (const line of soLines) {
+        const qty = diambil.get(line.sodIdrec) || 0;
+        // Invoice baru dibatasi stok pesanan/LHK; edit dibatasi sisa saja
+        // (stok invoice itu sendiri sudah terpotong)
+        const batas = line.qtySiap;
+        if (qty > batas) {
+          throw new Error(
+            `Qty ${line.kode} ${line.ukuran_asli || ""} (${qty}) melebihi batas ${batas}` +
+              `${line.alasanTidakSiap ? ` — ${line.alasanTidakSiap}` : ""}.`,
+          );
+        }
+        if (qty < line.qtyso) semuaHabis = false;
+        netDiambil +=
+          qty *
+          (applyRoundingPolicy(Number(line.hargaPakai ?? line.harga ?? 0)) -
+            applyRoundingPolicy(Number(line.diskonRp || 0)));
+      }
+
+      const brutoNetSo = soLines.reduce(
+        (s, l) =>
+          s +
+          Number(l.qtySo || 0) *
+            (Number(l.harga || 0) - Number(l.diskonRp || 0)),
+        0,
+      );
+      const diskonSo = Number(soHdr.so_disc || 0);
+      const mapsAktif =
+        String(soHdr.so_pro_nomor || "").includes("PRO-2026-003") &&
+        Number(soHdr.so_disc2 || 0) > 0;
+      const split = hitungSplitDiskonSo({
+        diskonTotal: diskonSo,
+        persenMaps: Number(soHdr.so_disc2 || 0),
+        mapsAktif,
+        brutoNetSo,
+      });
+      const diskonInv = hitungDiskonInvoice({
+        diskonSo,
+        diskonMapsSo: split.maps,
+        brutoNetSo,
+        netDiambil,
+        diskonTerpakai: diskonTerpakaiRp,
+        isTerakhir: semuaHabis,
+      });
+
+      const netto = Math.max(0, netDiambil - diskonInv.total);
+      const ppn = netto * (Number(soHdr.so_ppn || 0) / 100);
+      const biayaKirimSo = adaInvoiceAktif ? 0 : Number(soHdr.so_bkrm || 0); // hanya invoice pertama
+      const grandServer = applyRoundingPolicy(netto + ppn + biayaKirimSo);
+      const grandClient = applyRoundingPolicy(Number(totals.grandTotal || 0));
+
+      if (Math.abs(grandServer - grandClient) > TOLERANSI_TOTAL_RP) {
+        throw new Error(
+          `Total invoice di layar (Rp ${grandClient}) berbeda dari hitungan server (Rp ${grandServer}). Muat ulang SO lalu coba lagi.`,
+        );
+      }
+
+      totals.totalDiskonFaktur = diskonInv.total;
+      totals.netto = netto;
+      totals.grandTotal = grandServer;
+      header.biayaKirim = biayaKirimSo;
+
+      // DP: tidak boleh melebihi sisa DP di DB, dan total pemakaian tidak boleh melebihi tagihan
+      let totalDpSah = 0;
+      for (const dp of dps || []) {
+        const [r] = await connection.query(
+          `SELECT (h.sh_nominal - IFNULL((SELECT SUM(d.sd_bayar) FROM tsetor_dtl d
+                                           WHERE d.sd_sh_nomor = h.sh_nomor), 0)) AS sisa
+             FROM tsetor_hdr h WHERE h.sh_nomor = ?`,
+          [dp.nomor],
+        );
+        dp.nominal = Math.max(
+          0,
+          Math.min(Number(dp.nominal || 0), Number(r[0]?.sisa || 0)),
+        );
+        totalDpSah += dp.nominal;
+      }
+      totals.totalDp = Math.min(totalDpSah, grandServer);
+    }
+
     const headerTanggal = toSqlDate(header.tanggal);
     const headerTanggalTime = toSqlDateTime(header.tanggal);
     const totalDiskonItem = Number(totals.totalDiskonItem || 0);
@@ -1590,12 +1989,13 @@ const saveData = async (payload, user) => {
           invd_jumlah,
           invd_mstpesan, invd_mststok,
           invd_harga, invd_hpp, invd_disc, invd_diskon,
-          invd_sd_nomor, invd_nourut, invd_is_free_gift, invd_unit_serial
+          invd_sd_nomor, invd_sod_idrec, invd_nourut, invd_is_free_gift, invd_unit_serial
         ) VALUES ?
       `;
 
       const detailValues = [];
       const soldSerials = [];
+      const pesananTerpakai = new Map();
       let rowCounter = 0;
 
       for (let index = 0; index < validItems.length; index++) {
@@ -1626,14 +2026,20 @@ const saveData = async (payload, user) => {
         let invd_mststok = jumlah;
 
         if (!isKprOrKdc && header.nomorSo && header.nomorSo !== "") {
-          const sisaSO = await getSisaStokSO(
-            connection,
-            header.nomorSo,
-            item.kode,
-            item.ukuran,
-          );
-          invd_mstpesan = Math.min(jumlah, sisaSO);
+          const keyPesan = `${item.kode}||${item.ukuran || ""}`;
+          const sisaSO =
+            (await getSisaStokSO(
+              connection,
+              header.nomorSo,
+              item.kode,
+              item.ukuran,
+            )) - (pesananTerpakai.get(keyPesan) || 0);
+          invd_mstpesan = Math.min(jumlah, Math.max(0, sisaSO));
           invd_mststok = jumlah - invd_mstpesan;
+          pesananTerpakai.set(
+            keyPesan,
+            (pesananTerpakai.get(keyPesan) || 0) + invd_mstpesan,
+          );
         } else {
           invd_mstpesan = 0;
           invd_mststok = jumlah;
@@ -1664,6 +2070,7 @@ const saveData = async (payload, user) => {
             Number(item.diskonPersen || 0),
             diskonRp,
             item.noSoDtf || "",
+            item.sodIdrec || "",
             rowCounter,
             item.isFreeGift ? "Y" : "N",
             item.unitSerial,
@@ -1717,6 +2124,7 @@ const saveData = async (payload, user) => {
             Number(item.diskonPersen || 0),
             diskonRp,
             item.noSoDtf || "",
+            item.sodIdrec || "",
             rowCounter,
             item.isFreeGift ? "Y" : "N",
             serial,
@@ -1740,6 +2148,7 @@ const saveData = async (payload, user) => {
             Number(item.diskonPersen || 0),
             diskonRp,
             item.noSoDtf || "",
+            item.sodIdrec || "",
             rowCounter,
             item.isFreeGift ? "Y" : "N",
             serial,
@@ -1767,6 +2176,7 @@ const saveData = async (payload, user) => {
             Number(item.diskonPersen || 0),
             diskonRp,
             item.noSoDtf || "",
+            item.sodIdrec || "",
             rowCounter,
             item.isFreeGift ? "Y" : "N",
             null,
@@ -2862,6 +3272,38 @@ const getPrintData = async (nomor) => {
 
   header.terbilang =
     capitalize(terbilang(header.summary.grandTotal)) + " Rupiah";
+
+  // Info invoice parsial (hanya invoice yang berasal dari SO)
+  header.parsial = null;
+  if (header.inv_nomor_so) {
+    const [infoRows] = await pool.query(
+      `SELECT
+         (SELECT COUNT(*) FROM tinv_hdr x
+           WHERE x.inv_nomor_so = h.inv_nomor_so AND x.inv_sts_pro = 0
+             AND x.date_create <= h.date_create) AS ke,
+         (SELECT COUNT(*) FROM tinv_hdr x
+           WHERE x.inv_nomor_so = h.inv_nomor_so AND x.inv_sts_pro = 0) AS jumlahInvoice,
+         IFNULL((SELECT SUM(sod_jumlah) FROM tso_dtl
+                  WHERE sod_so_nomor = h.inv_nomor_so), 0) AS qtySo,
+         IFNULL((SELECT SUM(d.invd_jumlah) FROM tinv_dtl d
+                   JOIN tinv_hdr x ON x.inv_nomor = d.invd_inv_nomor
+                  WHERE x.inv_nomor_so = h.inv_nomor_so AND x.inv_sts_pro = 0), 0) AS qtyInvoiced
+       FROM tinv_hdr h WHERE h.inv_nomor = ?`,
+      [nomor],
+    );
+    const info = infoRows[0];
+    if (info && Number(info.qtySo) > 0) {
+      const qtySo = Number(info.qtySo);
+      const qtyInvoiced = Number(info.qtyInvoiced);
+      if (Number(info.jumlahInvoice) > 1 || qtyInvoiced < qtySo) {
+        header.parsial = {
+          ke: Number(info.ke),
+          jumlahInvoice: Number(info.jumlahInvoice),
+          sisaQty: Math.max(0, qtySo - qtyInvoiced),
+        };
+      }
+    }
+  }
 
   return { header, details };
 };
@@ -4390,12 +4832,12 @@ const updateHeaderOnly = async (nomor, payload, user) => {
       tanggal,
       biayaKirim,
       diskonPersen1,
-      diskonPersen2, // <--- Tangkap ini
+      diskonPersen2,
       diskonRp,
       ppnPersen,
       memberHp,
       memberNama,
-      nomorPromo, // <--- Dan ini
+      nomorPromo,
     } = payload;
 
     // Gabungkan promo ID untuk header only
@@ -4408,10 +4850,21 @@ const updateHeaderOnly = async (nomor, payload, user) => {
       }
     }
 
-    // [BARU] Paksa inv_disc1 = 0 untuk customer tertentu
+    // Paksa inv_disc1 = 0 untuk customer tertentu
     const diskonPersen1ForHdr = isNoHeaderDiscountCustomer(customer)
       ? 0
       : diskonPersen1 || 0;
+
+    const [dariSo] = await connection.query(
+      `SELECT 1 FROM tinv_hdr
+        WHERE inv_nomor = ? AND IFNULL(inv_nomor_so, '') <> '' LIMIT 1`,
+      [nomor],
+    );
+    if (dariSo.length > 0) {
+      throw new Error(
+        `Invoice ${nomor} berasal dari SO dan tidak bisa diubah headernya.`,
+      );
+    }
 
     const sql = `
       UPDATE tinv_hdr SET 
@@ -4441,11 +4894,9 @@ const updateHeaderOnly = async (nomor, payload, user) => {
       toSqlDate(tanggal),
       biayaKirim || 0,
       diskonPersen1ForHdr,
-      diskonPersen2 || 0, // [BARU]
+      diskonPersen2 || 0,
       diskonRp || 0,
-      finalPromoID, // [BARU]
-      ppnPersen || 0,
-      diskonRp || 0,
+      finalPromoID,
       ppnPersen || 0,
       memberHp || "",
       memberNama || "",

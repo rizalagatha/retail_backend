@@ -38,9 +38,26 @@ const save = async (data, user) => {
   }
   // ------------------------------------------------
   const connection = await pool.getConnection();
-  await connection.beginTransaction();
-
   try {
+    await connection.beginTransaction();
+
+    if (!isNew && header.nomor) {
+      // kunci SO supaya tidak balapan dengan saveData invoice
+      await connection.query(
+        "SELECT so_nomor FROM tso_hdr WHERE so_nomor = ? FOR UPDATE",
+        [header.nomor],
+      );
+      const [sudahInvoice] = await connection.query(
+        "SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor_so = ? AND inv_sts_pro = 0 LIMIT 1",
+        [header.nomor],
+      );
+      if (sudahInvoice.length > 0) {
+        throw new Error(
+          `SO ${header.nomor} sudah punya invoice (${sudahInvoice[0].inv_nomor}) dan tidak bisa diubah.`,
+        );
+      }
+    }
+
     let soNomor = header.nomor;
     let idrec;
 
@@ -517,6 +534,18 @@ const getSoForEdit = async (nomor) => {
     );
     const isInvoiced = invoiceRows.length > 0;
 
+    const [sisaRows] = await connection.query(
+      `SELECT
+         IFNULL((SELECT SUM(sod_jumlah) FROM tso_dtl WHERE sod_so_nomor = ?), 0) AS qtySo,
+         IFNULL((SELECT SUM(d.invd_jumlah)
+                   FROM tinv_dtl d
+                   JOIN tinv_hdr x ON x.inv_nomor = d.invd_inv_nomor
+                  WHERE x.inv_nomor_so = ? AND x.inv_sts_pro = 0), 0) AS qtyInv`,
+      [nomor, nomor],
+    );
+    const masihAdaSisaTagih =
+      Number(sisaRows[0].qtySo) > Number(sisaRows[0].qtyInv);
+
     // 2. Ambil data Header Utama & Detail Item dalam satu query
     const mainQuery = `
   SELECT 
@@ -688,6 +717,7 @@ const getSoForEdit = async (nomor) => {
       ppnPersen: Number(firstRow.so_ppn || 0),
       statusSo: firstRow.so_aktif === "Y" ? "AKTIF" : "PASIF",
       canEdit: !isInvoiced,
+      masihAdaSisaTagih,
       so_is_marketplace: firstRow.so_is_marketplace === "Y",
       so_mp_nomor_pesanan: firstRow.so_mp_nomor_pesanan || "",
       so_mp_resi: firstRow.so_mp_resi || "",

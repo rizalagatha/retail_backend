@@ -460,6 +460,19 @@ const update = async (nomor, data, user) => {
     // Jika ganti referensi SO atau ganti nomor SO DTF-nya
     // 5️⃣ Update Flag & Relasi SO Utama (Logic SO Lama vs Baru, presisi per baris)
     if (oldSo && (oldSo !== newSo || isOrderTypeChanged)) {
+      const [sudahDiinvoice] = await connection.query(
+        `SELECT d.invd_inv_nomor
+           FROM tinv_dtl d
+           JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+          WHERE h.inv_sts_pro = 0 AND h.inv_nomor_so = ? AND d.invd_sd_nomor = ?
+          LIMIT 1`,
+        [oldSo, nomor],
+      );
+      if (sudahDiinvoice.length > 0) {
+        throw new Error(
+          `SO DTF ${finalNomor} sudah ditagih di invoice ${sudahDiinvoice[0].invd_inv_nomor}. Tidak bisa dipindah atau dilepas dari SO ${oldSo}.`,
+        );
+      }
       await connection.query(
         "UPDATE tso_hdr SET so_dipakai_dtf = 'N' WHERE so_nomor = ?",
         [oldSo],
@@ -468,13 +481,13 @@ const update = async (nomor, data, user) => {
       if (oldSoLineIds.length > 0) {
         const ph = oldSoLineIds.map(() => "?").join(",");
         await connection.query(
-          `UPDATE tso_dtl SET sod_kode = 'CUSTOM', sod_sd_nomor = NULL 
-       WHERE sod_idrec IN (${ph}) AND sod_so_nomor = ? AND sod_custom = 'Y'`,
+          `UPDATE tso_dtl SET sod_kode = 'CUSTOM', sod_sd_nomor = '' 
+           WHERE sod_idrec IN (${ph}) AND sod_so_nomor = ? AND sod_custom = 'Y'`,
           [...oldSoLineIds, oldSo],
         );
       } else {
         await connection.query(
-          "UPDATE tso_dtl SET sod_sd_nomor = NULL WHERE sod_so_nomor = ? AND sod_custom = 'Y'",
+          "UPDATE tso_dtl SET sod_sd_nomor = '' WHERE sod_so_nomor = ? AND sod_custom = 'Y'",
           [oldSo],
         );
       }
@@ -490,8 +503,10 @@ const update = async (nomor, data, user) => {
         );
       } else {
         await connection.query(
-          `UPDATE tso_dtl SET sod_kode = ?, sod_sd_nomor = ? WHERE sod_so_nomor = ? AND sod_custom = 'Y'`,
-          [finalNomor, finalNomor, newSo],
+          `UPDATE tso_dtl SET sod_kode = ?, sod_sd_nomor = ? 
+            WHERE sod_so_nomor = ? AND sod_custom = 'Y'
+              AND (IFNULL(sod_sd_nomor, '') = '' OR sod_sd_nomor = ?)`,
+          [finalNomor, finalNomor, newSo, finalNomor],
         );
       }
       await connection.query(
@@ -974,9 +989,16 @@ const searchSoForDtf = async (term, cabang, page, itemsPerPage) => {
     WHERE h.so_cab = ?
       AND (h.so_nomor LIKE ? OR c.cus_nama LIKE ?)
       -- [BARU] Sembunyikan SO yang sudah jadi Invoice (belum dibatalkan)
-      AND NOT EXISTS (
-        SELECT 1 FROM tinv_hdr iv 
-        WHERE iv.inv_nomor_so = h.so_nomor AND iv.inv_sts_pro = 0
+      AND (
+        NOT EXISTS (
+          SELECT 1 FROM tinv_hdr iv 
+          WHERE iv.inv_nomor_so = h.so_nomor AND iv.inv_sts_pro = 0
+        )
+        OR EXISTS (
+          SELECT 1 FROM tso_dtl dk
+          WHERE dk.sod_so_nomor = h.so_nomor AND dk.sod_custom = 'Y'
+            AND IFNULL(dk.sod_sd_nomor, '') = ''
+        )
       )
 
     GROUP BY h.so_nomor
@@ -991,13 +1013,18 @@ const searchSoForDtf = async (term, cabang, page, itemsPerPage) => {
       FROM tso_hdr h
       LEFT JOIN tcustomer c ON c.cus_kode = h.so_cus_kode
       LEFT JOIN tsetor_hdr s ON s.sh_so_nomor = h.so_nomor
-      
       WHERE h.so_cab = ?
         AND (h.so_nomor LIKE ? OR c.cus_nama LIKE ?)
-        -- [BARU] samakan filter di count query
-        AND NOT EXISTS (
-          SELECT 1 FROM tinv_hdr iv 
-          WHERE iv.inv_nomor_so = h.so_nomor AND iv.inv_sts_pro = 0
+        AND (
+          NOT EXISTS (
+            SELECT 1 FROM tinv_hdr iv
+            WHERE iv.inv_nomor_so = h.so_nomor AND iv.inv_sts_pro = 0
+          )
+          OR EXISTS (
+            SELECT 1 FROM tso_dtl dk
+            WHERE dk.sod_so_nomor = h.so_nomor AND dk.sod_custom = 'Y'
+              AND IFNULL(dk.sod_sd_nomor, '') = ''
+          )
         )
       GROUP BY h.so_nomor
     ) x

@@ -527,7 +527,14 @@ const autoMutasiScan = async (payload, user) => {
           WHERE m.mst_aktif = 'Y' AND m.mst_cab = ? 
             AND m.mst_brg_kode = ? AND m.mst_ukuran = ? 
             AND m.mst_nomor_so = ?
-        ), 0) AS total_mutasi
+        ), 0) AS total_mutasi,
+        IFNULL((
+          SELECT SUM(i.invd_mstpesan)
+          FROM tinv_dtl i
+          JOIN tinv_hdr j ON j.inv_nomor = i.invd_inv_nomor
+          WHERE j.inv_sts_pro = 0 AND j.inv_nomor_so = ?
+            AND i.invd_kode = ? AND i.invd_ukuran = ?
+        ), 0) AS sudah_ditagih_pesanan
       FROM tso_dtl
       WHERE sod_so_nomor = ? AND sod_kode = ? AND sod_ukuran = ? LIMIT 1
     `,
@@ -536,6 +543,9 @@ const autoMutasiScan = async (payload, user) => {
         resolvedKode,
         resolvedUkuran,
         nomor_so,
+        nomor_so,
+        resolvedKode,
+        resolvedUkuran,
         nomor_so,
         resolvedKode,
         resolvedUkuran,
@@ -553,6 +563,7 @@ const autoMutasiScan = async (payload, user) => {
     const sod_jumlah = itemSo[0].sod_jumlah;
     const sod_scanned = itemSo[0].sod_scanned;
     const total_mutasi = itemSo[0].total_mutasi;
+    const sudah_ditagih_pesanan = Number(itemSo[0].sudah_ditagih_pesanan || 0);
     const new_scanned = sod_scanned + resolvedQty;
 
     if (new_scanned > sod_jumlah) {
@@ -567,7 +578,10 @@ const autoMutasiScan = async (payload, user) => {
       [new_scanned, nomor_so, resolvedKode, resolvedUkuran],
     );
 
-    const qty_to_mutate = Math.max(0, new_scanned - total_mutasi);
+    const qty_to_mutate = Math.max(
+      0,
+      new_scanned - (total_mutasi + sudah_ditagih_pesanan),
+    );
 
     if (qty_to_mutate > 0 && STICKER_DTF_LOCKED_KODE.includes(resolvedKode)) {
       const [stokRows] = await connection.query(

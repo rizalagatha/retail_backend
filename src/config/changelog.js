@@ -1,4 +1,15 @@
 const changelogs = {
+  "1.5.8": {
+    date: "2026-10-22",
+    changes: [
+      {
+        title: "Pembaruan",
+        items: [
+          "Fitur Baru Invoice Parsial, satu SO dapat di-invoice beberapa kali, dengan syarat barang sudah di-scan atau dimutasikan ke stok pesanan. SC dapat memilih jumlah barang yang akan diinvoice saat memanggil Surat Pesanan pada Form Buat Invoice Baru.",
+        ],
+      },
+    ],
+  },
   "1.5.7": {
     date: "2026-09-06",
     changes: [
