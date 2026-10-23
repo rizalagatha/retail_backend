@@ -41,20 +41,31 @@ const save = async (data, user) => {
   try {
     await connection.beginTransaction();
 
+    // SO yang sudah punya invoice aktif: hanya boleh menambah baris baru
+    let modeTambah = false;
+    let barisLama = [];
     if (!isNew && header.nomor) {
-      // kunci SO supaya tidak balapan dengan saveData invoice
-      await connection.query(
-        "SELECT so_nomor FROM tso_hdr WHERE so_nomor = ? FOR UPDATE",
+      const [kunci] = await connection.query(
+        "SELECT so_close FROM tso_hdr WHERE so_nomor = ? FOR UPDATE",
         [header.nomor],
       );
       const [sudahInvoice] = await connection.query(
         "SELECT inv_nomor FROM tinv_hdr WHERE inv_nomor_so = ? AND inv_sts_pro = 0 LIMIT 1",
         [header.nomor],
       );
-      if (sudahInvoice.length > 0) {
-        throw new Error(
-          `SO ${header.nomor} sudah punya invoice (${sudahInvoice[0].inv_nomor}) dan tidak bisa diubah.`,
+      modeTambah = sudahInvoice.length > 0;
+      if (modeTambah) {
+        if (Number(kunci[0]?.so_close || 0) !== 0) {
+          throw new Error(
+            `SO ${header.nomor} sudah ditutup dan tidak bisa diubah.`,
+          );
+        }
+        const [lama] = await connection.query(
+          `SELECT sod_idrec, sod_kode, sod_ukuran, sod_jumlah, sod_harga, sod_diskon, sod_custom
+             FROM tso_dtl WHERE sod_so_nomor = ? ORDER BY sod_nourut`,
+          [header.nomor],
         );
+        barisLama = lama;
       }
     }
 
@@ -154,7 +165,28 @@ const save = async (data, user) => {
         throw new Error("Nomor SO untuk diupdate tidak ditemukan.");
       idrec = idrecRows[0].so_idrec;
 
-      const updateHeaderQuery = `
+      if (modeTambah) {
+        // Hanya field yang ikut berubah saat baris bertambah
+        await connection.query(
+          `UPDATE tso_hdr SET
+             so_dateline = ?, so_accdp = ?, so_ket = ?,
+             so_disc = ?, so_disc1 = ?, so_disc2 = ?, so_dp = ?,
+             user_modified = ?, date_modified = NOW()
+           WHERE so_nomor = ?`,
+          [
+            header.dateline,
+            footer.pinTanpaDp || "",
+            header.keterangan || "",
+            footer.diskonRp || 0,
+            footer.diskonPersen1 || 0,
+            footer.diskonPersen2 || 0,
+            header.isMarketplace ? 0 : footer.totalDp || 0,
+            user.kode,
+            soNomor,
+          ],
+        );
+      } else {
+        const updateHeaderQuery = `
         UPDATE tso_hdr SET
           so_cus_kode = ?, so_pen_nomor = ?, so_cus_level = ?, so_tanggal = ?, 
           so_dateline = ?, so_top = ?, so_ppn = ?, so_accdp = ?, so_ket = ?,
@@ -168,42 +200,43 @@ const save = async (data, user) => {
         WHERE so_nomor = ?
       `;
 
-      await connection.query(updateHeaderQuery, [
-        header.customer.kode,
-        header.isMarketplace ? "" : header.penawaran || "",
-        header.level,
-        header.tanggal,
-        header.dateline,
-        header.isMarketplace ? 0 : header.top || 0,
-        header.ppnPersen || 0,
-        footer.pinTanpaDp || "",
-        header.keterangan || "",
-        header.jenisOrderKode || header.jenisOrder || null,
-        header.namaDtf || null,
-        header.isMarketplace ? "Y" : "N",
-        header.mpNomorPesanan || "",
-        header.mpResi || "",
-        footer.diskonRp || 0,
-        footer.diskonPersen1 || 0,
-        footer.diskonPersen2 || 0,
-        footer.biayaKirim || 0,
-        header.isMarketplace ? 0 : footer.totalDp || 0,
-        finalAktifStatus, // (FIXED)
-        header.salesCounter,
-        header.nomorPromo || "",
-        header.namaPromo || "",
+        await connection.query(updateHeaderQuery, [
+          header.customer.kode,
+          header.isMarketplace ? "" : header.penawaran || "",
+          header.level,
+          header.tanggal,
+          header.dateline,
+          header.isMarketplace ? 0 : header.top || 0,
+          header.ppnPersen || 0,
+          footer.pinTanpaDp || "",
+          header.keterangan || "",
+          header.jenisOrderKode || header.jenisOrder || null,
+          header.namaDtf || null,
+          header.isMarketplace ? "Y" : "N",
+          header.mpNomorPesanan || "",
+          header.mpResi || "",
+          footer.diskonRp || 0,
+          footer.diskonPersen1 || 0,
+          footer.diskonPersen2 || 0,
+          footer.biayaKirim || 0,
+          header.isMarketplace ? 0 : footer.totalDp || 0,
+          finalAktifStatus, // (FIXED)
+          header.salesCounter,
+          header.nomorPromo || "",
+          header.namaPromo || "",
 
-        // --- [BARU] ---
-        header.memberHp || "",
-        header.memberNama || "",
-        header.memberAlamat || "",
-        header.memberGender || "",
-        header.memberUsia || "",
-        header.memberReferensi || "",
+          // --- [BARU] ---
+          header.memberHp || "",
+          header.memberNama || "",
+          header.memberAlamat || "",
+          header.memberGender || "",
+          header.memberUsia || "",
+          header.memberReferensi || "",
 
-        user.kode,
-        soNomor,
-      ]);
+          user.kode,
+          soNomor,
+        ]);
+      }
     }
 
     // ========================================================================
@@ -284,9 +317,48 @@ const save = async (data, user) => {
     // ========================================================================
     // --- 3. PROSES DETAIL (DELETE & INSERT) ---
     // ========================================================================
-    await connection.query("DELETE FROM tso_dtl WHERE sod_so_nomor = ?", [
-      soNomor,
-    ]);
+    let barisUntukInsert = details;
+    let nourutAwal = 0;
+
+    if (modeTambah) {
+      // Baris lama tidak boleh dihapus atau diubah (penunjuk invoice parsial bergantung padanya)
+      const idDiPayload = new Set(
+        details.filter((d) => d.dbLineId).map((d) => d.dbLineId),
+      );
+      for (const lama of barisLama) {
+        if (!idDiPayload.has(lama.sod_idrec)) {
+          throw new Error(
+            `Baris ${lama.sod_kode} ${lama.sod_ukuran || ""} tidak boleh dihapus karena SO sudah punya invoice.`,
+          );
+        }
+        if (lama.sod_custom !== "Y") {
+          const kini = details.find((d) => d.dbLineId === lama.sod_idrec);
+          const sama =
+            (kini.kode || "") === lama.sod_kode &&
+            (kini.ukuran || "") === (lama.sod_ukuran || "") &&
+            Number(kini.jumlah || 0) === Number(lama.sod_jumlah) &&
+            Number(kini.harga || 0) === Number(lama.sod_harga) &&
+            Math.abs(
+              Number(kini.diskonRp || 0) - Number(lama.sod_diskon || 0),
+            ) < 1;
+          if (!sama) {
+            throw new Error(
+              `Baris ${lama.sod_kode} ${lama.sod_ukuran || ""} tidak boleh diubah karena SO sudah punya invoice.`,
+            );
+          }
+        }
+      }
+      barisUntukInsert = details.filter((d) => !d.dbLineId);
+      const [mx] = await connection.query(
+        "SELECT IFNULL(MAX(sod_nourut), 0) AS maks FROM tso_dtl WHERE sod_so_nomor = ?",
+        [soNomor],
+      );
+      nourutAwal = Number(mx[0].maks);
+    } else {
+      await connection.query("DELETE FROM tso_dtl WHERE sod_so_nomor = ?", [
+        soNomor,
+      ]);
+    }
 
     // [PENTING] Helper untuk membersihkan karakter 4-byte (emoji) agar MySQL tidak crash
     const stripEmojis = (str) => {
@@ -311,7 +383,8 @@ const save = async (data, user) => {
       miTracker[`${r.mid_kode}_${r.mid_ukuran}`] = Number(r.mi_qty);
     });
 
-    for (const [index, item] of details.entries()) {
+    for (const [i, item] of barisUntukInsert.entries()) {
+      const index = nourutAwal + i;
       const kodeBarang = item.kode || (item.isCustomOrder ? "CUSTOM" : "");
       const isCustom = item.isCustomOrder ? "Y" : "N";
 
@@ -717,6 +790,7 @@ const getSoForEdit = async (nomor) => {
       ppnPersen: Number(firstRow.so_ppn || 0),
       statusSo: firstRow.so_aktif === "Y" ? "AKTIF" : "PASIF",
       canEdit: !isInvoiced,
+      hanyaTambah: isInvoiced && Number(firstRow.so_close || 0) === 0,
       masihAdaSisaTagih,
       so_is_marketplace: firstRow.so_is_marketplace === "Y",
       so_mp_nomor_pesanan: firstRow.so_mp_nomor_pesanan || "",
