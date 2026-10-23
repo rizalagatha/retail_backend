@@ -4762,7 +4762,76 @@ const getActivePromos = async (filters, user) => {
   }));
 };
 
+// Promo SL1 dinamis: daftar barang dihitung dari asal SJ yang diterima di SL1.
+// Nomor promo HARUS sama dengan konstanta di backend mobile (packing_backend).
+const PROMO_ASAL_SL1 = {
+  "PRO-2026-016": "KBS", // diskon 25%
+  "PRO-2026-017": "KDC", // diskon 15%
+};
+
+// useAutoPromo (web) memanggil endpoint ini tiap item berubah, jadi hasilnya di-cache
+const PROMO_SL1_CACHE_MS = 60 * 1000;
+const promoSl1Cache = new Map(); // nomor promo -> { at, rows }
+
+const getSl1DynamicPromoItems = async (nomorPromo, asal) => {
+  const cached = promoSl1Cache.get(nomorPromo);
+  if (cached && Date.now() - cached.at < PROMO_SL1_CACHE_MS) {
+    return cached.rows;
+  }
+
+  // KDC hanya untuk barang yang tidak pernah masuk dari KBS (25% didahulukan)
+  const exclKbs =
+    asal === "KDC"
+      ? `AND NOT EXISTS (
+           SELECT 1 FROM tmasterstok m2
+           JOIN tdc_sj_hdr sj2 ON sj2.sj_noterima = m2.mst_noreferensi
+           WHERE m2.mst_cab = 'SL1' AND m2.mst_aktif = 'Y'
+             AND m2.mst_stok_in > 0 AND m2.mst_noreferensi LIKE '%.TJ.%'
+             AND sj2.sj_cab = 'KBS'
+             AND m2.mst_brg_kode = m.mst_brg_kode
+             AND m2.mst_ukuran = m.mst_ukuran
+         )`
+      : "";
+
+  const [found] = await pool.query(
+    `SELECT DISTINCT
+       m.mst_brg_kode AS kode,
+       m.mst_ukuran   AS ukuran,
+       p.pro_dispersen AS discPersen
+     FROM tmasterstok m
+     JOIN tdc_sj_hdr sj ON sj.sj_noterima = m.mst_noreferensi
+     JOIN tpromo p ON p.pro_nomor = ?
+     WHERE m.mst_cab = 'SL1' AND m.mst_aktif = 'Y'
+       AND m.mst_stok_in > 0 AND m.mst_noreferensi LIKE '%.TJ.%'
+       AND sj.sj_cab = ?
+       ${exclKbs}`,
+    [nomorPromo, asal],
+  );
+
+  // pro_dispersen dari DB berupa string "25.00"; useAutoPromo tidak mengonversinya
+  let rows = found.map((r) => ({
+    kode: r.kode,
+    ukuran: r.ukuran,
+    discPersen: Number(r.discPersen) || 0,
+    discRp: 0,
+  }));
+
+  // Daftar kosong dianggap "berlaku untuk semua barang" oleh useAutoPromo,
+  // jadi kembalikan baris penanda supaya tidak bocor ke semua barang.
+  if (rows.length === 0) {
+    rows = [{ kode: "__NONE__", ukuran: "-", discPersen: 0, discRp: 0 }];
+  }
+
+  promoSl1Cache.set(nomorPromo, { at: Date.now(), rows });
+  return rows;
+};
+
 const getPromoItems = async (nomorPromo) => {
+  const asal = PROMO_ASAL_SL1[nomorPromo];
+  if (asal) {
+    return getSl1DynamicPromoItems(nomorPromo, asal);
+  }
+
   const query = `
     SELECT 
       p.pb_brg_kode AS kode,
