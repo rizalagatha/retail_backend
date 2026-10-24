@@ -81,6 +81,22 @@ const getSetorHeaderId = async (connection, nomorSetor) => {
   return rows[0]?.sh_idrec;
 };
 
+// Hapus posting piutang/setoran milik satu dokumen refund (idempoten, aman dipanggil berulang)
+const hapusPostingRefund = async (connection, rfNomor) => {
+  await connection.query(
+    `DELETE FROM tpiutang_dtl
+     WHERE pd_ket = ? AND pd_uraian = 'REFUND'
+       AND pd_sd_angsur IN (SELECT rfd_iddrec FROM trefund_dtl WHERE rfd_nomor = ?)`,
+    [rfNomor, rfNomor],
+  );
+  await connection.query(
+    `DELETE FROM tsetor_dtl
+     WHERE sd_ket = ?
+       AND sd_angsur IN (SELECT rfd_iddrec FROM trefund_dtl WHERE rfd_nomor = ?)`,
+    [rfNomor, rfNomor],
+  );
+};
+
 // F1: Mencari Invoice (Piutang Negatif)
 const getInvoiceLookup = async (cabang) => {
   const query = `
@@ -177,7 +193,7 @@ const getSoDetailsForRefund = async (soNomor) => {
 const getDataForEdit = async (nomor) => {
   const query = `
         SELECT 
-            h.rf_nomor, h.rf_tanggal, h.user_create, h.rf_acc, h.rf_status,
+            h.rf_nomor, h.rf_tanggal, h.user_create, h.rf_acc, h.rf_status, h.rf_status_acc,
             d.rfd_notrs, d.rfd_cus_kode, d.rfd_nominal, d.rfd_refund, d.rfd_ket, 
             d.rfd_iddrec, d.rfd_bank, d.rfd_norek, d.rfd_atasnama,
             c.cus_nama,
@@ -200,6 +216,7 @@ const getDataForEdit = async (nomor) => {
     userApv: rows[0].rf_acc,
     isProcessed: !!rows[0].rf_status,
     isApproved: rows[0].rf_status === "APPROVE",
+    statusAcc: rows[0].rf_status_acc,
     keterangan: "",
   };
 
@@ -228,6 +245,14 @@ const getDataForEdit = async (nomor) => {
 // Menyimpan data (simpandata)
 const saveData = async (data, user) => {
   const { header, details, isNew, isApprover } = data;
+  // Jangan percaya flag dari klien: hak approve diambil dari token login
+  if (isApprover && user.canApproveRefund !== true) {
+    throw new Error("Anda tidak berwenang meng-approve refund.");
+  }
+  // Approver tidak membuat pengajuan baru (di frontend pun tidak bisa menambah baris)
+  if (isNew && isApprover) {
+    throw new Error("Approver tidak dapat membuat pengajuan refund baru.");
+  }
   const connection = await pool.getConnection();
 
   try {
@@ -235,6 +260,8 @@ const saveData = async (data, user) => {
 
     let rfNomor = header.nomor;
     let cidrec = "";
+    let perluAcc = false; // true = frontend harus meminta ACC SPV
+    let statusLama = ""; // rf_status sebelum disimpan (untuk membersihkan posting lama)
 
     let cStatus = "";
     if (isApprover) {
@@ -253,15 +280,39 @@ const saveData = async (data, user) => {
       rfNomor = await generateNewNomor(connection, user.cabang, header.tanggal);
 
       await connection.query(
-        "INSERT INTO trefund_hdr (rf_idrec, rf_nomor, rf_tanggal, user_create, date_create) VALUES (?, ?, ?, ?, NOW())",
+        "INSERT INTO trefund_hdr (rf_idrec, rf_nomor, rf_tanggal, rf_status_acc, user_create, date_create) VALUES (?, ?, ?, 'MENUNGGU', ?, NOW())",
         [cidrec, rfNomor, header.tanggal, user.kode],
       );
+      perluAcc = true;
     } else {
       const [hdr] = await connection.query(
-        "SELECT rf_idrec FROM trefund_hdr WHERE rf_nomor = ?",
+        "SELECT rf_idrec, rf_status, rf_status_acc, rf_closing FROM trefund_hdr WHERE rf_nomor = ? FOR UPDATE",
         [rfNomor],
       );
+      if (hdr.length === 0) throw new Error("Refund tidak ditemukan.");
+      if (hdr[0].rf_closing === "Y")
+        throw new Error("Refund sudah Closing, tidak bisa diubah.");
+      if (hdr[0].rf_status === "BATAL")
+        throw new Error("Refund sudah dibatalkan, tidak bisa diubah.");
+      const statusAcc = hdr[0].rf_status_acc;
+      statusLama = hdr[0].rf_status;
       cidrec = hdr[0].rf_idrec;
+
+      if (isApprover) {
+        if (statusAcc === "MENUNGGU")
+          throw new Error("Refund belum di-ACC SPV, belum bisa diproses.");
+        if (statusAcc === "DITOLAK")
+          throw new Error(
+            "Refund ditolak SPV. Menunggu perbaikan dari pengaju.",
+          );
+      } else {
+        if (hdr[0].rf_status === "APPROVE")
+          throw new Error("Refund yang sudah di-approve tidak bisa diubah.");
+        if (statusAcc === "MENUNGGU" || statusAcc === "ACC")
+          throw new Error(
+            "Refund yang sudah diajukan ke SPV tidak bisa diubah.",
+          );
+      }
 
       let query = "UPDATE trefund_hdr SET rf_tanggal = ?";
       const params = [header.tanggal];
@@ -272,6 +323,11 @@ const saveData = async (data, user) => {
       } else {
         query += ", user_modified = ?, date_modified = NOW()";
         params.push(user.kode);
+        // Perbaikan setelah ditolak = pengajuan ulang
+        if (statusAcc === "DITOLAK") {
+          query += ", rf_status_acc = 'MENUNGGU'";
+          perluAcc = true;
+        }
       }
       query += " WHERE rf_nomor = ?";
       params.push(rfNomor);
@@ -309,7 +365,12 @@ const saveData = async (data, user) => {
         }
       }
     } else {
-      // Jika APPROVER, update detail dan proses piutang/setoran
+      // Jika APPROVER: bersihkan posting lama dulu supaya hasil akhir selalu sesuai
+      // keadaan terbaru (un-approve atau centang APV dicabut tidak meninggalkan sisa)
+      if (statusLama === "APPROVE") {
+        await hapusPostingRefund(connection, rfNomor);
+      }
+      // update detail dan proses piutang/setoran
       for (const item of details) {
         if (item.iddrec) {
           const finalRefundAmount = item.apv ? item.refund : 0;
@@ -364,7 +425,11 @@ const saveData = async (data, user) => {
     }
 
     await connection.commit();
-    return { message: `Refund ${rfNomor} berhasil disimpan.`, nomor: rfNomor };
+    return {
+      message: `Refund ${rfNomor} berhasil disimpan.`,
+      nomor: rfNomor,
+      perluAcc,
+    };
   } catch (error) {
     await connection.rollback();
     throw error;
@@ -404,6 +469,9 @@ const getPrintData = async (nomor, user) => {
 
   const [rows] = await pool.query(query, [userSignature, nomor]);
   if (rows.length === 0) throw new Error("Data cetak tidak ditemukan.");
+  if (["MENUNGGU", "DITOLAK"].includes(rows[0].rf_status_acc)) {
+    throw new Error("Refund belum di-ACC SPV, belum bisa dicetak.");
+  }
 
   const header = { ...rows[0] };
   delete header.rfd_notrs; // Hapus properti detail dari header
@@ -442,4 +510,5 @@ module.exports = {
   getDataForEdit,
   saveData,
   getPrintData,
+  hapusPostingRefund,
 };

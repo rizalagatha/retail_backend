@@ -30,6 +30,67 @@ const generateAuthNumber = async (cabang) => {
   return `${prefix}${formattedSeq}`; // Hasilnya pas 18 karakter: K01.AUTH.2604.0001
 };
 
+// Tindak lanjut ACC/tolak mutasi kirim. Stok sudah terpotong saat simpan (trigger tmsk_dtl),
+// jadi ACC hanya membuka gerbang cetak/terima. Tolak = hapus dokumen (trigger before_delete
+// mengembalikan stok) dan unit serial dikembalikan ke toko pengirim.
+const prosesAccMutasiKirim = async (nomor, action, approver) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [hdr] = await connection.query(
+      "SELECT msk_cab, msk_status_acc FROM tmsk_hdr WHERE msk_nomor = ? FOR UPDATE",
+      [nomor],
+    );
+    // Dokumen sudah tidak ada atau sudah diproses: tidak ada yang dikerjakan
+    if (hdr.length === 0 || hdr[0].msk_status_acc !== "MENUNGGU") {
+      await connection.rollback();
+      return;
+    }
+
+    if (action === "APPROVE") {
+      await connection.query(
+        "UPDATE tmsk_hdr SET msk_status_acc = 'ACC' WHERE msk_nomor = ?",
+        [nomor],
+      );
+    } else {
+      const [serials] = await connection.query(
+        "SELECT mskd_unit_serial FROM tmsk_dtl WHERE mskd_nomor = ? AND mskd_unit_serial IS NOT NULL",
+        [nomor],
+      );
+      if (serials.length > 0) {
+        await connection.query(
+          `UPDATE tbarangdc_unit
+           SET unit_status = 'DI_TOKO', unit_lokasi_saat_ini = ?, date_modified = NOW(), user_modified = ?
+           WHERE unit_serial IN (?)`,
+          [hdr[0].msk_cab, approver, serials.map((r) => r.mskd_unit_serial)],
+        );
+      }
+      await connection.query("DELETE FROM tmsk_dtl WHERE mskd_nomor = ?", [
+        nomor,
+      ]);
+      await connection.query("DELETE FROM tmsk_hdr WHERE msk_nomor = ?", [
+        nomor,
+      ]);
+    }
+
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
+// ACC/tolak refund oleh SPV. Satu UPDATE sudah cukup: posting uang tetap oleh finance sesudahnya.
+const prosesAccRefund = async (nomor, action) => {
+  await pool.query(
+    "UPDATE trefund_hdr SET rf_status_acc = ? WHERE rf_nomor = ? AND rf_status_acc = 'MENUNGGU'",
+    [action === "APPROVE" ? "ACC" : "DITOLAK", nomor],
+  );
+};
+
 const authPinService = {
   async createRequest(payload) {
     // 1. Destructure Payload
@@ -83,7 +144,7 @@ const authPinService = {
 
       if (String(jenis).trim() === "TRANSFER_SOP") {
         // Sesuai permintaan: Kirim hanya ke RIO untuk Transfer SOP
-        managerCodes = ["RIO"];
+        await fcmService.sendToTopic("user_RIO", title, body, dataPayload);
       } else if (
         String(jenis).trim() === "AMBIL_BARANG" &&
         target_cabang &&
@@ -98,43 +159,28 @@ const authPinService = {
         const today = new Date();
         const isEstuManagerPeriod =
           today >= new Date(2026, 0, 12) && today < new Date(2026, 0, 17);
-        const isPeminjaman = String(jenis).trim() === "PEMINJAMAN_BARANG";
-        const isKlaimPettyCash = String(jenis).trim() === "KLAIM_PETTYCASH";
-        const isSubmitBap = String(jenis).trim() === "SUBMIT_BAP";
-        const isClosePenawaran = String(jenis).trim() === "CLOSE_PENAWARAN";
-        const isCloseSoDtf = String(jenis).trim() === "CLOSE_SO_DTF";
-        const isCloseSo = String(jenis).trim() === "CLOSE_SO";
-        const isClosePh = String(jenis).trim() === "CLOSE_PH";
+        // Jenis yang diproses Estu (bukan Haris), selain Darul
+        const jenisEstu = [
+          "PEMINJAMAN_BARANG",
+          "KLAIM_PETTYCASH",
+          "SUBMIT_BAP",
+          "CLOSE_PENAWARAN",
+          "CLOSE_SO_DTF",
+          "CLOSE_SO",
+          "CLOSE_PH",
+          "MUTASI_KIRIM",
+          "REFUND",
+        ];
+        const isJenisEstu = jenisEstu.includes(String(jenis).trim());
 
-        let managerCodes = ["DARUL"]; // Darul selalu dikirim
-
-        if (
-          isPeminjaman ||
-          isKlaimPettyCash ||
-          isSubmitBap ||
-          isClosePenawaran ||
-          isCloseSoDtf ||
-          isCloseSo ||
-          isClosePh
-        ) {
-          if (!managerCodes.includes("ESTU")) managerCodes.push("ESTU");
-        }
-
-        if (isEstuManagerPeriod) {
-          // Periode 12-16 Jan: Transaksi Manager lari ke ESTU
-          if (!managerCodes.includes("ESTU")) managerCodes.push("ESTU");
+        let managerCodes;
+        if (String(jenis).trim() === "REFUND") {
+          managerCodes = ["ESTU"]; // Refund hanya ke SPV (Estu)
         } else {
-          // Periode Normal: Transaksi Manager lari ke HARIS
-          // [PERBAIKAN] Haris TIDAK dikirimi notif jika jenisnya Peminjaman / Petty Cash (karena itu milik Estu)
-          if (
-            !isPeminjaman &&
-            !isKlaimPettyCash &&
-            !isSubmitBap &&
-            !isClosePenawaran &&
-            !isCloseSoDtf &&
-            !isCloseSo &&
-            !isClosePh
-          ) {
+          managerCodes = ["DARUL"]; // Darul selalu dikirim
+          if (isJenisEstu || isEstuManagerPeriod) {
+            managerCodes.push("ESTU");
+          } else {
             managerCodes.push("HARIS");
           }
         }
@@ -220,6 +266,8 @@ const authPinService = {
       "CLOSE_SO_DTF",
       "CLOSE_SO",
       "CLOSE_PH",
+      "MUTASI_KIRIM",
+      "REFUND",
     ];
 
     if (userCabang === "KDC") {
@@ -238,6 +286,8 @@ const authPinService = {
           "CLOSE_SO_DTF",
           "CLOSE_SO",
           "CLOSE_PH",
+          "MUTASI_KIRIM",
+          "REFUND",
         ]);
       } else if (userKodeUpper === "HARIS") {
         if (isEstuManagerPeriod) {
@@ -250,6 +300,8 @@ const authPinService = {
             "KLAIM_PETTYCASH",
             "SUBMIT_BAP",
             "TRANSFER_SOP",
+            "MUTASI_KIRIM",
+            "REFUND",
           ]);
         }
       } else if (userKodeUpper === "RIO") {
@@ -279,35 +331,38 @@ const authPinService = {
     const newStatus = action === "APPROVE" ? "Y" : "N";
 
     const [authDataCheck] = await pool.query(
-      "SELECT o_jenis, o_cab FROM totorisasi WHERE o_nomor = ?",
+      "SELECT o_jenis, o_cab, o_requester FROM totorisasi WHERE o_nomor = ?",
       [authNomor],
     );
     if (authDataCheck.length === 0) {
       throw new Error("Data otorisasi tidak ditemukan.");
     }
 
-    const { o_jenis, o_cab } = authDataCheck[0];
-    const managerTypes = [
-      "PEMINJAMAN_BARANG",
-      "KLAIM_PETTYCASH",
-      "SUBMIT_BAP",
-      "TRANSFER_SOP",
-      "DISKON_FAKTUR",
-      "SO_TANPA_DP",
-      "SO_DTF_TANPA_DP",
-      "BELUM_LUNAS",
-      "DISKON_ITEM",
-      "PIUTANG",
-      "CLOSE_PENAWARAN",
-      "CLOSE_SO_DTF",
-      "CLOSE_SO",
-    ];
+    const { o_jenis, o_cab, o_requester } = authDataCheck[0];
+
+    // Siapa yang sah meng-ACC tiap jenis, dan pemohon tidak boleh meng-ACC miliknya sendiri
+    const aturanApprover = {
+      MUTASI_KIRIM: ["DARUL", "ESTU"],
+      REFUND: ["ESTU"],
+    };
+    const approverSah = aturanApprover[o_jenis];
+    if (approverSah) {
+      const kodeUpper = String(managerUser).toUpperCase();
+      if (!approverSah.includes(kodeUpper)) {
+        throw new Error(
+          `Otorisasi ${o_jenis.replace(/_/g, " ")} hanya boleh dilakukan oleh ${approverSah.join(" atau ")}.`,
+        );
+      }
+      if (String(o_requester).toUpperCase() === kodeUpper) {
+        throw new Error("Tidak boleh meng-ACC permintaan sendiri.");
+      }
+    }
 
     const query = `
-            UPDATE totorisasi 
-            SET o_status = ?, o_approver = ?, o_approved_at = NOW()
-            WHERE o_nomor = ? AND o_status = 'P'
-        `;
+      UPDATE totorisasi 
+      SET o_status = ?, o_approver = ?, o_approved_at = NOW()
+      WHERE o_nomor = ? AND o_status = 'P'
+    `;
 
     const [result] = await pool.query(query, [
       newStatus,
@@ -356,6 +411,22 @@ const authPinService = {
             [managerUser, o_transaksi],
           );
         }
+      }
+    }
+    if ((o_jenis === "MUTASI_KIRIM" || o_jenis === "REFUND") && o_transaksi) {
+      try {
+        if (o_jenis === "MUTASI_KIRIM") {
+          await prosesAccMutasiKirim(o_transaksi, action, managerUser);
+        } else {
+          await prosesAccRefund(o_transaksi, action);
+        }
+      } catch (hookError) {
+        // Kembalikan ke pending supaya bisa diproses ulang, jangan menggantung Y/N
+        await pool.query(
+          "UPDATE totorisasi SET o_status = 'P' WHERE o_nomor = ?",
+          [authNomor],
+        );
+        throw hookError;
       }
     }
 

@@ -38,6 +38,13 @@ const loadFromKirim = async (nomorKirim) => {
     `;
   const [rows] = await pool.query(query, [nomorKirim]);
   if (rows.length === 0) throw new Error("Dokumen pengiriman tidak ditemukan.");
+  const [cekAcc] = await pool.query(
+    "SELECT msk_status_acc FROM tmsk_hdr WHERE msk_nomor = ?",
+    [nomorKirim],
+  );
+  if (cekAcc.length > 0 && cekAcc[0].msk_status_acc === "MENUNGGU") {
+    throw new Error("Mutasi belum di-ACC SPV, belum bisa diterima.");
+  }
 
   const header = {
     nomorKirim: rows[0].msk_nomor,
@@ -68,6 +75,31 @@ const save = async (payload, user) => {
 
   try {
     await connection.beginTransaction();
+
+    // Kunci dokumen kirim agar dua penerimaan bersamaan tidak lolos bersama
+    const [kirimRows] = await connection.query(
+      "SELECT msk_kecab, msk_noterima, msk_status_acc FROM tmsk_hdr WHERE msk_nomor = ? FOR UPDATE",
+      [header.nomorKirim],
+    );
+    if (kirimRows.length === 0)
+      throw new Error("Dokumen pengiriman tidak ditemukan.");
+    const kirim = kirimRows[0];
+
+    if (kirim.msk_status_acc === "MENUNGGU")
+      throw new Error("Mutasi belum di-ACC SPV, belum bisa diterima.");
+    if (kirim.msk_kecab !== user.cabang)
+      throw new Error("Dokumen ini bukan ditujukan ke store Anda.");
+    if (kirim.msk_noterima)
+      throw new Error(`Dokumen ini sudah diterima (${kirim.msk_noterima}).`);
+
+    const [kirimDtl] = await connection.query(
+      `SELECT mskd_kode, mskd_ukuran, SUM(mskd_jumlah) AS qty
+       FROM tmsk_dtl WHERE mskd_nomor = ? GROUP BY mskd_kode, mskd_ukuran`,
+      [header.nomorKirim],
+    );
+    const qtyKirim = new Map(
+      kirimDtl.map((r) => [`${r.mskd_kode}||${r.mskd_ukuran}`, Number(r.qty)]),
+    );
 
     const year = new Date(header.tanggalTerima)
       .getFullYear()
@@ -111,6 +143,13 @@ const save = async (payload, user) => {
       for (const item of items) {
         const qty = Number(item.jumlahTerima) || 0;
         if (qty <= 0) continue;
+
+        const qtyMaks = qtyKirim.get(`${item.kode}||${item.ukuran}`) ?? 0;
+        if (qty > qtyMaks) {
+          throw new Error(
+            `Jumlah terima ${item.kode} ukuran ${item.ukuran} (${qty}) melebihi jumlah kirim (${qtyMaks}).`,
+          );
+        }
 
         // BARU: cari unit_serial spesifik yang dikirim lewat dokumen
         // MSK ini (bukan pool TRANSIT_ANTAR_STORE global)

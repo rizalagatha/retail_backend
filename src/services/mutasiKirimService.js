@@ -30,7 +30,8 @@ const getList = async (filters) => {
         g.gdg_nama AS namaStoreTujuan,
         h.msk_ket AS keterangan,
         h.user_create AS usr,
-        h.msk_closing AS 'closing'
+        h.msk_closing AS 'closing',
+        h.msk_status_acc AS statusAcc
     FROM tmsk_hdr h
     INNER JOIN tmsk_dtl d ON d.mskd_nomor = h.msk_nomor
     LEFT JOIN tgudang f ON f.gdg_kode = h.msk_cab
@@ -70,12 +71,15 @@ const remove = async (nomor, user) => {
     await connection.beginTransaction();
 
     const [rows] = await connection.query(
-      "SELECT msk_noterima, msk_closing FROM tmsk_hdr WHERE msk_nomor = ?",
+      "SELECT msk_cab, msk_noterima, msk_closing, msk_status_acc FROM tmsk_hdr WHERE msk_nomor = ? FOR UPDATE",
       [nomor],
     );
 
     if (rows.length === 0) throw new Error("Data tidak ditemukan.");
     const doc = rows[0];
+
+    if (doc.msk_status_acc === "MENUNGGU")
+      throw new Error("Mutasi sedang menunggu ACC SPV. Tidak bisa dihapus.");
 
     // Validasi dari TfrmBrowMSK.cxButton4Click
     if (doc.msk_noterima)
@@ -88,7 +92,21 @@ const remove = async (nomor, user) => {
       );
     }
 
-    // Hapus detail dan header
+    // Kembalikan unit serial yang ditandai TRANSIT_ANTAR_STORE oleh save
+    const [serials] = await connection.query(
+      "SELECT mskd_unit_serial FROM tmsk_dtl WHERE mskd_nomor = ? AND mskd_unit_serial IS NOT NULL",
+      [nomor],
+    );
+    if (serials.length > 0) {
+      await connection.query(
+        `UPDATE tbarangdc_unit
+         SET unit_status = 'DI_TOKO', unit_lokasi_saat_ini = ?, date_modified = NOW(), user_modified = ?
+         WHERE unit_serial IN (?)`,
+        [doc.msk_cab, user.kode, serials.map((r) => r.mskd_unit_serial)],
+      );
+    }
+
+    // Hapus detail dan header (trigger before_delete mengembalikan stok)
     await connection.query("DELETE FROM tmsk_dtl WHERE mskd_nomor = ?", [
       nomor,
     ]);

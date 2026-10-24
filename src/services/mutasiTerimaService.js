@@ -18,6 +18,7 @@ const getList = async (filters) => {
     LEFT JOIN tgudang f ON f.gdg_kode = h.msk_cab
     WHERE
       h.msk_kecab = ?
+      AND h.msk_status_acc <> 'MENUNGGU'
       AND h.msk_tanggal BETWEEN ? AND ?
       AND (? IS NULL OR d.mskd_kode = ?)
     GROUP BY h.msk_nomor
@@ -51,7 +52,7 @@ const cancelReceipt = async (nomorKirim, user) => {
 
     const [headerRows] = await connection.query(
       "SELECT msk_noterima, msk_kecab FROM tmsk_hdr WHERE msk_nomor = ?",
-      [nomorKirim]
+      [nomorKirim],
     );
     if (headerRows.length === 0)
       throw new Error("Dokumen pengiriman tidak ditemukan.");
@@ -61,12 +62,12 @@ const cancelReceipt = async (nomorKirim, user) => {
     if (!nomorTerima) throw new Error("Dokumen ini memang belum diterima.");
     if (header.msk_kecab !== user.cabang)
       throw new Error(
-        "Anda tidak berhak membatalkan penerimaan milik cabang lain."
+        "Anda tidak berhak membatalkan penerimaan milik cabang lain.",
       );
 
     const [terimaRows] = await connection.query(
       "SELECT mst_closing FROM tmst_hdr WHERE mst_nomor = ?",
-      [nomorTerima]
+      [nomorTerima],
     );
     if (terimaRows.length > 0 && terimaRows[0].mst_closing === "Y") {
       throw new Error("Penerimaan sudah di-closing dan tidak bisa dibatalkan.");
@@ -79,7 +80,7 @@ const cancelReceipt = async (nomorKirim, user) => {
     // Kosongkan referensi di header pengiriman
     await connection.query(
       'UPDATE tmsk_hdr SET msk_noterima = "" WHERE msk_nomor = ?',
-      [nomorKirim]
+      [nomorKirim],
     );
 
     await connection.commit();
@@ -115,6 +116,7 @@ const getExportDetails = async (filters) => {
     LEFT JOIN tbarangdc a ON a.brg_kode = d.mskd_kode
     WHERE
       h.msk_kecab = ?
+      AND h.msk_status_acc <> 'MENUNGGU'
       -- [FIX] Gunakan DATE() agar jam diabaikan
       AND DATE(h.msk_tanggal) BETWEEN ? AND ?
       AND (? IS NULL OR d.mskd_kode = ?)

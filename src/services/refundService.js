@@ -1,5 +1,6 @@
 const pool = require("../config/database");
 const { format, parseISO, addMonths, startOfMonth } = require("date-fns");
+const { hapusPostingRefund } = require("./refundFormService");
 
 /**
  * Mengambil daftar header Refund.
@@ -14,6 +15,7 @@ const getList = async (filters, user) => {
             h.rf_tanggal AS Tanggal,
             h.user_create AS User,
             h.rf_status AS Status,
+            h.rf_status_acc AS StatusAcc,
             h.rf_acc AS Approved,
             h.date_acc AS TglApprove,
             h.rf_closing AS Closing,
@@ -80,11 +82,16 @@ const deleteRefund = async (nomor, user) => {
     await connection.beginTransaction();
 
     const [rows] = await connection.query(
-      "SELECT rf_nomor, rf_acc, rf_closing FROM trefund_hdr WHERE rf_nomor = ?",
+      "SELECT rf_nomor, rf_acc, rf_closing, rf_status_acc FROM trefund_hdr WHERE rf_nomor = ? FOR UPDATE",
       [nomor],
     );
     if (rows.length === 0) throw new Error("Dokumen tidak ditemukan.");
     const doc = rows[0];
+
+    // Validasi dari Delphi
+    if (doc.rf_status_acc === "MENUNGGU")
+      throw new Error("Menunggu ACC SPV. Tidak bisa dihapus.");
+    if (doc.rf_acc) throw new Error("Sudah diapprove. Tidak bisa dihapus.");
 
     // Validasi dari Delphi
     if (doc.rf_acc) throw new Error("Sudah diapprove. Tidak bisa dihapus.");
@@ -120,6 +127,7 @@ const getExportHeaders = async (filters, user) => {
         h.rf_tanggal AS 'Tanggal',
         h.user_create AS 'User',
         h.rf_status AS 'Status',
+        h.rf_status_acc AS 'StatusAcc',
         
         -- [FIX] Sesuaikan dengan nama kolom di database
         h.rf_acc AS 'ApprovedBy',
@@ -217,14 +225,28 @@ const getCabangOptions = async (user) => {
 const cancelRefund = async (nomor, reason, user) => {
   const connection = await pool.getConnection();
   try {
+    if (user.canApproveRefund !== true)
+      throw new Error("Anda tidak berwenang membatalkan refund.");
+
     await connection.beginTransaction();
 
     const [rows] = await connection.query(
-      "SELECT rf_nomor, rf_closing FROM trefund_hdr WHERE rf_nomor = ?",
+      "SELECT rf_nomor, rf_closing, rf_status, rf_status_acc FROM trefund_hdr WHERE rf_nomor = ? FOR UPDATE",
       [nomor],
     );
     if (rows.length === 0) throw new Error("Dokumen tidak ditemukan.");
     if (rows[0].rf_closing === "Y") throw new Error("Data sudah Closing.");
+    if (rows[0].rf_status === "BATAL")
+      throw new Error("Dokumen sudah dibatalkan.");
+    if (["MENUNGGU", "DITOLAK"].includes(rows[0].rf_status_acc))
+      throw new Error(
+        "Dokumen belum disetujui SPV. Tidak bisa dibatalkan dari sini.",
+      );
+
+    // Dokumen yang sudah APPROVE sudah memposting piutang/setoran: balik dulu
+    if (rows[0].rf_status === "APPROVE") {
+      await hapusPostingRefund(connection, nomor);
+    }
 
     // 1. UPDATE HEADER: Set Status 'BATAL' & Kosongkan Verifikasi
     const updateHdrSql = `

@@ -32,6 +32,13 @@ const getForEdit = async (nomor) => {
   if (headerRows.length === 0) {
     throw new Error("Dokumen tidak ditemukan");
   }
+  const [statusRows] = await pool.query(
+    "SELECT msk_status_acc FROM tmsk_hdr WHERE msk_nomor = ?",
+    [nomor],
+  );
+  if (statusRows.length > 0 && statusRows[0].msk_status_acc !== "LAMA") {
+    throw new Error("Mutasi yang sudah diajukan ke SPV tidak bisa diubah.");
+  }
   const header = headerRows[0];
   const gudangAsal = nomor.substring(0, 3);
 
@@ -84,9 +91,9 @@ const save = async (payload, user) => {
       const headerInsertQuery = `
         INSERT INTO tmsk_hdr (
           msk_idrec, msk_nomor, msk_tanggal, msk_kecab, msk_ket, 
-          msk_cab, user_create, date_create
+          msk_cab, msk_status_acc, user_create, date_create
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, NOW());
+        VALUES (?, ?, ?, ?, ?, ?, 'MENUNGGU', ?, NOW());
       `;
       await connection.query(headerInsertQuery, [
         currentIdRec,
@@ -98,6 +105,16 @@ const save = async (payload, user) => {
         user.kode,
       ]);
     } else {
+      const [statusRows] = await connection.query(
+        "SELECT msk_status_acc FROM tmsk_hdr WHERE msk_nomor = ? AND msk_cab = ? FOR UPDATE",
+        [nomorDokumen, user.cabang],
+      );
+      if (statusRows.length === 0) {
+        throw new Error("Dokumen tidak ditemukan.");
+      }
+      if (statusRows[0].msk_status_acc !== "LAMA") {
+        throw new Error("Mutasi yang sudah diajukan ke SPV tidak bisa diubah.");
+      }
       const [existingHeader] = await connection.query(
         "SELECT msk_idrec FROM tmsk_hdr WHERE msk_nomor = ? AND msk_cab = ?",
         [nomorDokumen, user.cabang],
@@ -283,6 +300,7 @@ const getPrintData = async (nomor, user) => {
       MAX(h.msk_ket) AS msk_ket,
       MAX(DATE_FORMAT(h.date_create, '%d-%m-%Y %H:%i:%s')) AS created,
       MAX(h.user_create) AS user_create,
+      MAX(h.msk_status_acc) AS msk_status_acc,
       d.mskd_kode,
       MAX(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna))) AS nama_barang,
       d.mskd_ukuran,
@@ -304,6 +322,9 @@ const getPrintData = async (nomor, user) => {
   const [rows] = await pool.query(query, [nomor]);
   if (rows.length === 0) {
     throw new Error("Data untuk dicetak tidak ditemukan");
+  }
+  if (rows[0].msk_status_acc === "MENUNGGU") {
+    throw new Error("Mutasi belum di-ACC SPV, belum bisa dicetak.");
   }
 
   const header = {

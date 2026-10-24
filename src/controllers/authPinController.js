@@ -81,6 +81,8 @@ const authorizationController = {
           "KLAIM_PETTYCASH",
           "SUBMIT_BAP",
           "TRANSFER_SOP",
+          "MUTASI_KIRIM",
+          "REFUND",
         ];
 
         // JIKA transaksi termasuk level Manager, tapi yang approve beralamat selain KDC -> BLOKIR!

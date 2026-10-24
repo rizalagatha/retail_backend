@@ -1,4 +1,17 @@
 const changelogs = {
+  "1.5.9": {
+    date: "2026-10-24",
+    changes: [
+      {
+        title: "Pembaruan",
+        items: [
+          "Pengajuan Refund dan Mutasi Antar Store Kirim wajib melalui approval SPV terlebih dahulu.",
+          "LHK SO DTF Stok tidak bisa diubah setelah disimpan",
+          "Fitur Export Excel Log Mesin DTF",
+        ],
+      },
+    ],
+  },
   "1.5.8": {
     date: "2026-10-22",
     changes: [
