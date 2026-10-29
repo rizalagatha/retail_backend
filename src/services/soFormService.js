@@ -60,8 +60,32 @@ const save = async (data, user) => {
             `SO ${header.nomor} sudah ditutup dan tidak bisa diubah.`,
           );
         }
+        const hdrLama = kunci[0];
+        if ((header.customer?.kode || "") !== hdrLama.so_cus_kode) {
+          throw new Error(
+            "Customer tidak boleh diganti karena SO sudah punya invoice.",
+          );
+        }
+        if (Number(header.ppnPersen || 0) !== Number(hdrLama.so_ppn || 0)) {
+          throw new Error(
+            "PPN tidak boleh diubah karena SO sudah punya invoice.",
+          );
+        }
+        if (
+          Math.abs(
+            Number(footer.diskonPersen1 || 0) - Number(hdrLama.so_disc1 || 0),
+          ) > 0.001 ||
+          Math.abs(
+            Number(footer.diskonPersen2 || 0) - Number(hdrLama.so_disc2 || 0),
+          ) > 0.001
+        ) {
+          throw new Error(
+            "Diskon % tidak boleh diubah karena SO sudah punya invoice.",
+          );
+        }
         const [lama] = await connection.query(
-          `SELECT sod_idrec, sod_kode, sod_ukuran, sod_jumlah, sod_harga, sod_diskon, sod_custom
+          `SELECT sod_idrec, sod_kode, sod_ukuran, sod_jumlah, sod_harga, sod_diskon,
+                  sod_custom, sod_sd_nomor, sod_scanned
              FROM tso_dtl WHERE sod_so_nomor = ? ORDER BY sod_nourut`,
           [header.nomor],
         );
@@ -166,25 +190,149 @@ const save = async (data, user) => {
       idrec = idrecRows[0].so_idrec;
 
       if (modeTambah) {
-        // Hanya field yang ikut berubah saat baris bertambah
-        await connection.query(
-          `UPDATE tso_hdr SET
-             so_dateline = ?, so_accdp = ?, so_ket = ?,
-             so_disc = ?, so_disc1 = ?, so_disc2 = ?, so_dp = ?,
-             user_modified = ?, date_modified = NOW()
-           WHERE so_nomor = ?`,
-          [
-            header.dateline,
-            footer.pinTanpaDp || "",
-            header.keterangan || "",
-            footer.diskonRp || 0,
-            footer.diskonPersen1 || 0,
-            footer.diskonPersen2 || 0,
-            header.isMarketplace ? 0 : footer.totalDp || 0,
-            user.kode,
-            soNomor,
-          ],
+        const ditagihMap = await hitungQtyDitagihPerBaris(
+          connection,
+          soNomor,
+          barisLama,
         );
+        const detailPerId = new Map(
+          details.filter((d) => d.dbLineId).map((d) => [d.dbLineId, d]),
+        );
+        const hapusIds = [];
+        const ubahList = [];
+
+        for (const lama of barisLama) {
+          const label = `${lama.sod_kode} ${lama.sod_ukuran || ""}`.trim();
+          const qtyLama = Number(lama.sod_jumlah);
+          const ditagih = ditagihMap.get(lama.sod_idrec) || 0;
+          const terhubungProduksi =
+            lama.sod_custom === "Y" ||
+            lama.sod_kode === "CUSTOM" ||
+            !!lama.sod_sd_nomor;
+          const kini = detailPerId.get(lama.sod_idrec);
+
+          // --- Baris dihapus ---
+          if (!kini) {
+            if (terhubungProduksi) {
+              throw new Error(
+                `Baris ${label} terhubung ke custom/SO DTF dan tidak boleh dihapus karena SO sudah punya invoice.`,
+              );
+            }
+            if (ditagih > 0) {
+              throw new Error(
+                `Baris ${label} sudah ditagih ${ditagih} pcs dan tidak boleh dihapus.`,
+              );
+            }
+            if (
+              (await qtyMutasiPesanan(
+                connection,
+                soNomor,
+                lama.sod_kode,
+                lama.sod_ukuran,
+              )) > 0
+            ) {
+              throw new Error(
+                `Baris ${label} sudah dimutasi ke stok pesanan. Batalkan mutasi dulu sebelum menghapus.`,
+              );
+            }
+            hapusIds.push(lama.sod_idrec);
+            continue;
+          }
+
+          // Custom/SO DTF: perilaku lama (tidak ikut diubah)
+          if (terhubungProduksi) continue;
+
+          const kodeSama =
+            (kini.kode || "") === lama.sod_kode &&
+            (kini.ukuran || "") === (lama.sod_ukuran || "");
+          const hargaSama = Number(kini.harga || 0) === Number(lama.sod_harga);
+          const diskonSama =
+            Math.abs(
+              Number(kini.diskonRp || 0) - Number(lama.sod_diskon || 0),
+            ) < 1;
+          const qtyKini = Number(kini.jumlah || 0);
+
+          if (kodeSama && hargaSama && diskonSama && qtyKini === qtyLama) {
+            continue; // tidak berubah
+          }
+
+          // --- Baris sudah pernah ditagih: hanya qty yang boleh berubah ---
+          if (ditagih > 0) {
+            if (!kodeSama || !hargaSama || !diskonSama) {
+              throw new Error(
+                `Kode, ukuran, harga, dan diskon baris ${label} tidak boleh diubah karena sudah ditagih.`,
+              );
+            }
+            if (ditagih >= qtyLama) {
+              throw new Error(
+                `Baris ${label} sudah ditagih penuh dan tidak boleh diubah.`,
+              );
+            }
+            if (qtyKini < ditagih) {
+              throw new Error(
+                `Qty baris ${label} tidak boleh di bawah qty yang sudah ditagih (${ditagih}).`,
+              );
+            }
+          }
+
+          if (qtyKini <= 0) {
+            throw new Error(
+              `Qty baris ${label} harus lebih dari 0. Hapus baris jika dibatalkan.`,
+            );
+          }
+          if (
+            (await qtyMutasiPesanan(
+              connection,
+              soNomor,
+              lama.sod_kode,
+              lama.sod_ukuran,
+            )) > 0
+          ) {
+            throw new Error(
+              `Baris ${label} sudah dimutasi ke stok pesanan. Batalkan mutasi dulu sebelum mengubah.`,
+            );
+          }
+          ubahList.push({
+            id: lama.sod_idrec,
+            kini,
+            kodeBerubah: !kodeSama,
+            lama,
+          });
+        }
+
+        // nourut baru dihitung SEBELUM hapus supaya idrec baris baru tidak menabrak
+        const [mx] = await connection.query(
+          "SELECT IFNULL(MAX(sod_nourut), 0) AS maks FROM tso_dtl WHERE sod_so_nomor = ?",
+          [soNomor],
+        );
+        nourutAwal = Number(mx[0].maks);
+
+        if (hapusIds.length > 0) {
+          await connection.query(
+            "DELETE FROM tso_dtl WHERE sod_so_nomor = ? AND sod_idrec IN (?)",
+            [soNomor, hapusIds],
+          );
+        }
+        for (const { id, kini, kodeBerubah, lama } of ubahList) {
+          await connection.query(
+            `UPDATE tso_dtl
+              SET sod_kode = ?, sod_ukuran = ?, sod_jumlah = ?, sod_harga = ?,
+                  sod_disc = ?, sod_diskon = ?, sod_scanned = ?
+            WHERE sod_so_nomor = ? AND sod_idrec = ?`,
+            [
+              kini.kode,
+              kini.ukuran || "",
+              Number(kini.jumlah || 0),
+              Number(kini.harga || 0),
+              Number(kini.diskonPersen || 0),
+              Number(kini.diskonRp || 0),
+              kodeBerubah ? 0 : Number(lama.sod_scanned || 0),
+              soNomor,
+              id,
+            ],
+          );
+        }
+        barisUntukInsert = details.filter((d) => !d.dbLineId);
       } else {
         const updateHeaderQuery = `
         UPDATE tso_hdr SET
@@ -331,8 +479,8 @@ const save = async (data, user) => {
             `Baris ${lama.sod_kode} ${lama.sod_ukuran || ""} tidak boleh dihapus karena SO sudah punya invoice.`,
           );
         }
+        const kini = details.find((d) => d.dbLineId === lama.sod_idrec);
         if (lama.sod_custom !== "Y") {
-          const kini = details.find((d) => d.dbLineId === lama.sod_idrec);
           const sama =
             (kini.kode || "") === lama.sod_kode &&
             (kini.ukuran || "") === (lama.sod_ukuran || "") &&
@@ -344,6 +492,21 @@ const save = async (data, user) => {
           if (!sama) {
             throw new Error(
               `Baris ${lama.sod_kode} ${lama.sod_ukuran || ""} tidak boleh diubah karena SO sudah punya invoice.`,
+            );
+          }
+        } else {
+          // Custom: boleh diedit, tapi qty tidak boleh di bawah yang sudah ditagih
+          const [ditagih] = await connection.query(
+            `SELECT IFNULL(SUM(d.invd_jumlah), 0) AS qty
+               FROM tinv_dtl d
+               JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+              WHERE h.inv_nomor_so = ? AND h.inv_sts_pro = 0
+                AND d.invd_sod_idrec = ?`,
+            [header.nomor, lama.sod_idrec],
+          );
+          if (Number(kini.jumlah || 0) < Number(ditagih[0].qty)) {
+            throw new Error(
+              `Qty baris custom ${lama.sod_kode} tidak boleh di bawah qty yang sudah ditagih (${ditagih[0].qty}).`,
             );
           }
         }
@@ -595,6 +758,66 @@ const save = async (data, user) => {
   }
 };
 
+// Qty yang sudah ditagih per baris SO (invoice aktif). Aturan alokasi SAMA dengan
+// alokasiBarisSo di invoiceFormService: penunjuk invd_sod_idrec dulu, invoice lama
+// (tanpa penunjuk) dibagi per kode+ukuran sesuai urutan baris.
+// baris: array urut sod_nourut berisi { sod_idrec, sod_kode, sod_ukuran, sod_jumlah }
+const hitungQtyDitagihPerBaris = async (db, soNomor, baris) => {
+  const [linkedRows] = await db.query(
+    `SELECT d.invd_sod_idrec AS idrec, SUM(d.invd_jumlah) AS qty
+       FROM tinv_dtl d
+       JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+      WHERE h.inv_nomor_so = ? AND h.inv_sts_pro = 0
+        AND d.invd_sod_idrec <> ''
+      GROUP BY d.invd_sod_idrec`,
+    [soNomor],
+  );
+  const [legacyRows] = await db.query(
+    `SELECT d.invd_kode AS kode, d.invd_ukuran AS ukuran, SUM(d.invd_jumlah) AS qty
+       FROM tinv_dtl d
+       JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+      WHERE h.inv_nomor_so = ? AND h.inv_sts_pro = 0
+        AND d.invd_sod_idrec = ''
+      GROUP BY d.invd_kode, d.invd_ukuran`,
+    [soNomor],
+  );
+  const linkedMap = new Map(linkedRows.map((r) => [r.idrec, Number(r.qty)]));
+  const legacyPool = new Map(
+    legacyRows.map((r) => [`${r.kode}||${r.ukuran}`, Number(r.qty)]),
+  );
+
+  const hasil = new Map();
+  for (const b of baris) {
+    const qtySo = Number(b.sod_jumlah || 0);
+    const linked = linkedMap.get(b.sod_idrec) || 0;
+    const key = `${b.sod_kode}||${b.sod_ukuran}`;
+    const legacyAvail = legacyPool.get(key) || 0;
+    const legacyPakai = Math.min(legacyAvail, Math.max(0, qtySo - linked));
+    legacyPool.set(key, legacyAvail - legacyPakai);
+    hasil.set(b.sod_idrec, linked + legacyPakai);
+  }
+  return hasil;
+};
+
+// Qty baris yang sudah dimutasi ke stok pesanan (sama dengan mutatedQty di getSoForEdit)
+const qtyMutasiPesanan = async (db, soNomor, kode, ukuran) => {
+  const [so] = await db.query(
+    `SELECT IFNULL(SUM(mst_stok_in - mst_stok_out), 0) AS qty
+       FROM tmasterstokso
+      WHERE mst_aktif = 'Y' AND mst_nomor_so = ?
+        AND mst_brg_kode = ? AND mst_ukuran = ?`,
+    [soNomor, kode, ukuran || ""],
+  );
+  const [mi] = await db.query(
+    `SELECT IFNULL(SUM(md.mid_jumlah), 0) AS qty
+       FROM tmutasiin_dtl md
+       JOIN tmutasiin_hdr mh ON mh.mi_nomor = md.mid_nomor
+      WHERE mh.mi_so_nomor = ? AND md.mid_kode = ? AND md.mid_ukuran = ?`,
+    [soNomor, kode, ukuran || ""],
+  );
+  return Math.max(Number(so[0].qty || 0), Number(mi[0].qty || 0));
+};
+
 /**
  * @description Memuat semua data untuk mode Ubah (loaddataall).
  */
@@ -693,6 +916,10 @@ const getSoForEdit = async (nomor) => {
       console.error(`❌ SO ${nomor} not found`);
       throw new Error(`Surat Pesanan dengan nomor ${nomor} tidak ditemukan.`);
     }
+
+    const ditagihMap = isInvoiced
+      ? await hitungQtyDitagihPerBaris(connection, nomor, mainRows)
+      : new Map();
 
     // =========================================================================
     // [LOGIKA BARU MUTASI IN]: Kumpulkan Total Mutasi In lalu distribusikan
@@ -842,6 +1069,8 @@ const getSoForEdit = async (nomor) => {
         sod_custom_data: row.sod_custom_data,
         isFreeGift: row.sod_is_free_gift === "Y",
         dbLineId: row.dbLineId || "",
+        qtyDb: Number(row.sod_jumlah || 0),
+        qtyDitagih: ditagihMap.get(row.sod_idrec) || 0,
       };
       return item;
     });
@@ -1657,6 +1886,15 @@ const deleteDp = async (nomorSetoran) => {
   const connection = await pool.getConnection();
   await connection.beginTransaction();
   try {
+    const [terpakai] = await connection.query(
+      "SELECT 1 FROM tsetor_dtl WHERE sd_sh_nomor = ? AND IFNULL(sd_inv, '') <> '' LIMIT 1",
+      [nomorSetoran],
+    );
+    if (terpakai.length > 0) {
+      throw new Error(
+        `DP ${nomorSetoran} sudah terpakai oleh invoice dan tidak bisa dihapus.`,
+      );
+    }
     await connection.query(
       "UPDATE tsetor_hdr SET sh_so_nomor = '' WHERE sh_nomor = ?",
       [nomorSetoran],
