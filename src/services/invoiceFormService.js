@@ -3295,24 +3295,40 @@ const getPrintData = async (nomor) => {
            WHERE x.inv_nomor_so = h.inv_nomor_so AND x.inv_sts_pro = 0
              AND x.date_create <= h.date_create) AS ke,
          (SELECT COUNT(*) FROM tinv_hdr x
-           WHERE x.inv_nomor_so = h.inv_nomor_so AND x.inv_sts_pro = 0) AS jumlahInvoice,
-         IFNULL((SELECT SUM(sod_jumlah) FROM tso_dtl
-                  WHERE sod_so_nomor = h.inv_nomor_so), 0) AS qtySo,
-         IFNULL((SELECT SUM(d.invd_jumlah) FROM tinv_dtl d
-                   JOIN tinv_hdr x ON x.inv_nomor = d.invd_inv_nomor
-                  WHERE x.inv_nomor_so = h.inv_nomor_so AND x.inv_sts_pro = 0), 0) AS qtyInvoiced
+           WHERE x.inv_nomor_so = h.inv_nomor_so AND x.inv_sts_pro = 0) AS jumlahInvoice
        FROM tinv_hdr h WHERE h.inv_nomor = ?`,
       [nomor],
     );
+
+    // Baris SO dengan field yang sama seperti getSoDetailsForGrid,
+    // supaya sisa dihitung dengan aturan yang sama persis.
+    const [soRows] = await pool.query(
+      `SELECT d.sod_idrec AS sodIdrec,
+              d.sod_kode AS kode,
+              d.sod_ukuran AS ukuran_asli,
+              d.sod_jumlah AS qtySo,
+              d.sod_custom AS isCustomRaw,
+              d.sod_sd_nomor AS noSoDtf,
+              d.sod_scanned AS sodScanned,
+              a.brg_logstok AS logstok
+         FROM tso_dtl d
+         LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
+        WHERE d.sod_so_nomor = ?
+        ORDER BY d.sod_nourut`,
+      [header.inv_nomor_so],
+    );
+
     const info = infoRows[0];
-    if (info && Number(info.qtySo) > 0) {
-      const qtySo = Number(info.qtySo);
-      const qtyInvoiced = Number(info.qtyInvoiced);
-      if (Number(info.jumlahInvoice) > 1 || qtyInvoiced < qtySo) {
+    if (info && soRows.length > 0) {
+      // excludeInv = "" -> semua invoice aktif dihitung (termasuk invoice ini)
+      await alokasiBarisSo(pool, header.inv_nomor_so, soRows, "", true);
+      const sisaQty = soRows.reduce((s, r) => s + Number(r.qtyso || 0), 0);
+
+      if (Number(info.jumlahInvoice) > 1 || sisaQty > 0) {
         header.parsial = {
           ke: Number(info.ke),
           jumlahInvoice: Number(info.jumlahInvoice),
-          sisaQty: Math.max(0, qtySo - qtyInvoiced),
+          sisaQty,
         };
       }
     }
