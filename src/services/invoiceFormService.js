@@ -4778,59 +4778,92 @@ const getActivePromos = async (filters, user) => {
   }));
 };
 
-// Promo SL1 dinamis: daftar barang dihitung dari asal SJ yang diterima di SL1.
+// Promo SL1 dinamis: daftar barang dihitung dari STOK SL1 yang masih berkode reguler.
+// Golongan "REG" = 25% (PRO-2026-016), "KDC" = barang yang seluruh stok masuknya dari
+// SJ KDC (PRO-2026-017, 10%). Persen diambil dari tpromo.pro_dispersen, bukan hardcode.
 // Nomor promo HARUS sama dengan konstanta di backend mobile (packing_backend).
 const PROMO_ASAL_SL1 = {
-  "PRO-2026-016": "KBS", // diskon 25%
-  "PRO-2026-017": "KDC", // diskon 15%
+  "PRO-2026-016": "REG",
+  "PRO-2026-017": "KDC",
 };
 
 // useAutoPromo (web) memanggil endpoint ini tiap item berubah, jadi hasilnya di-cache
 const PROMO_SL1_CACHE_MS = 60 * 1000;
 const promoSl1Cache = new Map(); // nomor promo -> { at, rows }
+let sl1KlasifikasiCache = null; // { at, rows: [{ kode, ukuran, golongan }] }
 
-const getSl1DynamicPromoItems = async (nomorPromo, asal) => {
+// Klasifikasi stok SL1 per kode+ukuran. Hanya kode reguler (brg_kelompok kosong);
+// barcode baru/grading (kelompok 'C') dan stiker ('S') tidak ikut dulu.
+const getSl1Klasifikasi = async () => {
+  if (
+    sl1KlasifikasiCache &&
+    Date.now() - sl1KlasifikasiCache.at < PROMO_SL1_CACHE_MS
+  ) {
+    return sl1KlasifikasiCache.rows;
+  }
+
+  const [rows] = await pool.query(
+    `SELECT s.kode, s.ukuran,
+            CASE
+              WHEN EXISTS (
+                     SELECT 1 FROM tmasterstok m2
+                     WHERE m2.mst_cab = 'SL1' AND m2.mst_aktif = 'Y'
+                       AND m2.mst_brg_kode = s.kode AND m2.mst_ukuran = s.ukuran
+                       AND m2.mst_stok_in > 0 AND m2.mst_noreferensi LIKE '%.TJ.%'
+                       AND EXISTS (SELECT 1 FROM tdc_sj_hdr sj2
+                                    WHERE sj2.sj_noterima = m2.mst_noreferensi
+                                      AND sj2.sj_cab = 'KDC')
+                   )
+               AND NOT EXISTS (
+                     SELECT 1 FROM tmasterstok m3
+                     WHERE m3.mst_cab = 'SL1' AND m3.mst_aktif = 'Y'
+                       AND m3.mst_brg_kode = s.kode AND m3.mst_ukuran = s.ukuran
+                       AND m3.mst_stok_in > 0
+                       AND NOT (m3.mst_noreferensi LIKE '%.TJ.%'
+                                AND EXISTS (SELECT 1 FROM tdc_sj_hdr sj3
+                                             WHERE sj3.sj_noterima = m3.mst_noreferensi
+                                               AND sj3.sj_cab = 'KDC'))
+                   )
+              THEN 'KDC'
+              ELSE 'REG'
+            END AS golongan
+       FROM (
+         SELECT m.mst_brg_kode AS kode, m.mst_ukuran AS ukuran
+           FROM tmasterstok m
+           JOIN tbarangdc a ON a.brg_kode = m.mst_brg_kode
+          WHERE m.mst_cab = 'SL1' AND m.mst_aktif = 'Y'
+            AND IFNULL(a.brg_kelompok, '') = ''
+          GROUP BY m.mst_brg_kode, m.mst_ukuran
+         HAVING SUM(m.mst_stok_in - m.mst_stok_out) > 0
+       ) s`,
+  );
+
+  sl1KlasifikasiCache = { at: Date.now(), rows };
+  return rows;
+};
+
+const getSl1DynamicPromoItems = async (nomorPromo, golongan) => {
   const cached = promoSl1Cache.get(nomorPromo);
   if (cached && Date.now() - cached.at < PROMO_SL1_CACHE_MS) {
     return cached.rows;
   }
 
-  // KDC hanya untuk barang yang tidak pernah masuk dari KBS (25% didahulukan)
-  const exclKbs =
-    asal === "KDC"
-      ? `AND NOT EXISTS (
-           SELECT 1 FROM tmasterstok m2
-           JOIN tdc_sj_hdr sj2 ON sj2.sj_noterima = m2.mst_noreferensi
-           WHERE m2.mst_cab = 'SL1' AND m2.mst_aktif = 'Y'
-             AND m2.mst_stok_in > 0 AND m2.mst_noreferensi LIKE '%.TJ.%'
-             AND sj2.sj_cab = 'KBS'
-             AND m2.mst_brg_kode = m.mst_brg_kode
-             AND m2.mst_ukuran = m.mst_ukuran
-         )`
-      : "";
-
-  const [found] = await pool.query(
-    `SELECT DISTINCT
-       m.mst_brg_kode AS kode,
-       m.mst_ukuran   AS ukuran,
-       p.pro_dispersen AS discPersen
-     FROM tmasterstok m
-     JOIN tdc_sj_hdr sj ON sj.sj_noterima = m.mst_noreferensi
-     JOIN tpromo p ON p.pro_nomor = ?
-     WHERE m.mst_cab = 'SL1' AND m.mst_aktif = 'Y'
-       AND m.mst_stok_in > 0 AND m.mst_noreferensi LIKE '%.TJ.%'
-       AND sj.sj_cab = ?
-       ${exclKbs}`,
-    [nomorPromo, asal],
+  const [promoRows] = await pool.query(
+    `SELECT pro_dispersen FROM tpromo WHERE pro_nomor = ?`,
+    [nomorPromo],
   );
-
   // pro_dispersen dari DB berupa string "25.00"; useAutoPromo tidak mengonversinya
-  let rows = found.map((r) => ({
-    kode: r.kode,
-    ukuran: r.ukuran,
-    discPersen: Number(r.discPersen) || 0,
-    discRp: 0,
-  }));
+  const discPersen = Number(promoRows[0]?.pro_dispersen) || 0;
+
+  const klasifikasi = await getSl1Klasifikasi();
+  let rows = klasifikasi
+    .filter((r) => r.golongan === golongan)
+    .map((r) => ({
+      kode: r.kode,
+      ukuran: r.ukuran,
+      discPersen,
+      discRp: 0,
+    }));
 
   // Daftar kosong dianggap "berlaku untuk semua barang" oleh useAutoPromo,
   // jadi kembalikan baris penanda supaya tidak bocor ke semua barang.
