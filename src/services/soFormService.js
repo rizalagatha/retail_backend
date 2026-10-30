@@ -2,6 +2,7 @@ const pool = require("../config/database");
 const { format } = require("date-fns");
 const { get } = require("../routes/salesCounterRoute");
 const auditService = require("./auditService");
+const { LHK_BORDIR_SQL } = require("./invoiceFormService");
 
 /**
  * @description Membuat nomor SO baru (getmaxnomor).
@@ -1920,6 +1921,9 @@ const checkLhkStatus = async (soNomor) => {
                UNION ALL
                -- Ambil dari DB Pabrik menggunakan kolom 'spk_nomor'
                SELECT spk_nomor AS nomor_dtf FROM kencanaprint.tdtf
+               UNION ALL
+               -- Mutasi Bordir (GP014 -> GP010) yang qty-nya sudah sama dengan SO DTF
+               ${LHK_BORDIR_SQL}
            ) lhk 
            JOIN tso_dtl dd ON lhk.nomor_dtf = dd.sod_sd_nomor 
            WHERE dd.sod_so_nomor = ?) AS total_lhk,
@@ -1957,6 +1961,7 @@ const checkLhkStatus = async (soNomor) => {
     // Aman, bisa lanjut
     return { isReady: true };
   } catch (error) {
+    console.error("checkLhkStatus error:", error);
     throw new Error("Gagal memeriksa status LHK di database.");
   }
 };

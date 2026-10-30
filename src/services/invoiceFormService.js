@@ -9,6 +9,29 @@ const {
 const { validate } = require("uuid");
 const { applyRoundingPolicy } = require("../lib/numberUtils");
 
+// SO DTF yang sudah LHK lewat mutasi produksi Bordir (GP014) -> QC Cetak (GP010).
+// Penghubung: tsalesorder.so_invdc berisi nomor SO DTF Kaosan; SPK menunjuk ke SO MANKSI
+// lewat tspk.spk_so_ref. Lolos kalau total qty mutasi >= qty SO DTF.
+const LHK_BORDIR_SQL = `
+  SELECT x.nomor_dtf
+    FROM (
+      SELECT TRIM(so.so_invdc) AS nomor_dtf, SUM(h.mph_jumlah) AS qty_mutasi
+        FROM kencanaprint.tsalesorder so
+        JOIN kencanaprint.tspk s ON s.spk_so_ref = so.so_nomor
+        JOIN kencanaprint.tmutasiproduksi_hdr h ON h.mph_spk_nomor = s.spk_nomor
+       WHERE TRIM(so.so_invdc) <> ''
+         AND h.mph_gdgasal = 'GP014'
+         AND h.mph_gdgtujuan = 'GP010'
+       GROUP BY TRIM(so.so_invdc)
+    ) x
+    JOIN (
+      SELECT sdd_nomor, SUM(sdd_jumlah) AS qty_dtf
+        FROM tsodtf_dtl
+       GROUP BY sdd_nomor
+    ) q ON q.sdd_nomor = x.nomor_dtf
+   WHERE x.qty_mutasi >= q.qty_dtf
+`;
+
 // helper: format ke MySQL DATETIME (yyyy-MM-dd HH:mm:ss)
 const toSqlDateTime = (value) => {
   if (!value) return null;
@@ -400,9 +423,15 @@ const searchSo = async (term, page, itemsPerPage, user) => {
                       AND dd.sod_sd_nomor != ''), 0) AS total_so_dtf,
                     
             -- 6. Cek LHK yang sudah dibuat (Harus match dengan jumlah SO DTF)
-            IFNULL((SELECT COUNT(DISTINCT lhk.sodtf) 
-                    FROM tdtf lhk 
-                    JOIN tso_dtl dd ON lhk.sodtf = dd.sod_sd_nomor
+            IFNULL((SELECT COUNT(DISTINCT l.nomor_dtf)
+                    FROM (
+                      SELECT sodtf AS nomor_dtf FROM tdtf
+                      UNION ALL
+                      SELECT spk_nomor AS nomor_dtf FROM kencanaprint.tdtf
+                      UNION ALL
+                      ${LHK_BORDIR_SQL}
+                    ) l
+                    JOIN tso_dtl dd ON dd.sod_sd_nomor = l.nomor_dtf
                     WHERE dd.sod_so_nomor = h.so_nomor), 0) AS lhk_created
 
             ,
@@ -570,6 +599,8 @@ const alokasiBarisSo = async (
          SELECT sodtf AS nomor_dtf FROM tdtf
          UNION ALL
          SELECT spk_nomor AS nomor_dtf FROM kencanaprint.tdtf
+         UNION ALL
+         ${LHK_BORDIR_SQL}
        ) l
        JOIN tso_dtl d ON d.sod_sd_nomor = l.nomor_dtf
       WHERE d.sod_so_nomor = ?`,
@@ -4415,6 +4446,7 @@ const searchSoDtf = async (filters, user) => {
                     UNION ALL
                     SELECT 1 FROM kencanaprint.tdtf WHERE spk_nomor = h.sd_nomor
                 ) THEN 1
+                WHEN h.sd_nomor IN (${LHK_BORDIR_SQL}) THEN 1
                 ELSE 0 
             END AS isLhk
         FROM tsodtf_hdr h
@@ -5371,4 +5403,5 @@ module.exports = {
   getHargaKhususList,
   recalcKprDiscountForItems,
   findUnitForSale,
+  LHK_BORDIR_SQL,
 };

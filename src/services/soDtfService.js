@@ -3,6 +3,7 @@ const { format } = require("date-fns");
 const fs = require("fs");
 const path = require("path");
 const ExcelJS = require("exceljs");
+const { LHK_BORDIR_SQL } = require("./invoiceFormService");
 
 const getSoDtfList = async (filters, user) => {
   const { startDate, endDate, cabang, filterDateType, status } = filters;
@@ -59,6 +60,7 @@ const getSoDtfList = async (filters, user) => {
         FROM (
             SELECT 
                 h.sd_nomor AS Nomor, 
+                h.sd_tanggal AS TanggalRaw,                
                 DATE_FORMAT(h.sd_tanggal, '%d-%m-%Y') AS Tanggal, 
                 DATE_FORMAT(h.sd_datekerja, '%d-%m-%Y') AS TglPengerjaan, 
                 h.sd_dateline AS DatelineCus, h.sd_nama AS NamaDTF,
@@ -66,14 +68,16 @@ const getSoDtfList = async (filters, user) => {
                 IFNULL((SELECT SUM(i.sdd_jumlah * i.sdd_harga) FROM tsodtf_dtl i WHERE i.sdd_nomor = h.sd_nomor), 0) AS TotalHarga,
                 IFNULL((SELECT COUNT(*) FROM tsodtf_dtl2 i WHERE i.sdd2_nomor = h.sd_nomor), 0) AS Titik,
                 
-                -- [PERBAIKAN] Gabungkan pencarian LHK dari DB Retail dan DB Kencana Print
-                (SELECT COUNT(*) 
-                 FROM (
-                     SELECT sodtf AS nomor_dtf FROM tdtf
-                     UNION ALL
-                     SELECT spk_nomor AS nomor_dtf FROM kencanaprint.tdtf
-                 ) f 
-                 WHERE f.nomor_dtf = h.sd_nomor
+                -- LHK: DB Retail + DB Kencana Print + mutasi Bordir (GP014 -> GP010, qty sudah sama)
+                (
+                  (SELECT COUNT(*) 
+                   FROM (
+                       SELECT sodtf AS nomor_dtf FROM tdtf
+                       UNION ALL
+                       SELECT spk_nomor AS nomor_dtf FROM kencanaprint.tdtf
+                   ) f 
+                   WHERE f.nomor_dtf = h.sd_nomor)
+                  + IF(lb.nomor_dtf IS NULL, 0, 1)
                 ) AS LHK_Count,
                 
                 IFNULL((SELECT dd.sod_so_nomor FROM tso_dtl dd WHERE dd.sod_sd_nomor = h.sd_nomor GROUP BY dd.sod_so_nomor LIMIT 1), "") AS NoSO,
@@ -87,6 +91,7 @@ const getSoDtfList = async (filters, user) => {
             FROM tsodtf_hdr h
             LEFT JOIN tcustomer c ON c.cus_kode = h.sd_cus_kode
             LEFT JOIN kencanaprint.tsales s ON s.sal_kode = h.sd_sal_kode
+            LEFT JOIN (${LHK_BORDIR_SQL}) lb ON lb.nomor_dtf = h.sd_nomor
             WHERE h.sd_stok = "" 
               AND IFNULL(h.sd_trial, 'N') = 'N' 
               AND h.sd_nomor NOT LIKE 'TRL-%'
@@ -94,7 +99,7 @@ const getSoDtfList = async (filters, user) => {
             ${branchQuery} 
         ) x
         ${status === "belum_invoice" ? " WHERE x.NoINV = '' AND x.Close <> 'Y'" : ""}
-        ORDER BY x.Tanggal, x.Nomor;
+        ORDER BY x.TanggalRaw, x.Nomor;
     `;
 
   const [rows] = await pool.query(query, params);
