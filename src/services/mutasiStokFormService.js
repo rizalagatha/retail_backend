@@ -514,18 +514,34 @@ const autoMutasiScan = async (payload, user) => {
       resolvedQty = 1;
     }
 
-    // --- Validasi & update sod_scanned (SAMA seperti sebelumnya,
-    // cuma pakai resolvedKode/resolvedUkuran/resolvedQty) ---
-    const [itemSo] = await connection.query(
+    // --- Validasi & update sod_scanned ---
+    // SO bisa punya lebih dari satu baris dengan kode+ukuran sama (baris baru ditambah
+    // setelah invoice parsial). Jumlah & scan dihitung dari SEMUA baris itu, urut sod_nourut.
+    const [barisSo] = await connection.query(
+      `SELECT sod_idrec, sod_jumlah, sod_scanned
+         FROM tso_dtl
+        WHERE sod_so_nomor = ? AND sod_kode = ? AND sod_ukuran = ?
+        ORDER BY sod_nourut
+        FOR UPDATE`,
+      [nomor_so, resolvedKode, resolvedUkuran],
+    );
+
+    if (barisSo.length === 0) {
+      await connection.rollback();
+      const err = new Error(
+        "Barang tidak ditemukan di dalam dokumen Surat Pesanan ini.",
+      );
+      throw err;
+    }
+
+    const [angka] = await connection.query(
       `
-      SELECT 
-        sod_jumlah,
-        sod_scanned,
+      SELECT
         IFNULL((
-          SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
-          FROM tmasterstokso m 
-          WHERE m.mst_aktif = 'Y' AND m.mst_cab = ? 
-            AND m.mst_brg_kode = ? AND m.mst_ukuran = ? 
+          SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+          FROM tmasterstokso m
+          WHERE m.mst_aktif = 'Y' AND m.mst_cab = ?
+            AND m.mst_brg_kode = ? AND m.mst_ukuran = ?
             AND m.mst_nomor_so = ?
         ), 0) AS total_mutasi,
         IFNULL((
@@ -535,8 +551,6 @@ const autoMutasiScan = async (payload, user) => {
           WHERE j.inv_sts_pro = 0 AND j.inv_nomor_so = ?
             AND i.invd_kode = ? AND i.invd_ukuran = ?
         ), 0) AS sudah_ditagih_pesanan
-      FROM tso_dtl
-      WHERE sod_so_nomor = ? AND sod_kode = ? AND sod_ukuran = ? LIMIT 1
     `,
       [
         cabang,
@@ -546,25 +560,20 @@ const autoMutasiScan = async (payload, user) => {
         nomor_so,
         resolvedKode,
         resolvedUkuran,
-        nomor_so,
-        resolvedKode,
-        resolvedUkuran,
       ],
     );
 
-    if (itemSo.length === 0) {
-      await connection.rollback();
-      const err = new Error(
-        "Barang tidak ditemukan di dalam dokumen Surat Pesanan ini.",
-      );
-      throw err;
-    }
-
-    const sod_jumlah = itemSo[0].sod_jumlah;
-    const sod_scanned = itemSo[0].sod_scanned;
-    const total_mutasi = itemSo[0].total_mutasi;
-    const sudah_ditagih_pesanan = Number(itemSo[0].sudah_ditagih_pesanan || 0);
-    const new_scanned = sod_scanned + resolvedQty;
+    const sod_jumlah = barisSo.reduce(
+      (s, b) => s + Number(b.sod_jumlah || 0),
+      0,
+    );
+    const sod_scanned = barisSo.reduce(
+      (s, b) => s + Number(b.sod_scanned || 0),
+      0,
+    );
+    const total_mutasi = Number(angka[0].total_mutasi || 0);
+    const sudah_ditagih_pesanan = Number(angka[0].sudah_ditagih_pesanan || 0);
+    const new_scanned = sod_scanned + Number(resolvedQty);
 
     if (new_scanned > sod_jumlah) {
       await connection.rollback();
@@ -573,10 +582,20 @@ const autoMutasiScan = async (payload, user) => {
       );
     }
 
-    await connection.query(
-      "UPDATE tso_dtl SET sod_scanned = ? WHERE sod_so_nomor = ? AND sod_kode = ? AND sod_ukuran = ?",
-      [new_scanned, nomor_so, resolvedKode, resolvedUkuran],
-    );
+    // Isi baris yang belum penuh lebih dulu (sama dengan pilihan baris di frontend);
+    // baris lama yang sudah penuh/ditagih tidak disentuh.
+    let sisaScan = Number(resolvedQty);
+    for (const b of barisSo) {
+      if (sisaScan <= 0) break;
+      const ruang = Number(b.sod_jumlah || 0) - Number(b.sod_scanned || 0);
+      if (ruang <= 0) continue;
+      const isi = Math.min(ruang, sisaScan);
+      await connection.query(
+        "UPDATE tso_dtl SET sod_scanned = sod_scanned + ? WHERE sod_so_nomor = ? AND sod_idrec = ?",
+        [isi, nomor_so, b.sod_idrec],
+      );
+      sisaScan -= isi;
+    }
 
     const qty_to_mutate = Math.max(
       0,
