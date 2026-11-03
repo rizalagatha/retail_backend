@@ -38,9 +38,7 @@ const save = async (req, res) => {
 
 const lookupInvoices = async (req, res) => {
   try {
-    console.log("lookup cabang:", JSON.stringify(req.user.cabang));
     const data = await service.lookupInvoices(req.user.cabang);
-    console.log("lookup rows:", data.length);
     res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });
