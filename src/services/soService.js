@@ -1917,16 +1917,101 @@ const getActivePromos = async (filters) => {
 // Cabang yang tidak ditampilkan di halaman publik (katalog stok & pusat bantuan)
 const HIDDEN_PUBLIC_BRANCHES = ["K04", "SL1"];
 
-const getPublicStores = async () => {
-  const query = `
-      SELECT gdg_kode AS kode, gdg_nama AS nama 
-      FROM tgudang 
-      WHERE gdg_dc = 0 AND gdg_kode NOT IN (?) 
-      ORDER BY gdg_nama
-  `;
-  const [rows] = await pool.query(query, [HIDDEN_PUBLIC_BRANCHES]);
-  return rows;
+// ===== Cache memori ringan untuk endpoint publik (stale-while-revalidate) =====
+const memo = new Map();
+const MEMO_MAX = 200;
+const MIN = 60_000;
+
+/**
+ * ttlMs      : selama ini data dianggap segar (langsung dikembalikan)
+ * maxStaleMs : lewat ttl tapi belum lewat ini -> kembalikan data lama, refresh di belakang
+ * Lewat maxStaleMs -> request menunggu data baru.
+ * Request bersamaan untuk key yang sama berbagi satu query (tidak menumpuk).
+ * Nilai yang dikembalikan dipakai bersama: jangan dimutasi oleh pemanggil.
+ */
+const withCache = (key, ttlMs, maxStaleMs, loader) => {
+  const now = Date.now();
+  let e = memo.get(key);
+  if (!e) {
+    if (memo.size >= MEMO_MAX) memo.delete(memo.keys().next().value);
+    e = { has: false, value: undefined, at: 0, loading: null };
+    memo.set(key, e);
+  }
+  const refresh = () => {
+    if (!e.loading) {
+      e.loading = loader()
+        .then((v) => {
+          e.value = v;
+          e.has = true;
+          e.at = Date.now();
+          return v;
+        })
+        .finally(() => {
+          e.loading = null;
+        });
+    }
+    return e.loading;
+  };
+  if (e.has) {
+    const age = now - e.at;
+    if (age < ttlMs) return Promise.resolve(e.value);
+    if (age < maxStaleMs) {
+      refresh().catch(() => {}); // gagal refresh: tetap pakai data lama
+      return Promise.resolve(e.value);
+    }
+  }
+  return refresh();
 };
+
+// Peta foto per produk (satu query untuk semua produk, dipakai katalog & cek stok)
+const getImageMap = () =>
+  withCache("img", 10 * MIN, 60 * MIN, async () => {
+    const [rows] = await pool.query(
+      `SELECT img_brg_kode AS kode, img_url AS url, img_index AS idx
+         FROM tbarangdc_images
+        ORDER BY img_brg_kode, img_index ASC`,
+    );
+    const grouped = new Map();
+    for (const r of rows) {
+      const k = String(r.kode);
+      if (!grouped.has(k)) grouped.set(k, []);
+      grouped.get(k).push({ url: r.url, index: r.idx });
+    }
+    const map = new Map();
+    for (const [k, list] of grouped) {
+      map.set(k, { utama: list[0].url, galeri: JSON.stringify(list) });
+    }
+    return map;
+  });
+
+// Total terjual per kode|ukuran di satu cabang (hanya untuk urutan "terlaris")
+const getSoldMap = (cabang) =>
+  withCache(`sold:${cabang}`, 10 * MIN, 60 * MIN, async () => {
+    const [rows] = await pool.query(
+      `SELECT d.invd_kode AS kode, d.invd_ukuran AS ukuran, SUM(d.invd_jumlah) AS qty
+         FROM tinv_hdr h
+         JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+        WHERE h.inv_sts_pro = 0 AND h.inv_cab = ?
+        GROUP BY d.invd_kode, d.invd_ukuran`,
+      [cabang],
+    );
+    const map = new Map();
+    for (const r of rows)
+      map.set(promoKey(r.kode, r.ukuran), Number(r.qty) || 0);
+    return map;
+  });
+
+const getPublicStores = () =>
+  withCache("stores", 10 * MIN, 60 * MIN, async () => {
+    const [rows] = await pool.query(
+      `SELECT gdg_kode AS kode, gdg_nama AS nama
+         FROM tgudang
+        WHERE gdg_dc = 0 AND gdg_kode NOT IN (?)
+        ORDER BY gdg_nama`,
+      [HIDDEN_PUBLIC_BRANCHES],
+    );
+    return rows;
+  });
 
 // ===== Harga setelah promo (diskon per barang) untuk halaman publik =====
 const PROMO_HARGA = ["PRO-2026-010", "PRO-2026-011", "PRO-2026-012"];
@@ -1936,28 +2021,29 @@ const promoKey = (kode, ukuran) =>
   `${String(kode).trim()}|${String(ukuran).trim()}`.toUpperCase();
 
 // Peta kode|ukuran -> { persen, rp } untuk promo yang sedang berlaku di cabang itu
-const getPromoDiskonMap = async (cabang) => {
-  const [rows] = await pool.query(
-    `SELECT pb.pb_brg_kode AS kode, pb.pb_ukuran AS ukuran,
-            MAX(pb.pb_disc) AS persen, MAX(pb.pb_diskon) AS rp
-       FROM tpromo p
-       JOIN tpromo_cabang c ON c.pc_nomor = p.pro_nomor AND c.pc_cab = ?
-       JOIN tpromo_barang pb ON pb.pb_nomor = p.pro_nomor
-      WHERE p.pro_nomor IN (?)
-        AND p.pro_f1 = 'N'
-        AND CURDATE() BETWEEN p.pro_tanggal1 AND p.pro_tanggal2
-      GROUP BY pb.pb_brg_kode, pb.pb_ukuran`,
-    [cabang, PROMO_HARGA],
-  );
-  const map = new Map();
-  rows.forEach((r) =>
-    map.set(promoKey(r.kode, r.ukuran), {
-      persen: Number(r.persen) || 0,
-      rp: Number(r.rp) || 0,
-    }),
-  );
-  return map;
-};
+const getPromoDiskonMap = (cabang) =>
+  withCache(`promo:${cabang}`, 1 * MIN, 5 * MIN, async () => {
+    const [rows] = await pool.query(
+      `SELECT pb.pb_brg_kode AS kode, pb.pb_ukuran AS ukuran,
+              MAX(pb.pb_disc) AS persen, MAX(pb.pb_diskon) AS rp
+         FROM tpromo p
+         JOIN tpromo_cabang c ON c.pc_nomor = p.pro_nomor AND c.pc_cab = ?
+         JOIN tpromo_barang pb ON pb.pb_nomor = p.pro_nomor
+        WHERE p.pro_nomor IN (?)
+          AND p.pro_f1 = 'N'
+          AND CURDATE() BETWEEN p.pro_tanggal1 AND p.pro_tanggal2
+        GROUP BY pb.pb_brg_kode, pb.pb_ukuran`,
+      [cabang, PROMO_HARGA],
+    );
+    const map = new Map();
+    rows.forEach((r) =>
+      map.set(promoKey(r.kode, r.ukuran), {
+        persen: Number(r.persen) || 0,
+        rp: Number(r.rp) || 0,
+      }),
+    );
+    return map;
+  });
 
 // Sama dengan unitDiscount di aplikasi mobile: nominal Rp diutamakan, lalu persen
 const hargaSetelahPromo = (harga, disc) => {
@@ -1969,6 +2055,8 @@ const hargaSetelahPromo = (harga, disc) => {
 
 /**
  * @description Pencarian stok publik berdasarkan cabang (Telah dikurangi Booking/SO)
+ * Stok, booking, dan harga dihitung sekali per kode|ukuran (derived table),
+ * bukan subquery per baris. Foto dan "terjual" diambil dari cache terpisah.
  */
 const getPublicStock = async (
   cabang,
@@ -1976,90 +2064,87 @@ const getPublicStock = async (
   { includeBooking = true, sejak = null } = {},
 ) => {
   if (!cabang) return [];
-  const term = keyword ? `%${keyword}%` : "%";
+  const kw = String(keyword || "").trim();
 
-  // Stok pesanan (booking SO) ditambahkan ke stok toko. Pameran memakai tmasterstok saja.
-  const bookingSql = includeBooking
-    ? `+ IFNULL((
-                  SELECT SUM(so.mst_stok_in - so.mst_stok_out)
-                  FROM tmasterstokso so
-                  WHERE so.mst_aktif='Y' AND so.mst_cab=m.mst_cab AND so.mst_brg_kode=m.mst_brg_kode AND so.mst_ukuran=m.mst_ukuran
-              ), 0)`
-    : "";
+  const namaExpr = `TRIM(CONCAT(IFNULL(b.brg_jeniskaos,''), ' ', IFNULL(b.brg_tipe,''), ' ', IFNULL(b.brg_lengan,''), ' ', IFNULL(b.brg_jeniskain,''), ' ', IFNULL(b.brg_warna,'')))`;
 
-  // Pameran: hanya gerakan stok sejak tanggal ini yang dihitung
-  const sejakSql = sejak ? "AND m.mst_tanggal >= ?" : "";
+  // Urutan placeholder di SQL: stok (cabang, [sejak]) -> booking (cabang) -> keyword
+  const params = [cabang];
+  if (sejak) params.push(sejak);
+  if (includeBooking) params.push(cabang);
+  if (kw) params.push(`%${kw}%`, `%${kw}%`);
 
   const query = `
-      SELECT 
-          b.brg_kode AS kode,
-          b.brg_jeniskain AS jenis_kain,
-          IFNULL(b.brg_jeniskaos, '') AS jenis_kaos,
-          IFNULL(b.brg_lengan, '') AS lengan,
-          IFNULL(b.brg_ktg, '') AS ktg,
-          TRIM(CONCAT(IFNULL(b.brg_jeniskaos,''), " ", IFNULL(b.brg_tipe,''), " ", IFNULL(b.brg_lengan,''), " ", IFNULL(b.brg_jeniskain,''), " ", IFNULL(b.brg_warna,''))) AS nama,
-          m.mst_ukuran AS ukuran,
-          MAX(dtl.brgd_harga) AS harga,
-          
-          -- [OPTIMASI] Ambil gambar utama dari hasil LEFT JOIN di bawah
-          COALESCE(img_group.img_utama, b.brg_gambar_url) AS gambar_url,
-          IFNULL(b.brg_urutan_tampil, 9999) AS urutan,
-          
-          -- [OPTIMASI] Ambil galeri JSON langsung dari LEFT JOIN
-          img_group.galeri AS galeri,
-
-          (SUM(m.mst_stok_in - m.mst_stok_out) ${bookingSql}) AS stok,
-          
-          IFNULL((
-              SELECT SUM(d.invd_jumlah)
-              FROM tinv_dtl d
-              JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
-              WHERE h.inv_sts_pro = 0 
-                AND h.inv_cab = m.mst_cab
-                AND d.invd_kode = m.mst_brg_kode
-                AND d.invd_ukuran = m.mst_ukuran
-          ), 0) AS total_terjual
-
-      FROM tmasterstok m
-      JOIN tbarangdc b ON b.brg_kode = m.mst_brg_kode
-      LEFT JOIN tbarangdc_dtl dtl ON dtl.brgd_kode = m.mst_brg_kode AND dtl.brgd_ukuran = m.mst_ukuran
-      
-      -- [KUNCI OPTIMASI PENTING] 
-      -- Join galeri diolah di sini agar MySQL hanya memproses 1 kali per produk!
-      LEFT JOIN (
-          SELECT 
-              img_brg_kode,
-              -- Ambil URL urutan pertama (paling kecil) sebagai thumbnail utama
-              (SELECT sub_img.img_url FROM tbarangdc_images sub_img WHERE sub_img.img_brg_kode = t.img_brg_kode ORDER BY sub_img.img_index ASC LIMIT 1) AS img_utama,
-              CONCAT('[', GROUP_CONCAT(JSON_OBJECT('url', img_url, 'index', img_index) ORDER BY img_index ASC), ']') AS galeri
-          FROM tbarangdc_images t
-          GROUP BY img_brg_kode
-      ) img_group ON img_group.img_brg_kode = b.brg_kode
-
-      WHERE m.mst_aktif = 'Y' 
-        AND m.mst_cab = ?
-        ${sejakSql}
-        AND (
-            b.brg_kode LIKE ? 
-            OR TRIM(CONCAT(IFNULL(b.brg_jeniskaos,''), " ", IFNULL(b.brg_tipe,''), " ", IFNULL(b.brg_lengan,''), " ", IFNULL(b.brg_jeniskain,''), " ", IFNULL(b.brg_warna,''))) LIKE ?
-        )
-      GROUP BY m.mst_cab, m.mst_brg_kode, m.mst_ukuran
-      ORDER BY urutan ASC, total_terjual DESC, nama ASC, ukuran ASC
+    SELECT
+      b.brg_kode AS kode,
+      b.brg_jeniskain AS jenis_kain,
+      IFNULL(b.brg_jeniskaos, '') AS jenis_kaos,
+      IFNULL(b.brg_lengan, '') AS lengan,
+      IFNULL(b.brg_ktg, '') AS ktg,
+      ${namaExpr} AS nama,
+      s.ukuran AS ukuran,
+      h.harga AS harga,
+      b.brg_gambar_url AS gambar_fallback,
+      IFNULL(b.brg_urutan_tampil, 9999) AS urutan,
+      (s.stok ${includeBooking ? "+ IFNULL(bk.qty, 0)" : ""}) AS stok
+    FROM (
+      SELECT mst_brg_kode AS kode, mst_ukuran AS ukuran,
+             SUM(mst_stok_in - mst_stok_out) AS stok
+        FROM tmasterstok
+       WHERE mst_aktif = 'Y' AND mst_cab = ? ${sejak ? "AND mst_tanggal >= ?" : ""}
+       GROUP BY mst_brg_kode, mst_ukuran
+    ) s
+    JOIN tbarangdc b ON b.brg_kode = s.kode
+    LEFT JOIN (
+      SELECT brgd_kode, brgd_ukuran, MAX(brgd_harga) AS harga
+        FROM tbarangdc_dtl
+       GROUP BY brgd_kode, brgd_ukuran
+    ) h ON h.brgd_kode = s.kode AND h.brgd_ukuran = s.ukuran
+    ${
+      includeBooking
+        ? `LEFT JOIN (
+      SELECT mst_brg_kode, mst_ukuran, SUM(mst_stok_in - mst_stok_out) AS qty
+        FROM tmasterstokso
+       WHERE mst_aktif = 'Y' AND mst_cab = ?
+       GROUP BY mst_brg_kode, mst_ukuran
+    ) bk ON bk.mst_brg_kode = s.kode AND bk.mst_ukuran = s.ukuran`
+        : ""
+    }
+    ${kw ? `WHERE (b.brg_kode LIKE ? OR ${namaExpr} LIKE ?)` : ""}
   `;
 
-  const [rows] = await pool.query(query, [
-    cabang,
-    ...(sejak ? [sejak] : []),
-    term,
-    term,
+  // Query stok jalan paralel dengan peta foto/terjual/promo yang di-cache
+  const [[rows], imgMap, soldMap, promo] = await Promise.all([
+    pool.query(query, params),
+    getImageMap(),
+    sejak ? Promise.resolve(null) : getSoldMap(cabang), // pameran menghitung terjual sendiri
+    getPromoDiskonMap(cabang),
   ]);
-  const promo = await getPromoDiskonMap(cabang);
-  if (promo.size === 0) return rows;
-  return rows.map((r) => {
+
+  const out = rows.map((r) => {
+    const img = imgMap.get(String(r.kode));
     const harga = Number(r.harga) || 0;
     const hp = hargaSetelahPromo(harga, promo.get(promoKey(r.kode, r.ukuran)));
-    return hp < harga ? { ...r, harga_promo: hp } : r;
+    const { gambar_fallback, ...rest } = r;
+    const row = {
+      ...rest,
+      gambar_url: img ? img.utama : gambar_fallback,
+      galeri: img ? img.galeri : null,
+      total_terjual: soldMap ? soldMap.get(promoKey(r.kode, r.ukuran)) || 0 : 0,
+    };
+    if (hp < harga) row.harga_promo = hp;
+    return row;
   });
+
+  return out.sort(
+    (a, b) =>
+      a.urutan - b.urutan ||
+      b.total_terjual - a.total_terjual ||
+      String(a.nama).localeCompare(String(b.nama)) ||
+      String(a.ukuran).localeCompare(String(b.ukuran), undefined, {
+        numeric: true,
+      }),
+  );
 };
 
 // Stok pameran: stok B02 (tmasterstok) dikurangi penjualan bazar yang belum di-klerek.
@@ -2073,10 +2158,19 @@ const naturalSort = (a, b) =>
 
 const getPublicStockLive = async (cabang, q) => {
   const isPameran = PAMERAN_BRANCHES.includes(cabang);
-  const rows = await getPublicStock(cabang, q, {
-    includeBooking: !isPameran,
-    sejak: isPameran ? PAMERAN_MULAI : null,
-  });
+
+  // Toko biasa tanpa pencarian = kasus terbesar (halaman cek stok memuat semua).
+  // Segar 1 menit, paling lama 3 menit data lama. Pameran/kiosk tetap live.
+  // Pencarian bebas tidak di-cache (mencegah key liar memenuhi memori).
+  const rows =
+    !isPameran && !String(q || "").trim()
+      ? await withCache(`stock:${cabang}`, 1 * MIN, 3 * MIN, () =>
+          getPublicStock(cabang, "", { includeBooking: true }),
+        )
+      : await getPublicStock(cabang, q, {
+          includeBooking: !isPameran,
+          sejak: isPameran ? PAMERAN_MULAI : null,
+        });
   if (!isPameran || rows.length === 0) return rows;
 
   // Terjual BELUM klerek (tmp). invd_kode di tmp = barcode.
@@ -2165,85 +2259,93 @@ const getPublicContacts = async () => {
  * Katalog publik: produk + harga + foto, TANPA stok dan TANPA toko.
  * Hanya produk yang punya foto yang ditampilkan.
  */
-const getPublicCatalog = async () => {
-  const query = `
-    SELECT
-      b.brg_kode AS kode,
-      IFNULL(b.brg_jeniskain, '') AS jenis_kain,
-      IFNULL(b.brg_jeniskaos, '') AS jenis_kaos,
-      IFNULL(b.brg_lengan, '') AS lengan,
-      IFNULL(b.brg_ktg, '') AS ktg,
-      TRIM(CONCAT(IFNULL(b.brg_jeniskaos,''), ' ', IFNULL(b.brg_tipe,''), ' ', IFNULL(b.brg_lengan,''), ' ', IFNULL(b.brg_jeniskain,''), ' ', IFNULL(b.brg_warna,''))) AS nama,
-      MIN(NULLIF(dtl.brgd_harga, 0)) AS harga_min,
-      MAX(NULLIF(dtl.brgd_harga, 0)) AS harga_max,
-      GROUP_CONCAT(DISTINCT dtl.brgd_ukuran ORDER BY dtl.brgd_ukuran SEPARATOR ',') AS ukuran,
-      CONCAT('[', GROUP_CONCAT(DISTINCT JSON_OBJECT('ukuran', dtl.brgd_ukuran, 'harga', IFNULL(dtl.brgd_harga, 0)) SEPARATOR ','), ']') AS ukuran_harga,
-      img_group.img_utama AS gambar_url,
-      IFNULL(b.brg_urutan_tampil, 9999) AS urutan,
-      img_group.galeri AS galeri
-    FROM tbarangdc b
-    LEFT JOIN tbarangdc_dtl dtl ON dtl.brgd_kode = b.brg_kode
-    LEFT JOIN (
-      SELECT
-        img_brg_kode,
-        (SELECT s.img_url FROM tbarangdc_images s WHERE s.img_brg_kode = t.img_brg_kode ORDER BY s.img_index ASC LIMIT 1) AS img_utama,
-        CONCAT('[', GROUP_CONCAT(JSON_OBJECT('url', img_url, 'index', img_index) ORDER BY img_index ASC), ']') AS galeri
-      FROM tbarangdc_images t
-      GROUP BY img_brg_kode
-    ) img_group ON img_group.img_brg_kode = b.brg_kode
-    WHERE b.brg_aktif = 0
-      AND b.brg_katalog = 1
-      AND b.brg_logstok = 'Y'
-      AND (
-        b.brg_ktg = 'KIDDIFY'
-        OR IFNULL(b.brg_ktgp, '') NOT IN ('PESANAN', 'PROMO', 'REJECT', 'DISPLAY')
-      )
-      AND IFNULL(b.brg_ktg, '') IN ('', 'KIDDIFY')
-    GROUP BY b.brg_kode
-    ORDER BY (gambar_url IS NULL), urutan ASC, nama ASC
-  `;
-  const [rows] = await pool.query(query);
+const getPublicCatalog = () =>
+  withCache("katalog", 5 * MIN, 30 * MIN, async () => {
+    const [[rows], imgMap, promo] = await Promise.all([
+      pool.query(`
+        SELECT
+          b.brg_kode AS kode,
+          IFNULL(b.brg_jeniskain, '') AS jenis_kain,
+          IFNULL(b.brg_jeniskaos, '') AS jenis_kaos,
+          IFNULL(b.brg_lengan, '') AS lengan,
+          IFNULL(b.brg_ktg, '') AS ktg,
+          TRIM(CONCAT(IFNULL(b.brg_jeniskaos,''), ' ', IFNULL(b.brg_tipe,''), ' ', IFNULL(b.brg_lengan,''), ' ', IFNULL(b.brg_jeniskain,''), ' ', IFNULL(b.brg_warna,''))) AS nama,
+          MIN(NULLIF(dtl.brgd_harga, 0)) AS harga_min,
+          MAX(NULLIF(dtl.brgd_harga, 0)) AS harga_max,
+          GROUP_CONCAT(DISTINCT dtl.brgd_ukuran ORDER BY dtl.brgd_ukuran SEPARATOR ',') AS ukuran,
+          CONCAT('[', GROUP_CONCAT(DISTINCT JSON_OBJECT('ukuran', dtl.brgd_ukuran, 'harga', IFNULL(dtl.brgd_harga, 0)) SEPARATOR ','), ']') AS ukuran_harga,
+          IFNULL(b.brg_urutan_tampil, 9999) AS urutan
+        FROM tbarangdc b
+        LEFT JOIN tbarangdc_dtl dtl ON dtl.brgd_kode = b.brg_kode
+        WHERE b.brg_aktif = 0
+          AND b.brg_katalog = 1
+          AND b.brg_logstok = 'Y'
+          AND (
+            b.brg_ktg = 'KIDDIFY'
+            OR IFNULL(b.brg_ktgp, '') NOT IN ('PESANAN', 'PROMO', 'REJECT', 'DISPLAY')
+          )
+          AND IFNULL(b.brg_ktg, '') IN ('', 'KIDDIFY')
+        GROUP BY b.brg_kode
+      `),
+      getImageMap(),
+      getPromoDiskonMap(PROMO_KATALOG_CABANG),
+    ]);
 
-  const promo = await getPromoDiskonMap(PROMO_KATALOG_CABANG);
-  if (promo.size === 0) return rows;
-
-  return rows.map((r) => {
-    let list = [];
-    try {
-      list = r.ukuran_harga ? JSON.parse(r.ukuran_harga) : [];
-    } catch {
-      list = [];
-    }
-    const dengan = list.map((u) => {
-      const harga = Number(u.harga) || 0;
-      const hp = hargaSetelahPromo(
-        harga,
-        promo.get(promoKey(r.kode, u.ukuran)),
+    const withImg = rows
+      .map((r) => {
+        const img = imgMap.get(String(r.kode));
+        return {
+          ...r,
+          gambar_url: img ? img.utama : null,
+          galeri: img ? img.galeri : null,
+        };
+      })
+      .sort(
+        (a, b) =>
+          Number(!a.gambar_url) - Number(!b.gambar_url) ||
+          a.urutan - b.urutan ||
+          String(a.nama).localeCompare(String(b.nama)),
       );
-      return { ...u, harga_promo: hp < harga ? hp : null };
-    });
-    const berpromo = dengan.filter((u) => u.harga_promo !== null);
-    if (!berpromo.length) return r;
 
-    const akhir = dengan
-      .map((u) =>
-        u.harga_promo !== null ? u.harga_promo : Number(u.harga) || 0,
-      )
-      .filter((h) => h > 0);
-    const persen = Math.max(
-      ...berpromo.map((u) =>
-        Math.round((1 - u.harga_promo / Number(u.harga)) * 100),
-      ),
-    );
-    return {
-      ...r,
-      ukuran_harga: JSON.stringify(dengan),
-      promo_min: Math.min(...akhir),
-      promo_max: Math.max(...akhir),
-      promo_persen: persen,
-    };
+    if (promo.size === 0) return withImg;
+
+    return withImg.map((r) => {
+      let list = [];
+      try {
+        list = r.ukuran_harga ? JSON.parse(r.ukuran_harga) : [];
+      } catch {
+        list = [];
+      }
+      const dengan = list.map((u) => {
+        const harga = Number(u.harga) || 0;
+        const hp = hargaSetelahPromo(
+          harga,
+          promo.get(promoKey(r.kode, u.ukuran)),
+        );
+        return { ...u, harga_promo: hp < harga ? hp : null };
+      });
+      const berpromo = dengan.filter((u) => u.harga_promo !== null);
+      if (!berpromo.length) return r;
+
+      const akhir = dengan
+        .map((u) =>
+          u.harga_promo !== null ? u.harga_promo : Number(u.harga) || 0,
+        )
+        .filter((h) => h > 0);
+      const persen = Math.max(
+        ...berpromo.map((u) =>
+          Math.round((1 - u.harga_promo / Number(u.harga)) * 100),
+        ),
+      );
+      return {
+        ...r,
+        ukuran_harga: JSON.stringify(dengan),
+        promo_min: Math.min(...akhir),
+        promo_max: Math.max(...akhir),
+        promo_persen: persen,
+      };
+    });
   });
-};
 
 module.exports = {
   getList,
