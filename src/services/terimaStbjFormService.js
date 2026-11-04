@@ -16,8 +16,23 @@ const loadFromStbj = async (nomorStbj) => {
   if (headerData.length === 0) throw new Error("STBJ tidak ditemukan.");
 
   const [summaryItems] = await pool.query(
-    `SELECT d.STBJD_SPK_Nomor AS spk, s.spk_nama AS nama, IF(d.stbjd_size<>'', d.stbjd_size, s.spk_ukuran) AS ukuran, d.STBJD_Jumlah AS jumlah, d.STBJD_Koli AS koli, d.STBJD_Keterangan AS keterangan FROM kencanaprint.tstbj_dtl d LEFT JOIN kencanaprint.tspk s ON s.spk_nomor=d.STBJD_SPK_Nomor WHERE d.STBJD_STBJ_Nomor = ?`,
-    [nomorStbj],
+    `SELECT d.STBJD_SPK_Nomor AS spk,
+            (SELECT GROUP_CONCAT(DISTINCT p.pack_nomor ORDER BY p.pack_nomor SEPARATOR ', ')
+               FROM tpacking p
+              WHERE p.pack_spk_nomor = d.STBJD_SPK_Nomor
+                AND (p.pack_nostbj = ? OR p.pack_nostbj IS NULL OR p.pack_nostbj = '')) AS packing,
+            g.gdg_nama AS gudang,
+            s.spk_nama AS nama,
+            IF(d.stbjd_size<>'', d.stbjd_size, s.spk_ukuran) AS ukuran,
+            d.STBJD_Jumlah AS jumlah,
+            d.STBJD_Koli AS koli,
+            d.STBJD_Keterangan AS keterangan
+       FROM kencanaprint.tstbj_dtl d
+       LEFT JOIN kencanaprint.tspk s ON s.spk_nomor = d.STBJD_SPK_Nomor
+       LEFT JOIN kencanaprint.tsalesorder so ON so.so_nomor = s.spk_so_ref AND so.so_aktif = 'Y'
+       LEFT JOIN tgudang g ON g.gdg_kode = LEFT(so.so_invdc, 3)
+      WHERE d.STBJD_STBJ_Nomor = ?`,
+    [nomorStbj, nomorStbj],
   );
 
   const [allocationItems] = await pool.query(
