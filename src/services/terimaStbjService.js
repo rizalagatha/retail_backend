@@ -44,6 +44,11 @@ const getDetails = async (nomor) => {
             h.ts_stbj AS nomor, 
             d.tsd_nomor AS nomorTerima,
             d.tsd_spk_nomor AS spk,
+            (SELECT GROUP_CONCAT(DISTINCT p.pack_nomor ORDER BY p.pack_nomor SEPARATOR ', ')
+               FROM tpacking p
+              WHERE p.pack_spk_nomor = d.tsd_spk_nomor
+                AND (p.pack_nostbj = h.ts_stbj OR p.pack_nostbj IS NULL OR p.pack_nostbj = '')) AS packing,
+            g.gdg_nama AS gudang,
             d.tsd_kode AS kode,
             TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS nama,
             d.tsd_ukuran AS ukuran,
@@ -51,6 +56,9 @@ const getDetails = async (nomor) => {
         FROM tdc_stbj_hdr h
         INNER JOIN tdc_stbj_dtl d ON d.tsd_nomor = h.ts_nomor
         LEFT JOIN tbarangdc a ON a.brg_kode = d.tsd_kode
+        LEFT JOIN kencanaprint.tspk s ON s.spk_nomor = d.tsd_spk_nomor
+        LEFT JOIN kencanaprint.tsalesorder so ON so.so_nomor = s.spk_so_ref AND so.so_aktif = 'Y'
+        LEFT JOIN tgudang g ON g.gdg_kode = LEFT(so.so_invdc, 3)
         WHERE h.ts_stbj = ?
         ORDER BY d.tsd_nomor, d.tsd_spk_nomor, d.tsd_kode, d.tsd_ukuran;
     `;
@@ -72,7 +80,7 @@ const cancelReceipt = async (nomorKirim, user) => {
       FROM kencanaprint.tstbj_hdr h
       LEFT JOIN tdc_stbj_hdr ts ON h.stbj_nomor = ts.ts_stbj
       WHERE h.stbj_nomor = ?`,
-      [nomorKirim]
+      [nomorKirim],
     );
 
     if (rows.length === 0 || !rows[0].ts_nomor) {
@@ -86,11 +94,11 @@ const cancelReceipt = async (nomorKirim, user) => {
 
     const [sjRows] = await connection.query(
       'SELECT sj_noterima FROM tdc_sj_hdr WHERE sj_stbj = ? AND sj_noterima <> "" LIMIT 1',
-      [doc.stbj_nomor]
+      [doc.stbj_nomor],
     );
     if (sjRows.length > 0) {
       throw new Error(
-        `Data ini ada SJ ke Store yg sudah diterima dengan Nomor: ${sjRows[0].sj_noterima}`
+        `Data ini ada SJ ke Store yg sudah diterima dengan Nomor: ${sjRows[0].sj_noterima}`,
       );
     }
     // --- AKHIR VALIDASI ---
@@ -135,7 +143,7 @@ const cancelRejection = async (nomorKirim, user) => {
              LEFT JOIN tdc_stbj_hdr ts ON h.stbj_nomor = ts.ts_stbj
              LEFT JOIN tdc_stbjtolak tl ON h.stbj_nomor = tl.tl_stbj
              WHERE h.stbj_nomor = ?`,
-      [nomorKirim]
+      [nomorKirim],
     );
 
     if (rows.length === 0) throw new Error("Dokumen STBJ tidak ditemukan.");
@@ -145,17 +153,17 @@ const cancelRejection = async (nomorKirim, user) => {
     if (!doc.tl_nomor) throw new Error("STBJ ini belum ditolak.");
     if (doc.ts_nomor)
       throw new Error(
-        "STBJ ini sudah diterima, tidak bisa dibatalkan penolakannya."
+        "STBJ ini sudah diterima, tidak bisa dibatalkan penolakannya.",
       );
 
     // Cek apakah sudah dibuat pengiriman dari Gudang Repair
     const [grRows] = await connection.query(
       "SELECT 1 FROM tdc_gr_hdr WHERE gr_tl_nomor = ? LIMIT 1",
-      [doc.tl_nomor]
+      [doc.tl_nomor],
     );
     if (grRows.length > 0) {
       throw new Error(
-        "Data ini sudah dibuatkan pengiriman dari Gudang Repair ke DC."
+        "Data ini sudah dibuatkan pengiriman dari Gudang Repair ke DC.",
       );
     }
     // --- AKHIR VALIDASI ---
