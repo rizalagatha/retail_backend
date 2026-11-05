@@ -2001,16 +2001,28 @@ const getSoldMap = (cabang) =>
     return map;
   });
 
+// Koordinat dari kolom teks/desimal: kembalikan angka valid atau null (0 = belum diisi)
+const toCoord = (v, min, max) => {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n !== 0 && n >= min && n <= max ? n : null;
+};
+
 const getPublicStores = () =>
   withCache("stores", 10 * MIN, 60 * MIN, async () => {
     const [rows] = await pool.query(
-      `SELECT gdg_kode AS kode, gdg_nama AS nama
+      `SELECT gdg_kode AS kode, gdg_nama AS nama, gdg_lat, gdg_long
          FROM tgudang
         WHERE gdg_dc = 0 AND gdg_kode NOT IN (?)
         ORDER BY gdg_nama`,
       [HIDDEN_PUBLIC_BRANCHES],
     );
-    return rows;
+    return rows.map((r) => ({
+      kode: r.kode,
+      nama: r.nama,
+      lat: toCoord(r.gdg_lat, -90, 90),
+      lng: toCoord(r.gdg_long, -180, 180),
+    }));
   });
 
 // ===== Harga setelah promo (diskon per barang) untuk halaman publik =====
