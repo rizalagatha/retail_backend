@@ -7,6 +7,9 @@ const {
   generateNomorSjStore,
 } = require("./sequenceService");
 
+// Cabang tujuan alokasi. KBS/KPS = mutasi otomatis, selain itu (KPR, KF1) = SJ otomatis ke store
+const CABANG_ALOKASI = ["KBS", "KPS", "KPR", "KF1"];
+
 // --- Main Service Functions ---
 const loadFromStbj = async (nomorStbj) => {
   const [headerData] = await pool.query(
@@ -77,6 +80,25 @@ const save = async (payload, user) => {
 
       const { header, allocationItems } = payload;
       const tanggal = header.tanggal;
+
+      // Validasi di server: pengecekan di frontend saja tidak cukup, dan pickForCabang
+      // diam-diam mengirim lebih sedikit bila pool unit habis
+      for (const item of allocationItems) {
+        const alokasi = CABANG_ALOKASI.map(
+          (c) => Number(item[c.toLowerCase()]) || 0,
+        );
+        if (alokasi.some((q) => q < 0)) {
+          throw new Error(
+            `Alokasi untuk ${item.spk} ${item.kode} ${item.ukuran} tidak boleh negatif.`,
+          );
+        }
+        const totalAlokasi = alokasi.reduce((s, q) => s + q, 0);
+        if (totalAlokasi > (Number(item.jumlah) || 0)) {
+          throw new Error(
+            `Alokasi untuk ${item.spk} ${item.kode} ${item.ukuran} melebihi jumlah STBJ.`,
+          );
+        }
+      }
 
       const nomorTerima = await generateNomorTerima(seqConnection, tanggal);
       const nomorSjGarmen = "";
@@ -160,9 +182,7 @@ const save = async (payload, user) => {
         [nomorTerima, header.nomorStbj],
       );
 
-      const cabangAlokasi = ["KBS", "KPS", "KPR"];
-
-      for (const cabang of cabangAlokasi) {
+      for (const cabang of CABANG_ALOKASI) {
         const key = cabang.toLowerCase();
         const itemsForCabang = allocationItems.filter((item) => item[key] > 0);
         if (itemsForCabang.length === 0) continue;
@@ -252,7 +272,7 @@ const save = async (payload, user) => {
             }
           }
         } else {
-          // KPR — SJ Otomatis ke Store
+          // KPR dan KF1 — SJ Otomatis ke Store
           const sjStoreResult = await generateNomorSjStore(
             seqConnection,
             tanggal,
