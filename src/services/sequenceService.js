@@ -84,6 +84,24 @@ const generateNomorSjStore = async (connection, tanggal) => {
   const seqName = `SJ_STORE_${yearMonth}`;
   const seqDate = format(new Date(tanggal), "yyyy-MM-01"); // [FIX] Bulanan
 
+  // Deret KDC.SJ.* juga dipakai penulis lain yang tidak lewat tdc_sequence.
+  // Selaraskan counter ke nomor tertinggi yang sudah ada sebelum menaikkannya.
+  await connection.query(
+    `INSERT IGNORE INTO tdc_sequence (seq_name, seq_value, seq_date)
+     VALUES (?, 0, ?)`,
+    [seqName, seqDate],
+  );
+  await connection.query(
+    `UPDATE tdc_sequence
+        SET seq_value = GREATEST(seq_value, (
+              SELECT COALESCE(MAX(CAST(SUBSTRING(sj_nomor, ?) AS UNSIGNED)), 0)
+                FROM tdc_sj_hdr
+               WHERE sj_nomor LIKE CONCAT(?, '%')
+                 AND SUBSTRING(sj_nomor, ?) REGEXP '^[0-9]+$'))
+      WHERE seq_name = ? AND seq_date = ?`,
+    [prefix.length + 1, prefix, prefix.length + 1, seqName, seqDate],
+  );
+
   const nextNum = await incrementSequence(connection, seqName, seqDate);
   return {
     prefix,
