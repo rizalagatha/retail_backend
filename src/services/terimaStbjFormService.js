@@ -355,6 +355,7 @@ const save = async (payload, user) => {
       if (connection) connection.release();
 
       if (error.code === "ER_DUP_ENTRY") {
+        console.error("[TERIMA STBJ] ER_DUP_ENTRY:", error.sqlMessage);
         retries--;
         if (retries === 0) {
           throw new Error(
