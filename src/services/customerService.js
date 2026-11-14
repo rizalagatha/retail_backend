@@ -291,9 +291,9 @@ const getCustomerDetails = async (kode) => {
   return { customer: customerRows[0], levelHistory: levelHistoryRows, levels };
 };
 
-const generateNewCustomerCode = async (cabang) => {
+const generateNewCustomerCode = async (cabang, db = pool) => {
   // Logika ini meniru fungsi getnomor dari Delphi
-  const [rows] = await pool.query(
+  const [rows] = await db.query(
     "SELECT IFNULL(MAX(RIGHT(cus_kode, 5)), 0) as lastNum FROM tcustomer WHERE LEFT(cus_kode, 3) = ?",
     [cabang],
   );
@@ -309,6 +309,77 @@ const getCustomerLevels = async () => {
   return rows;
 };
 
+// Level default customer yang dibuat dari katalog online (tcustomer_level):
+// 4 = Retailer, 5 = Retailer Online.
+const ONLINE_CUSTOMER_LEVEL = 5;
+
+// cus_telp di data lama formatnya bebas (spasi, tanda hubung, +62, dst).
+const TELP_BERSIH_SQL = `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(c.cus_telp, ' ', ''), '-', ''), '.', ''), '+', ''), '(', ''), ')', '')`;
+
+/**
+ * Normalisasi nomor HP Indonesia ke bentuk nasional (08xxxxxxxxxx).
+ * Mengembalikan null kalau bukan nomor seluler yang wajar.
+ */
+const normalizeTelp = (raw) => {
+  const digits = String(raw ?? "")
+    .replace(/\D/g, "")
+    .replace(/^00/, "");
+  let nasional = null;
+  if (digits.startsWith("62")) nasional = `0${digits.slice(2)}`;
+  else if (digits.startsWith("0")) nasional = digits;
+  else if (digits.startsWith("8")) nasional = `0${digits}`;
+  return nasional && /^08\d{8,12}$/.test(nasional) ? nasional : null;
+};
+
+/**
+ * Cari customer aktif berdasarkan nomor telepon; kalau tidak ada, buat baru.
+ * Wajib dipanggil di dalam transaksi milik pemanggil (beginTransaction sudah dilakukan).
+ * Tidak pernah mengubah data customer yang sudah ada.
+ * Bisa melempar ER_DUP_ENTRY (kode customer bentrok) -> pemanggil yang retry.
+ */
+const findOrCreateOnlineCustomer = async (
+  connection,
+  { nama, alamat, telp, cabang },
+) => {
+  const nasional = normalizeTelp(telp);
+  if (!nasional) throw new Error("Nomor telepon tidak valid.");
+  const internasional = `62${nasional.slice(1)}`;
+
+  const [found] = await connection.query(
+    `SELECT c.cus_kode AS kode,
+            (SELECT h.clh_level FROM tcustomer_level_history h
+              WHERE h.clh_cus_kode = c.cus_kode
+              ORDER BY h.clh_tanggal DESC LIMIT 1) AS level
+       FROM tcustomer c
+      WHERE c.cus_aktif = 0
+        AND c.cus_franchise = 'N'
+        AND c.cus_nama NOT LIKE 'RETAIL%'
+        AND EXISTS (SELECT 1 FROM tcustomer_level_history x WHERE x.clh_cus_kode = c.cus_kode)
+        AND ${TELP_BERSIH_SQL} IN (?, ?)
+      ORDER BY (LEFT(c.cus_kode, 3) = ?) DESC, c.date_create DESC
+      LIMIT 1`,
+    [nasional, internasional, cabang],
+  );
+  if (found.length > 0) {
+    return { kode: found[0].kode, level: found[0].level, isNew: false };
+  }
+
+  const kode = await generateNewCustomerCode(cabang, connection);
+  await connection.query(
+    `INSERT INTO tcustomer
+       (cus_kode, cus_nama, cus_alamat, cus_kota, cus_telp, cus_nama_kontak,
+        cus_top, cus_aktif, cus_limit, cus_franchise, user_create, date_create)
+     VALUES (?, ?, ?, '', ?, '', 0, 0, 0, 'N', 'ONLINE', NOW())`,
+    [kode, nama, alamat, nasional],
+  );
+  await connection.query(
+    `INSERT INTO tcustomer_level_history (clh_cus_kode, clh_tanggal, clh_level)
+     VALUES (?, CURDATE(), ?)`,
+    [kode, ONLINE_CUSTOMER_LEVEL],
+  );
+  return { kode, level: ONLINE_CUSTOMER_LEVEL, isNew: true };
+};
+
 module.exports = {
   getAllCustomers,
   createCustomer,
@@ -317,4 +388,6 @@ module.exports = {
   getCustomerDetails,
   generateNewCustomerCode,
   getCustomerLevels,
+  normalizeTelp,
+  findOrCreateOnlineCustomer,
 };

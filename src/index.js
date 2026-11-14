@@ -199,6 +199,8 @@ const laporanProduktivitasRoutes = require("./routes/laporanProduktivitasRoutes"
 const soManksiViewRoutes = require("./routes/soManksiViewRoutes");
 
 const app = express();
+// Di belakang nginx (1 hop): req.ip = IP asli pengunjung, bukan 127.0.0.1
+app.set("trust proxy", 1);
 const port = process.env.PORT || 8000;
 const allowedOrigins = [
   "http://localhost:5173", // vite dev server
@@ -236,6 +238,24 @@ app.use(
     credentials: true,
   }),
 );
+// Jalur publik tanpa login: body maksimal 16kb. Harus SEBELUM parser global 50mb,
+// karena request yang body-nya sudah terbaca dilewati parser berikutnya.
+app.use(
+  "/api/so/public",
+  express.json({ limit: "16kb" }),
+  express.urlencoded({ extended: false, limit: "16kb" }),
+);
+// Error dari CORS/parser di jalur publik: jawab singkat, jangan bocorkan stack trace
+app.use("/api/so/public", (err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  if (err && err.message === "Not allowed by CORS") {
+    return res.status(403).json({ message: "Origin tidak diizinkan." });
+  }
+  if (err && err.type === "entity.too.large") {
+    return res.status(413).json({ message: "Data terlalu besar." });
+  }
+  return res.status(400).json({ message: "Data yang dikirim tidak valid." });
+});
 app.use(express.json({ limit: "50mb" }));
 app.use(cookieParser());
 app.use(
@@ -651,7 +671,7 @@ app.use(
 );
 
 // Menjalankan Server
-app.listen(port, async () => {
+app.listen(port, "127.0.0.1", async () => {
   console.log(`⚡️[server]: Server berjalan di http://localhost:${port}`);
 
   // Load master data untuk AI (Fuzzy Matching) saat server pertama kali hidup

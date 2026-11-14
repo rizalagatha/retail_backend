@@ -1,6 +1,22 @@
 const pool = require("../config/database");
 const { format, addDays, parseISO } = require("date-fns");
-const { get } = require("../routes/salesCounterRoute");
+const { normalizeTelp } = require("./customerService");
+const {
+  UKURAN_CETAK,
+  WARNA_KAOS,
+  getJasa,
+  labelSizeCetak,
+  hitungEstimasi,
+} = require("./jasaCustomTarif");
+const { findOrCreateOnlineCustomer } = require("./customerService");
+const {
+  getPublicStores,
+  getPublicStockLive,
+  getPromoDiskonMap,
+  hargaSetelahPromo,
+  promoKey,
+  PAMERAN_BRANCHES,
+} = require("./soService");
 
 /**
  * @description Membuat nomor Penawaran baru (getmaxnomor versi Delphi).
@@ -1135,6 +1151,528 @@ const renameReviewProofImage = async (tempFilePath, nomor) => {
   });
 };
 
+// ===== PENAWARAN ONLINE (katalog publik, tanpa login) =====
+// Semua input dari internet dianggap tidak tepercaya: tipe dicek ketat (string/number murni),
+// teks dibersihkan, dan hanya field yang dikenal yang diteruskan.
+
+const ONLINE_LIMIT = { ITEMS: 50, QTY: 99, CUSTOM: 10, TITIK: 10, DIM_CM: 500 };
+
+// Error yang aman ditampilkan ke pengunjung. Error lain jangan pernah dibocorkan.
+class OnlineOfferError extends Error {
+  constructor(message, status = 400) {
+    super(message);
+    this.name = "OnlineOfferError";
+    this.status = status;
+  }
+}
+
+const isPlainObject = (v) =>
+  v !== null && typeof v === "object" && !Array.isArray(v);
+
+const bersihTeks = (v, maks) => {
+  if (typeof v !== "string") return "";
+  return v
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "") // é -> e
+    .replace(/[^\x20-\x7E]/g, " ") // emoji, karakter kontrol, non-ASCII (tabel latin1)
+    .replace(/[<>`\\]/g, "") // cegah markup tersimpan lalu tampil di ERP/cetak
+    .replace(/\s+/g, " ")
+    .replace(/^[=+\-@\s]+/, "") // cegah formula Excel saat staf ekspor
+    .trim()
+    .slice(0, maks)
+    .trim();
+};
+
+const normalizeOnlineOfferInput = (body) => {
+  if (!isPlainObject(body)) {
+    throw new OnlineOfferError("Data yang dikirim tidak valid.");
+  }
+
+  const cabang =
+    typeof body.cabang === "string" ? body.cabang.trim().toUpperCase() : "";
+  if (!/^[A-Z0-9]{3}$/.test(cabang)) {
+    throw new OnlineOfferError("Store tujuan tidak valid.");
+  }
+
+  // --- customer
+  const c = isPlainObject(body.customer) ? body.customer : {};
+  const nama = bersihTeks(c.nama, 50);
+  if (nama.length < 2 || !/[A-Za-z]/.test(nama)) {
+    throw new OnlineOfferError("Nama minimal 2 huruf.");
+  }
+  const telp = normalizeTelp(typeof c.telp === "string" ? c.telp : "");
+  if (!telp) {
+    throw new OnlineOfferError("Nomor HP tidak valid. Contoh: 081234567890.");
+  }
+  const alamat = bersihTeks(c.alamat, 200);
+  if (alamat.length < 8) {
+    throw new OnlineOfferError("Alamat terlalu pendek.");
+  }
+
+  // --- barang biasa
+  if (!Array.isArray(body.items) || body.items.length === 0) {
+    throw new OnlineOfferError("Keranjang masih kosong.");
+  }
+  if (body.items.length > ONLINE_LIMIT.ITEMS) {
+    throw new OnlineOfferError(
+      `Maksimal ${ONLINE_LIMIT.ITEMS} item per penawaran.`,
+    );
+  }
+  const itemMap = new Map();
+  for (const it of body.items) {
+    if (!isPlainObject(it)) {
+      throw new OnlineOfferError("Ada item yang tidak valid.");
+    }
+    const kode = typeof it.kode === "string" ? it.kode.trim() : "";
+    const ukuran = typeof it.ukuran === "string" ? it.ukuran.trim() : "";
+    if (
+      !/^[A-Za-z0-9._-]{1,20}$/.test(kode) ||
+      !/^[A-Za-z0-9./ -]{1,15}$/.test(ukuran)
+    ) {
+      throw new OnlineOfferError("Ada item yang tidak valid.");
+    }
+    if (!Number.isInteger(it.qty) || it.qty < 1) {
+      throw new OnlineOfferError("Jumlah item tidak valid.");
+    }
+    const key = `${kode}|${ukuran}`.toUpperCase();
+    const qty = (itemMap.has(key) ? itemMap.get(key).qty : 0) + it.qty;
+    if (qty > ONLINE_LIMIT.QTY) {
+      throw new OnlineOfferError(
+        `Jumlah per item maksimal ${ONLINE_LIMIT.QTY}.`,
+      );
+    }
+    itemMap.set(key, { kode, ukuran, qty });
+  }
+  const items = [...itemMap.values()];
+  const kodeKanon = new Map(items.map((i) => [i.kode.toUpperCase(), i.kode]));
+
+  // --- jasa custom (opsional). Satu penawaran = satu jenis; wajib dipasangkan ke kaos di keranjang.
+  const customRaw = body.custom === undefined ? [] : body.custom;
+  if (!Array.isArray(customRaw) || customRaw.length > ONLINE_LIMIT.CUSTOM) {
+    throw new OnlineOfferError("Jasa custom tidak valid.");
+  }
+
+  let jenisOrder = null;
+  const custom = [];
+  for (const cu of customRaw) {
+    if (!isPlainObject(cu)) {
+      throw new OnlineOfferError("Jasa custom tidak valid.");
+    }
+    const jasa =
+      typeof cu.jenis === "string"
+        ? getJasa(cu.jenis.trim().toUpperCase())
+        : null;
+    if (!jasa) throw new OnlineOfferError("Jenis jasa custom tidak dikenal.");
+    if (jenisOrder && jenisOrder !== jasa.kode) {
+      throw new OnlineOfferError(
+        "Satu penawaran hanya untuk satu jenis jasa custom. Kirim jenis lain sebagai penawaran terpisah.",
+      );
+    }
+    jenisOrder = jasa.kode;
+
+    // Ukuran cetak + warna kaos hanya relevan untuk jasa berbasis ukuran (SB, TG)
+    let ukuranCetak = null;
+    let warna = null;
+    if (jasa.mode === "ukuran") {
+      ukuranCetak = UKURAN_CETAK.includes(cu.ukuranCetak)
+        ? cu.ukuranCetak
+        : null;
+      if (!ukuranCetak) throw new OnlineOfferError("Ukuran cetak tidak valid.");
+      warna = jasa.bedaWarnaKaos
+        ? WARNA_KAOS.includes(cu.warna)
+          ? cu.warna
+          : null
+        : "WARNA";
+      if (!warna) throw new OnlineOfferError("Warna kaos tidak valid.");
+    }
+
+    if (
+      !Array.isArray(cu.titiks) ||
+      cu.titiks.length < 1 ||
+      cu.titiks.length > ONLINE_LIMIT.TITIK
+    ) {
+      throw new OnlineOfferError("Titik cetak tidak valid.");
+    }
+    const titiks = cu.titiks.map((t, i) => {
+      if (!isPlainObject(t))
+        throw new OnlineOfferError("Titik cetak tidak valid.");
+      const namaTitik = bersihTeks(t.nama, 30) || `Titik ${i + 1}`;
+      let panjang = 0;
+      let lebar = 0;
+      if (jasa.mode === "luas") {
+        const dimOk = (n) =>
+          typeof n === "number" &&
+          Number.isFinite(n) &&
+          n >= 1 &&
+          n <= ONLINE_LIMIT.DIM_CM;
+        if (!dimOk(t.panjang) || !dimOk(t.lebar)) {
+          throw new OnlineOfferError(
+            `Ukuran titik "${namaTitik}" harus 1-${ONLINE_LIMIT.DIM_CM} cm.`,
+          );
+        }
+        panjang = Math.round(t.panjang * 100) / 100;
+        lebar = Math.round(t.lebar * 100) / 100;
+      }
+      return { nama: namaTitik, panjang, lebar };
+    });
+
+    if (
+      !Array.isArray(cu.kaos) ||
+      cu.kaos.length < 1 ||
+      cu.kaos.length > ONLINE_LIMIT.ITEMS
+    ) {
+      throw new OnlineOfferError("Pilih kaos yang akan diberi jasa custom.");
+    }
+    const kaos = [
+      ...new Set(
+        cu.kaos.map((k) => {
+          const kanon =
+            typeof k === "string"
+              ? kodeKanon.get(k.trim().toUpperCase())
+              : null;
+          if (!kanon) {
+            throw new OnlineOfferError(
+              "Kaos untuk jasa custom tidak ada di keranjang.",
+            );
+          }
+          return kanon;
+        }),
+      ),
+    ];
+
+    custom.push({
+      jenis: jasa.kode,
+      nama: bersihTeks(cu.nama, 60),
+      ukuranCetak,
+      warna,
+      titiks,
+      kaos,
+    });
+  }
+
+  return {
+    cabang,
+    customer: { nama, telp, alamat },
+    items,
+    custom,
+    jenisOrder,
+  };
+};
+
+// ===== PENAWARAN ONLINE: harga, stok, simpan =====
+
+const BERLAKU_HARI = 3;
+const MAKS_PERCOBA = 3;
+// Dimensi cetak per ukuran kertas (cm), sama dengan data lama: A3 42x29.7, A4 29.7x21
+const UKURAN_CM = { A3: [42, 29.7], A4: [29.7, 21], A5: [21, 14.8] };
+
+const waktuWib = () => new Date(Date.now() + 7 * 60 * 60 * 1000);
+const tglIso = (d) => d.toISOString().slice(0, 10);
+const tglIndo = (iso) =>
+  `${iso.slice(8, 10)}-${iso.slice(5, 7)}-${iso.slice(0, 4)}`;
+
+const daftarSingkat = (arr) =>
+  arr.length > 5
+    ? `${arr.slice(0, 5).join(", ")}, dan ${arr.length - 5} lainnya`
+    : arr.join(", ");
+
+/**
+ * Hanya membaca & menghitung (tanpa menulis). Harga, promo, dan stok SELALU dari server;
+ * apa pun yang dikirim klien selain kode/ukuran/qty/titik diabaikan.
+ */
+const buildOnlineOffer = async (input) => {
+  const { cabang } = input;
+
+  const stores = await getPublicStores();
+  if (
+    PAMERAN_BRANCHES.includes(cabang) ||
+    !stores.some((s) => s.kode === cabang)
+  ) {
+    throw new OnlineOfferError("Store tujuan tidak tersedia.");
+  }
+
+  const [stokRows, promoMap] = await Promise.all([
+    getPublicStockLive(cabang, ""),
+    getPromoDiskonMap(cabang),
+  ]);
+  const stokMap = new Map(stokRows.map((r) => [promoKey(r.kode, r.ukuran), r]));
+
+  // --- barang biasa
+  const tidakAda = [];
+  const stokKurang = [];
+  const regular = [];
+  for (const it of input.items) {
+    const key = promoKey(it.kode, it.ukuran);
+    const row = stokMap.get(key);
+    const harga = row ? Number(row.harga) : 0;
+    if (!row || !(harga > 0)) {
+      tidakAda.push(`${it.kode} ${it.ukuran}`);
+      continue;
+    }
+    // Penawaran tidak menahan stok: kurang tetap disimpan, hanya dilaporkan.
+    const stok = Number(row.stok) || 0;
+    if (stok < it.qty) {
+      stokKurang.push({
+        nama: row.nama,
+        ukuran: String(row.ukuran).trim(),
+        diminta: it.qty,
+        tersisa: Math.max(stok, 0),
+      });
+    }
+    const disc = promoMap.get(key);
+    const diskonRp = harga - hargaSetelahPromo(harga, disc);
+    regular.push({
+      inKode: it.kode, // kode seperti di input, untuk mencocokkan custom.kaos
+      kode: String(row.kode).trim(),
+      nama: row.nama,
+      ukuran: String(row.ukuran).trim(),
+      qty: it.qty,
+      harga,
+      diskonRp,
+      diskonPersen: diskonRp > 0 ? disc.persen : 0,
+      promoNomor: diskonRp > 0 ? disc.nomor : null,
+      promoUnik: diskonRp > 0 ? disc.nPromo === 1 : true,
+    });
+  }
+  if (tidakAda.length) {
+    throw new OnlineOfferError(
+      `Barang tidak tersedia di store ini: ${daftarSingkat(tidakAda)}.`,
+      409,
+    );
+  }
+
+  // --- promo header (pilihan A): diisi hanya bila semua baris berpromo satu nomor yang sama
+  const dipromo = regular.filter((l) => l.diskonRp > 0);
+  const nomorSet = new Set(dipromo.map((l) => l.promoNomor));
+  const promoNomor =
+    dipromo.length > 0 &&
+    nomorSet.size === 1 &&
+    dipromo.every((l) => l.promoUnik)
+      ? [...nomorSet][0] || null
+      : null;
+
+  // --- jasa custom: satu baris per ukuran kaos, harga dari total pcs kaos terpilih
+  const custom = [];
+  for (const cu of input.custom) {
+    const jasa = getJasa(cu.jenis);
+    const picked = regular.filter((l) => cu.kaos.includes(l.inKode));
+    const totalPcs = picked.reduce((s, l) => s + l.qty, 0);
+
+    let est;
+    try {
+      // ukuran/warna hanya dipakai jasa berbasis ukuran; untuk jasa luas diisi nilai aman
+      est = hitungEstimasi(
+        jasa,
+        totalPcs,
+        cu.ukuranCetak || "A4",
+        cu.warna || "WARNA",
+        cu.titiks,
+      );
+    } catch (e) {
+      throw new OnlineOfferError("Ukuran titik cetak tidak valid.");
+    }
+    const satuan = Math.round(est.satuan);
+    if (!(satuan > 0)) {
+      throw new OnlineOfferError("Harga jasa custom tidak valid.");
+    }
+
+    const label = labelSizeCetak(jasa, cu.ukuranCetak, cu.warna);
+    const titikCetak = cu.titiks.map((t) => {
+      const [p, l] =
+        jasa.mode === "ukuran"
+          ? UKURAN_CM[cu.ukuranCetak]
+          : [t.panjang, t.lebar];
+      return {
+        keterangan: t.nama,
+        sizeCetak: label,
+        warna: "",
+        panjang: p,
+        lebar: l,
+      };
+    });
+    const sourceItems = [
+      ...picked.map((l) => ({
+        kode: l.kode,
+        nama: l.nama,
+        ukuran: l.ukuran,
+        jumlah: l.qty,
+      })),
+      { kode: "", nama: "", ukuran: "", jumlah: 0 }, // baris penutup, sama dengan data lama
+    ];
+    const hargaPerCm = jasa.mode === "luas" ? est.hargaPerCm2 : 0;
+    const namaDesain = (cu.nama || `${jasa.nama} ${picked[0].nama}`).slice(
+      0,
+      100,
+    );
+
+    const perUkuran = new Map();
+    for (const l of picked) {
+      perUkuran.set(l.ukuran, (perUkuran.get(l.ukuran) || 0) + l.qty);
+    }
+    for (const [ukuran, jumlah] of perUkuran) {
+      custom.push({
+        nama: namaDesain,
+        ukuran,
+        jumlah,
+        harga: satuan,
+        data: JSON.stringify({
+          ukuranKaos: [{ ukuran, jumlah, harga: satuan }],
+          titikCetak,
+          hargaPerCm,
+          sourceItems,
+        }),
+      });
+    }
+  }
+
+  const total =
+    regular.reduce((s, l) => s + l.qty * (l.harga - l.diskonRp), 0) +
+    custom.reduce((s, c) => s + c.jumlah * c.harga, 0);
+
+  return {
+    cabang,
+    jenisOrderKode: input.jenisOrder,
+    jenisOrderNama: input.jenisOrder
+      ? getJasa(input.jenisOrder).nama.toUpperCase()
+      : null,
+    promoNomor,
+    stokKurang,
+    regular,
+    custom,
+    total,
+  };
+};
+
+/**
+ * Simpan penawaran dari katalog publik. Satu transaksi: customer (cari/buat) + header + detail.
+ * ER_DUP_ENTRY (nomor penawaran / kode customer bentrok dengan transaksi lain) -> coba ulang.
+ * Error selain OnlineOfferError JANGAN diteruskan ke klien (controller yang membungkus).
+ */
+const saveOnlineOffer = async (body) => {
+  const input = normalizeOnlineOfferInput(body);
+  const plan = await buildOnlineOffer(input);
+
+  const wib = waktuWib();
+  const tanggal = tglIso(wib);
+  const berlaku = tglIndo(
+    tglIso(new Date(wib.getTime() + BERLAKU_HARI * 24 * 60 * 60 * 1000)),
+  );
+  const keterangan = `KATALOG ONLINE - BERLAKU S/D ${berlaku}`;
+
+  for (let percobaan = 1; percobaan <= MAKS_PERCOBA; percobaan++) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const customer = await findOrCreateOnlineCustomer(connection, {
+        nama: input.customer.nama,
+        alamat: input.customer.alamat,
+        telp: input.customer.telp,
+        cabang: input.cabang,
+      });
+
+      const nomor = await generateNewOfferNumber(
+        connection,
+        input.cabang,
+        tanggal,
+      );
+      const idrec = `${input.cabang}PEN${format(new Date(), "yyyyMMddHHmmssSSS")}`;
+
+      await connection.query(
+        `INSERT INTO tpenawaran_hdr
+         (pen_idrec, pen_nomor, pen_tanggal, pen_top, pen_ppn, pen_disc, pen_disc1, pen_disc2,
+          pen_bkrm, pen_cus_kode, pen_cus_level, pen_ket, pen_cab, user_create, date_create,
+          pen_jenis_order_kode, pen_jenis_order_nama, pen_nama_dtf, pen_promo_nomor)
+         VALUES (?, ?, ?, 0, 0, 0, 0, 0, 0, ?, ?, ?, ?, 'ONLINE', NOW(), ?, ?, NULL, ?)`,
+        [
+          idrec,
+          nomor,
+          tanggal,
+          customer.kode,
+          Number(customer.level) || 5,
+          keterangan,
+          input.cabang,
+          plan.jenisOrderKode,
+          plan.jenisOrderNama,
+          plan.promoNomor,
+        ],
+      );
+
+      let urut = 0;
+      const rows = [
+        ...plan.regular.map((l) => [
+          idrec,
+          nomor,
+          l.kode,
+          "",
+          "",
+          l.ukuran,
+          l.qty,
+          l.harga,
+          l.diskonPersen,
+          l.diskonRp,
+          ++urut,
+          "N",
+          null,
+          null,
+          "N",
+        ]),
+        ...plan.custom.map((c) => [
+          idrec,
+          nomor,
+          "CUSTOM",
+          "",
+          "",
+          c.ukuran,
+          c.jumlah,
+          c.harga,
+          0,
+          0,
+          ++urut,
+          "Y",
+          c.nama,
+          c.data,
+          "N",
+        ]),
+      ];
+      await connection.query(
+        `INSERT INTO tpenawaran_dtl
+         (pend_idrec, pend_nomor, pend_kode, pend_ph_nomor, pend_sd_nomor, pend_ukuran,
+          pend_jumlah, pend_harga, pend_disc, pend_diskon, pend_nourut,
+          pend_custom, pend_custom_nama, pend_custom_data, pend_is_free_gift)
+         VALUES ?`,
+        [rows],
+      );
+
+      await connection.commit();
+      // Sengaja tidak mengembalikan apakah customer baru atau lama.
+      return {
+        nomor,
+        tanggal,
+        berlakuSampai: berlaku,
+        total: plan.total,
+        stokKurang: plan.stokKurang,
+      };
+    } catch (err) {
+      try {
+        await connection.rollback();
+      } catch (_) {
+        /* koneksi sudah putus; release di finally */
+      }
+      if (err && err.code === "ER_DUP_ENTRY") {
+        if (percobaan < MAKS_PERCOBA) continue;
+        throw new OnlineOfferError(
+          "Server sedang sibuk, coba kirim lagi sebentar lagi.",
+          503,
+        );
+      }
+      throw err;
+    } finally {
+      connection.release();
+    }
+  }
+};
+
 module.exports = {
   generateNewOfferNumber,
   searchCustomers,
@@ -1152,4 +1690,9 @@ module.exports = {
   getDataForPrint,
   findByBarcode,
   renameReviewProofImage,
+  OnlineOfferError,
+  normalizeOnlineOfferInput,
+  bersihTeks,
+  buildOnlineOffer,
+  saveOnlineOffer,
 };

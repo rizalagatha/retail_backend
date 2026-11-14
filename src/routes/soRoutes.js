@@ -18,6 +18,10 @@ router.get("/public/contacts", soController.getPublicContacts);
 
 router.get("/public/katalog", soController.getPublicCatalog);
 
+router.get("/public/tarif-jasa", soController.getPublicTarifJasa);
+
+router.post("/public/penawaran", soController.postPublicPenawaran);
+
 // GET: Mengambil daftar Surat Pesanan berdasarkan filter
 router.get(
   "/",

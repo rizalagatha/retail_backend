@@ -2032,12 +2032,14 @@ const PROMO_KATALOG_CABANG = "B02"; // acuan promo untuk katalog (tanpa toko)
 const promoKey = (kode, ukuran) =>
   `${String(kode).trim()}|${String(ukuran).trim()}`.toUpperCase();
 
-// Peta kode|ukuran -> { persen, rp } untuk promo yang sedang berlaku di cabang itu
+// Peta kode|ukuran -> { persen, rp, nomor, nPromo } untuk promo yang sedang berlaku di cabang itu
+// nPromo > 1 berarti barang itu ada di lebih dari satu promo (nomor jadi ambigu)
 const getPromoDiskonMap = (cabang) =>
   withCache(`promo:${cabang}`, 1 * MIN, 5 * MIN, async () => {
     const [rows] = await pool.query(
       `SELECT pb.pb_brg_kode AS kode, pb.pb_ukuran AS ukuran,
-              MAX(pb.pb_disc) AS persen, MAX(pb.pb_diskon) AS rp
+              MAX(pb.pb_disc) AS persen, MAX(pb.pb_diskon) AS rp,
+              MIN(p.pro_nomor) AS nomor, COUNT(DISTINCT p.pro_nomor) AS nPromo
          FROM tpromo p
          JOIN tpromo_cabang c ON c.pc_nomor = p.pro_nomor AND c.pc_cab = ?
          JOIN tpromo_barang pb ON pb.pb_nomor = p.pro_nomor
@@ -2052,6 +2054,8 @@ const getPromoDiskonMap = (cabang) =>
       map.set(promoKey(r.kode, r.ukuran), {
         persen: Number(r.persen) || 0,
         rp: Number(r.rp) || 0,
+        nomor: r.nomor ? String(r.nomor) : null,
+        nPromo: Number(r.nPromo) || 0,
       }),
     );
     return map;
@@ -2375,4 +2379,8 @@ module.exports = {
   getPublicStockLive,
   getPublicContacts,
   getPublicCatalog,
+  getPromoDiskonMap,
+  hargaSetelahPromo,
+  promoKey,
+  PAMERAN_BRANCHES,
 };
