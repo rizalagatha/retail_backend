@@ -403,19 +403,24 @@ const saveData = async (data, user) => {
                 ],
               );
             } else if (item.nomor.includes(".STR.")) {
-              // Proses Setoran
+              // Proses Setoran: tanggal refund (sd_tanggal), nomor refund (sd_inv), nominal refund (sd_bayar)
               const shidrec = await getSetorHeaderId(connection, item.nomor);
               await connection.query(
-                `INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur) 
-                                 VALUES (?, ?, NOW(), "", ?, ?, ?) 
-                                 ON DUPLICATE KEY UPDATE sd_bayar = ?`,
+                `INSERT INTO tsetor_dtl (sd_idrec, sd_sh_nomor, sd_tanggal, sd_inv, sd_bayar, sd_ket, sd_angsur)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE
+                   sd_tanggal = VALUES(sd_tanggal),
+                   sd_inv = VALUES(sd_inv),
+                   sd_bayar = VALUES(sd_bayar),
+                   sd_ket = VALUES(sd_ket)`,
                 [
                   shidrec,
                   item.nomor,
-                  item.refund,
+                  header.tanggal,
+                  rfNomor,
+                  finalRefundAmount,
                   rfNomor,
                   item.iddrec,
-                  item.refund,
                 ],
               );
             }
