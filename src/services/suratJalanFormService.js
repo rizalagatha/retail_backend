@@ -601,7 +601,7 @@ const searchBahanPenolong = async (term, page, itemsPerPage, cabang) => {
       AND (
         (b.brg_jenis = 'ACCESORIES' AND b.brg_ktg = 'STORE')
         OR
-        (b.brg_jenis = 'OBAT'       AND b.brg_ktg = 'DTF')
+        (b.brg_jenis = 'OBAT' AND b.brg_ktg IN ('DTF', 'MMT'))
       )
       AND (b.brg_kode LIKE ? OR b.brg_nama LIKE ?)
   `;
