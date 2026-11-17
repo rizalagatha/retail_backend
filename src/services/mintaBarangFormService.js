@@ -1,6 +1,8 @@
 const pool = require("../config/database");
 const { format } = require("date-fns");
 const paretoService = require("./paretoService");
+// Minta yang lebih tua dari ini dianggap tidak lagi "dalam proses" saat menghitung stok efektif
+const MINTA_BATAS_HARI = 14;
 
 const getSudah = async (connection, soNomor, kode, ukuran, excludeMtNomor) => {
   const query = `
@@ -925,7 +927,7 @@ const generateAutomasiMintaBarang = async (user) => {
       [activeCabangs],
     );
 
-    // C. Ambil Permintaan Gantung
+    // C. Ambil Permintaan Gantung (hanya yang masih segar, maksimal MINTA_BATAS_HARI hari)
     const [sudahMinta] = await connection.query(
       `
       SELECT mth.mt_cab AS cabang, mtd.mtd_kode AS kode, mtd.mtd_ukuran AS ukuran, SUM(mtd.mtd_jumlah) AS qty
@@ -933,9 +935,10 @@ const generateAutomasiMintaBarang = async (user) => {
       JOIN tmintabarang_dtl mtd ON mtd.mtd_nomor = mth.mt_nomor
       WHERE mth.mt_closing = 'N' AND mth.mt_nomor NOT IN (SELECT sj_mt_nomor FROM tdc_sj_hdr WHERE sj_mt_nomor <> '')
         AND mth.mt_cab IN (?)
+        AND mth.mt_tanggal >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
       GROUP BY mth.mt_cab, mtd.mtd_kode, mtd.mtd_ukuran
     `,
-      [activeCabangs],
+      [activeCabangs, MINTA_BATAS_HARI],
     );
 
     // D. Ambil Packing List Gantung
