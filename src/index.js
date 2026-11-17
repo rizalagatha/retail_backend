@@ -210,6 +210,7 @@ const allowedOrigins = [
   "https://103.94.238.252",
   "https://tracking.kaosanofficial.com",
   "https://katalog.kaosanofficial.com",
+  "https://rtl.kaosanofficial.com",
 ];
 const imageFolderPath = path.join(__dirname, "public", "images");
 const memoFolderPath = path.join(__dirname, "../public/memos");
