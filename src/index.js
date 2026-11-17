@@ -401,44 +401,53 @@ app.get("/api/memos/stream/:filename", (req, res) => {
 //   },
 // );
 
-cron.schedule(
-  "0 6 * * *",
-  async () => {
-    console.log("--- [CRON] Memulai Automasi Minta Barang ---");
-    try {
-      // Karena ini dijalankan sistem, kita buat user "Palsu"
-      const systemUser = { kode: "SYSTEM", cabang: "KDC" };
+// Cron hanya boleh jalan di SATU server. Isi DISABLE_CRON=true di .env server yang tidak boleh menjalankannya.
+if (process.env.DISABLE_CRON === "true") {
+  console.log("[CRON] DISABLE_CRON=true, semua cron di proses ini dimatikan.");
+} else {
+  cron.schedule(
+    "0 6 * * *",
+    async () => {
+      console.log("--- [CRON] Memulai Automasi Minta Barang ---");
+      try {
+        // Karena ini dijalankan sistem, kita buat user "Palsu"
+        const systemUser = { kode: "SYSTEM", cabang: "KDC" };
 
-      const result =
-        await mintaBarangFormService.generateAutomasiMintaBarang(systemUser);
-      console.log(`✅ [CRON] Automasi Minta Barang Selesai: ${result.message}`);
-    } catch (error) {
-      console.error(`❌ [CRON] Error Automasi Minta Barang: ${error.message}`);
-    }
-  },
-  {
-    scheduled: true,
-    timezone: "Asia/Jakarta", // Memastikan berjalan jam 06:00 WIB
-  },
-);
+        const result =
+          await mintaBarangFormService.generateAutomasiMintaBarang(systemUser);
+        console.log(
+          `✅ [CRON] Automasi Minta Barang Selesai: ${result.message}`,
+        );
+      } catch (error) {
+        console.error(
+          `❌ [CRON] Error Automasi Minta Barang: ${error.message}`,
+        );
+      }
+    },
+    {
+      scheduled: true,
+      timezone: "Asia/Jakarta", // Memastikan berjalan jam 06:00 WIB
+    },
+  );
 
-// "0 0 1 * *" berarti berjalan tiap jam 00:00 tanggal 1 setiap bulan
-cron.schedule(
-  "0 0 1 * *",
-  async () => {
-    console.log(`[CRON] Memulai kalkulasi otomatis Buffer Stok Bulanan...`);
-    try {
-      await bufferPanelService.generateMonthlyLog();
-      console.log(`[CRON] Berhasil melakukan update dan log Buffer Stok.`);
-    } catch (error) {
-      console.error(`[CRON] Gagal generate Buffer Stok:`, error);
-    }
-  },
-  {
-    scheduled: true,
-    timezone: "Asia/Jakarta", // (tepat 00:00 WIB)
-  },
-);
+  // "0 0 1 * *" berarti berjalan tiap jam 00:00 tanggal 1 setiap bulan
+  cron.schedule(
+    "0 0 1 * *",
+    async () => {
+      console.log(`[CRON] Memulai kalkulasi otomatis Buffer Stok Bulanan...`);
+      try {
+        await bufferPanelService.generateMonthlyLog();
+        console.log(`[CRON] Berhasil melakukan update dan log Buffer Stok.`);
+      } catch (error) {
+        console.error(`[CRON] Gagal generate Buffer Stok:`, error);
+      }
+    },
+    {
+      scheduled: true,
+      timezone: "Asia/Jakarta", // (tepat 00:00 WIB)
+    },
+  );
+}
 
 // Menggunakan Rute
 app.use("/api/auth", clientCertAuth, authRoutes);
