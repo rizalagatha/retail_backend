@@ -7,11 +7,42 @@ process.on("unhandledRejection", (reason) => {
   console.error("[UNHANDLED REJECTION]", reason);
 });
 
+const fs = require("fs");
+
+const _renameSync = fs.renameSync;
+fs.renameSync = (src, dest) => {
+  try {
+    _renameSync(src, dest);
+  } catch (e) {
+    if (e.code !== "EXDEV") throw e;
+    fs.copyFileSync(src, dest);
+    fs.unlinkSync(src);
+  }
+};
+
+const _rename = fs.rename;
+fs.rename = (src, dest, cb) => {
+  _rename(src, dest, (err) => {
+    if (!err || err.code !== "EXDEV") return cb(err);
+    fs.copyFile(src, dest, (e2) => (e2 ? cb(e2) : fs.unlink(src, cb)));
+  });
+};
+
+const _pRename = fs.promises.rename;
+fs.promises.rename = async (src, dest) => {
+  try {
+    await _pRename(src, dest);
+  } catch (e) {
+    if (e.code !== "EXDEV") throw e;
+    await fs.promises.copyFile(src, dest);
+    await fs.promises.unlink(src);
+  }
+};
+
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const clientCertAuth = require("./middleware/clientCertAuth");
-const fs = require("fs");
 const path = require("path");
 const cron = require("node-cron");
 const terimaSjService = require("./services/terimaSjService");
