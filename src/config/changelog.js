@@ -1,4 +1,20 @@
 const changelogs = {
+  "1.5.10": {
+    date: "2026-10-24",
+    changes: [
+      {
+        title: "Pembaruan",
+        items: [
+          "Penambahan Sub Kategori Produk pada Master Barang, dan tag New Arrival untuk pembuatan Barang DC baru yang berlaku selama 6 bulan.",
+          "Penambahan mode Mutasi Stok baru yaitu Mutasi ke Bad Stock (BS), stok juga disesuaikan untuk barang BS",
+          "Proforma Invoice dapat memanggil nomor Invoice, dan memerlukan otorisasi Manager ketika simpan",
+          "Update pada Terima STBJ, dapat terima parsial dan penambahan dashboard Terima STBJ, memisahkan antara STBJ Retail dan Stok DC",
+          "Pada Perencanaan Produksi dapat centang semua barang dari semua halaman, dan dapat diexport ke excel untuk mengolah laporannya",
+          "Penambahan beberapa metric baru pada Work Summary Dashboard (Dasbor Ringkasan Kerja)",
+        ],
+      },
+    ],
+  },
   "1.5.9": {
     date: "2026-10-24",
     changes: [

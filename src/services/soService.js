@@ -1915,7 +1915,7 @@ const getActivePromos = async (filters) => {
 };
 
 // Cabang yang tidak ditampilkan di halaman publik (katalog stok & pusat bantuan)
-const HIDDEN_PUBLIC_BRANCHES = ["K04", "SL1"];
+const HIDDEN_PUBLIC_BRANCHES = ["K04", "SL1", "KF1"];
 
 // ===== Cache memori ringan untuk endpoint publik (stale-while-revalidate) =====
 const memo = new Map();

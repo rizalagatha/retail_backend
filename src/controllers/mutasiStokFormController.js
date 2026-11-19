@@ -65,6 +65,15 @@ const exportDetails = async (req, res) => {
   }
 };
 
+const lookupBarangBs = async (req, res) => {
+  try {
+    const data = await service.lookupBarangBs(req.query.term, req.user);
+    res.json(data);
+  } catch (error) {
+    res.status(404).json({ message: error.message });
+  }
+};
+
 module.exports = {
   searchSo,
   loadFromSo,
@@ -72,4 +81,5 @@ module.exports = {
   save,
   getPrintData,
   exportDetails,
+  lookupBarangBs,
 };

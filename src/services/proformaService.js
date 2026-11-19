@@ -33,7 +33,8 @@ const getList = async (filters, user) => {
             c.Cus_Kota AS kota,
             CONCAT(h.inv_cus_level, " - ", l.level_nama) AS 'level',
             h.Inv_ket AS keterangan,
-            h.inv_closing AS closing
+            h.inv_closing AS closing,
+            h.inv_status_acc AS statusAcc
         FROM tinv_hdr h
         LEFT JOIN tcustomer c ON c.cus_kode = h.Inv_cus_kode
         LEFT JOIN tcustomer_level l ON l.level_kode = h.inv_cus_level
@@ -49,12 +50,13 @@ const getList = async (filters, user) => {
     `;
   const params = [startDate, endDate];
 
-  // Logika filter cabang dari Delphi
-  if (user.cabang === "KDC" && cabang === "KDC") {
+  // Cabang dikunci di server: non-KDC selalu cabangnya sendiri, apa pun isi query
+  const cabangFilter = user.cabang === "KDC" ? cabang : user.cabang;
+  if (user.cabang === "KDC" && cabangFilter === "KDC") {
     query += " AND h.inv_cab IN (SELECT gdg_kode FROM tgudang WHERE gdg_dc=1)";
   } else {
     query += " AND h.inv_cab = ?";
-    params.push(cabang);
+    params.push(cabangFilter);
   }
 
   query += " ORDER BY h.Inv_nomor DESC";
@@ -63,8 +65,8 @@ const getList = async (filters, user) => {
   return rows;
 };
 
-const getDetails = async (nomor) => {
-  const query = `
+const getDetails = async (nomor, user) => {
+  let query = `
         SELECT 
             d.invd_kode AS kode,
             IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) AS nama,
@@ -75,12 +77,21 @@ const getDetails = async (nomor) => {
             d.invd_diskon AS 'diskonRp',
             (d.invd_jumlah * d.invd_harga) AS total
         FROM tinv_dtl d
+        JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor AND h.inv_sts_pro = 2
         LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
         LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
         WHERE d.invd_inv_nomor = ?
-        ORDER BY d.invd_nourut;
     `;
-  const [rows] = await pool.query(query, [nomor]);
+  const params = [nomor];
+
+  // Non-KDC hanya boleh melihat proforma cabangnya sendiri
+  if (user.cabang !== "KDC") {
+    query += " AND h.inv_cab = ?";
+    params.push(user.cabang);
+  }
+  query += " ORDER BY d.invd_nourut";
+
+  const [rows] = await pool.query(query, params);
   return rows;
 };
 
@@ -89,9 +100,9 @@ const deleteProforma = async (nomor, user) => {
   try {
     await connection.beginTransaction();
 
-    // Ambil data untuk validasi
+    // Hanya Proforma (inv_sts_pro = 2): endpoint ini tidak boleh menyentuh invoice sungguhan
     const [rows] = await connection.query(
-      "SELECT inv_closing, inv_cab as cabang_doc FROM tinv_hdr WHERE inv_nomor = ?",
+      "SELECT inv_closing, inv_cab as cabang_doc FROM tinv_hdr WHERE inv_nomor = ? AND inv_sts_pro = 2 FOR UPDATE",
       [nomor],
     );
     if (rows.length === 0) throw new Error("Dokumen tidak ditemukan.");
@@ -107,9 +118,18 @@ const deleteProforma = async (nomor, user) => {
       );
 
     // Lakukan penghapusan
-    await connection.query("DELETE FROM tinv_hdr WHERE inv_nomor = ?", [nomor]);
+    await connection.query(
+      "DELETE FROM tinv_hdr WHERE inv_nomor = ? AND inv_sts_pro = 2",
+      [nomor],
+    );
     // Sebaiknya detail juga dihapus, asumsi ada foreign key ON DELETE CASCADE. Jika tidak, tambahkan:
     // await connection.query('DELETE FROM tinv_dtl WHERE invd_inv_nomor = ?', [nomor]);
+
+    // Batalkan request ACC yang masih menunggu, supaya tidak jadi request yatim di HP Manager
+    await connection.query(
+      "UPDATE totorisasi SET o_status = 'N', o_approver = 'SISTEM' WHERE o_transaksi = ? AND o_jenis = 'PROFORMA' AND o_status = 'P'",
+      [nomor],
+    );
 
     await connection.commit();
     return { message: `Proforma Invoice ${nomor} berhasil dihapus.` };

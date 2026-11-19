@@ -68,15 +68,126 @@ const resolvePeriode = async (gudang, startDate) => {
   return { jenis, dawal, startDateEff };
 };
 
+// null = showroom
+const kodeBsDari = (jenisStok) =>
+  jenisStok === "bs_cetak" ? "BC" : jenisStok === "bs_produksi" ? "BP" : null;
+
+// STOK AWAL selalu di baris pertama, lalu saldo berjalan
+const hitungSaldo = (rows) => {
+  const urut = [
+    ...rows.filter((r) => r.nomor === "STOK AWAL"),
+    ...rows.filter((r) => r.nomor !== "STOK AWAL"),
+  ];
+  let saldo = 0;
+  return urut.map((row) => {
+    const masuk = row.In || row.in || 0;
+    const keluar = row.Out || row.out || 0;
+    saldo += masuk - keluar;
+    return { ...row, no_pesanan: row.no_pesanan || "-", saldo };
+  });
+};
+
+const getProductListBs = async (filters) => {
+  const { gudang, kodeBarang, startDate, endDate, jenisStok } = filters;
+  const kodeBs = kodeBsDari(jenisStok);
+
+  let query = `
+    SELECT
+      m.mst_brg_kode AS kode,
+      TRIM(CONCAT(COALESCE(a.brg_jeniskaos,''),' ',COALESCE(a.brg_tipe,''),' ',COALESCE(a.brg_lengan,''),' ',COALESCE(a.brg_jeniskain,''),' ',COALESCE(a.brg_warna,''))) AS nama,
+      m.mst_ukuran AS ukuran,
+      SUM(CASE WHEN m.mst_tanggal < ? THEN m.mst_stok_in - m.mst_stok_out ELSE 0 END) AS stokAwal,
+      SUM(CASE WHEN m.mst_tanggal BETWEEN ? AND ? THEN m.mst_stok_in ELSE 0 END) AS mutMasukBs,
+      SUM(CASE WHEN m.mst_tanggal BETWEEN ? AND ? THEN m.mst_stok_out ELSE 0 END) AS mutKeluarBs,
+      SUM(m.mst_stok_in - m.mst_stok_out) AS saldoAkhir
+    FROM tmasterstok_badstock m
+    LEFT JOIN tbarangdc a ON a.brg_kode = m.mst_brg_kode
+    WHERE m.mst_cab = ? AND m.mst_jenis_bs = ? AND m.mst_aktif = 'Y' AND m.mst_tanggal <= ?
+  `;
+  const params = [
+    startDate,
+    startDate,
+    endDate,
+    startDate,
+    endDate,
+    gudang,
+    kodeBs,
+    endDate,
+  ];
+
+  if (kodeBarang) {
+    query += ` AND m.mst_brg_kode = ?`;
+    params.push(kodeBarang);
+  }
+
+  query += `
+    GROUP BY m.mst_brg_kode, m.mst_ukuran, a.brg_jeniskaos, a.brg_tipe, a.brg_lengan, a.brg_jeniskain, a.brg_warna
+    HAVING stokAwal <> 0 OR mutMasukBs <> 0 OR mutKeluarBs <> 0
+    ORDER BY m.mst_brg_kode, m.mst_ukuran
+  `;
+
+  const [rows] = await pool.query(query, params);
+  return rows;
+};
+
+const getKartuDetailsBs = async (filters) => {
+  const { gudang, startDate, endDate, id, jenisStok } = filters;
+  const kodeBs = kodeBsDari(jenisStok);
+  const startDateStr = format(parseISO(startDate), "yyyy-MM-dd");
+  const endDateStr = format(parseISO(endDate), "yyyy-MM-dd");
+
+  const query = `
+    (SELECT
+      ? AS id, ? AS tanggal, 'STOK AWAL' AS nomor, '-' AS no_pesanan,
+      IFNULL(SUM(m.mst_stok_in - m.mst_stok_out), 0) AS \`In\`, 0 AS \`Out\`,
+      'Stok Awal' AS transaksi
+    FROM tmasterstok_badstock m
+    WHERE m.mst_cab = ? AND m.mst_jenis_bs = ? AND m.mst_tanggal < ? AND m.mst_aktif = 'Y'
+      AND CONCAT(m.mst_brg_kode, m.mst_ukuran) = ?)
+    UNION ALL
+    (SELECT
+      CONCAT(m.mst_brg_kode, m.mst_ukuran) AS id,
+      m.mst_tanggal AS tanggal,
+      m.mst_noreferensi AS nomor,
+      '-' AS no_pesanan,
+      COALESCE(SUM(m.mst_stok_in), 0) AS \`In\`,
+      COALESCE(SUM(m.mst_stok_out), 0) AS \`Out\`,
+      'Mutasi ke Bad Stock' AS transaksi
+    FROM tmasterstok_badstock m
+    WHERE m.mst_cab = ? AND m.mst_jenis_bs = ? AND m.mst_tanggal BETWEEN ? AND ? AND m.mst_aktif = 'Y'
+      AND CONCAT(m.mst_brg_kode, m.mst_ukuran) = ?
+    GROUP BY m.mst_brg_kode, m.mst_ukuran, m.mst_noreferensi, m.mst_tanggal)
+    ORDER BY tanggal, nomor
+  `;
+  const params = [
+    id,
+    startDateStr,
+    gudang,
+    kodeBs,
+    startDateStr,
+    id,
+    gudang,
+    kodeBs,
+    startDateStr,
+    endDateStr,
+    id,
+  ];
+
+  const [rows] = await pool.query(query, params);
+  return hitungSaldo(rows);
+};
+
 // ------------------------------------------------------
 // 1. PRODUCT LIST (HEADER LAPORAN KARTU STOK) - STORE
 // ------------------------------------------------------
 const getProductList = async (filters) => {
-  const { gudang, kodeBarang, startDate, endDate } = filters;
+  const { gudang, kodeBarang, startDate, endDate, jenisStok } = filters;
 
   if (!gudang || !startDate || !endDate) {
     throw new Error("gudang, startDate, dan endDate harus diisi");
   }
+
+  if (kodeBsDari(jenisStok)) return getProductListBs(filters);
 
   let query = `
     SELECT
@@ -97,6 +208,7 @@ const getProductList = async (filters) => {
       COALESCE(msk.stok,0)        AS mutStoreKirim,
       COALESCE(mso.stok,0)        AS mutOutPesan,
       COALESCE(mop.stok,0)        AS mutOutProduksi,
+      COALESCE(mbs.stok,0)        AS mutKeBs,
 
       (
         (COALESCE(awal.stok,0) + COALESCE(sop.stok,0) + COALESCE(kor.stok,0) +
@@ -104,7 +216,8 @@ const getProductList = async (filters) => {
          COALESCE(msi.stok,0) + COALESCE(mip.stok,0))
         -
         (COALESCE(inv.stok,0) + COALESCE(invso.stok,0) + COALESCE(rb.stok,0) +
-         COALESCE(msk.stok,0) + COALESCE(mso.stok,0) + COALESCE(mop.stok,0))
+         COALESCE(msk.stok,0) + COALESCE(mso.stok,0) + COALESCE(mop.stok,0) +
+         COALESCE(mbs.stok,0))
       ) AS saldoAkhir
 
     FROM tbarangdc_dtl b
@@ -204,10 +317,14 @@ const getProductList = async (filters) => {
   ) msk ON msk.mst_brg_kode = b.brgd_kode AND msk.mst_ukuran = b.brgd_ukuran
 
   LEFT JOIN (
-    SELECT mst_brg_kode, mst_ukuran, IFNULL(SUM(mst_stok_out),0) AS stok
-    FROM tmasterstok
-    WHERE mst_cab = ? AND MID(mst_noreferensi,4,3) = 'MSO' AND mst_tanggal BETWEEN ? AND ? AND mst_aktif = 'Y'
-    GROUP BY mst_brg_kode, mst_ukuran
+    SELECT m.mst_brg_kode, m.mst_ukuran, IFNULL(SUM(m.mst_stok_out),0) AS stok
+    FROM tmasterstok m
+    WHERE m.mst_cab = ? AND MID(m.mst_noreferensi,4,3) = 'MSO' AND m.mst_tanggal BETWEEN ? AND ? AND m.mst_aktif = 'Y'
+      AND NOT EXISTS (
+        SELECT 1 FROM tmutasistok_hdr bh
+        WHERE bh.mso_nomor = m.mst_noreferensi AND bh.mso_jenis IN ('BC','BP')
+      )
+    GROUP BY m.mst_brg_kode, m.mst_ukuran
   ) mso ON mso.mst_brg_kode = b.brgd_kode AND mso.mst_ukuran = b.brgd_ukuran
 
   LEFT JOIN (
@@ -216,25 +333,21 @@ const getProductList = async (filters) => {
     WHERE mst_cab = ? AND MID(mst_noreferensi,4,2) = 'MO' AND mst_tanggal BETWEEN ? AND ? AND mst_aktif = 'Y'
     GROUP BY mst_brg_kode, mst_ukuran
   ) mop ON mop.mst_brg_kode = b.brgd_kode AND mop.mst_ukuran = b.brgd_ukuran
+
+  LEFT JOIN (
+    SELECT m.mst_brg_kode, m.mst_ukuran, IFNULL(SUM(m.mst_stok_out),0) AS stok
+    FROM tmasterstok m
+    JOIN tmutasistok_hdr bh ON bh.mso_nomor = m.mst_noreferensi AND bh.mso_jenis IN ('BC','BP')
+    WHERE m.mst_cab = ? AND m.mst_tanggal BETWEEN ? AND ? AND m.mst_aktif = 'Y'
+    GROUP BY m.mst_brg_kode, m.mst_ukuran
+  ) mbs ON mbs.mst_brg_kode = b.brgd_kode AND mbs.mst_ukuran = b.brgd_ukuran
   `;
 
-  // 13 Params karena ada 13 JOIN yang baca tanggal
+  // 14 JOIN mutasi: sop, kor, rj, tj, mst, msi, mip, inv, invso, rb, msk, mso, mop, mbs.
+  // Masing-masing membutuhkan [gudang, startDate, endDate].
+  const JUMLAH_JOIN_MUTASI = 14;
   const p = [gudang, startDate, endDate];
-  params.push(
-    ...p,
-    ...p,
-    ...p,
-    ...p,
-    ...p,
-    ...p,
-    ...p,
-    ...p,
-    ...p,
-    ...p,
-    ...p,
-    ...p,
-    ...p,
-  );
+  for (let i = 0; i < JUMLAH_JOIN_MUTASI; i++) params.push(...p);
 
   query += `
     WHERE a.brg_aktif = 0 AND a.brg_logstok = 'Y'
@@ -261,9 +374,17 @@ const getProductList = async (filters) => {
       OR mutStoreKirim <> 0 
       OR mutOutPesan <> 0
       OR mutOutProduksi <> 0
+      OR mutKeBs <> 0
     )
     ORDER BY b.brgd_kode, b.brgd_ukuran
   `;
+
+  const jumlahPlaceholder = (query.match(/\?/g) || []).length;
+  if (jumlahPlaceholder !== params.length) {
+    throw new Error(
+      `Jumlah parameter query kartu stok tidak cocok: ${jumlahPlaceholder} placeholder, ${params.length} parameter`,
+    );
+  }
 
   const [rows] = await pool.query(query, params);
 
@@ -275,11 +396,13 @@ const getProductList = async (filters) => {
 // 2. DETAIL / KARTU STOK (PER KODE+UKURAN) - STORE
 // ------------------------------------------------------
 const getKartuDetails = async (filters) => {
-  const { gudang, startDate, endDate, id } = filters;
+  const { gudang, startDate, endDate, id, jenisStok } = filters;
 
   if (!gudang || !startDate || !endDate || !id) {
     throw new Error("gudang, startDate, endDate, dan id harus diisi");
   }
+
+  if (kodeBsDari(jenisStok)) return getKartuDetailsBs(filters);
 
   const start = parseISO(startDate);
   const end = parseISO(endDate);
@@ -311,6 +434,8 @@ const getKartuDetails = async (filters) => {
       COALESCE(SUM(m.mst_stok_in), 0) AS \`In\`,
       COALESCE(SUM(m.mst_stok_out), 0) AS \`Out\`,
       CASE
+          WHEN bh.mso_jenis = 'BC' THEN 'Mutasi ke BS Cetak'
+          WHEN bh.mso_jenis = 'BP' THEN 'Mutasi ke BS Produksi'
           -- [BARU]: Tangkap baris Stok Awal hasil injeksi
           WHEN m.mst_ket = 'STOK AWAL (CUT-OFF SOP)' THEN 'Stok Awal Sistem (SOP)'
           
@@ -338,8 +463,9 @@ const getKartuDetails = async (filters) => {
           ELSE 'Lain-lain'
       END AS transaksi
     FROM tmasterstok m
+    LEFT JOIN tmutasistok_hdr bh ON bh.mso_nomor = m.mst_noreferensi AND bh.mso_jenis IN ('BC','BP')
     WHERE m.mst_cab = ? AND m.mst_tanggal BETWEEN ? AND ? AND m.mst_aktif = 'Y' AND CONCAT(m.mst_brg_kode, m.mst_ukuran) = ?
-    GROUP BY m.mst_brg_kode, m.mst_ukuran, m.mst_noreferensi, m.mst_tanggal
+    GROUP BY m.mst_brg_kode, m.mst_ukuran, m.mst_noreferensi, m.mst_tanggal, bh.mso_jenis
   `;
   const mutasiParams = [gudang, startDateStr, endDateStr, id];
 
@@ -379,19 +505,7 @@ const getKartuDetails = async (filters) => {
   const [rows] = await pool.query(fullQuery, params);
 
   // Hitung saldo berjalan
-  let saldo = 0;
-  const resultWithSaldo = rows.map((row) => {
-    const masuk = row.In || row.in || 0;
-    const keluar = row.Out || row.out || 0;
-    saldo += masuk - keluar;
-    return {
-      ...row,
-      no_pesanan: row.no_pesanan || "-",
-      saldo,
-    };
-  });
-
-  return resultWithSaldo;
+  return hitungSaldo(rows);
 };
 
 // ------------------------------------------------------

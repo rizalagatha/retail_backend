@@ -7,16 +7,20 @@ const getList = async (filters, user) => {
   let params = [startDate, endDate];
 
   let query = `
-        SELECT x.kode, x.kategori, x.nama, x.date_create, x.otomatis, x.adaStok, x.status
+        SELECT x.kode, x.kategori, x.subKategori, x.nama, x.date_create, x.otomatis, x.adaStok, x.status,
+               x.newArrival, x.newUntil
         FROM (
             SELECT 
                 a.brg_kode AS kode,
                 TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS nama,
                 a.brg_ktgp AS kategori,
+                a.brg_subktgp AS subKategori,
                 a.date_create,
                 IF(a.brg_otomatis=1, "YA", "") AS otomatis,
                 a.brg_logstok AS adaStok,
                 IF(a.brg_aktif=0, "AKTIF", "PASIF") AS status,
+                IF(a.brg_new_until IS NOT NULL AND a.brg_new_until >= CURDATE(), "NEW", "") AS newArrival,
+                DATE_FORMAT(a.brg_new_until, '%Y-%m-%d') AS newUntil,
                 (SELECT SUM(b.brgd_harga) FROM tbarangdc_dtl b WHERE b.brgd_kode = a.brg_kode) AS harga,
                 (SELECT SUM(b.brgd_hpp) FROM tbarangdc_dtl b WHERE b.brgd_kode = a.brg_kode) AS hpp
             FROM tbarangdc a
@@ -96,10 +100,13 @@ const getExportHeaders = async (filters) => {
         a.brg_kode AS 'Kode',
         TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS 'Nama Barang',
         a.brg_ktgp AS 'Kategori',
+        a.brg_subktgp AS 'SubKategori',
         a.date_create AS 'DateCreate',
         IF(a.brg_otomatis=1, 'YA', '') AS 'Otomatis',
         IF(a.brg_logstok='Y', 'Y', 'N') AS 'AdaStok',
-        IF(a.brg_aktif=0, 'AKTIF', 'PASIF') AS 'Status'
+        IF(a.brg_aktif=0, 'AKTIF', 'PASIF') AS 'Status',
+        IF(a.brg_new_until IS NOT NULL AND a.brg_new_until >= CURDATE(),
+           DATE_FORMAT(a.brg_new_until, '%d/%m/%Y'), '') AS 'NewArrival'
     FROM tbarangdc a
     WHERE a.brg_ktg = ''
       AND a.date_create BETWEEN ? AND DATE_ADD(?, INTERVAL 1 DAY)

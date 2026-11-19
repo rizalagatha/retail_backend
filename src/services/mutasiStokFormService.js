@@ -1,6 +1,16 @@
 const pool = require("../config/database");
 const { format } = require("date-fns");
 
+const JENIS_BS = ["BC", "BP"]; // BC = BS Cetak, BP = BS Produksi
+const isJenisBs = (jenis) => JENIS_BS.includes(jenis);
+
+const JENIS_LABEL_SQL = `CASE h.mso_jenis
+  WHEN 'SP' THEN 'Showroom ke Pesanan'
+  WHEN 'PS' THEN 'Pesanan ke Showroom'
+  WHEN 'BC' THEN 'Mutasi ke BS Cetak'
+  WHEN 'BP' THEN 'Mutasi ke BS Produksi'
+  ELSE h.mso_jenis END`;
+
 /**
  * Menghasilkan nomor Mutasi Stok (MSO) baru.
  */
@@ -170,72 +180,86 @@ const saveData = async (payload, user) => {
   try {
     await connection.beginTransaction();
 
-    if (!header.nomorSo) throw new Error("No. Pesanan harus diisi.");
+    let msoNomor = header.nomor;
+    let jenis = header.jenisMutasi;
+    let nomorSo = header.nomorSo;
+
+    if (!isNew) {
+      // Jenis & SO dikunci dari DB: trigger hapus stok membaca mso_jenis
+      // header, jadi nilainya tidak boleh berubah saat edit.
+      const [hdrRows] = await connection.query(
+        `SELECT mso_jenis, mso_so_nomor FROM tmutasistok_hdr
+         WHERE mso_nomor = ? AND mso_cab = ? FOR UPDATE`,
+        [msoNomor, user.cabang],
+      );
+      if (hdrRows.length === 0)
+        throw new Error("Data Mutasi Stok tidak ditemukan.");
+      jenis = hdrRows[0].mso_jenis;
+      nomorSo = hdrRows[0].mso_so_nomor;
+    }
+
+    if (!["SP", "PS", ...JENIS_BS].includes(jenis))
+      throw new Error("Jenis mutasi tidak valid.");
+    const isBs = isJenisBs(jenis);
+    if (isBs) nomorSo = "";
+    else if (!nomorSo) throw new Error("No. Pesanan harus diisi.");
+
     const validItems = items.filter(
       (item) => item.kode && (item.jumlah || 0) > 0,
     );
     if (validItems.length === 0) throw new Error("Detail barang harus diisi.");
 
-    let msoNomor = header.nomor;
+    if (isBs) {
+      const kodeList = [...new Set(validItems.map((i) => i.kode))];
+      const [valid] = await connection.query(
+        `SELECT brg_kode FROM tbarangdc WHERE brg_kode IN (?) AND brg_logstok = 'Y' AND brg_aktif = 0`,
+        [kodeList],
+      );
+      if (valid.length !== kodeList.length)
+        throw new Error("Ada barang non-stok atau tidak aktif di daftar.");
+    }
+
     const timestamp = format(new Date(), "yyyyMMddHHmmssSSS");
     const idrec = `${user.cabang}MSO${timestamp}`;
 
     if (isNew) {
       msoNomor = await generateNewMsoNumber(user.cabang, header.tanggal);
-      const headerSql = `
-        INSERT INTO tmutasistok_hdr (
+      await connection.query(
+        `INSERT INTO tmutasistok_hdr (
           mso_idrec, mso_nomor, mso_tanggal, mso_so_nomor, mso_ket, mso_jenis, mso_cab, user_create, date_create
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW());
-      `;
-      await connection.query(headerSql, [
-        idrec,
-        msoNomor,
-        header.tanggal,
-        header.nomorSo,
-        header.keterangan,
-        header.jenisMutasi,
-        user.cabang,
-        user.kode,
-      ]);
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW());`,
+        [
+          idrec,
+          msoNomor,
+          header.tanggal,
+          nomorSo,
+          header.keterangan,
+          jenis,
+          user.cabang,
+          user.kode,
+        ],
+      );
     } else {
-      const headerSql = `
-        UPDATE tmutasistok_hdr SET
-          mso_tanggal = ?, mso_so_nomor = ?, mso_ket = ?, mso_jenis = ?,
-          user_modified = ?, date_modified = NOW()
-        WHERE mso_nomor = ? AND mso_cab = ?;
-      `;
-      await connection.query(headerSql, [
-        header.tanggal,
-        header.nomorSo,
-        header.keterangan,
-        header.jenisMutasi,
-        user.kode,
-        msoNomor,
-        user.cabang,
-      ]);
-    }
+      await connection.query(
+        `UPDATE tmutasistok_hdr SET
+          mso_tanggal = ?, mso_ket = ?, user_modified = ?, date_modified = NOW()
+        WHERE mso_nomor = ? AND mso_cab = ?;`,
+        [header.tanggal, header.keterangan, user.kode, msoNomor, user.cabang],
+      );
 
-    // ═══════════ DI SINI blok yang saya kasih terakhir masuk ═══════════
-    // Mode edit — kembalikan status unit yang sebelumnya kepakai di
-    // dokumen ini, TERMASUK unit_so_nomor-nya
-    if (!isNew) {
+      // Kembalikan status unit yang sebelumnya terpakai di dokumen ini
       const [oldSerials] = await connection.query(
         `SELECT msod_unit_serial FROM tmutasistok_dtl WHERE msod_nomor = ? AND msod_unit_serial IS NOT NULL`,
         [msoNomor],
       );
       if (oldSerials.length > 0) {
         const serials = oldSerials.map((r) => r.msod_unit_serial);
-        if (header.jenisMutasi === "SP") {
-          await connection.query(
-            `UPDATE tbarangdc_unit SET unit_status = 'DI_TOKO', unit_so_nomor = NULL WHERE unit_serial IN (?)`,
-            [serials],
-          );
-        } else {
-          await connection.query(
-            `UPDATE tbarangdc_unit SET unit_status = 'RESERVED', unit_so_nomor = ? WHERE unit_serial IN (?)`,
-            [header.nomorSo, serials],
-          );
-        }
+        const restoreStatus = jenis === "PS" ? "RESERVED" : "DI_TOKO";
+        const restoreSo = jenis === "PS" ? nomorSo : null;
+        await connection.query(
+          `UPDATE tbarangdc_unit SET unit_status = ?, unit_so_nomor = ? WHERE unit_serial IN (?)`,
+          [restoreStatus, restoreSo, serials],
+        );
       }
     }
 
@@ -243,100 +267,121 @@ const saveData = async (payload, user) => {
       msoNomor,
     ]);
 
-    if (validItems.length > 0) {
-      const msodNomorIn = await generateNewMsodNomorIn(
-        connection,
-        user.cabang,
-        header.tanggal,
-      );
+    const msodNomorIn = await generateNewMsodNomorIn(
+      connection,
+      user.cabang,
+      header.tanggal,
+    );
 
-      const sourceStatus = header.jenisMutasi === "SP" ? "DI_TOKO" : "RESERVED";
-      const targetStatus = header.jenisMutasi === "SP" ? "RESERVED" : "DI_TOKO";
+    const sourceStatus = jenis === "PS" ? "RESERVED" : "DI_TOKO";
+    const targetStatus =
+      jenis === "SP" ? "RESERVED" : jenis === "PS" ? "DI_TOKO" : "BAD_STOCK";
+    const targetSo = jenis === "SP" ? nomorSo : null;
 
-      const detailValues = [];
-      const unitSerialsToUpdate = [];
-      let nourut = 0;
+    const detailValues = [];
+    const unitSerialsToUpdate = [];
+    let nourut = 0;
 
-      for (const item of validItems) {
-        const qty = Number(item.jumlah) || 0;
-        let remaining = qty;
+    for (const item of validItems) {
+      const qty = Number(item.jumlah) || 0;
 
+      // BS: serial hasil scan QR dipakai persis, bukan FIFO
+      const serialPilihan =
+        isBs && Array.isArray(item.serials) ? item.serials : [];
+      let units = [];
+      if (serialPilihan.length > 0) {
+        const [rows] = await connection.query(
+          `SELECT unit_serial FROM tbarangdc_unit
+           WHERE unit_serial IN (?) AND unit_kode = ? AND unit_ukuran = ?
+             AND unit_status = 'DI_TOKO' AND unit_lokasi_saat_ini = ?
+           FOR UPDATE`,
+          [serialPilihan, item.kode, item.ukuran, user.cabang],
+        );
+        if (rows.length !== serialPilihan.length)
+          throw new Error(
+            `Ada unit ${item.kode} (${item.ukuran}) yang sudah tidak tersedia di showroom.`,
+          );
+        units = rows;
+      }
+
+      let remaining = qty - units.length;
+      if (remaining < 0)
+        throw new Error(
+          `Qty ${item.kode} (${item.ukuran}) lebih kecil dari jumlah unit yang di-scan.`,
+        );
+
+      if (remaining > 0) {
         const params = [item.kode, item.ukuran, sourceStatus];
         let extraFilter = "";
-        if (header.jenisMutasi === "PS") {
+        if (jenis === "PS") {
           extraFilter = "AND unit_so_nomor = ?";
-          params.push(header.nomorSo);
+          params.push(nomorSo);
         } else {
-          // BARU: arah SP — sumbernya DI_TOKO, wajib filter lokasi
-          // cabang sendiri (DI_TOKO adalah status bersama semua toko)
+          // DI_TOKO adalah status bersama semua toko → wajib filter lokasi
           extraFilter = "AND unit_lokasi_saat_ini = ?";
           params.push(user.cabang);
         }
-        params.push(qty);
+        if (units.length > 0) {
+          extraFilter += " AND unit_serial NOT IN (?)";
+          params.push(units.map((u) => u.unit_serial));
+        }
+        params.push(remaining);
 
-        const [availableUnits] = await connection.query(
+        const [fifo] = await connection.query(
           `SELECT unit_serial FROM tbarangdc_unit
            WHERE unit_kode = ? AND unit_ukuran = ? AND unit_status = ? ${extraFilter}
            ORDER BY date_create ASC, unit_serial ASC
            LIMIT ? FOR UPDATE`,
           params,
         );
-
-        for (const u of availableUnits) {
-          nourut++;
-          detailValues.push([
-            idrec,
-            msoNomor,
-            msodNomorIn,
-            item.kode,
-            item.ukuran,
-            1,
-            nourut,
-            u.unit_serial,
-          ]);
-          unitSerialsToUpdate.push(u.unit_serial);
-          remaining--;
-        }
-
-        if (remaining > 0) {
-          nourut++;
-          detailValues.push([
-            idrec,
-            msoNomor,
-            msodNomorIn,
-            item.kode,
-            item.ukuran,
-            remaining,
-            nourut,
-            null,
-          ]);
-        }
+        units = units.concat(fifo);
+        remaining = qty - units.length;
       }
 
-      const detailSql = `
-        INSERT INTO tmutasistok_dtl (
-          msod_idrec, msod_nomor, msod_nomorin, msod_kode, msod_ukuran, msod_jumlah, msod_nourut, msod_unit_serial
-        ) VALUES ?;
-      `;
-      await connection.query(detailSql, [detailValues]);
+      for (const u of units) {
+        nourut++;
+        detailValues.push([
+          idrec,
+          msoNomor,
+          msodNomorIn,
+          item.kode,
+          item.ukuran,
+          1,
+          nourut,
+          u.unit_serial,
+        ]);
+        unitSerialsToUpdate.push(u.unit_serial);
+      }
 
-      if (unitSerialsToUpdate.length > 0) {
-        if (header.jenisMutasi === "SP") {
-          await connection.query(
-            `UPDATE tbarangdc_unit SET unit_status = ?, unit_so_nomor = ?, date_modified = NOW(), user_modified = ?
-             WHERE unit_serial IN (?)`,
-            [targetStatus, header.nomorSo, user.kode, unitSerialsToUpdate],
-          );
-        } else {
-          await connection.query(
-            `UPDATE tbarangdc_unit SET unit_status = ?, unit_so_nomor = NULL, date_modified = NOW(), user_modified = ?
-             WHERE unit_serial IN (?)`,
-            [targetStatus, user.kode, unitSerialsToUpdate],
-          );
-        }
+      if (remaining > 0) {
+        nourut++;
+        detailValues.push([
+          idrec,
+          msoNomor,
+          msodNomorIn,
+          item.kode,
+          item.ukuran,
+          remaining,
+          nourut,
+          null,
+        ]);
       }
     }
-    // ═══════════════════════ akhir blok ═══════════════════════
+
+    await connection.query(
+      `INSERT INTO tmutasistok_dtl (
+        msod_idrec, msod_nomor, msod_nomorin, msod_kode, msod_ukuran, msod_jumlah, msod_nourut, msod_unit_serial
+      ) VALUES ?;`,
+      [detailValues],
+    );
+
+    if (unitSerialsToUpdate.length > 0) {
+      await connection.query(
+        `UPDATE tbarangdc_unit SET unit_status = ?, unit_so_nomor = ?, date_modified = NOW(), user_modified = ?
+         WHERE unit_serial IN (?)`,
+        [targetStatus, targetSo, user.kode, unitSerialsToUpdate],
+      );
+    }
 
     await connection.commit();
     return {
@@ -367,6 +412,45 @@ const loadForEdit = async (nomor, user) => {
   if (headerRows.length === 0)
     throw new Error("Data Mutasi Stok tidak ditemukan.");
   const header = headerRows[0];
+
+  if (isJenisBs(header.jenisMutasi)) {
+    const [bsItems] = await pool.query(
+      `SELECT
+         d.msod_kode AS kode,
+         d.msod_ukuran AS ukuran,
+         MAX(b.brgd_barcode) AS barcode,
+         MAX(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna))) AS nama,
+         SUM(d.msod_jumlah) AS jumlah,
+         IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m
+                 WHERE m.mst_aktif = "Y" AND m.mst_cab = ?
+                   AND m.mst_brg_kode = d.msod_kode AND m.mst_ukuran = d.msod_ukuran), 0) AS showroom
+       FROM tmutasistok_dtl d
+       JOIN tbarangdc a ON a.brg_kode = d.msod_kode
+       LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.msod_kode AND b.brgd_ukuran = d.msod_ukuran
+       WHERE d.msod_nomor = ?
+       GROUP BY d.msod_kode, d.msod_ukuran`,
+      [user.cabang, nomor],
+    );
+    const [serialRows] = await pool.query(
+      `SELECT msod_kode, msod_ukuran, msod_unit_serial FROM tmutasistok_dtl
+       WHERE msod_nomor = ? AND msod_unit_serial IS NOT NULL`,
+      [nomor],
+    );
+    const items = bsItems.map((it) => ({
+      ...it,
+      qtyso: 0,
+      produksi: 0,
+      pesan: 0,
+      ready: 0,
+      kurang: 0,
+      masuk: 0,
+      keluar: 0,
+      serials: serialRows
+        .filter((s) => s.msod_kode === it.kode && s.msod_ukuran === it.ukuran)
+        .map((s) => s.msod_unit_serial),
+    }));
+    return { header, items };
+  }
 
   // 2. Query kompleks untuk mengambil detail dari SO asli, lengkap dengan semua perhitungan stok
   const itemsQuery = `
@@ -408,8 +492,8 @@ const loadForEdit = async (nomor, user) => {
 const getPrintData = async (nomor) => {
   const query = `
     SELECT 
-      h.mso_nomor, h.mso_tanggal, h.mso_so_nomor, h.mso_ket,
-      IF(h.mso_jenis="SP", "Showroom ke Pesanan", "Pesanan ke Showroom") AS jenis_mutasi,
+      h.mso_nomor, h.mso_tanggal, h.mso_so_nomor, h.mso_ket, h.mso_jenis,
+      ${JENIS_LABEL_SQL} AS jenis_mutasi,
       d.msod_kode, d.msod_ukuran, d.msod_jumlah,
       TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
       DATE_FORMAT(h.date_create, "%d-%m-%Y %T") AS created,
@@ -445,7 +529,7 @@ const getExportDetails = async (filters) => {
     SELECT 
       h.mso_nomor AS 'Nomor Mutasi',
       h.mso_tanggal AS 'Tanggal',
-      IF(h.mso_jenis="SP", "Showroom ke Pesanan", "Pesanan ke Showroom") AS 'Jenis Mutasi',
+      ${JENIS_LABEL_SQL} AS 'Jenis Mutasi',
       h.mso_so_nomor AS 'No SO',
       c.cus_nama AS 'Customer',
       h.mso_ket AS 'Keterangan Header',
@@ -466,6 +550,63 @@ const getExportDetails = async (filters) => {
 
   const [rows] = await pool.query(query, [cabang, startDate, endDate]);
   return rows;
+};
+
+/**
+ * Resolve hasil scan (QR unit atau barcode) menjadi baris item untuk mutasi BS.
+ */
+const lookupBarangBs = async (term, user) => {
+  const kata = String(term || "").trim();
+  if (!kata) throw new Error("Barcode / QR kosong.");
+
+  let kode;
+  let ukuran;
+  let unitSerial = null;
+
+  const [unitRows] = await pool.query(
+    `SELECT unit_serial, unit_kode, unit_ukuran, unit_status, unit_lokasi_saat_ini
+     FROM tbarangdc_unit WHERE unit_serial = ?`,
+    [kata],
+  );
+  if (unitRows.length > 0) {
+    const u = unitRows[0];
+    if (u.unit_status !== "DI_TOKO" || u.unit_lokasi_saat_ini !== user.cabang) {
+      throw new Error(
+        `Unit ini berstatus '${u.unit_status}' di lokasi '${u.unit_lokasi_saat_ini}', bukan stok showroom cabang ini.`,
+      );
+    }
+    kode = u.unit_kode;
+    ukuran = u.unit_ukuran;
+    unitSerial = u.unit_serial;
+  } else {
+    const [brg] = await pool.query(
+      `SELECT brgd_kode, brgd_ukuran FROM tbarangdc_dtl WHERE brgd_barcode = ? LIMIT 1`,
+      [kata],
+    );
+    if (brg.length === 0) throw new Error("Barcode / QR tidak dikenali.");
+    kode = brg[0].brgd_kode;
+    ukuran = brg[0].brgd_ukuran;
+  }
+
+  const [rows] = await pool.query(
+    `SELECT
+       a.brg_kode AS kode,
+       TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+       b.brgd_ukuran AS ukuran,
+       b.brgd_barcode AS barcode,
+       IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok m
+               WHERE m.mst_aktif = "Y" AND m.mst_cab = ?
+                 AND m.mst_brg_kode = a.brg_kode AND m.mst_ukuran = b.brgd_ukuran), 0) AS showroom
+     FROM tbarangdc a
+     JOIN tbarangdc_dtl b ON b.brgd_kode = a.brg_kode
+     WHERE a.brg_kode = ? AND b.brgd_ukuran = ? AND a.brg_aktif = 0 AND a.brg_logstok = "Y"
+     LIMIT 1`,
+    [user.cabang, kode, ukuran],
+  );
+  if (rows.length === 0)
+    throw new Error("Barang tidak aktif atau tidak berstok.");
+
+  return { ...rows[0], unitSerial };
 };
 
 const STICKER_DTF_LOCKED_KODE = ["2500053", "2500060"]; // Reguler & Premium
@@ -786,4 +927,6 @@ module.exports = {
   getPrintData,
   getExportDetails,
   autoMutasiScan,
+  lookupBarangBs,
+  JENIS_LABEL_SQL,
 };

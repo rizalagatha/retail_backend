@@ -91,6 +91,14 @@ const prosesAccRefund = async (nomor, action) => {
   );
 };
 
+// ACC/tolak Proforma oleh Manager Retail. Dokumen tetap ada; ACC hanya membuka gerbang cetak.
+const prosesAccProforma = async (nomor, action) => {
+  await pool.query(
+    "UPDATE tinv_hdr SET inv_status_acc = ? WHERE inv_nomor = ? AND inv_sts_pro = 2 AND inv_status_acc = 'MENUNGGU'",
+    [action === "APPROVE" ? "ACC" : "DITOLAK", nomor],
+  );
+};
+
 const authPinService = {
   async createRequest(payload) {
     // 1. Destructure Payload
@@ -176,6 +184,8 @@ const authPinService = {
         let managerCodes;
         if (String(jenis).trim() === "REFUND") {
           managerCodes = ["ESTU"]; // Refund hanya ke SPV (Estu)
+        } else if (String(jenis).trim() === "PROFORMA") {
+          managerCodes = ["HARIS"]; // Proforma hanya ke Manager Retail (Haris)
         } else {
           managerCodes = ["DARUL"]; // Darul selalu dikirim
           if (isJenisEstu || isEstuManagerPeriod) {
@@ -268,6 +278,7 @@ const authPinService = {
       "CLOSE_PH",
       "MUTASI_KIRIM",
       "REFUND",
+      "PROFORMA",
     ];
 
     if (userCabang === "KDC") {
@@ -308,7 +319,7 @@ const authPinService = {
         query += " AND o_jenis = 'TRANSFER_SOP' ";
       } else {
         query +=
-          " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '' OR o_jenis IN ('PEMINJAMAN_BARANG', 'KLAIM_PETTYCASH', 'SUBMIT_BAP')) ";
+          " AND (o_target IS NULL OR o_target = 'KDC' OR o_target = '' OR o_jenis IN ('PEMINJAMAN_BARANG', 'KLAIM_PETTYCASH', 'SUBMIT_BAP')) AND o_jenis <> 'PROFORMA' ";
       }
     } else {
       query +=
@@ -331,19 +342,20 @@ const authPinService = {
     const newStatus = action === "APPROVE" ? "Y" : "N";
 
     const [authDataCheck] = await pool.query(
-      "SELECT o_jenis, o_cab, o_requester FROM totorisasi WHERE o_nomor = ?",
+      "SELECT o_jenis, o_requester, o_transaksi FROM totorisasi WHERE o_nomor = ?",
       [authNomor],
     );
     if (authDataCheck.length === 0) {
       throw new Error("Data otorisasi tidak ditemukan.");
     }
 
-    const { o_jenis, o_cab, o_requester } = authDataCheck[0];
+    const { o_jenis, o_requester, o_transaksi } = authDataCheck[0];
 
     // Siapa yang sah meng-ACC tiap jenis, dan pemohon tidak boleh meng-ACC miliknya sendiri
     const aturanApprover = {
       MUTASI_KIRIM: ["DARUL", "ESTU"],
       REFUND: ["ESTU"],
+      PROFORMA: ["HARIS"],
     };
     const approverSah = aturanApprover[o_jenis];
     if (approverSah) {
@@ -358,17 +370,12 @@ const authPinService = {
       }
     }
 
-    const query = `
-      UPDATE totorisasi 
-      SET o_status = ?, o_approver = ?, o_approved_at = NOW()
-      WHERE o_nomor = ? AND o_status = 'P'
-    `;
-
-    const [result] = await pool.query(query, [
-      newStatus,
-      managerUser,
-      authNomor,
-    ]);
+    const [result] = await pool.query(
+      `UPDATE totorisasi 
+       SET o_status = ?, o_approver = ?, o_approved_at = NOW()
+       WHERE o_nomor = ? AND o_status = 'P'`,
+      [newStatus, managerUser, authNomor],
+    );
 
     if (result.affectedRows === 0) {
       throw new Error(
@@ -376,49 +383,45 @@ const authPinService = {
       );
     }
 
-    // =========================================================================
-    // [BARU] HOOK UNTUK MENG-ACC PETTY CASH SECARA OTOMATIS (WEB VERSION)
-    // =========================================================================
-    const [authData] = await pool.query(
-      "SELECT o_transaksi, o_jenis FROM totorisasi WHERE o_nomor = ?",
-      [authNomor],
-    );
+    // Hook ACC Petty Cash (web)
+    if (o_jenis === "KLAIM_PETTYCASH" && o_transaksi) {
+      if (action === "APPROVE") {
+        await pool.query(
+          `UPDATE tpettycash_klaim_hdr SET pck_status = 'ACC', pck_acc = ?, date_acc = NOW(), user_modified = ?, date_modified = NOW() WHERE pck_nomor = ? AND pck_status = 'SUBMITTED'`,
+          [managerUser, managerUser, o_transaksi],
+        );
+        await pool.query(
+          `UPDATE tpettycash_hdr SET pc_status = 'ACC', user_modified = ?, date_modified = NOW() WHERE pck_nomor = ?`,
+          [managerUser, o_transaksi],
+        );
+      } else if (action === "REJECT") {
+        const alasan = "Ditolak via Web Otorisasi";
 
-    if (authData.length > 0) {
-      const { o_transaksi, o_jenis } = authData[0];
+        await pool.query(
+          `UPDATE tpettycash_klaim_hdr SET pck_status = 'REJECTED', pck_keterangan = CONCAT(IFNULL(pck_keterangan, ''), '\n[Catatan Revisi]: ', ?), user_modified = ?, date_modified = NOW() WHERE pck_nomor = ? AND pck_status = 'SUBMITTED'`,
+          [alasan, managerUser, o_transaksi],
+        );
 
-      if (o_jenis === "KLAIM_PETTYCASH" && o_transaksi) {
-        if (action === "APPROVE") {
-          await pool.query(
-            `UPDATE tpettycash_klaim_hdr SET pck_status = 'ACC', pck_acc = ?, date_acc = NOW(), user_modified = ?, date_modified = NOW() WHERE pck_nomor = ? AND pck_status = 'SUBMITTED'`,
-            [managerUser, managerUser, o_transaksi],
-          );
-          await pool.query(
-            `UPDATE tpettycash_hdr SET pc_status = 'ACC', user_modified = ?, date_modified = NOW() WHERE pck_nomor = ?`,
-            [managerUser, o_transaksi],
-          );
-        } else if (action === "REJECT") {
-          const alasan = "Ditolak via Web Otorisasi";
-
-          await pool.query(
-            `UPDATE tpettycash_klaim_hdr SET pck_status = 'REJECTED', pck_keterangan = CONCAT(IFNULL(pck_keterangan, ''), '\n[Catatan Revisi]: ', ?), user_modified = ?, date_modified = NOW() WHERE pck_nomor = ? AND pck_status = 'SUBMITTED'`,
-            [alasan, managerUser, o_transaksi],
-          );
-
-          // [PERBAIKAN KUNCI]: Lepaskan ikatan pck_nomor
-          await pool.query(
-            `UPDATE tpettycash_hdr SET pc_status = 'REJECTED', pck_nomor = NULL, user_modified = ?, date_modified = NOW() WHERE pck_nomor = ?`,
-            [managerUser, o_transaksi],
-          );
-        }
+        // Lepaskan ikatan pck_nomor
+        await pool.query(
+          `UPDATE tpettycash_hdr SET pc_status = 'REJECTED', pck_nomor = NULL, user_modified = ?, date_modified = NOW() WHERE pck_nomor = ?`,
+          [managerUser, o_transaksi],
+        );
       }
     }
-    if ((o_jenis === "MUTASI_KIRIM" || o_jenis === "REFUND") && o_transaksi) {
+
+    // Hook tindak lanjut dokumen (Mutasi Kirim, Refund, Proforma)
+    if (
+      o_transaksi &&
+      ["MUTASI_KIRIM", "REFUND", "PROFORMA"].includes(o_jenis)
+    ) {
       try {
         if (o_jenis === "MUTASI_KIRIM") {
           await prosesAccMutasiKirim(o_transaksi, action, managerUser);
-        } else {
+        } else if (o_jenis === "REFUND") {
           await prosesAccRefund(o_transaksi, action);
+        } else {
+          await prosesAccProforma(o_transaksi, action);
         }
       } catch (hookError) {
         // Kembalikan ke pending supaya bisa diproses ulang, jangan menggantung Y/N

@@ -18,6 +18,29 @@ const getDataFromSO = async (req, res) => {
   }
 };
 
+const getDataFromInvoice = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    if (!nomor) {
+      return res.status(400).json({ message: "Nomor Invoice diperlukan." });
+    }
+    // Cabang dari user login, bukan dari query
+    const data = await service.getDataFromInvoice(nomor, req.user.cabang);
+    res.json(data);
+  } catch (error) {
+    res.status(404).json({ message: error.message });
+  }
+};
+
+const lookupInvoice = async (req, res) => {
+  try {
+    const result = await service.lookupInvoice(req.user.cabang);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const getDataForEdit = async (req, res) => {
   try {
     const { id } = req.params;
@@ -38,16 +61,17 @@ const saveNew = async (req, res) => {
 
     // 2. AUDIT: Catat Log Create
     const targetId = result.nomor || "UNKNOWN";
-    const refSO = payload.header?.nomorSo || "UNKNOWN";
+    const refSO = payload.header?.nomorSo || "-";
+    const refInv = payload.header?.refInvoice;
 
     auditService.logActivity(
       req,
       "CREATE",
       "PROFORMA_INVOICE",
       targetId,
-      null,    // Old Data (Null karena Create)
+      null, // Old Data (Null karena Create)
       payload, // New Data (Payload Form sudah lengkap Header + Items)
-      `Input Proforma Baru (Ref SO: ${refSO})`
+      `Input Proforma Baru (Ref SO: ${refSO}${refInv ? `, Ref Invoice: ${refInv}` : ""})`,
     );
 
     res.status(201).json(result);
@@ -71,7 +95,7 @@ const updateExisting = async (req, res) => {
       // A. Ambil Header
       const [headerRows] = await pool.query(
         "SELECT * FROM tinv_hdr WHERE inv_nomor = ?",
-        [nomorDokumen]
+        [nomorDokumen],
       );
 
       if (headerRows.length > 0) {
@@ -80,13 +104,13 @@ const updateExisting = async (req, res) => {
         // B. Ambil Detail (Gunakan invd_inv_nomor)
         const [detailRows] = await pool.query(
           "SELECT * FROM tinv_dtl WHERE invd_inv_nomor = ? ORDER BY invd_nourut",
-          [nomorDokumen]
+          [nomorDokumen],
         );
 
         // C. Gabungkan
         oldData = {
           ...header,
-          items: detailRows
+          items: detailRows,
         };
       }
     } catch (e) {
@@ -104,7 +128,7 @@ const updateExisting = async (req, res) => {
       nomorDokumen,
       oldData, // Data Lama (Header + Items)
       payload, // Data Baru (Payload Form)
-      `Update Proforma Invoice`
+      `Update Proforma Invoice`,
     );
 
     res.json(result);
@@ -132,11 +156,47 @@ const getPrintData = async (req, res) => {
   }
 };
 
+// Status yang boleh dicetak. '' = proforma lama sebelum fitur ACC.
+const STATUS_BOLEH_CETAK = ["", "ACC"];
+
+// Gerbang akses per dokumen, dipasang di route:
+// - non-KDC hanya boleh membuka/mengubah/mencetak proforma cabangnya sendiri
+// - { cetak: true }: hanya yang sudah ACC
+const batasiAkses =
+  ({ cetak = false } = {}) =>
+  async (req, res, next) => {
+    try {
+      const nomor = req.params.id || req.params.nomor;
+      const info = await service.getInfoAkses(nomor);
+      if (!info) {
+        return res.status(404).json({ message: "Proforma tidak ditemukan." });
+      }
+      if (req.user.cabang !== "KDC" && info.cabang !== req.user.cabang) {
+        return res
+          .status(403)
+          .json({ message: "Proforma ini milik cabang lain." });
+      }
+      if (cetak && !STATUS_BOLEH_CETAK.includes(info.statusAcc)) {
+        const pesan =
+          info.statusAcc === "DITOLAK"
+            ? "Pengajuan proforma ditolak Manager Retail. Ubah lalu ajukan ulang."
+            : "Proforma belum disetujui Manager Retail. Cetak baru bisa setelah ACC.";
+        return res.status(403).json({ message: pesan });
+      }
+      next();
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  };
+
 module.exports = {
   getDataFromSO,
+  getDataFromInvoice,
   getDataForEdit,
   saveNew,
   updateExisting,
   lookupSO,
+  lookupInvoice,
   getPrintData,
+  batasiAkses,
 };

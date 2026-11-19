@@ -16,7 +16,7 @@ const getDetails = async (req, res) => {
     const { nomor } = req.query;
     if (!nomor)
       return res.status(400).json({ message: "Parameter 'nomor' diperlukan." });
-    const data = await service.getDetails(nomor);
+    const data = await service.getDetails(nomor, req.user);
     res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -34,7 +34,7 @@ const deleteProforma = async (req, res) => {
       // A. Ambil Header
       const [headerRows] = await pool.query(
         "SELECT * FROM tinv_hdr WHERE inv_nomor = ?",
-        [nomor]
+        [nomor],
       );
 
       if (headerRows.length > 0) {
@@ -43,13 +43,13 @@ const deleteProforma = async (req, res) => {
         // B. Ambil Detail (Gunakan invd_inv_nomor)
         const [detailRows] = await pool.query(
           "SELECT * FROM tinv_dtl WHERE invd_inv_nomor = ? ORDER BY invd_nourut",
-          [nomor]
+          [nomor],
         );
 
         // C. Gabungkan
         oldData = {
           ...header,
-          items: detailRows
+          items: detailRows,
         };
       }
     } catch (e) {
@@ -63,12 +63,12 @@ const deleteProforma = async (req, res) => {
     if (oldData) {
       auditService.logActivity(
         req,
-        "DELETE",            // Action
-        "PROFORMA_INVOICE",  // Module
-        nomor,               // Target ID
-        oldData,             // Data Lama (Header + Items)
-        null,                // Data Baru (Null)
-        `Menghapus Proforma Invoice (Customer: ${oldData.inv_cus_kode || "Unknown"})`
+        "DELETE", // Action
+        "PROFORMA_INVOICE", // Module
+        nomor, // Target ID
+        oldData, // Data Lama (Header + Items)
+        null, // Data Baru (Null)
+        `Menghapus Proforma Invoice (Customer: ${oldData.inv_cus_kode || "Unknown"})`,
       );
     }
 

@@ -1,26 +1,28 @@
 const pool = require("../config/database");
 const { format, subMonths } = require("date-fns");
 
+const isBsJenis = (jenisStok) =>
+  jenisStok === "bs_cetak" || jenisStok === "bs_produksi";
+
+// Sumber tabel stok per tab. Tab "semua" sengaja TIDAK menyertakan bad stock.
+const getStockSourceTable = (jenisStok) => {
+  const kolom =
+    "mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_tanggal, mst_aktif";
+  if (jenisStok === "showroom") return "tmasterstok";
+  if (jenisStok === "pesanan") return "tmasterstokso";
+  if (isBsJenis(jenisStok)) {
+    const kodeBs = jenisStok === "bs_cetak" ? "BC" : "BP"; // whitelist, bukan input user
+    return `(SELECT ${kolom} FROM tmasterstok_badstock WHERE mst_jenis_bs = '${kodeBs}')`;
+  }
+  return `(SELECT ${kolom} FROM tmasterstok UNION ALL SELECT ${kolom} FROM tmasterstokso)`;
+};
+
 const getRealTimeStock = async (filters) => {
   const { gudang, kodeBarang, keyword, jenisStok, tampilkanKosong, tanggal } =
     filters;
   const connection = await pool.getConnection();
   try {
-    // 1. Tentukan Sumber Tabel
-    let stockSourceTable = "";
-    if (jenisStok === "showroom") {
-      stockSourceTable = "tmasterstok";
-    } else if (jenisStok === "pesanan") {
-      stockSourceTable = "tmasterstokso";
-    } else {
-      stockSourceTable = `(
-        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_tanggal, mst_aktif 
-        FROM tmasterstok
-        UNION ALL
-        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_tanggal, mst_aktif 
-        FROM tmasterstokso
-      )`;
-    }
+    const stockSourceTable = getStockSourceTable(jenisStok);
 
     // 2. Siapkan Filter Dasar untuk subquery Size
     let baseParams = [tanggal];
@@ -74,7 +76,8 @@ const getRealTimeStock = async (filters) => {
     // [BARU] Mode "store spesifik" — cuma aktif kalau gudang bukan ALL/KDC.
     // Pesanan Ready/Booked cuma bermakna untuk 1 cabang toko tertentu, bukan
     // agregat lintas cabang (ALL) atau konteks DC (KDC).
-    const isStoreMode = gudang !== "ALL" && gudang !== "KDC";
+    const isStoreMode =
+      gudang !== "ALL" && gudang !== "KDC" && !isBsJenis(jenisStok);
 
     let pesananCTESql = "";
     let pesananSelectSql = "";
@@ -427,20 +430,7 @@ const getRealTimeStockExport = async (filters) => {
       pesananJoinSql = `LEFT JOIN pesanan_booked_summary pb ON pb.kode = a.brg_kode AND pb.ukuran = b.brgd_ukuran`;
     }
 
-    let stockSourceTable = "";
-    if (jenisStok === "showroom") {
-      stockSourceTable = "tmasterstok";
-    } else if (jenisStok === "pesanan") {
-      stockSourceTable = "tmasterstokso";
-    } else {
-      stockSourceTable = `(
-        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_tanggal, mst_aktif 
-        FROM tmasterstok
-        UNION ALL
-        SELECT mst_brg_kode, mst_ukuran, mst_stok_in, mst_stok_out, mst_cab, mst_tanggal, mst_aktif 
-        FROM tmasterstokso
-      )`;
-    }
+    const stockSourceTable = getStockSourceTable(jenisStok);
 
     let gudangFilter = "1 = 1";
     let kodeBarangFilter = "";

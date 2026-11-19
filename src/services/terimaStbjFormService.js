@@ -6,6 +6,7 @@ const {
   generateNomorMutasi,
   generateNomorSjStore,
 } = require("./sequenceService");
+const { getPosisiPenerimaan, ringkasPosisi } = require("./terimaStbjService");
 
 // Cabang tujuan alokasi. KBS/KPS = mutasi otomatis, selain itu (KPR, KF1) = SJ otomatis ke store
 const CABANG_ALOKASI = ["KBS", "KPS", "KPR", "KF1"];
@@ -18,12 +19,13 @@ const loadFromStbj = async (nomorStbj) => {
   );
   if (headerData.length === 0) throw new Error("STBJ tidak ditemukan.");
 
+  // Packing per SPK diambil dari tdc_stbj (sumber yang sah), bukan tebakan pack_nostbj
   const [summaryItems] = await pool.query(
     `SELECT d.STBJD_SPK_Nomor AS spk,
-            (SELECT GROUP_CONCAT(DISTINCT p.pack_nomor ORDER BY p.pack_nomor SEPARATOR ', ')
-               FROM tpacking p
-              WHERE p.pack_spk_nomor = d.STBJD_SPK_Nomor
-                AND (p.pack_nostbj = ? OR p.pack_nostbj IS NULL OR p.pack_nostbj = '')) AS packing,
+            (SELECT GROUP_CONCAT(DISTINCT e.tsd_packing ORDER BY e.tsd_packing SEPARATOR ', ')
+               FROM tdc_stbj e
+              WHERE e.tsd_nomor = d.STBJD_STBJ_Nomor
+                AND e.tsd_spk_nomor = d.STBJD_SPK_Nomor) AS packing,
             g.gdg_nama AS gudang,
             s.spk_nama AS nama,
             IF(d.stbjd_size<>'', d.stbjd_size, s.spk_ukuran) AS ukuran,
@@ -35,38 +37,20 @@ const loadFromStbj = async (nomorStbj) => {
        LEFT JOIN kencanaprint.tsalesorder so ON so.so_nomor = s.spk_so_ref AND so.so_aktif = 'Y'
        LEFT JOIN tgudang g ON g.gdg_kode = LEFT(so.so_invdc, 3)
       WHERE d.STBJD_STBJ_Nomor = ?`,
-    [nomorStbj, nomorStbj],
-  );
-
-  const [allocationItems] = await pool.query(
-    `SELECT e.tsd_spk_nomor AS spk, e.tsd_kode AS kode, e.tsd_ukuran AS ukuran, e.tsd_jumlah AS jumlah, concat(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna) AS nama FROM tdc_stbj e LEFT JOIN tbarangdc a ON a.brg_kode=e.tsd_kode WHERE e.tsd_nomor = ?`,
     [nomorStbj],
   );
 
-  return { header: headerData[0], summaryItems, allocationItems };
-};
+  // Baris per packing: jumlah (isi packing), diterima, sisa
+  const allocationItems = await getPosisiPenerimaan(pool, nomorStbj);
+  if (allocationItems.length === 0) {
+    throw new Error("STBJ ini belum punya data packing.");
+  }
+  const ringkasan = ringkasPosisi(allocationItems);
+  if (ringkasan.kekurangan <= 0) {
+    throw new Error("STBJ ini sudah diterima seluruhnya.");
+  }
 
-// UBAH: soft-fallback — ambil unit fisik status DICETAK sebanyak yang
-// TERSEDIA (bisa kurang dari count kalau barang ini masih pakai barcode
-// format lama / belum sempat dicetak sebagai unit unik). Sisa yang tidak
-// ketemu unit-nya nanti dicatat sebagai baris agregat legacy
-// (unit_serial=NULL), BUKAN ditolak total seperti sebelumnya.
-const selectAvailableUnitsSoft = async (
-  connection,
-  spk,
-  kode,
-  ukuran,
-  count,
-) => {
-  const [units] = await connection.query(
-    `SELECT unit_serial FROM tbarangdc_unit
-     WHERE unit_spk_nomor = ? AND unit_kode = ? AND unit_ukuran = ?
-       AND unit_status = 'DICETAK'
-     ORDER BY date_create ASC, unit_serial ASC
-     FOR UPDATE`,
-    [spk, kode, ukuran],
-  );
-  return units.slice(0, count).map((u) => u.unit_serial);
+  return { header: headerData[0], summaryItems, allocationItems, ringkasan };
 };
 
 const save = async (payload, user) => {
@@ -78,25 +62,62 @@ const save = async (payload, user) => {
     try {
       await connection.beginTransaction();
 
-      const { header, allocationItems } = payload;
+      const { header } = payload;
       const tanggal = header.tanggal;
+      const nomorStbj = header.nomorStbj;
 
-      // Validasi di server: pengecekan di frontend saja tidak cukup, dan pickForCabang
-      // diam-diam mengirim lebih sedikit bila pool unit habis
+      // Hanya baris yang benar-benar diterima kali ini
+      const allocationItems = (payload.allocationItems || []).filter(
+        (item) => Number(item.jumlah) > 0,
+      );
+      if (allocationItems.length === 0) {
+        throw new Error("Pilih minimal satu packing dengan qty diterima.");
+      }
+
+      // Kunci header STBJ: dua penerimaan bersamaan atas STBJ yang sama harus berurutan.
+      // Harus jadi query pertama di transaksi ini supaya hitungan sisa di bawah
+      // melihat penerimaan yang baru di-commit transaksi lain.
+      const [stbjRows] = await connection.query(
+        "SELECT stbj_nomor FROM kencanaprint.tstbj_hdr WHERE stbj_nomor = ? FOR UPDATE",
+        [nomorStbj],
+      );
+      if (stbjRows.length === 0) throw new Error("STBJ tidak ditemukan.");
+
+      // Validasi di server: qty tidak boleh melebihi sisa per packing, dan
+      // pengecekan di frontend saja tidak cukup
+      const posisi = await getPosisiPenerimaan(connection, nomorStbj);
+      const posisiMap = new Map(
+        posisi.map((r) => [`${r.packing}|${r.spk}|${r.kode}|${r.ukuran}`, r]),
+      );
+      const sudahDipakai = new Set();
+
       for (const item of allocationItems) {
+        const label = `${item.packing || "(tanpa packing)"} / ${item.spk} ${item.kode} ${item.ukuran}`;
+        const key = `${item.packing}|${item.spk}|${item.kode}|${item.ukuran}`;
+        const baris = posisiMap.get(key);
+        if (!baris) {
+          throw new Error(`Baris ${label} tidak ada di STBJ ${nomorStbj}.`);
+        }
+        if (sudahDipakai.has(key)) {
+          throw new Error(`Baris ${label} terkirim dobel.`);
+        }
+        sudahDipakai.add(key);
+
+        const qty = Number(item.jumlah);
+        if (qty > baris.sisa + 1e-9) {
+          throw new Error(
+            `${label}: qty ${qty} melebihi sisa yang belum diterima (${baris.sisa}).`,
+          );
+        }
+
         const alokasi = CABANG_ALOKASI.map(
           (c) => Number(item[c.toLowerCase()]) || 0,
         );
         if (alokasi.some((q) => q < 0)) {
-          throw new Error(
-            `Alokasi untuk ${item.spk} ${item.kode} ${item.ukuran} tidak boleh negatif.`,
-          );
+          throw new Error(`Alokasi untuk ${label} tidak boleh negatif.`);
         }
-        const totalAlokasi = alokasi.reduce((s, q) => s + q, 0);
-        if (totalAlokasi > (Number(item.jumlah) || 0)) {
-          throw new Error(
-            `Alokasi untuk ${item.spk} ${item.kode} ${item.ukuran} melebihi jumlah STBJ.`,
-          );
+        if (alokasi.reduce((s, q) => s + q, 0) > qty) {
+          throw new Error(`Alokasi untuk ${label} melebihi qty diterima.`);
         }
       }
 
@@ -105,29 +126,41 @@ const save = async (payload, user) => {
 
       await connection.query(
         "INSERT INTO tdc_stbj_hdr (ts_nomor, ts_tanggal, ts_sj_garmen, ts_stbj, user_create, date_create) VALUES (?, ?, ?, ?, ?, NOW())",
-        [
-          nomorTerima,
-          header.tanggal,
-          nomorSjGarmen,
-          header.nomorStbj,
-          user.kode,
-        ],
+        [nomorTerima, header.tanggal, nomorSjGarmen, nomorStbj, user.kode],
       );
 
-      // UBAH: dual-mode — sebanyak mungkin diserialisasi per unit,
-      // sisanya (barang masih barcode lama / belum sempat dicetak
-      // sebagai unit) masuk sebagai 1 baris agregat legacy per item
-      // (unit_serial=NULL), bukan menolak transaksi total.
+      // Unit fisik berstatus DICETAK per SPK/kode/ukuran dimuat sekali lalu
+      // dibagi berurutan ke tiap baris packing, jadi serial tidak pernah terpakai dua kali.
+      // Soft-fallback: kalau unit kurang (barang masih barcode lama), sisanya masuk
+      // sebagai 1 baris agregat legacy (unit_serial NULL), bukan menolak transaksi.
+      const poolUnit = new Map();
+      const ambilUnit = async (spk, kode, ukuran, count) => {
+        const key = `${spk}|${kode}|${ukuran}`;
+        if (!poolUnit.has(key)) {
+          const [units] = await connection.query(
+            `SELECT unit_serial FROM tbarangdc_unit
+             WHERE unit_spk_nomor = ? AND unit_kode = ? AND unit_ukuran = ?
+               AND unit_status = 'DICETAK'
+             ORDER BY date_create ASC, unit_serial ASC
+             FOR UPDATE`,
+            [spk, kode, ukuran],
+          );
+          poolUnit.set(
+            key,
+            units.map((u) => u.unit_serial),
+          );
+        }
+        return poolUnit.get(key).splice(0, count);
+      };
+
       const stbjDtlValues = [];
-      const itemUnitMap = []; // simpan sisa serial & sisa qty legacy per item, dipakai lagi di tahap mutasi/SJ di bawah
+      const itemUnitMap = []; // sisa serial & sisa qty legacy per baris, dipakai lagi di tahap mutasi/SJ di bawah
       let stbjDtlIdx = 0;
 
       for (const item of allocationItems) {
         const jumlah = Number(item.jumlah) || 0;
-        if (jumlah <= 0) continue;
 
-        const serials = await selectAvailableUnitsSoft(
-          connection,
+        const serials = await ambilUnit(
           item.spk,
           item.kode,
           item.ukuran,
@@ -141,6 +174,7 @@ const save = async (payload, user) => {
           stbjDtlValues.push([
             nomorTerima + stbjDtlIdx.toString().padStart(3, "0"),
             nomorTerima,
+            item.packing,
             item.spk,
             item.kode,
             item.ukuran,
@@ -154,6 +188,7 @@ const save = async (payload, user) => {
           stbjDtlValues.push([
             nomorTerima + stbjDtlIdx.toString().padStart(3, "0"),
             nomorTerima,
+            item.packing,
             item.spk,
             item.kode,
             item.ukuran,
@@ -163,12 +198,14 @@ const save = async (payload, user) => {
         }
       }
 
-      if (stbjDtlValues.length > 0) {
-        await connection.query(
-          "INSERT INTO tdc_stbj_dtl (tsd_iddrec, tsd_nomor, tsd_spk_nomor, tsd_kode, tsd_ukuran, tsd_jumlah, tsd_unit_serial) VALUES ?",
-          [stbjDtlValues],
-        );
-        const allSerials = stbjDtlValues.map((r) => r[6]);
+      await connection.query(
+        "INSERT INTO tdc_stbj_dtl (tsd_iddrec, tsd_nomor, tsd_packing, tsd_spk_nomor, tsd_kode, tsd_ukuran, tsd_jumlah, tsd_unit_serial) VALUES ?",
+        [stbjDtlValues],
+      );
+      const allSerials = stbjDtlValues
+        .map((r) => r[7])
+        .filter((s) => s !== null);
+      if (allSerials.length > 0) {
         await connection.query(
           `UPDATE tbarangdc_unit SET unit_status = 'DI_DC', unit_lokasi_saat_ini = 'KDC',
              unit_stbj_nomor = ?, date_modified = NOW(), user_modified = ?
@@ -177,9 +214,10 @@ const save = async (payload, user) => {
         );
       }
 
+      // Hanya penerimaan pertama yang mengisi penanda; yang berikutnya tidak menimpa
       await connection.query(
-        "UPDATE kencanaprint.tstbj_hdr SET stbj_ts_nomor = ? WHERE stbj_nomor = ?",
-        [nomorTerima, header.nomorStbj],
+        "UPDATE kencanaprint.tstbj_hdr SET stbj_ts_nomor = ? WHERE stbj_nomor = ? AND stbj_ts_nomor = ''",
+        [nomorTerima, nomorStbj],
       );
 
       for (const cabang of CABANG_ALOKASI) {
@@ -341,6 +379,11 @@ const save = async (payload, user) => {
         }
       }
 
+      // Posisi setelah penerimaan ini, dihitung dalam transaksi yang sama
+      const ringkasan = ringkasPosisi(
+        await getPosisiPenerimaan(connection, nomorStbj),
+      );
+
       await connection.commit();
       seqConnection.release();
       connection.release();
@@ -348,6 +391,7 @@ const save = async (payload, user) => {
       return {
         message: `Penerimaan STBJ berhasil disimpan dengan nomor ${nomorTerima}`,
         nomor: nomorTerima,
+        ringkasan,
       };
     } catch (error) {
       await connection.rollback();

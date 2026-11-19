@@ -1,5 +1,5 @@
 const pool = require("../config/database");
-const { format } = require("date-fns");
+const { format, addDays } = require("date-fns");
 
 // Fungsi untuk membuat nomor Proforma baru
 const generateNewNumber = async (connection, branchCode, date) => {
@@ -32,14 +32,48 @@ const getDataFromSO = async (soNumber, branchCode) => {
             d.sod_kode AS kode, d.sod_ukuran AS ukuran, d.sod_jumlah AS jumlah, d.sod_harga AS harga,
             d.sod_disc AS diskonPersen, d.sod_diskon AS diskonRp,
             IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) AS nama,
-            b.brgd_barcode as barcode
+            (SELECT brgd_barcode FROM tbarangdc_dtl WHERE brgd_kode = d.sod_kode AND brgd_ukuran = d.sod_ukuran LIMIT 1) AS barcode
         FROM tso_dtl d
         LEFT JOIN tbarangdc a ON a.brg_kode = d.sod_kode
         LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.sod_kode
-        LEFT JOIN tbarangdc_dtl b ON b.brgd_kode = d.sod_kode AND b.brgd_ukuran = d.sod_ukuran
         WHERE d.sod_so_nomor = ? ORDER BY d.sod_nourut;
     `;
   const [itemsRows] = await pool.query(itemsQuery, [soNumber]);
+
+  return { header: headerRows[0], items: itemsRows };
+};
+
+// Memanggil invoice sebagai sumber Proforma (alternatif selain SO)
+const getDataFromInvoice = async (nomorInv, branchCode) => {
+  const headerQuery = `
+        SELECT 
+            h.inv_nomor_so AS nomorSo, o.so_tanggal AS tanggalSo,
+            h.inv_cus_kode AS customerKode, c.cus_nama AS customerNama, c.cus_alamat AS alamat, c.cus_kota AS kota, c.cus_telp AS telp,
+            h.inv_cus_level AS levelKode, l.level_nama AS levelNama,
+            h.inv_top AS top, h.inv_ppn AS ppn, h.inv_disc AS diskon, h.inv_disc1 AS diskonPersen,
+            h.inv_bkrm AS biayaKirim, h.inv_dp AS dp
+        FROM tinv_hdr h
+        LEFT JOIN tso_hdr o ON o.so_nomor = h.inv_nomor_so
+        LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+        LEFT JOIN tcustomer_level l ON l.level_kode = h.inv_cus_level
+        WHERE h.inv_nomor = ? AND h.inv_cab = ? AND h.inv_sts_pro <> 2;
+    `;
+  const [headerRows] = await pool.query(headerQuery, [nomorInv, branchCode]);
+  if (headerRows.length === 0)
+    throw new Error("Nomor Invoice tidak ditemukan.");
+
+  const itemsQuery = `
+        SELECT 
+            d.invd_kode AS kode, d.invd_ukuran AS ukuran, d.invd_jumlah AS jumlah, d.invd_harga AS harga,
+            d.invd_disc AS diskonPersen, d.invd_diskon AS diskonRp,
+            IFNULL(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)), f.sd_nama) AS nama,
+            (SELECT brgd_barcode FROM tbarangdc_dtl WHERE brgd_kode = d.invd_kode AND brgd_ukuran = d.invd_ukuran LIMIT 1) AS barcode
+        FROM tinv_dtl d
+        LEFT JOIN tbarangdc a ON a.brg_kode = d.invd_kode
+        LEFT JOIN tsodtf_hdr f ON f.sd_nomor = d.invd_kode
+        WHERE d.invd_inv_nomor = ? ORDER BY d.invd_nourut;
+    `;
+  const [itemsRows] = await pool.query(itemsQuery, [nomorInv]);
 
   return { header: headerRows[0], items: itemsRows };
 };
@@ -54,6 +88,7 @@ const getDataForEdit = async (nomor) => {
             h.inv_cus_level AS levelKode, l.level_nama AS levelNama,
             h.inv_top AS top, h.inv_ket AS keterangan, h.inv_ppn AS ppn, h.inv_disc AS diskon, 
             h.inv_disc1 AS diskonPersen, h.inv_bkrm AS biayaKirim, h.inv_dp AS dp,
+            h.inv_ref_inv_nomor AS refInvoice, h.inv_status_acc AS statusAcc,
             d.invd_kode AS item_kode, d.invd_ukuran AS item_ukuran, d.invd_jumlah AS item_jumlah, 
             d.invd_harga AS item_harga, d.invd_disc AS item_diskonPersen, d.invd_diskon AS item_diskonRp,
             IFNULL(TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)), f.sd_nama) AS item_nama,
@@ -92,6 +127,12 @@ const getDataForEdit = async (nomor) => {
     telp: rows[0].telp,
     level: `${rows[0].levelKode} - ${rows[0].levelNama}`,
     top: rows[0].top,
+    tempo: format(
+      addDays(new Date(rows[0].tanggal), Number(rows[0].top) || 0),
+      "yyyy-MM-dd",
+    ),
+    refInvoice: rows[0].refInvoice || "",
+    statusAcc: rows[0].statusAcc || "",
     keterangan: rows[0].keterangan,
     ppn: rows[0].ppn,
     diskon: rows[0].diskon,
@@ -116,7 +157,50 @@ const getDataForEdit = async (nomor) => {
   return { header, items };
 };
 
-// Fungsi untuk menyimpan data Proforma
+const angka = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+const kunciBaris = (kode, ukuran) => `${kode}|${String(ukuran ?? "")}`;
+
+// Harga acuan dari sumber (SO atau invoice referensi). Harga dari client tidak dipercaya.
+const loadSumber = async (connection, { nomorSo, refInvoice, cabang }) => {
+  const harga = new Map();
+  let soAsal = nomorSo;
+
+  if (refInvoice) {
+    const [rows] = await connection.query(
+      `SELECT h.inv_nomor_so, d.invd_kode AS kode, d.invd_ukuran AS ukuran, d.invd_harga AS harga
+       FROM tinv_hdr h
+       JOIN tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+       WHERE h.inv_nomor = ? AND h.inv_cab = ? AND h.inv_sts_pro <> 2`,
+      [refInvoice, cabang],
+    );
+    if (rows.length === 0)
+      throw new Error(`Invoice referensi ${refInvoice} tidak ditemukan.`);
+    soAsal = rows[0].inv_nomor_so;
+    rows.forEach((r) => {
+      const k = kunciBaris(r.kode, r.ukuran);
+      if (!harga.has(k)) harga.set(k, angka(r.harga));
+    });
+  } else {
+    const [rows] = await connection.query(
+      `SELECT d.sod_kode AS kode, d.sod_ukuran AS ukuran, d.sod_harga AS harga
+       FROM tso_hdr h
+       JOIN tso_dtl d ON d.sod_so_nomor = h.so_nomor
+       WHERE h.so_nomor = ? AND h.so_cab = ?`,
+      [nomorSo, cabang],
+    );
+    if (rows.length === 0) throw new Error(`SO ${nomorSo} tidak ditemukan.`);
+    rows.forEach((r) => {
+      const k = kunciBaris(r.kode, r.ukuran);
+      if (!harga.has(k)) harga.set(k, angka(r.harga));
+    });
+  }
+  return { harga, soAsal };
+};
+
+// Fungsi untuk menyimpan data Proforma. Setiap simpan (baru/ubah) berstatus MENUNGGU ACC.
 const saveData = async (payload, user) => {
   const { header, items } = payload;
   const isEdit = !!header.nomor;
@@ -125,92 +209,190 @@ const saveData = async (payload, user) => {
     await connection.beginTransaction();
 
     let nomorProforma = header.nomor;
+    let cabang = header.cabang;
+    let nomorSo = String(header.nomorSo || "").trim();
+    let refInvoice = String(header.refInvoice || "").trim();
+    const hargaLama = new Map();
+
+    if (isEdit) {
+      // Sumber & cabang dibaca dari dokumen yang tersimpan, bukan dari payload
+      const [lama] = await connection.query(
+        "SELECT inv_cab, inv_nomor_so, inv_ref_inv_nomor FROM tinv_hdr WHERE inv_nomor = ? AND inv_sts_pro = 2 FOR UPDATE",
+        [nomorProforma],
+      );
+      if (lama.length === 0)
+        throw new Error(`Proforma ${nomorProforma} tidak ditemukan.`);
+      cabang = lama[0].inv_cab;
+      nomorSo = lama[0].inv_nomor_so;
+      refInvoice = lama[0].inv_ref_inv_nomor;
+
+      const [rowsLama] = await connection.query(
+        "SELECT invd_kode, invd_ukuran, invd_harga FROM tinv_dtl WHERE invd_inv_nomor = ?",
+        [nomorProforma],
+      );
+      rowsLama.forEach((r) =>
+        hargaLama.set(
+          kunciBaris(r.invd_kode, r.invd_ukuran),
+          angka(r.invd_harga),
+        ),
+      );
+    }
+
+    if (!nomorSo && !refInvoice)
+      throw new Error("Sumber (SO atau Invoice) harus diisi.");
+    if (!header.tanggal) throw new Error("Tanggal harus diisi.");
+    if (!header.customerKode) throw new Error("Customer harus diisi.");
+
+    const sumber = await loadSumber(connection, {
+      nomorSo,
+      refInvoice,
+      cabang,
+    });
+
+    // ── Validasi detail ──
+    const validItems = (items || []).filter(
+      (i) => i.kode && angka(i.jumlah) > 0,
+    );
+    if (validItems.length === 0) {
+      throw new Error("Minimal satu barang dengan jumlah lebih dari 0.");
+    }
+    const rows = validItems.map((it) => {
+      const k = kunciBaris(it.kode, it.ukuran);
+      const hargaSumber = sumber.harga.get(k);
+      if (hargaSumber === undefined) {
+        throw new Error(
+          `Barang ${it.kode} (${it.ukuran}) tidak ada di sumber.`,
+        );
+      }
+      const harga = angka(it.harga);
+      const sama = (a, b) => Math.abs(a - b) < 0.005;
+      const boleh =
+        sama(harga, hargaSumber) ||
+        (hargaLama.has(k) && sama(harga, hargaLama.get(k)));
+      if (!boleh)
+        throw new Error(`Harga ${it.kode} (${it.ukuran}) tidak boleh diubah.`);
+
+      const jumlah = angka(it.jumlah);
+      const diskonPersen = angka(it.diskonPersen);
+      const diskonRp = angka(it.diskonRp);
+      if (diskonPersen < 0 || diskonPersen > 100) {
+        throw new Error(
+          `Diskon % ${it.kode} (${it.ukuran}) harus antara 0 dan 100.`,
+        );
+      }
+      if (diskonRp < 0 || diskonRp > jumlah * harga + 0.005) {
+        throw new Error(`Diskon Rp ${it.kode} (${it.ukuran}) tidak valid.`);
+      }
+      return {
+        kode: it.kode,
+        ukuran: it.ukuran,
+        jumlah,
+        harga,
+        diskonPersen,
+        diskonRp,
+      };
+    });
+
+    // ── Validasi header & total (cermin hitungan di form) ──
+    const top = angka(header.top);
+    const ppn = angka(header.ppn);
+    const diskon = angka(header.diskon);
+    const diskonPersen = angka(header.diskonPersen);
+    const biayaKirim = angka(header.biayaKirim);
+    const dp = angka(header.dp);
+    if (top < 0) throw new Error("TOP tidak boleh negatif.");
+    if (ppn < 0 || ppn > 100)
+      throw new Error("PPN (%) harus antara 0 dan 100.");
+    if (diskonPersen < 0 || diskonPersen > 100)
+      throw new Error("Diskon (%) harus antara 0 dan 100.");
+    if (diskon < 0 || biayaKirim < 0 || dp < 0) {
+      throw new Error("Diskon, biaya kirim, dan DP tidak boleh negatif.");
+    }
+    const subtotal = rows.reduce((t, r) => t + r.jumlah * r.harga, 0);
+    const setelahItem = subtotal - rows.reduce((t, r) => t + r.diskonRp, 0);
+    const dpp = setelahItem - (setelahItem * (diskonPersen / 100) + diskon);
+    const netto = dpp + dpp * (ppn / 100) + biayaKirim - dp;
+    if (dpp < -0.005) throw new Error("Total diskon melebihi subtotal.");
+    if (netto < -0.005)
+      throw new Error("DP melebihi total tagihan (netto negatif).");
+
     if (!isEdit) {
       nomorProforma = await generateNewNumber(
         connection,
-        header.cabang,
+        cabang,
         header.tanggal,
       );
     }
 
-    // ========================================================
-    // [PERBAIKAN] Potong string level, ambil kodenya saja!
-    // Misal: "1 - DISTRIBUTOR" -> split -> array ["1", "DISTRIBUTOR"] -> ambil index [0]
-    // ========================================================
+    // Potong string level: "1 - DISTRIBUTOR" -> "1"
     const levelKodeOlah = header.level
       ? header.level.split(" - ")[0].trim()
       : null;
 
-    // Simpan header (INSERT atau UPDATE)
     const headerData = {
       Inv_tanggal: header.tanggal,
-      Inv_nomor_so: header.nomorSo,
-      inv_cus_level: levelKodeOlah, // <--- GUNAKAN VARIABEL YANG SUDAH DIPOTONG TADI
-      Inv_top: header.top,
-      inv_ppn: header.ppn,
-      inv_disc: header.diskon,
-      inv_disc1: header.diskonPersen,
-      inv_bkrm: header.biayaKirim,
-      inv_dp: header.dp,
+      inv_cus_level: levelKodeOlah,
+      Inv_top: top,
+      inv_ppn: ppn,
+      inv_disc: diskon,
+      inv_disc1: diskonPersen,
+      inv_bkrm: biayaKirim,
+      inv_dp: dp,
       Inv_cus_kode: header.customerKode,
       Inv_ket: header.keterangan,
       inv_sts_pro: 2, // Proforma
+      inv_status_acc: "MENUNGGU", // setiap simpan butuh ACC Manager Retail
     };
 
     if (isEdit) {
       headerData.user_modified = user.kode;
       headerData.date_modified = new Date();
-      headerData.inv_cab = header.cabang;
       await connection.query("UPDATE tinv_hdr SET ? WHERE inv_nomor = ?", [
         headerData,
         nomorProforma,
       ]);
-
       await connection.query("DELETE FROM tinv_dtl WHERE invd_inv_nomor = ?", [
         nomorProforma,
       ]);
+
+      // Permintaan ACC lama untuk dokumen ini gugur: yang berlaku hanya yang terbaru
+      await connection.query(
+        `UPDATE totorisasi SET o_status = 'N', o_approver = 'SISTEM', o_approved_at = NOW()
+         WHERE o_jenis = 'PROFORMA' AND o_transaksi = ? AND o_status = 'P'`,
+        [nomorProforma],
+      );
     } else {
       headerData.inv_nomor = nomorProforma;
-
-      // ==========================================
-      // [TAMBAHAN 1] Buat KTP/IDREC untuk Header
-      // ==========================================
-      headerData.inv_idrec = `${header.cabang}INV${format(new Date(), "yyyyMMddHHmmss.SSS")}`;
-
-      headerData.inv_cab = header.cabang;
+      headerData.Inv_nomor_so = sumber.soAsal;
+      headerData.inv_ref_inv_nomor = refInvoice;
+      headerData.inv_idrec = `${cabang}INV${format(new Date(), "yyyyMMddHHmmss.SSS")}`;
+      headerData.inv_cab = cabang;
       headerData.user_create = user.kode;
       headerData.date_create = new Date();
       await connection.query("INSERT INTO tinv_hdr SET ?", headerData);
     }
 
     // Simpan detail
-    for (const [index, item] of items.entries()) {
-      if (item.kode && item.jumlah > 0) {
-        // ==========================================
-        // [TAMBAHAN 2] Buat KTP/IDREC untuk setiap baris Detail
-        // Wajib ditambah index di belakang agar tidak kembar walau dieksekusi di detik yang sama
-        // ==========================================
-        const detailIdrec = `${header.cabang}IND${format(new Date(), "yyyyMMddHHmmss.SSS")}${index}`;
-
-        const itemData = {
-          invd_idrec: detailIdrec, // <--- MASUKKAN KE SINI
-          Invd_Inv_nomor: nomorProforma,
-          Invd_kode: item.kode,
-          invd_ukuran: item.ukuran,
-          Invd_jumlah: item.jumlah,
-          invd_harga: item.harga,
-          invd_disc: item.diskonPersen,
-          invd_diskon: item.diskonRp,
-          invd_nourut: index + 1,
-        };
-        await connection.query("INSERT INTO tinv_dtl SET ?", itemData);
-      }
+    for (const [index, r] of rows.entries()) {
+      const detailIdrec = `${cabang}IND${format(new Date(), "yyyyMMddHHmmss.SSS")}${index}`;
+      await connection.query("INSERT INTO tinv_dtl SET ?", {
+        invd_idrec: detailIdrec,
+        Invd_Inv_nomor: nomorProforma,
+        Invd_kode: r.kode,
+        invd_ukuran: r.ukuran,
+        Invd_jumlah: r.jumlah,
+        invd_harga: r.harga,
+        invd_disc: r.diskonPersen,
+        invd_diskon: r.diskonRp,
+        invd_nourut: index + 1,
+      });
     }
 
     await connection.commit();
     return {
-      message: `Proforma berhasil disimpan dengan nomor ${nomorProforma}`,
+      message: `Proforma ${nomorProforma} tersimpan dan menunggu ACC Manager Retail.`,
       nomor: nomorProforma,
+      statusAcc: "MENUNGGU",
     };
   } catch (error) {
     await connection.rollback();
@@ -256,6 +438,22 @@ const lookupSO = async (filters) => {
   const [items] = await pool.query(dataQuery, dataParams);
 
   return { items, total };
+};
+
+// Daftar invoice untuk lookup Proforma. Modal memfilter di sisi client,
+// jadi hasilnya dibatasi 500 invoice terbaru dari cabang user.
+const lookupInvoice = async (cabang) => {
+  const [rows] = await pool.query(
+    `SELECT h.inv_nomor AS Nomor, h.inv_tanggal AS Tanggal, h.inv_nomor_so AS NomorSo,
+            h.inv_cus_kode AS KdCus, c.cus_nama AS Customer
+     FROM tinv_hdr h
+     LEFT JOIN tcustomer c ON c.cus_kode = h.inv_cus_kode
+     WHERE h.inv_cab = ? AND h.inv_sts_pro <> 2
+     ORDER BY h.inv_tanggal DESC, h.inv_nomor DESC
+     LIMIT 500`,
+    [cabang],
+  );
+  return rows;
 };
 
 const getPrintData = async (nomor) => {
@@ -315,10 +513,23 @@ const getPrintData = async (nomor) => {
   return { header, details };
 };
 
+// Info ringkas untuk gerbang akses (cabang pemilik + status ACC).
+// Null kalau nomor bukan proforma atau tidak ada.
+const getInfoAkses = async (nomor) => {
+  const [rows] = await pool.query(
+    "SELECT inv_cab AS cabang, inv_status_acc AS statusAcc FROM tinv_hdr WHERE inv_nomor = ? AND inv_sts_pro = 2",
+    [nomor],
+  );
+  return rows[0] || null;
+};
+
 module.exports = {
   getDataFromSO,
+  getDataFromInvoice,
   getDataForEdit,
   saveData,
   lookupSO,
+  lookupInvoice,
   getPrintData,
+  getInfoAkses,
 };

@@ -18,7 +18,7 @@ router.get(
   "/export-details",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.exportDetails
+  controller.exportDetails,
 );
 
 // Mencari SO yang valid untuk dimuat
@@ -26,7 +26,15 @@ router.get(
   "/search/so",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.searchSo
+  controller.searchSo,
+);
+
+// Resolve hasil scan barcode / QR untuk mutasi ke bad stock
+router.get(
+  "/bs-lookup",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.lookupBarangBs,
 );
 
 // Memuat detail item dari SO yang dipilih
@@ -34,14 +42,14 @@ router.get(
   "/load-from-so/:nomorSo",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.loadFromSo
+  controller.loadFromSo,
 );
 
 router.get(
   "/print/:nomor",
   verifyToken,
   checkPermission(MENU_ID, "view"),
-  controller.getPrintData
+  controller.getPrintData,
 );
 
 // Memuat data Mutasi Stok yang sudah ada untuk mode "Ubah" (Wildcard Parameter)
@@ -49,7 +57,7 @@ router.get(
   "/:nomor",
   verifyToken,
   checkPermission(MENU_ID, "edit"),
-  controller.loadForEdit
+  controller.loadForEdit,
 );
 
 // Menyimpan data (baru atau yang diubah)

@@ -2,6 +2,17 @@ const pool = require("../config/database");
 const path = require("path");
 const fs = require("fs").promises;
 
+// Sumber tunggal daftar sub kategori; dikirim ke frontend lewat getInitialData
+const SUB_KATEGORI = [
+  "REGULER DEWASA",
+  "REGULER ANAK",
+  "PREMIUM",
+  "JAKET WOVEN",
+  "JAKET KNIT",
+];
+// Lama tag NEW ARRIVAL sejak barang baru dibuat
+const NEW_ARRIVAL_BULAN = 6;
+
 const getInitialData = async (user) => {
   try {
     // Jalankan semua query secara bersamaan untuk efisiensi
@@ -19,6 +30,7 @@ const getInitialData = async (user) => {
       jenisKaos: jenisKaosRes[0].map((j) => `${j.jo_kode} - ${j.jo_nama}`),
       tipe: tipeRes[0].map((t) => t.Tipe),
       lengan: lenganRes[0].map((l) => l.Lengan),
+      subKategori: SUB_KATEGORI,
     };
   } catch (error) {
     // Jika terjadi error, log pesan yang lebih detail di konsol backend
@@ -36,7 +48,9 @@ const getForEdit = async (kode) => {
             a.*, 
             CONCAT(o.jo_kode, " - ", o.jo_nama) AS jenisorder,
             (SELECT kode FROM tjeniskain WHERE JenisKain = a.brg_jeniskain) AS jenisKainKode,
-            (SELECT kode FROM twarna WHERE Warna = a.brg_warna) AS warnaKode
+            (SELECT kode FROM twarna WHERE Warna = a.brg_warna) AS warnaKode,
+            (a.brg_new_until IS NOT NULL AND a.brg_new_until >= CURDATE()) AS isNewArrival,
+            DATE_FORMAT(a.brg_new_until, '%Y-%m-%d') AS newUntil
         FROM tbarangdc a
         LEFT JOIN tjenisorder o ON o.jo_kode = a.brg_jeniskaos
         WHERE a.brg_kode = ?;
@@ -76,6 +90,15 @@ const getForEdit = async (kode) => {
 
 const save = async (payload, user) => {
   const { header, variants, isNew } = payload;
+
+  const subKategori = header.subKategori || "";
+  if (isNew && !SUB_KATEGORI.includes(subKategori)) {
+    throw new Error("Sub kategori belum dipilih atau tidak valid.");
+  }
+  if (!isNew && subKategori && !SUB_KATEGORI.includes(subKategori)) {
+    throw new Error("Sub kategori tidak valid.");
+  }
+
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -104,12 +127,15 @@ const save = async (payload, user) => {
       header.bcdId = bcdRows[0].next_id;
 
       await connection.query(
-        `INSERT INTO tbarangdc (brg_kode, brg_jeniskaos, brg_ktgp, brg_tipe, brg_lengan, brg_jeniskain, brg_warna, brg_aktif, brg_bcdid, brg_logstok, user_create, date_create) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        `INSERT INTO tbarangdc
+           (brg_kode, brg_jeniskaos, brg_ktgp, brg_subktgp, brg_tipe, brg_lengan, brg_jeniskain,
+            brg_warna, brg_aktif, brg_bcdid, brg_logstok, brg_new_until, user_create, date_create)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATE_ADD(CURDATE(), INTERVAL ? MONTH), ?, NOW())`,
         [
           kodeBarang,
           header.jenisKaos.substring(0, 2),
           header.kategoriProduk,
+          subKategori,
           header.tipe,
           header.lengan,
           header.jenisKain,
@@ -117,15 +143,20 @@ const save = async (payload, user) => {
           header.status,
           header.bcdId,
           header.logStok,
+          NEW_ARRIVAL_BULAN,
           user.kode,
         ],
       );
     } else {
       await connection.query(
-        `UPDATE tbarangdc SET brg_aktif = ?, brg_ktgp = ?, brg_logstok = ?, user_modified = ?, date_modified = NOW() WHERE brg_kode = ?`,
+        `UPDATE tbarangdc
+            SET brg_aktif = ?, brg_ktgp = ?, brg_subktgp = ?, brg_logstok = ?,
+                user_modified = ?, date_modified = NOW()
+          WHERE brg_kode = ?`,
         [
           header.status,
           header.kategoriProduk,
+          subKategori,
           header.logStok,
           user.kode,
           kodeBarang,

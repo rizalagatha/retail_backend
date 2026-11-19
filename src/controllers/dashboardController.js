@@ -656,6 +656,65 @@ const getWorkSummaryDetail = async (req, res) => {
         ),
       );
     }
+    if (key === "pengajuan_harga_open") {
+      return res.json(
+        await dashboardService.getPengajuanHargaDetailList(
+          userWithOverride,
+          periode,
+          page,
+          limit,
+        ),
+      );
+    }
+    if (key === "pet_dtf_panjang") {
+      return res.json(
+        await dashboardService.getPetDtfDetailList(
+          userWithOverride,
+          periode,
+          page,
+          limit,
+        ),
+      );
+    }
+    if (key === "retur_jual") {
+      return res.json(
+        await dashboardService.getReturDetailList(
+          userWithOverride,
+          periode,
+          page,
+          limit,
+        ),
+      );
+    }
+    if (key === "refund_approve") {
+      return res.json(
+        await dashboardService.getRefundDetailList(
+          userWithOverride,
+          periode,
+          page,
+          limit,
+        ),
+      );
+    }
+    if (key === "peminjaman_belum_kembali") {
+      return res.json(
+        await dashboardService.getPeminjamanDetailList(
+          userWithOverride,
+          periode,
+          page,
+          limit,
+        ),
+      );
+    }
+    if (key === "stok_minus") {
+      return res.json(
+        await dashboardService.getStokMinusDetailList(
+          userWithOverride,
+          page,
+          limit,
+        ),
+      );
+    }
     res.json(
       await dashboardService.getSuratPesananDetailList(
         key,

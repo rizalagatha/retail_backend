@@ -9,6 +9,7 @@ const {
   subWeeks,
 } = require("date-fns");
 const monitoringAchievementService = require("./monitoringAchievementService");
+const { STATUS_LABEL: PH_STATUS_LABEL } = require("./priceProposalService");
 
 const monthShortNames = [
   "Jan",
@@ -4169,53 +4170,764 @@ const getRepeatOrderDetailList = async (
   }));
 };
 
+// =========================================================================
+// PENGAJUAN HARGA OPEN
+// Status efektif meniru getPriceProposals (priceProposalService): status
+// kosong/DRAFT yang sudah punya approval lama dianggap LEGACY_APPROVED.
+// OPEN = masih berjalan, dari DRAFT sampai READY_STORE.
+// =========================================================================
+const PH_STATUS_EFEKTIF_SQL = `CASE
+    WHEN (h.ph_status IS NULL OR h.ph_status = 'DRAFT')
+      AND h.ph_apv IS NOT NULL AND h.ph_apv <> ''
+    THEN 'LEGACY_APPROVED'
+    ELSE IFNULL(h.ph_status, 'DRAFT')
+  END`;
+
+const PH_OPEN_STATUSES = [
+  "DRAFT",
+  "ACC_CUSTOMER",
+  "ACC_FINANCE",
+  "MENUNGGU_DC",
+  "ACC_DC",
+  "PRODUKSI",
+  "BARANG_DITERIMA_DC",
+  "READY_STORE",
+];
+// Konstanta internal (bukan input user), aman di-inline ke SQL
+const PH_OPEN_IN_SQL = PH_OPEN_STATUSES.map((s) => `'${s}'`).join(",");
+
+const statusDariRasio = (percent) =>
+  percent > 50 ? "kritis" : percent > 25 ? "perhatian" : "baik";
+
+const getPengajuanHargaWorkSummary = async (user, periode = {}) => {
+  const isKDC = user.cabang === "KDC";
+  const effectiveCabang = isKDC ? user.cabangOverride || null : user.cabang;
+  const branchFilter = effectiveCabang ? "AND h.ph_cab = ?" : "";
+  const branchParam = effectiveCabang ? [effectiveCabang] : [];
+  const { startDate, endDate } = resolvePeriodeRange(periode);
+
+  const [rows] = await pool.query(
+    `SELECT
+       COUNT(*) AS total,
+       IFNULL(SUM(CASE WHEN ${PH_STATUS_EFEKTIF_SQL} IN (${PH_OPEN_IN_SQL}) THEN 1 ELSE 0 END), 0) AS jumlah_open
+     FROM tpengajuanharga h
+     WHERE h.ph_tanggal BETWEEN ? AND ?
+       ${branchFilter}`,
+    [startDate, endDate, ...branchParam],
+  );
+
+  const total = Number(rows[0]?.total || 0);
+  const jumlahOpen = Number(rows[0]?.jumlah_open || 0);
+  const percent = total > 0 ? (jumlahOpen / total) * 100 : 0;
+
+  return {
+    key: "pengajuan_harga_open",
+    title: "Pengajuan Harga Open",
+    icon: "mdi-tag-text-outline",
+    current: jumlahOpen,
+    total,
+    nominal: undefined,
+    percent: Math.min(100, percent),
+    status: statusDariRasio(percent),
+    type: "ph-detail",
+  };
+};
+
+// Terlama di atas: yang paling lama menggantung paling perlu dikejar
+const getPengajuanHargaDetailList = async (
+  user,
+  periode = {},
+  page = 1,
+  limit = 30,
+) => {
+  const isKDC = user.cabang === "KDC";
+  const effectiveCabang = isKDC ? user.cabangOverride || null : user.cabang;
+  const branchFilter = effectiveCabang ? "AND h.ph_cab = ?" : "";
+  const branchParam = effectiveCabang ? [effectiveCabang] : [];
+  const { startDate, endDate } = resolvePeriodeRange(periode);
+  const offset = (Number(page) - 1) * Number(limit);
+
+  const [rows] = await pool.query(
+    `SELECT
+       h.ph_nomor AS nomor,
+       DATE_FORMAT(h.ph_tanggal, '%Y-%m-%d') AS tanggal,
+       c.cus_nama AS customer,
+       ${PH_STATUS_EFEKTIF_SQL} AS status
+     FROM tpengajuanharga h
+     LEFT JOIN tcustomer c ON c.cus_kode = h.ph_kd_cus
+     WHERE h.ph_tanggal BETWEEN ? AND ?
+       AND ${PH_STATUS_EFEKTIF_SQL} IN (${PH_OPEN_IN_SQL})
+       ${branchFilter}
+     ORDER BY h.ph_tanggal ASC, h.ph_nomor ASC
+     LIMIT ? OFFSET ?`,
+    [startDate, endDate, ...branchParam, Number(limit), offset],
+  );
+
+  return rows.map((r) => ({
+    nomor: r.nomor,
+    tanggal: r.tanggal,
+    customer: r.customer || "-",
+    status: PH_STATUS_LABEL[r.status] || r.status,
+  }));
+};
+
+// =========================================================================
+// STOK MINUS (real time, tidak ikut filter bulan)
+// Stok = SUM(masuk - keluar) per barang + ukuran + gudang dari tmasterstok
+// (rak), sama dengan Laporan Stok Minus tapi tanpa batas tanggal.
+// User KDC tanpa pilihan cabang = semua gudang.
+// =========================================================================
+const STOK_MINUS_BATAS_KRITIS = 10; // > 10 item = kritis, 1-10 = perlu perhatian
+const STOK_MINUS_PREVIEW_LIMIT = 5;
+const STOK_MINUS_TTL_MS = 60 * 1000;
+
+const STOK_MINUS_SELECT_SQL = `
+  x.mst_brg_kode AS kode,
+  TRIM(CONCAT(
+    IFNULL(a.brg_jeniskaos,''), ' ', IFNULL(a.brg_tipe,''), ' ',
+    IFNULL(a.brg_lengan,''), ' ', IFNULL(a.brg_jeniskain,''), ' ',
+    IFNULL(a.brg_warna,'')
+  )) AS nama,
+  x.mst_ukuran AS ukuran,
+  IFNULL(g.gdg_nama, x.mst_cab) AS cabang,
+  x.stok AS qty`;
+
+const stokMinusFromSql = (branchFilter) => `
+  FROM (
+    SELECT mst_brg_kode, mst_ukuran, mst_cab,
+           SUM(mst_stok_in - mst_stok_out) AS stok
+    FROM tmasterstok
+    WHERE mst_aktif = 'Y' ${branchFilter}
+    GROUP BY mst_brg_kode, mst_ukuran, mst_cab
+    HAVING SUM(mst_stok_in - mst_stok_out) < 0
+  ) x
+  JOIN tbarangdc a ON a.brg_kode = x.mst_brg_kode AND a.brg_logstok = 'Y'
+  LEFT JOIN tgudang g ON g.gdg_kode = x.mst_cab`;
+
+const resolveStokMinusCabang = (user) =>
+  user.cabang === "KDC" ? user.cabangOverride || null : user.cabang;
+
+const queryStokMinus = async (cabang) => {
+  const branchFilter = cabang ? "AND mst_cab = ?" : "";
+  const params = cabang ? [cabang] : [];
+
+  // Window function: total item & total pcs dihitung dari SELURUH hasil,
+  // walau yang dikembalikan hanya N baris teratas
+  const [rows] = await pool.query(
+    `SELECT ${STOK_MINUS_SELECT_SQL},
+            COUNT(*) OVER () AS total_item,
+            SUM(x.stok) OVER () AS total_pcs
+     ${stokMinusFromSql(branchFilter)}
+     ORDER BY x.stok ASC, x.mst_brg_kode ASC, x.mst_ukuran ASC
+     LIMIT ${STOK_MINUS_PREVIEW_LIMIT}`,
+    params,
+  );
+
+  return {
+    jumlah: Number(rows[0]?.total_item || 0),
+    pcs: Number(rows[0]?.total_pcs || 0),
+    preview: rows.map((r) => ({
+      kode: r.kode,
+      nama: r.nama,
+      ukuran: r.ukuran,
+      cabang: r.cabang,
+      qty: Number(r.qty),
+    })),
+  };
+};
+
+// Cache 60 detik per cabang (promise-nya yang disimpan, jadi request
+// serentak dan polling 30 detik tidak menembak query berat berulang)
+const stokMinusCache = new Map();
+const getStokMinusSnapshot = (cabang) => {
+  const key = cabang || "ALL";
+  const hit = stokMinusCache.get(key);
+  if (hit && Date.now() - hit.at < STOK_MINUS_TTL_MS) return hit.promise;
+
+  const promise = queryStokMinus(cabang).catch((err) => {
+    stokMinusCache.delete(key);
+    throw err;
+  });
+  stokMinusCache.set(key, { at: Date.now(), promise });
+  return promise;
+};
+
+const getStokMinusWorkSummary = async (user) => {
+  const snapshot = await getStokMinusSnapshot(resolveStokMinusCabang(user));
+
+  let status = "baik";
+  if (snapshot.jumlah > STOK_MINUS_BATAS_KRITIS) status = "kritis";
+  else if (snapshot.jumlah > 0) status = "perhatian";
+
+  return {
+    key: "stok_minus",
+    title: "Stok Minus",
+    icon: "mdi-package-variant-remove",
+    current: snapshot.jumlah,
+    total: null,
+    percent: null,
+    status,
+    type: "stok-detail",
+    pcsMinus: snapshot.pcs,
+    preview: snapshot.preview,
+  };
+};
+
+// Detail dibuat live (tanpa cache) karena dialog dibuka atas aksi user
+const getStokMinusDetailList = async (user, page = 1, limit = 30) => {
+  const cabang = resolveStokMinusCabang(user);
+  const branchFilter = cabang ? "AND mst_cab = ?" : "";
+  const params = cabang ? [cabang] : [];
+  const offset = (Number(page) - 1) * Number(limit);
+
+  const [rows] = await pool.query(
+    `SELECT ${STOK_MINUS_SELECT_SQL}
+     ${stokMinusFromSql(branchFilter)}
+     ORDER BY x.stok ASC, x.mst_brg_kode ASC, x.mst_ukuran ASC, x.mst_cab ASC
+     LIMIT ? OFFSET ?`,
+    [...params, Number(limit), offset],
+  );
+
+  return rows.map((r) => ({
+    nomor: r.kode,
+    customer: r.nama,
+    ukuran: r.ukuran,
+    cabang: r.cabang,
+    qty: Number(r.qty),
+  }));
+};
+
+// =========================================================================
+// CARD TOTAL TANPA PEMBANDING (PET DTF, Retur, Refund) + PEMINJAMAN
+// Rentang tanggal setengah terbuka (>= awal, < akhir + 1 hari): benar untuk
+// kolom DATE maupun DATETIME. BETWEEN dengan tanggal saja memotong transaksi
+// di hari terakhir bulan.
+// =========================================================================
+const resolveCardCabang = (user) =>
+  user.cabang === "KDC" ? user.cabangOverride || null : user.cabang;
+
+const rentangSql = (kolom) =>
+  `${kolom} >= ? AND ${kolom} < DATE_ADD(?, INTERVAL 1 DAY)`;
+
+const buildCardTotal = ({
+  key,
+  title,
+  current,
+  unit,
+  fractionDigits = 0,
+  type,
+  nominal,
+}) => ({
+  key,
+  title,
+  current,
+  total: null,
+  percent: null,
+  status: "netral",
+  type,
+  unit,
+  fractionDigits,
+  ...(nominal ? { nominal } : {}),
+});
+
+// ---- PET DTF: realisasi panjang (tdtf, jenis order SD) -------------------
+// Panjang diambil sekali per nomor LHK (MAX), sama dengan Lap. LHK
+// (lhkSoDtfService.getLhkList). Cabang = cabang pengerja LHK (d.cab).
+const PET_DTF_JENIS_ORDER = "SD";
+
+const petDtfFilter = (user, periode) => {
+  const cabang = resolveCardCabang(user);
+  const { startDate, endDate } = resolvePeriodeRange(periode);
+  return {
+    where: `d.jo_kode = ? AND ${rentangSql("d.tanggal")} ${cabang ? "AND d.cab = ?" : ""}`,
+    params: [
+      PET_DTF_JENIS_ORDER,
+      startDate,
+      endDate,
+      ...(cabang ? [cabang] : []),
+    ],
+  };
+};
+
+// Daftar tanggal 'yyyy-MM-dd' dari awal sampai akhir rentang (aritmetika UTC, bebas geseran zona waktu)
+const hariDalamRentang = (startDate, endDate) => {
+  const [y1, m1, d1] = startDate.split("-").map(Number);
+  const [y2, m2, d2] = endDate.split("-").map(Number);
+  const akhir = Date.UTC(y2, m2 - 1, d2);
+  const hasil = [];
+  for (let t = Date.UTC(y1, m1 - 1, d1); t <= akhir; t += 86400000) {
+    hasil.push(new Date(t).toISOString().slice(0, 10));
+  }
+  return hasil;
+};
+
+const getPetDtfWorkSummary = async (user, periode = {}) => {
+  const { where, params } = petDtfFilter(user, periode);
+  const { startDate, endDate } = resolvePeriodeRange(periode);
+
+  // Satu query: total, jumlah LHK, dan pemakaian per hari
+  const [rows] = await pool.query(
+    `SELECT DATE_FORMAT(x.hari, '%Y-%m-%d') AS tanggal,
+            SUM(x.panjang) AS meter,
+            COUNT(*) AS jumlah_lhk
+     FROM (
+       SELECT d.lhk_nomor, DATE(MIN(d.tanggal)) AS hari, MAX(d.panjang) AS panjang
+       FROM tdtf d
+       WHERE ${where}
+       GROUP BY d.lhk_nomor
+     ) x
+     GROUP BY x.hari
+     ORDER BY x.hari`,
+    params,
+  );
+
+  const perHari = new Map(rows.map((r) => [r.tanggal, Number(r.meter) || 0]));
+  const harian = hariDalamRentang(startDate, endDate).map((tanggal) => ({
+    tanggal,
+    meter: Math.round((perHari.get(tanggal) || 0) * 100) / 100,
+  }));
+  const totalMeter = rows.reduce((acc, r) => acc + (Number(r.meter) || 0), 0);
+  const jumlahLhk = rows.reduce(
+    (acc, r) => acc + (Number(r.jumlah_lhk) || 0),
+    0,
+  );
+
+  return {
+    ...buildCardTotal({
+      key: "pet_dtf_panjang",
+      title: "Pemakaian PET DTF",
+      current: Math.round(totalMeter * 100) / 100,
+      unit: "m",
+      fractionDigits: 1,
+      type: "pet-detail",
+    }),
+    jumlahLhk,
+    harian,
+  };
+};
+
+const getPetDtfDetailList = async (
+  user,
+  periode = {},
+  page = 1,
+  limit = 30,
+) => {
+  const { where, params } = petDtfFilter(user, periode);
+  const offset = (Number(page) - 1) * Number(limit);
+
+  const [rows] = await pool.query(
+    `SELECT d.lhk_nomor AS nomor,
+            DATE_FORMAT(MIN(d.tanggal), '%Y-%m-%d') AS tanggal,
+            MAX(IFNULL(g.gdg_nama, d.cab)) AS store,
+            MAX(d.panjang) AS panjang
+     FROM tdtf d
+     LEFT JOIN tgudang g ON g.gdg_kode = d.cab
+     WHERE ${where}
+     GROUP BY d.lhk_nomor
+     ORDER BY MIN(d.tanggal) DESC, d.lhk_nomor DESC
+     LIMIT ? OFFSET ?`,
+    [...params, Number(limit), offset],
+  );
+
+  return rows.map((r) => ({
+    nomor: r.nomor,
+    tanggal: r.tanggal,
+    customer: r.store,
+    qty: Number(r.panjang) || 0,
+  }));
+};
+
+// ---- Retur: jumlah dokumen trj_hdr (semua jenis) --------------------------
+const returFilter = (user, periode) => {
+  const cabang = resolveCardCabang(user);
+  const { startDate, endDate } = resolvePeriodeRange(periode);
+  return {
+    where: `${rentangSql("h.rj_tanggal")} ${cabang ? "AND h.rj_cab = ?" : ""}`,
+    params: [startDate, endDate, ...(cabang ? [cabang] : [])],
+  };
+};
+
+// Rumus nominal sama dengan returJualService.getList (setelah diskon dan PPN)
+const RETUR_NOMINAL_SQL = `(
+  SELECT ROUND(SUM(d.rjd_jumlah * (d.rjd_harga - d.rjd_diskon)) - h.rj_disc
+         + (h.rj_ppn / 100 * (SUM(d.rjd_jumlah * (d.rjd_harga - d.rjd_diskon)) - h.rj_disc)))
+  FROM trj_dtl d WHERE d.rjd_nomor = h.rj_nomor
+)`;
+
+const getReturWorkSummary = async (user, periode = {}) => {
+  const { where, params } = returFilter(user, periode);
+  const [rows] = await pool.query(
+    `SELECT COUNT(*) AS jumlah, IFNULL(SUM(x.nominal), 0) AS nominal
+     FROM (
+       SELECT ${RETUR_NOMINAL_SQL} AS nominal
+       FROM trj_hdr h
+       WHERE ${where}
+     ) x`,
+    params,
+  );
+
+  return buildCardTotal({
+    key: "retur_jual",
+    title: "Jumlah Retur",
+    current: Number(rows[0]?.jumlah || 0),
+    unit: "dokumen",
+    type: "retur-detail",
+    nominal: Number(rows[0]?.nominal || 0),
+  });
+};
+
+const getReturDetailList = async (user, periode = {}, page = 1, limit = 30) => {
+  const { where, params } = returFilter(user, periode);
+  const offset = (Number(page) - 1) * Number(limit);
+
+  const [rows] = await pool.query(
+    `SELECT h.rj_nomor AS nomor,
+            DATE_FORMAT(h.rj_tanggal, '%Y-%m-%d') AS tanggal,
+            c.cus_nama AS customer,
+            ${RETUR_NOMINAL_SQL} AS nominal
+     FROM trj_hdr h
+     LEFT JOIN tcustomer c ON c.cus_kode = h.rj_cus_kode
+     WHERE ${where}
+     ORDER BY h.rj_tanggal DESC, h.rj_nomor DESC
+     LIMIT ? OFFSET ?`,
+    [...params, Number(limit), offset],
+  );
+
+  return rows.map((r) => ({
+    nomor: r.nomor,
+    tanggal: r.tanggal,
+    customer: r.customer || "-",
+    nominal: Number(r.nominal) || 0,
+  }));
+};
+
+// ---- Refund: jumlah dokumen trefund_hdr berstatus APPROVE -----------------
+// Cabang dari 3 huruf awal nomor refund (sama dengan refundService).
+const refundFilter = (user, periode) => {
+  const cabang = resolveCardCabang(user);
+  const { startDate, endDate } = resolvePeriodeRange(periode);
+  return {
+    where: `h.rf_status = 'APPROVE' AND ${rentangSql("h.rf_tanggal")} ${
+      cabang ? "AND LEFT(h.rf_nomor, 3) = ?" : ""
+    }`,
+    params: [startDate, endDate, ...(cabang ? [cabang] : [])],
+  };
+};
+
+const getRefundWorkSummary = async (user, periode = {}) => {
+  const { where, params } = refundFilter(user, periode);
+  const [rows] = await pool.query(
+    `SELECT COUNT(DISTINCT h.rf_nomor) AS jumlah,
+            IFNULL(SUM(d.rfd_refund), 0) AS nominal
+     FROM trefund_hdr h
+     LEFT JOIN trefund_dtl d ON d.rfd_nomor = h.rf_nomor
+     WHERE ${where}`,
+    params,
+  );
+
+  return buildCardTotal({
+    key: "refund_approve",
+    title: "Jumlah Refund",
+    current: Number(rows[0]?.jumlah || 0),
+    unit: "dokumen",
+    type: "refund-detail",
+    nominal: Number(rows[0]?.nominal || 0),
+  });
+};
+
+const getRefundDetailList = async (
+  user,
+  periode = {},
+  page = 1,
+  limit = 30,
+) => {
+  const { where, params } = refundFilter(user, periode);
+  const offset = (Number(page) - 1) * Number(limit);
+
+  // Nominal = total rfd_refund (kolom "Nominal Approval" di export refund)
+  const [rows] = await pool.query(
+    `SELECT h.rf_nomor AS nomor,
+            DATE_FORMAT(h.rf_tanggal, '%Y-%m-%d') AS tanggal,
+            GROUP_CONCAT(DISTINCT c.cus_nama ORDER BY c.cus_nama SEPARATOR ', ') AS customer,
+            IFNULL(SUM(d.rfd_refund), 0) AS nominal
+     FROM trefund_hdr h
+     LEFT JOIN trefund_dtl d ON d.rfd_nomor = h.rf_nomor
+     LEFT JOIN tcustomer c ON c.cus_kode = d.rfd_cus_kode
+     WHERE ${where}
+     GROUP BY h.rf_nomor, h.rf_tanggal
+     ORDER BY h.rf_tanggal DESC, h.rf_nomor DESC
+     LIMIT ? OFFSET ?`,
+    [...params, Number(limit), offset],
+  );
+
+  return rows.map((r) => ({
+    nomor: r.nomor,
+    tanggal: r.tanggal,
+    customer: r.customer || "-",
+    nominal: Number(r.nominal) || 0,
+  }));
+};
+
+// ---- Peminjaman: belum kembali dan lewat batas, dari peminjaman bulan ini --
+// Kondisi sama dengan notifikasi peminjaman overdue di beranda
+// (pj_status_kembali = 'N' dan lebih dari 14 hari sejak tanggal pinjam).
+const PEMINJAMAN_BATAS_HARI = 14;
+const PEMINJAMAN_TERLAMBAT_SQL = `h.pj_status_kembali = 'N' AND DATEDIFF(CURDATE(), h.pj_tanggal) > ${PEMINJAMAN_BATAS_HARI}`;
+
+const peminjamanFilter = (user, periode) => {
+  const cabang = resolveCardCabang(user);
+  const { startDate, endDate } = resolvePeriodeRange(periode);
+  return {
+    where: `${rentangSql("h.pj_tanggal")} ${cabang ? "AND h.pj_cab = ?" : ""}`,
+    params: [startDate, endDate, ...(cabang ? [cabang] : [])],
+  };
+};
+
+const getPeminjamanWorkSummary = async (user, periode = {}) => {
+  const { where, params } = peminjamanFilter(user, periode);
+  const [rows] = await pool.query(
+    `SELECT COUNT(*) AS total,
+            IFNULL(SUM(CASE WHEN ${PEMINJAMAN_TERLAMBAT_SQL} THEN 1 ELSE 0 END), 0) AS jumlah_terlambat
+     FROM tpeminjaman_hdr h
+     WHERE ${where}`,
+    params,
+  );
+
+  const total = Number(rows[0]?.total || 0);
+  const terlambat = Number(rows[0]?.jumlah_terlambat || 0);
+  const percent = total > 0 ? (terlambat / total) * 100 : 0;
+
+  return {
+    key: "peminjaman_belum_kembali",
+    title: "Peminjaman Belum Kembali",
+    current: terlambat,
+    total,
+    percent: Math.min(100, percent),
+    status: statusDariRasio(percent),
+    type: "pinjam-detail",
+  };
+};
+
+// Terlama di atas: yang paling lama menggantung paling perlu dikejar
+const getPeminjamanDetailList = async (
+  user,
+  periode = {},
+  page = 1,
+  limit = 30,
+) => {
+  const { where, params } = peminjamanFilter(user, periode);
+  const offset = (Number(page) - 1) * Number(limit);
+
+  const [rows] = await pool.query(
+    `SELECT h.pj_nomor AS nomor,
+            DATE_FORMAT(h.pj_tanggal, '%Y-%m-%d') AS tanggal,
+            CONCAT_WS(' - ', h.pj_cab, h.pj_nama) AS peminjam,
+            DATEDIFF(CURDATE(), h.pj_tanggal) - ${PEMINJAMAN_BATAS_HARI} AS terlambat
+     FROM tpeminjaman_hdr h
+     WHERE ${where} AND ${PEMINJAMAN_TERLAMBAT_SQL}
+     ORDER BY h.pj_tanggal ASC, h.pj_nomor ASC
+     LIMIT ? OFFSET ?`,
+    [...params, Number(limit), offset],
+  );
+
+  return rows.map((r) => ({
+    nomor: r.nomor,
+    tanggal: r.tanggal,
+    customer: r.peminjam || "-",
+    qty: Number(r.terlambat) || 0,
+  }));
+};
+
+// =========================================================================
+// INFO RUMUS PER CARD (tampil di popover ikon (i)).
+// Ambang di sini WAJIB sinkron dengan ambang di fungsi builder masing-masing.
+// =========================================================================
+const AMBANG_RASIO_STANDAR =
+  "Baik sampai 25%, Perlu perhatian di atas 25%, Kritis di atas 50%.";
+const CATATAN_NOMINAL_SP =
+  "Nominal = nilai SP setelah diskon, PPN, dan ongkos kirim.";
+
+const CARD_FORMULA = {
+  sp_belum_invoice: {
+    definisi: "Surat Pesanan aktif bulan ini yang belum dibuatkan invoice.",
+    rumus: "SP belum invoice ÷ semua SP aktif bulan ini × 100%",
+    ambang: AMBANG_RASIO_STANDAR,
+    catatan: CATATAN_NOMINAL_SP,
+  },
+  sp_belum_ready: {
+    definisi:
+      "SP bulan ini yang belum diinvoice dan masih punya item yang jumlahnya lebih besar dari stok pesanan yang sudah disiapkan.",
+    rumus: "SP belum ready ÷ semua SP aktif bulan ini × 100%",
+    ambang: AMBANG_RASIO_STANDAR,
+    catatan: CATATAN_NOMINAL_SP,
+  },
+  sp_over_deadline: {
+    definisi:
+      "SP bulan ini yang tanggal deadline-nya sudah lewat dan belum diinvoice.",
+    rumus: "SP over deadline ÷ semua SP aktif bulan ini × 100%",
+    ambang: AMBANG_RASIO_STANDAR,
+    catatan: CATATAN_NOMINAL_SP,
+  },
+  sp_belum_dp: {
+    definisi: "SP bulan ini yang belum diinvoice dan belum ada DP sama sekali.",
+    rumus: "SP belum DP ÷ semua SP aktif bulan ini × 100%",
+    ambang: AMBANG_RASIO_STANDAR,
+    catatan: CATATAN_NOMINAL_SP,
+  },
+  sp_siap_belum_diambil: {
+    definisi:
+      "SP bulan ini yang seluruh itemnya sudah ready di stok pesanan, tetapi belum diinvoice (belum diambil customer).",
+    rumus: "SP siap belum diambil ÷ semua SP aktif bulan ini × 100%",
+    ambang: AMBANG_RASIO_STANDAR,
+    catatan: CATATAN_NOMINAL_SP,
+  },
+  sp_belum_lunas: {
+    definisi:
+      "SP bulan ini yang belum diinvoice, sudah ada DP, tetapi DP masih lebih kecil dari nilai SP.",
+    rumus: "SP belum lunas ÷ semua SP aktif bulan ini × 100%",
+    ambang: AMBANG_RASIO_STANDAR,
+    catatan: "Nominal = sisa yang belum dibayar (nilai SP dikurangi DP).",
+  },
+  penawaran_belum_follow_up: {
+    definisi:
+      "Penawaran bulan ini yang belum jadi SP, belum ditutup, dan sudah lebih dari 3 hari sejak dibuat.",
+    rumus: "Penawaran belum follow up ÷ semua penawaran bulan ini × 100%",
+    ambang: AMBANG_RASIO_STANDAR,
+  },
+  penawaran_closing: {
+    definisi:
+      "Penawaran bulan ini yang ditutup manual oleh SC (alasan penutupan terisi).",
+    rumus: "Penawaran ditutup manual ÷ semua penawaran bulan ini × 100%",
+    ambang: AMBANG_RASIO_STANDAR,
+    catatan:
+      "Bukan penawaran yang berhasil jadi SP, melainkan yang tidak dilanjutkan.",
+  },
+  pengajuan_harga_open: {
+    definisi:
+      "Pengajuan harga bulan ini yang masih berjalan, dari status Draft sampai Ready di Store.",
+    rumus: "PH open ÷ semua PH yang dibuat bulan ini × 100%",
+    ambang: AMBANG_RASIO_STANDAR,
+    catatan:
+      "Tidak dihitung sebagai open: Closed, Ditolak, Dibatalkan, dan data lama tanpa status.",
+  },
+  minta_barang_belum_diproses: {
+    definisi:
+      "Permintaan barang manual dari store bulan ini yang belum ditutup dan belum dibuatkan Packing List oleh DC.",
+    rumus:
+      "Dokumen belum diproses ÷ semua dokumen permintaan manual bulan ini × 100%",
+    ambang: "Baik sampai 10%, Perlu perhatian di atas 10%, Kritis di atas 30%.",
+    catatan:
+      "Permintaan otomatis tidak dihitung. Nominal = jumlah pcs × harga dasar barang.",
+  },
+  customer_baru: {
+    definisi: "Customer yang didaftarkan pada bulan terpilih.",
+    rumus: "Customer baru ÷ seluruh customer (semua waktu) × 100%",
+    ambang: "Hanya informasi, tidak ada status kritis.",
+  },
+  repeat_order: {
+    definisi:
+      "Customer (selain RETAIL) yang punya lebih dari 1 invoice pada bulan terpilih.",
+    rumus:
+      "Customer repeat ÷ customer non-RETAIL yang bertransaksi bulan ini × 100%",
+    ambang:
+      "Makin tinggi makin baik: Baik mulai 15%, Perlu perhatian 5% sampai di bawah 15%, Kritis di bawah 5%.",
+  },
+  produksi_terlambat: {
+    definisi:
+      "SO/SPK Kaosan yang dibuat bulan ini, belum selesai, dan tanggal deadline-nya sudah lewat.",
+    rumus: "SO terlambat ÷ semua SPK dan SO Kaosan yang masih terbuka × 100%",
+    ambang: AMBANG_RASIO_STANDAR,
+    catatan:
+      "Hanya yang terhubung ke Pengajuan Harga. Terlambat dihitung terhadap hari ini.",
+  },
+  stok_minus: {
+    definisi:
+      "Kombinasi barang, ukuran, dan gudang yang stok akhirnya di bawah nol.",
+    rumus:
+      "Stok = total masuk − total keluar; dihitung bila hasilnya kurang dari 0",
+    ambang: `Baik: 0 item. Perlu perhatian: 1 sampai ${STOK_MINUS_BATAS_KRITIS} item. Kritis: lebih dari ${STOK_MINUS_BATAS_KRITIS} item.`,
+    catatan:
+      "Real time, tidak mengikuti filter bulan; disegarkan maksimal tiap 60 detik. Hanya barang yang stoknya dicatat, tidak termasuk stok pesanan.",
+  },
+  pet_dtf_panjang: {
+    definisi:
+      "Total panjang PET DTF yang terpakai pada LHK jenis order SD di bulan terpilih.",
+    rumus: "Jumlah panjang tiap nomor LHK (jenis order SD)",
+    ambang: "Hanya informasi, tidak ada status.",
+    catatan:
+      "Panjang diambil sekali per nomor LHK, sama dengan kolom Panjang di Lap. LHK, dan sudah termasuk buangan. Cabang mengikuti cabang pengerja LHK.",
+  },
+  retur_jual: {
+    definisi: "Jumlah dokumen retur jual yang dibuat di bulan terpilih.",
+    rumus:
+      "Jumlah dokumen retur (tukar barang, retur online, dan pengembalian)",
+    ambang: "Hanya informasi, tidak ada status.",
+    catatan: "Satu dokumen dihitung satu, berapa pun jumlah barangnya.",
+  },
+  refund_approve: {
+    definisi:
+      "Jumlah dokumen refund yang sudah disetujui (status APPROVE) dengan tanggal di bulan terpilih.",
+    rumus: "Jumlah dokumen refund berstatus APPROVE",
+    ambang: "Hanya informasi, tidak ada status.",
+    catatan:
+      "Refund yang menunggu ACC, ditolak, atau dibatalkan tidak dihitung. Cabang diambil dari 3 huruf awal nomor refund.",
+  },
+  peminjaman_belum_kembali: {
+    definisi:
+      "Peminjaman barang bulan ini yang belum kembali dan sudah lewat batas 14 hari sejak tanggal pinjam.",
+    rumus:
+      "Peminjaman belum kembali dan lewat 14 hari ÷ semua peminjaman bulan ini × 100%",
+    ambang: AMBANG_RASIO_STANDAR,
+    catatan:
+      "Hanya peminjaman yang dibuat di bulan terpilih: pinjaman bulan lalu yang masih menggantung tidak ikut, dan pinjaman akhir bulan belum sempat lewat tempo.",
+  },
+};
+
 /**
  * WORK SUMMARY DASHBOARD: agregat semua card "Summary Hasil Pekerjaan".
  * Bertahap — card lain (Mockup, Random Stok, Permintaan Barang, Omzet
  * Barang Jadi) menyusul setelah skema tabelnya jelas.
  */
 const getWorkSummary = async (user, periode = {}) => {
+  const resolvedPeriode = resolvePeriodeRange(periode);
+
+  // Urutan di sini = urutan card dalam tiap grup di dashboard
+  const sources = [
+    ["Surat Pesanan", () => getSuratPesananWorkSummary(user, periode)],
+    ["Penawaran", () => getPenawaranWorkSummary(user, periode)],
+    ["Pengajuan Harga", () => getPengajuanHargaWorkSummary(user, periode)],
+    ["Retur", () => getReturWorkSummary(user, periode)],
+    ["Refund", () => getRefundWorkSummary(user, periode)],
+    ["Peminjaman", () => getPeminjamanWorkSummary(user, periode)],
+    ["Minta Barang", () => getMintaBarangWorkSummary(user, periode)],
+    ["Customer Baru", () => getCustomerBaruWorkSummary(user, periode)],
+    ["Repeat Order", () => getRepeatOrderWorkSummary(user, periode)],
+    [
+      "Produksi Terlambat",
+      () => getProduksiTerlambatSummary(user, resolvedPeriode),
+    ],
+    ["PET DTF", () => getPetDtfWorkSummary(user, periode)],
+    ["Stok Minus", () => getStokMinusWorkSummary(user)],
+  ];
+
+  const results = await Promise.allSettled(sources.map(([, run]) => run()));
+
   const cards = [];
-  try {
-    cards.push(...(await getSuratPesananWorkSummary(user, periode)));
-  } catch (err) {
-    console.error("Gagal load card Surat Pesanan:", err.message);
-  }
+  results.forEach((result, i) => {
+    if (result.status === "fulfilled") {
+      cards.push(...[].concat(result.value));
+    } else {
+      console.error(
+        `Gagal load card ${sources[i][0]}:`,
+        result.reason?.message || result.reason,
+      );
+    }
+  });
 
-  try {
-    cards.push(...(await getPenawaranWorkSummary(user, periode)));
-  } catch (err) {
-    console.error("Gagal load card Penawaran:", err.message);
-  }
-
-  try {
-    cards.push(...(await getMintaBarangWorkSummary(user, periode)));
-  } catch (err) {
-    console.error("Gagal load card Minta Barang:", err.message);
-  }
-
-  try {
-    cards.push(await getCustomerBaruWorkSummary(user, periode));
-  } catch (err) {
-    console.error("Gagal load card Customer Baru:", err.message);
-  }
-
-  try {
-    cards.push(await getRepeatOrderWorkSummary(user, periode));
-  } catch (err) {
-    console.error("Gagal load card Repeat Order:", err.message);
-  }
-
-  // [FIX] Sekarang ikut filter bulan (Opsi A) — dihitung dari spk_tanggal
-  // dibuat pada periode, dicek terlambat/tidaknya terhadap HARI INI.
-  try {
-    const resolvedPeriode = resolvePeriodeRange(periode);
-    cards.push(await getProduksiTerlambatSummary(user, resolvedPeriode));
-  } catch (err) {
-    console.error("Gagal load card Produksi Terlambat:", err.message);
-  }
-
-  return cards;
+  return cards.map((card) => ({
+    ...card,
+    formula: CARD_FORMULA[card.key] ?? null,
+  }));
 };
 
 module.exports = {
@@ -4273,5 +4985,17 @@ module.exports = {
   getCustomerBaruDetailList,
   getRepeatOrderWorkSummary,
   getRepeatOrderDetailList,
+  getPetDtfWorkSummary,
+  getPetDtfDetailList,
+  getReturWorkSummary,
+  getReturDetailList,
+  getRefundWorkSummary,
+  getRefundDetailList,
+  getPeminjamanWorkSummary,
+  getPeminjamanDetailList,
   getWorkSummary,
+  getPengajuanHargaWorkSummary,
+  getPengajuanHargaDetailList,
+  getStokMinusWorkSummary,
+  getStokMinusDetailList,
 };

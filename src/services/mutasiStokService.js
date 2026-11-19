@@ -1,4 +1,5 @@
 const pool = require("../config/database");
+const { JENIS_LABEL_SQL } = require("./mutasiStokFormService");
 
 const getCabangList = async (user) => {
   // Pola yang sama dari form sebelumnya
@@ -23,8 +24,9 @@ const getList = async (filters) => {
         h.mso_nomor AS Nomor,
         h.mso_tanggal AS Tanggal,
         IF(h.mso_jenis="SP", "Showroom ke Pesanan", "Pesanan ke Showroom") AS Jenis,
+        ${JENIS_LABEL_SQL} AS Jenis,
         h.mso_so_nomor AS NoSO,
-        IFNULL((SELECT inv_nomor FROM tinv_hdr v WHERE inv_nomor_so = h.mso_so_nomor ORDER BY v.inv_nomor DESC LIMIT 1), "") AS Invoice,
+        IF(h.mso_so_nomor = "", "", IFNULL((SELECT inv_nomor FROM tinv_hdr v WHERE inv_nomor_so = h.mso_so_nomor ORDER BY v.inv_nomor DESC LIMIT 1), "")) AS Invoice,
         o.so_cus_kode AS KdCus,
         c.cus_nama AS Customer,
         c.cus_alamat AS Alamat,
@@ -67,10 +69,10 @@ const remove = async (nomor, user) => {
       `
         SELECT 
             h.mso_so_nomor, 
-            IFNULL((SELECT inv_nomor FROM tinv_hdr v WHERE v.inv_nomor_so = h.mso_so_nomor LIMIT 1), "") AS Invoice
+            IF(h.mso_so_nomor = "", "", IFNULL((SELECT inv_nomor FROM tinv_hdr v WHERE v.inv_nomor_so = h.mso_so_nomor LIMIT 1), "")) AS Invoice
         FROM tmutasistok_hdr h WHERE h.mso_nomor = ?
     `,
-      [nomor]
+      [nomor],
     );
 
     if (rows.length === 0) throw new Error("Data tidak ditemukan.");

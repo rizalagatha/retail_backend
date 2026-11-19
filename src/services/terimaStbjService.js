@@ -1,69 +1,195 @@
 const pool = require("../config/database");
 
-const getList = async (filters, user) => {
-  const { startDate, endDate, gudang } = filters;
+const ke3 = (n) => Math.round(Number(n || 0) * 1000) / 1000;
+const kunciBaris = (r) => `${r.packing}|${r.spk}|${r.kode}|${r.ukuran}`;
+const kunciItem = (r) => `${r.spk}|${r.kode}|${r.ukuran}`;
+
+// Asal baris STBJ dibaca dari SO milik SPK-nya:
+// RETAIL = so_invdc terisi (3 huruf pertama = cabang, isinya biasanya nomor pengajuan harga).
+// DC     = so_invdc kosong, atau SPK tanpa SO.
+const sqlAsal = (kolomSpk) => `IF(EXISTS (
+    SELECT 1
+    FROM kencanaprint.tspk sp
+    JOIN kencanaprint.tsalesorder so ON so.so_nomor = sp.spk_so_ref AND so.so_aktif = 'Y'
+    WHERE sp.spk_nomor = ${kolomSpk} AND TRIM(IFNULL(so.so_invdc, '')) <> ''
+  ), 'RETAIL', 'DC')`;
+
+// Posisi penerimaan per baris packing: qty STBJ, sudah diterima, sisa.
+// db = pool atau connection (di dalam transaksi).
+// Penerimaan lama (tsd_packing = '') dibagikan ke packing berurutan sampai habis.
+const getPosisiPenerimaan = async (db, nomorStbj) => {
+  const [baris] = await db.query(
+    `SELECT e.tsd_packing AS packing, e.tsd_spk_nomor AS spk, e.tsd_kode AS kode,
+            e.tsd_ukuran AS ukuran, SUM(e.tsd_jumlah) AS jumlah,
+            MAX(TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna))) AS nama
+       FROM tdc_stbj e
+       LEFT JOIN tbarangdc a ON a.brg_kode = e.tsd_kode
+      WHERE e.tsd_nomor = ?
+      GROUP BY e.tsd_packing, e.tsd_spk_nomor, e.tsd_kode, e.tsd_ukuran
+      ORDER BY e.tsd_packing, e.tsd_spk_nomor, e.tsd_kode, e.tsd_ukuran`,
+    [nomorStbj],
+  );
+
+  const [diterimaRows] = await db.query(
+    `SELECT d.tsd_packing AS packing, d.tsd_spk_nomor AS spk, d.tsd_kode AS kode,
+            d.tsd_ukuran AS ukuran, SUM(d.tsd_jumlah) AS diterima
+       FROM tdc_stbj_hdr ts
+       JOIN tdc_stbj_dtl d ON d.tsd_nomor = ts.ts_nomor
+      WHERE ts.ts_stbj = ?
+      GROUP BY d.tsd_packing, d.tsd_spk_nomor, d.tsd_kode, d.tsd_ukuran`,
+    [nomorStbj],
+  );
+
+  const perPacking = new Map();
+  const lama = new Map();
+  for (const r of diterimaRows) {
+    if (r.packing === "") lama.set(kunciItem(r), ke3(r.diterima));
+    else perPacking.set(kunciBaris(r), ke3(r.diterima));
+  }
+
+  return baris.map((b) => {
+    const jumlah = ke3(b.jumlah);
+    let diterima = Math.min(perPacking.get(kunciBaris(b)) || 0, jumlah);
+    const sisaLama = lama.get(kunciItem(b)) || 0;
+    if (sisaLama > 0 && diterima < jumlah) {
+      const pakai = Math.min(sisaLama, jumlah - diterima);
+      diterima = ke3(diterima + pakai);
+      lama.set(kunciItem(b), ke3(sisaLama - pakai));
+    }
+    return { ...b, jumlah, diterima, sisa: ke3(jumlah - diterima) };
+  });
+};
+
+const ringkasPosisi = (posisi) => {
+  const totalQty = ke3(posisi.reduce((s, r) => s + r.jumlah, 0));
+  const diterima = ke3(posisi.reduce((s, r) => s + r.diterima, 0));
+  const kekurangan = ke3(Math.max(totalQty - diterima, 0));
+  const persen =
+    totalQty > 0
+      ? Math.min(Math.round((diterima / totalQty) * 1000) / 10, 100)
+      : 0;
+  const statusTerima =
+    diterima <= 0 ? "BELUM" : kekurangan <= 0 ? "SEMUA" : "SEBAGIAN";
+  return { totalQty, diterima, kekurangan, persen, statusTerima };
+};
+
+const getList = async (filters) => {
+  const { startDate, endDate, gudang, status, tab } = filters;
+  const asal = tab === "RETAIL" || tab === "DC" ? tab : ""; // "" = Gabungan
+  const adaStatus = ["BELUM", "SEBAGIAN", "SEMUA"].includes(status);
+
+  // Hanya baris/penerimaan yang berasal dari tab terpilih
+  const andAsal = (kolomSpk) =>
+    asal ? `AND ${sqlAsal(kolomSpk)} = '${asal}'` : "";
+  const andTerimaAsal = asal
+    ? `AND EXISTS (
+         SELECT 1 FROM tdc_stbj_dtl dd
+         WHERE dd.tsd_nomor = ts.ts_nomor AND ${sqlAsal("dd.tsd_spk_nomor")} = '${asal}'
+       )`
+    : "";
+
   const query = `
-        SELECT 
-            h.stbj_nomor AS nomor,
-            h.stbj_tanggal AS tanggal,
-            h.stbj_keterangan AS keterangan,
-            g.gdg_nama AS asalGudang,
-            IFNULL(ts.ts_nomor, "") AS nomorTerima,
-            ts.ts_tanggal AS tglTerima,
-            IFNULL(tl.tl_nomor, "") AS nomorTolak,
-            tl.tl_tanggal AS tglTolak,
-            (
-                SELECT CASE 
-                    WHEN pin_acc = "" AND pin_dipakai = "" THEN "WAIT"
-                    WHEN pin_acc = "Y" AND pin_dipakai = "" THEN "ACC"
-                    WHEN pin_acc = "N" THEN "TOLAK"
-                    ELSE ""
-                END
-                FROM kencanaprint.tspk_pin5 
-                WHERE pin_trs = "BATAL TERIMA STBJ" AND pin_nomor = IFNULL(ts.ts_nomor, "") 
-                ORDER BY pin_urut DESC LIMIT 1
-            ) AS statusPengajuan,
-            h.user_create AS userCreate,
-            IFNULL(ts.ts_closing, "N") AS closing
-        FROM kencanaprint.tstbj_hdr h
-        LEFT JOIN kencanaprint.tgudang g ON g.gdg_kode = h.stbj_gdg_kode 
-        LEFT JOIN tdc_stbj_hdr ts ON ts.ts_stbj = h.stbj_nomor
-        LEFT JOIN tdc_stbjtolak tl ON tl.tl_stbj = h.stbj_nomor
-        WHERE h.stbj_tanggal BETWEEN ? AND ?
-          AND h.stbj_gdg_kode = ?
-        ORDER BY ts.ts_nomor, h.stbj_nomor;
-    `;
-  const [rows] = await pool.query(query, [startDate, endDate, gudang]);
+    SELECT x.*,
+      GREATEST(x.totalQty - x.diterima, 0) AS kekurangan,
+      IF(x.totalQty > 0, LEAST(x.diterima / x.totalQty * 100, 100), 0) AS persen,
+      CASE
+        WHEN x.diterima <= 0 THEN 'BELUM'
+        WHEN x.diterima >= x.totalQty THEN 'SEMUA'
+        ELSE 'SEBAGIAN'
+      END AS statusTerima
+    FROM (
+      SELECT
+        h.stbj_nomor AS nomor,
+        h.stbj_tanggal AS tanggal,
+        h.stbj_keterangan AS keterangan,
+        g.gdg_nama AS asalGudang,
+        IFNULL((SELECT GROUP_CONCAT(ts.ts_nomor ORDER BY ts.ts_nomor SEPARATOR ', ')
+                FROM tdc_stbj_hdr ts
+                WHERE ts.ts_stbj = h.stbj_nomor ${andTerimaAsal}), '') AS nomorTerima,
+        (SELECT COUNT(*) FROM tdc_stbj_hdr ts
+          WHERE ts.ts_stbj = h.stbj_nomor ${andTerimaAsal}) AS jumlahPenerimaan,
+        (SELECT MAX(ts.ts_tanggal) FROM tdc_stbj_hdr ts
+          WHERE ts.ts_stbj = h.stbj_nomor ${andTerimaAsal}) AS tglTerima,
+        IFNULL(tl.tl_nomor, '') AS nomorTolak,
+        tl.tl_tanggal AS tglTolak,
+        h.user_create AS userCreate,
+        IFNULL((SELECT MAX(ts.ts_closing) FROM tdc_stbj_hdr ts
+                WHERE ts.ts_stbj = h.stbj_nomor ${andTerimaAsal}), 'N') AS closing,
+        CAST(IFNULL((SELECT SUM(e.tsd_jumlah) FROM tdc_stbj e
+                     WHERE e.tsd_nomor = h.stbj_nomor ${andAsal("e.tsd_spk_nomor")}), 0) AS SIGNED) AS totalQty,
+        CAST(IFNULL((SELECT SUM(d.tsd_jumlah)
+                     FROM tdc_stbj_hdr ts
+                     JOIN tdc_stbj_dtl d ON d.tsd_nomor = ts.ts_nomor
+                     WHERE ts.ts_stbj = h.stbj_nomor ${andAsal("d.tsd_spk_nomor")}), 0) AS SIGNED) AS diterima
+      FROM kencanaprint.tstbj_hdr h
+      LEFT JOIN kencanaprint.tgudang g ON g.gdg_kode = h.stbj_gdg_kode
+      LEFT JOIN tdc_stbjtolak tl ON tl.tl_stbj = h.stbj_nomor
+      WHERE h.stbj_tanggal BETWEEN ? AND ?
+        AND h.stbj_gdg_kode = ?
+    ) x
+    ${asal ? "WHERE x.totalQty > 0" : ""}
+    ${adaStatus ? "HAVING statusTerima = ?" : ""}
+    ORDER BY (statusTerima = 'SEMUA'), x.tanggal DESC, x.nomor DESC
+  `;
+  const params = [startDate, endDate, gudang];
+  if (adaStatus) params.push(status);
+  const [rows] = await pool.query(query, params);
   return rows;
 };
 
 const getDetails = async (nomor) => {
-  // Query ini adalah terjemahan dari SQLDetail di Delphi
-  const query = `
-        SELECT 
-            h.ts_stbj AS nomor, 
-            d.tsd_nomor AS nomorTerima,
-            d.tsd_spk_nomor AS spk,
-            (SELECT GROUP_CONCAT(DISTINCT p.pack_nomor ORDER BY p.pack_nomor SEPARATOR ', ')
-               FROM tpacking p
-              WHERE p.pack_spk_nomor = d.tsd_spk_nomor
-                AND (p.pack_nostbj = h.ts_stbj OR p.pack_nostbj IS NULL OR p.pack_nostbj = '')) AS packing,
-            g.gdg_nama AS gudang,
-            d.tsd_kode AS kode,
-            TRIM(CONCAT(a.brg_jeniskaos," ",a.brg_tipe," ",a.brg_lengan," ",a.brg_jeniskain," ",a.brg_warna)) AS nama,
-            d.tsd_ukuran AS ukuran,
-            d.tsd_jumlah AS jumlah
-        FROM tdc_stbj_hdr h
-        INNER JOIN tdc_stbj_dtl d ON d.tsd_nomor = h.ts_nomor
-        LEFT JOIN tbarangdc a ON a.brg_kode = d.tsd_kode
-        LEFT JOIN kencanaprint.tspk s ON s.spk_nomor = d.tsd_spk_nomor
-        LEFT JOIN kencanaprint.tsalesorder so ON so.so_nomor = s.spk_so_ref AND so.so_aktif = 'Y'
-        LEFT JOIN tgudang g ON g.gdg_kode = LEFT(so.so_invdc, 3)
-        WHERE h.ts_stbj = ?
-        ORDER BY d.tsd_nomor, d.tsd_spk_nomor, d.tsd_kode, d.tsd_ukuran;
-    `;
-  const [rows] = await pool.query(query, [nomor]);
-  return rows;
+  const posisi = await getPosisiPenerimaan(pool, nomor);
+  if (posisi.length === 0) return [];
+
+  // Asal dan gudang (cabang dari 3 huruf pertama so_invdc) per SPK
+  const spkList = [...new Set(posisi.map((r) => r.spk))];
+  const [asalRows] = await pool.query(
+    `SELECT s.spk_nomor AS spk,
+            COALESCE(g.gdg_nama, NULLIF(LEFT(TRIM(so.so_invdc), 3), '')) AS gudang,
+            IF(TRIM(IFNULL(so.so_invdc, '')) <> '', 'RETAIL', 'DC') AS asal
+       FROM kencanaprint.tspk s
+       JOIN kencanaprint.tsalesorder so ON so.so_nomor = s.spk_so_ref AND so.so_aktif = 'Y'
+       LEFT JOIN tgudang g ON g.gdg_kode = LEFT(TRIM(so.so_invdc), 3)
+      WHERE s.spk_nomor IN (?)`,
+    [spkList],
+  );
+  const asalPerSpk = new Map(asalRows.map((r) => [r.spk, r]));
+
+  // Nomor dan tanggal penerimaan per packing
+  const [terimaRows] = await pool.query(
+    `SELECT d.tsd_packing AS packing,
+            GROUP_CONCAT(DISTINCT ts.ts_nomor ORDER BY ts.ts_nomor SEPARATOR ', ') AS nomorTerima,
+            MAX(ts.ts_tanggal) AS tglTerima
+       FROM tdc_stbj_hdr ts
+       JOIN tdc_stbj_dtl d ON d.tsd_nomor = ts.ts_nomor
+      WHERE ts.ts_stbj = ?
+      GROUP BY d.tsd_packing`,
+    [nomor],
+  );
+  const terimaPerPacking = new Map(terimaRows.map((r) => [r.packing, r]));
+
+  return posisi.map((r) => {
+    // Penerimaan lama tidak punya packing: dipakai untuk baris yang sudah terisi
+    const info =
+      terimaPerPacking.get(r.packing) ??
+      (r.diterima > 0 ? terimaPerPacking.get("") : undefined);
+    return {
+      nomor,
+      packing: r.packing,
+      spk: r.spk,
+      gudang: asalPerSpk.get(r.spk)?.gudang ?? null,
+      asal: asalPerSpk.get(r.spk)?.asal ?? "DC",
+      kode: r.kode,
+      nama: r.nama,
+      ukuran: r.ukuran,
+      jumlah: r.jumlah,
+      diterima: r.diterima,
+      selisih: ke3(r.diterima - r.jumlah), // negatif = kurang, sesuai mockup
+      status: r.sisa <= 0 ? "DITERIMA" : r.diterima > 0 ? "SEBAGIAN" : "BELUM",
+      nomorTerima: info?.nomorTerima ?? "",
+      tglTerima: info?.tglTerima ?? null,
+    };
+  });
 };
 
 const cancelReceipt = async (nomorKirim, user) => {
@@ -193,6 +319,7 @@ const getExportDetails = async (filters) => {
             h.stbj_tanggal AS 'Tgl Kirim',
             g.gdg_nama AS 'Asal Gudang',
             ts.ts_nomor AS 'Nomor Terima',
+            d.tsd_packing AS 'Packing',
             ts.ts_tanggal AS 'Tgl Terima',
             d.tsd_spk_nomor AS 'SPK',
             d.tsd_kode AS 'Kode Barang',
@@ -217,7 +344,8 @@ const getExportDetails = async (filters) => {
 module.exports = {
   getList,
   getDetails,
-  cancelReceipt,
   cancelRejection,
   getExportDetails,
+  getPosisiPenerimaan,
+  ringkasPosisi,
 };

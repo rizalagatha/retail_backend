@@ -1,4 +1,5 @@
 const service = require("../services/authPinService");
+const pool = require("../config/database");
 
 const authorizationController = {
   createRequest: async (req, res) => {
@@ -83,6 +84,7 @@ const authorizationController = {
           "TRANSFER_SOP",
           "MUTASI_KIRIM",
           "REFUND",
+          "PROFORMA",
         ];
 
         // JIKA transaksi termasuk level Manager, tapi yang approve beralamat selain KDC -> BLOKIR!
